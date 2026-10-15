@@ -1,0 +1,10 @@
+[package]
+name = "machine"
+description = "Machine model for the Recreated host: identifiers, addressing, memory image, CPU backend trait, virtual clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
