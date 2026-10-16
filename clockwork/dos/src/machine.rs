@@ -24,6 +24,7 @@ use crate::time::DateTime;
 use crate::vfs::Vfs;
 use crate::vga::{self, Vga};
 use crate::vga_draw;
+use crate::xms::{self, Xms};
 use crate::{bios, dos};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -42,6 +43,10 @@ pub struct Config {
     pub environment: Vec<(String, String)>,
     /// Expanded memory (LIM EMS 4.0) in KB; 0 means no EMS driver.
     pub ems_kb: u32,
+    /// Memory above the first megabyte, in KB (15360 for a 16 MB PC).
+    pub extended_kb: u32,
+    /// Whether an XMS driver (HIMEM.SYS) manages the extended memory.
+    pub xms: bool,
     /// Whether a mouse and its driver (INT 33h) are installed.
     pub mouse: bool,
     /// The Sound Blaster card (with its OPL chips), or `None` for no sound card.
@@ -58,6 +63,8 @@ impl Default for Config {
             start_drive: 'C',
             environment: Vec::new(),
             ems_kb: 4096,
+            extended_kb: 15 * 1024,
+            xms: true,
             mouse: true,
             sound_blaster: Some(SbConfig::default()),
         }
@@ -90,6 +97,9 @@ pub enum Stop {
     Fault(cpu::Exit),
 }
 
+/// Extended memory is limited to what a 24-bit (286/386SX) address bus reaches: 16 MB in all.
+pub const MAX_EXTENDED_KB: u32 = 15 * 1024;
+
 /// One displayed frame, fingerprinted at the start of vertical retrace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Frame {
@@ -120,7 +130,7 @@ pub struct Devices {
 }
 
 impl Devices {
-    fn new(clock: Clock, start_time: DateTime, sound_blaster: Option<SbConfig>) -> Self {
+    fn new(clock: Clock, start_time: DateTime, sound_blaster: Option<SbConfig>, extended_kb: u32) -> Self {
         Self {
             // BIOS defaults: IRQ0, 1, 2 and 6 unmasked on the master; vectors 08h and 70h.
             pic: Pic::new(0x08, 0xB8),
@@ -129,7 +139,7 @@ impl Devices {
             keyboard: Keyboard::default(),
             vga: Vga::new(),
             mpu: Mpu401::default(),
-            cmos: Cmos::new(start_time),
+            cmos: Cmos::new(start_time, extended_kb),
             dma: Dma::new(),
             opl: sound_blaster.map(|sb| Opl::new(sb.opl_mode())),
             sb: sound_blaster.map(SoundBlaster::new),
@@ -352,6 +362,7 @@ pub struct Machine {
     pub devices: Devices,
     pub dos: DosState,
     pub ems: Ems,
+    pub xms: Xms,
     pub mouse: Mouse,
     pub drive: Vfs,
     pub config: Config,
@@ -384,10 +395,11 @@ impl Machine {
         let clock = Clock::new(config.instructions_per_second);
         let mut machine = Self {
             cpu: Cpu::with_model(config.cpu_model),
-            mem: Memory::new(),
-            devices: Devices::new(clock, config.start_time, config.sound_blaster),
+            mem: Memory::with_size(0x10_0000 + config.extended_kb.min(MAX_EXTENDED_KB) * 1024),
+            devices: Devices::new(clock, config.start_time, config.sound_blaster, config.extended_kb),
             dos: DosState::default(),
             ems: Ems::new(config.ems_kb),
+            xms: Xms::new(config.xms, 0x10_0000 + config.extended_kb.min(MAX_EXTENDED_KB) * 1024),
             mouse: Mouse::new(config.mouse),
             drive,
             config,
@@ -407,6 +419,7 @@ impl Machine {
         };
         bios::install(&mut machine);
         ems::install(&mut machine);
+        xms::install(&mut machine);
         mouse::install(&mut machine);
         dos::install(&mut machine);
         machine
@@ -476,6 +489,12 @@ impl Machine {
     /// Nanoseconds of emulated time elapsed.
     pub fn elapsed_ns(&self) -> u64 {
         self.devices.clock.nanos(self.cpu.cycles)
+    }
+
+    /// Sets the A20 gate the way port 92h does, keeping the port's bit 1 in step.
+    pub(crate) fn set_a20(&mut self, on: bool) {
+        self.mem.set_a20(on);
+        self.devices.port92 = (self.devices.port92 & !0x02) | if on { 0x02 } else { 0 };
     }
 
     /// Milliseconds of emulated time elapsed.

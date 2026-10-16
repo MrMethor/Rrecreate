@@ -1529,3 +1529,158 @@ fn blaster_variable_is_in_the_environment() {
     let env = String::from_utf8_lossy(&m.mem.read_bytes(u32::from(env_segment) << 4, 256)).into_owned();
     assert!(env.contains("BLASTER=A220 I7 D1 H5 T6\0"), "{env:?}");
 }
+
+#[test]
+fn xms_driver_allocates_moves_and_locks_extended_memory() {
+    let program = com(|a| {
+        a.mov(ax, 0x4300)?;
+        a.int(0x2F)?;
+        let installed = byte_at(a, "installed");
+        a.mov(installed, al)?;
+        a.mov(ax, 0x4310)?;
+        a.int(0x2F)?;
+        let entry = a.addr("entry") as u32;
+        a.mov(word_ptr(entry), bx)?;
+        a.mov(word_ptr(entry + 2), es)?;
+        let call_xms = |a: &mut Asm| a.call(dword_ptr(entry));
+        a.mov(ah, 0x00)?;
+        call_xms(a)?;
+        let version = word_at(a, "version");
+        a.mov(version, ax)?;
+        a.mov(ah, 0x08)?;
+        call_xms(a)?;
+        let free = word_at(a, "free");
+        a.mov(free, dx)?;
+        a.mov(ah, 0x09)?;
+        a.mov(dx, 64)?;
+        call_xms(a)?;
+        let handle = word_at(a, "handle");
+        a.mov(handle, dx)?;
+        // Conventional memory -> EMB offset 1000h, then back into "buffer".
+        let to_emb = a.addr("to_emb") as u32;
+        let from_emb = a.addr("from_emb") as u32;
+        a.mov(word_ptr(to_emb + 8), ds)?;
+        a.mov(word_ptr(to_emb + 10), dx)?;
+        a.mov(word_ptr(from_emb + 4), dx)?;
+        a.mov(word_ptr(from_emb + 14), ds)?;
+        let at = a.addr("to_emb");
+        a.mov(si, at)?;
+        a.mov(ah, 0x0B)?;
+        call_xms(a)?;
+        let at = a.addr("from_emb");
+        a.mov(si, at)?;
+        a.mov(ah, 0x0B)?;
+        call_xms(a)?;
+        let handle = word_at(a, "handle");
+        a.mov(dx, handle)?;
+        a.mov(ah, 0x0C)?;
+        call_xms(a)?;
+        let locked = a.addr("locked") as u32;
+        a.mov(word_ptr(locked), bx)?;
+        a.mov(word_ptr(locked + 2), dx)?;
+        a.mov(ah, 0x03)?; // global enable A20
+        call_xms(a)?;
+        a.mov(ah, 0x07)?;
+        call_xms(a)?;
+        let a20 = word_at(a, "a20");
+        a.mov(a20, ax)?;
+        a.mov(ah, 0x01)?; // request the HMA
+        a.mov(dx, 0xFFFF)?;
+        call_xms(a)?;
+        let hma = word_at(a, "hma");
+        a.mov(hma, ax)?;
+        a.mov(ah, 0x88)?; // INT 15h: no extended memory left for the BIOS
+        a.int(0x15)?;
+        let bios = word_at(a, "bios");
+        a.mov(bios, ax)?;
+        exit(a, 0)?;
+        a.here("installed")?;
+        a.db(&[0])?;
+        a.here("entry")?;
+        a.dw(&[0, 0])?;
+        for label in ["version", "free", "handle", "a20", "hma", "bios"] {
+            a.here(label)?;
+            a.dw(&[0xFFFF])?;
+        }
+        a.here("locked")?;
+        a.dw(&[0, 0])?;
+        a.here("message")?;
+        a.db(b"Extended memory!")?;
+        a.here("buffer")?;
+        a.db(&[0; 16])?;
+        // length 16, source handle 0 + DS:message, destination handle (patched) + offset 1000h
+        let message = a.addr("message") as u16;
+        let buffer = a.addr("buffer") as u16;
+        a.here("to_emb")?;
+        a.dw(&[16, 0, 0, message, 0, 0, 0x1000, 0])?;
+        a.here("from_emb")?;
+        a.dw(&[16, 0, 0, 0x1000, 0, 0, buffer, 0])
+    });
+    let mut m = boot(&[("X.COM", &program)], "X.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+    let base = (u32::from(m.dos.psp) << 4) + 0x100;
+    let find = |m: &Machine, text: &[u8]| {
+        let image = m.mem.read_bytes(base, program.len());
+        image.windows(text.len()).position(|w| w == text).map(|i| base + i as u32)
+    };
+    let fields = find(&m, b"Extended memory!").unwrap() - 4 - 12 - 1 - 4;
+    let word = |offset: u32| m.mem.read_u16(fields + offset);
+    assert_eq!(m.mem.read_u8(fields), 0x80, "installed");
+    assert_eq!(word(5), 0x0300, "XMS 3.0");
+    assert_eq!(word(7), 15 * 1024 - 64, "free KB: 15 MB minus the HMA");
+    assert_eq!(word(9), 1, "first handle");
+    assert_eq!(word(11), 1, "A20 enabled");
+    assert_eq!(word(13), 1, "HMA granted");
+    assert_eq!(word(15), 0, "INT 15h AH=88h reports no free extended memory");
+    assert_eq!(m.mem.read_u32(fields + 17), 0x11_0000, "locked block's physical address");
+    assert_eq!(m.mem.read_phys(0x11_1000), b'E', "the data is in extended memory");
+    let message = find(&m, b"Extended memory!").unwrap();
+    assert_eq!(m.mem.read_bytes(message + 16, 16), b"Extended memory!", "and came back");
+    assert!(m.mem.a20());
+}
+
+#[test]
+fn bios_extended_memory_without_xms() {
+    // INT 15h AH=88h reports 15 MB, AH=87h copies 8 bytes to 200000h through a GDT.
+    let program = com(|a| {
+        a.mov(ah, 0x88)?;
+        a.int(0x15)?;
+        let size = word_at(a, "size");
+        a.mov(size, ax)?;
+        // Source descriptor base = DS:data (linear), destination base = 200000h.
+        a.mov(ax, ds)?;
+        a.mov(dx, 16)?;
+        a.mul(dx)?; // DX:AX = DS * 16
+        let data = a.addr("data");
+        a.add(ax, data)?;
+        a.adc(dx, 0)?;
+        let gdt = a.addr("gdt") as u32;
+        a.mov(word_ptr(gdt + 0x12), ax)?;
+        a.mov(byte_ptr(gdt + 0x14), dl)?;
+        a.push(ds)?;
+        a.pop(es)?;
+        let at = a.addr("gdt");
+        a.mov(si, at)?;
+        a.mov(cx, 4)?; // words
+        a.mov(ah, 0x87)?;
+        a.int(0x15)?;
+        exit(a, 0)?;
+        a.here("size")?;
+        a.dw(&[0])?;
+        a.here("data")?;
+        a.db(b"BLOCKMOV")?;
+        a.here("gdt")?;
+        let mut gdt = [0u8; 48];
+        gdt[0x10..0x18].copy_from_slice(&[0xFF, 0xFF, 0, 0, 0, 0x93, 0, 0]);
+        gdt[0x18..0x20].copy_from_slice(&[0xFF, 0xFF, 0x00, 0x00, 0x20, 0x93, 0, 0]);
+        a.db(&gdt)
+    });
+    let config = Config { xms: false, ..Config::default() };
+    let mut m = boot_with(config, &[("B.COM", &program)], "B.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let base = (u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32 - 48 - 8 - 2;
+    assert_eq!(m.mem.read_u16(base), 15 * 1024);
+    let copied: Vec<u8> = (0..8).map(|i| m.mem.read_phys(0x20_0000 + i)).collect();
+    assert_eq!(copied, b"BLOCKMOV");
+}

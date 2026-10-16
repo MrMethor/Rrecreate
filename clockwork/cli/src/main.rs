@@ -44,6 +44,8 @@ options:
   --drive LETTER     the current drive when the program starts (default C)
   --env NAME=VALUE   set an environment variable (repeatable)
   --ems KB           expanded memory size (default 4096; 0 disables EMS)
+  --memory MB        total memory of the PC, 1-16 (default 16)
+  --no-xms           no XMS driver (programs see the extended memory through INT 15h)
   --sb SPEC          sound card: none, sb1, sb2, sbpro1, sbpro2 or sb16 (default), optionally
                      followed by BLASTER-style resources, e.g. \"sbpro2 A220 I5 D1\"
   --scale N          play: window scale (default 2)";
@@ -69,6 +71,8 @@ struct Options {
     start_drive: Option<char>,
     environment: Vec<(String, String)>,
     ems_kb: Option<u32>,
+    memory_mb: Option<u32>,
+    no_xms: bool,
     hotspots: usize,
     disasm: Option<String>,
     dump: Option<String>,
@@ -121,6 +125,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--record" => options.record = Some(value(arg)?.into()),
             "--scale" => options.scale = value(arg)?.parse().map_err(|_| "--scale needs a whole number")?,
             "--ems" => options.ems_kb = Some(value(arg)?.parse().map_err(|_| "--ems needs kilobytes")?),
+            "--memory" => {
+                let mb: u32 = value(arg)?.parse().map_err(|_| "--memory needs megabytes")?;
+                if !(1..=16).contains(&mb) {
+                    return Err("--memory must be 1 to 16 (MB)".into());
+                }
+                options.memory_mb = Some(mb);
+            }
+            "--no-xms" => options.no_xms = true,
             "--cd" => options.cd_drive = Some(drive_letter(&value(arg)?)?),
             "--drive" => options.start_drive = Some(drive_letter(&value(arg)?)?),
             "--env" => {
@@ -197,6 +209,8 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         environment: o.environment.clone(),
         ems_kb: o.ems_kb.unwrap_or(Config::default().ems_kb),
         sound_blaster: o.sound_blaster.unwrap_or(Config::default().sound_blaster),
+        extended_kb: o.memory_mb.map_or(Config::default().extended_kb, |mb| (mb - 1) * 1024),
+        xms: !o.no_xms,
         ..Config::default()
     };
     Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())

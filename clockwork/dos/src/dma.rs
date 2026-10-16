@@ -81,7 +81,7 @@ impl Channel {
         while done < units && !self.masked {
             let at = self.physical();
             for i in 0..unit_bytes {
-                out.push(mem.read_u8(at + i));
+                out.push(mem.read_phys(at + i));
             }
             done += 1;
             if !self.advance() {
@@ -102,7 +102,7 @@ impl Channel {
             }
             let at = self.physical();
             for (i, &byte) in unit.iter().enumerate() {
-                mem.write_u8(at + i as u32, byte);
+                mem.write_phys(at + i as u32, byte);
             }
             done += 1;
             if !self.advance() {

@@ -160,6 +160,7 @@ pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
         callback::FAST_CONSOLE => bios::teletype(m, m.cpu.regs.al()),
         callback::MULTIPLEX => multiplex(m),
         callback::EMS => crate::ems::service(m),
+        callback::XMS => crate::xms::service(m),
         _ => return false,
     }
     true
@@ -820,6 +821,9 @@ fn ioctl(m: &mut Machine) {
 /// INT 2Fh. Only MSCDEX is answered, and only when a CD drive is configured; everything else
 /// returns unchanged, as if no TSR were installed.
 fn multiplex(m: &mut Machine) {
+    if crate::xms::multiplex(m) {
+        return;
+    }
     let r = m.cpu.regs;
     let Some(cd) = m.dos.cd_drive else { return };
     if r.ah() != 0x15 {

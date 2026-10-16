@@ -72,6 +72,8 @@ pub(crate) mod callback {
     pub const EMS: u16 = 0x67;
     pub const MOUSE: u16 = 0x33;
     pub const MOUSE_IRQ: u16 = 0x74;
+    /// The XMS driver's far-call entry point (not an interrupt).
+    pub const XMS: u16 = 0x0143;
 }
 
 /// A device driver header for the emulated CD-ROM (MSCDEX AX=1501h points at it).
@@ -1249,14 +1251,38 @@ fn disk(m: &mut Machine) {
 fn system(m: &mut Machine) {
     match m.cpu.regs.ah() {
         0x4F => m.set_return_flag(CF, true), // keyboard intercept: process the key
+        0x87 => {
+            // Block move through a GDT at ES:SI: source descriptor at 10h, destination at 18h.
+            let gdt = Machine::lin(m.cpu.regs.es(), m.cpu.regs.si());
+            let base = |m: &Machine, at: u32| {
+                (m.mem.read_u32(at + 2) & 0x00FF_FFFF) | (u32::from(m.mem.read_u8(at + 7)) << 24)
+            };
+            let (source, dest) = (base(m, gdt + 0x10), base(m, gdt + 0x18));
+            let bytes = u32::from(m.cpu.regs.cx()) * 2;
+            m.mem.copy_phys(dest, source, bytes);
+            m.cpu.regs.set_ah(0);
+            m.set_return_flag(CF, false);
+            m.set_return_flag(ZF, true);
+        }
         0x88 => {
-            m.cpu.regs.set_ax(0); // no extended memory
+            // With an XMS driver loaded, it owns extended memory and the BIOS reports none.
+            let kb = if m.xms.enabled() { 0 } else { m.config.extended_kb.min(0xFFFF) as u16 };
+            m.cpu.regs.set_ax(kb);
+            m.set_return_flag(CF, false);
+        }
+        0xE8 if m.cpu.regs.al() == 0x01 => {
+            // Memory between 1 and 16 MB in KB (AX, CX) and above 16 MB in 64 KB blocks (BX, DX).
+            let kb = m.config.extended_kb.min(15 * 1024) as u16;
+            m.cpu.regs.set_ax(kb);
+            m.cpu.regs.set_cx(kb);
+            m.cpu.regs.set_bx(0);
+            m.cpu.regs.set_dx(0);
             m.set_return_flag(CF, false);
         }
         0x24 => {
             let al = m.cpu.regs.al();
             match al {
-                0 | 1 => m.mem.set_a20(al == 1),
+                0 | 1 => m.set_a20(al == 1),
                 2 => {
                     let a20 = m.mem.a20();
                     m.cpu.regs.set_al(u8::from(a20));
