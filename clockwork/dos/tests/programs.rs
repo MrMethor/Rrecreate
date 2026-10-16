@@ -1830,6 +1830,33 @@ fn sound_blaster_auto_init_interrupts_every_block() {
 }
 
 #[test]
+fn sound_blaster_playback_is_logged_as_it_plays() {
+    // One 100 ms block at 10 kHz: the samples are read a millisecond at a time, not at its end.
+    let program = sound_blaster_program(0x49, 999, &[0xD1, 0x40, 156, 0x14, 0xE7, 0x03]);
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    m.run(SECOND * 5 / 100);
+    let logged: usize = m.audio_log().pcm.iter().map(|s| s.samples.len()).sum();
+    assert!(logged >= 480, "{logged} samples logged after 50 ms");
+    assert!(m.audio_settled_ns() + 3_000_000 >= m.elapsed_ns(), "the log is final up to a few ms ago");
+}
+
+#[test]
+fn audio_rendered_while_running_matches_the_final_log() {
+    let program = sound_blaster_program(0x59, 199, &[0x40, 156, 0x48, 99, 0x00, 0x1C]);
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let mut renderer = dos::audio::Renderer::default();
+    let mut live = Vec::new();
+    for step in [SECOND / 70, SECOND / 333, SECOND / 70, SECOND / 7].into_iter().cycle().take(12) {
+        m.run(step);
+        renderer.render(&m.audio_log(), m.audio_settled_ns(), &mut live);
+    }
+    assert!(m.elapsed_ns() > 500_000_000);
+    let whole = m.audio_log().render(renderer.rendered_ns());
+    assert_eq!(live.len(), whole.len());
+    assert!(live == whole, "live rendering differs from rendering the final log");
+}
+
+#[test]
 fn blaster_variable_is_in_the_environment() {
     let mut m = boot(&[("E.COM", &com(hold))], "E.COM");
     m.run(SECOND / 100);

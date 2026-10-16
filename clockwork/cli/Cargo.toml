@@ -16,6 +16,8 @@ cpu.workspace = true
 dos.workspace = true
 machine.workspace = true
 minifb = "0.29"
+tinyaudio = "2"
+midir = "0.11"
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "intel"] }
 
 [lints]

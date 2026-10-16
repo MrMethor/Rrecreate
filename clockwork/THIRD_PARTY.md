@@ -28,5 +28,8 @@ Reference checkout: DOSBox Staging, commit `0fdf977d9c4e41908700d7eb2255142044f8
 | `host/dos/src/dma.rs` | DOSBox Staging `src/hardware/dma.cpp` | GPL-2.0-or-later | 8237 DMA controllers, page registers, terminal count and auto-init |
 | `host/dos/src/sblaster.rs` | DOSBox Staging `src/hardware/audio/soundblaster.cpp` | GPL-2.0-or-later | DSP command set and lengths, DMA modes, ADPCM decoding tables, E2h checksum table, mixer registers, `BLASTER` format |
 | `host/dos/src/opl.rs` | DOSBox Staging `src/hardware/audio/opl.cpp` | GPL-2.0-or-later | OPL port decoding (OPL2, dual OPL2, OPL3), timers and status register |
+| `host/dos/src/mpu401.rs` (`MidiParser`) | DOSBox Staging `src/midi/midi.cpp` (`MIDI_RawOutByte`, message lengths) | GPL-2.0-or-later | Splitting the MIDI byte stream into messages: running status, SysEx, real-time bytes |
+| Dependency `tinyaudio` (crates.io, used by `host/frontend/src/live_audio.rs`) | Sound output library by Dmitry Stepanov (mrDIMAS) | MIT | Live sound in `rec-host play` (DirectSound on Windows) |
+| Dependency `midir` (crates.io, used by `host/frontend/src/live_audio.rs`) | MIDI library by Patrick Reisert | MIT | Live MIDI output in `rec-host play` |
 | Dependency `nuked-opl3` (crates.io, used by `host/dos/src/audio.rs`) | Pure-Rust port of Nuked OPL3 by Nuke.YKT, Tony Gies | LGPL-2.1-or-later | OPL3 synthesis when rendering audio |
 | `COPYING` | GNU GPL version 2 text (via DOSBox Staging `licenses/GPL-2.0.txt`) | — | License text |

@@ -4,7 +4,8 @@
 //! ([`crate::opl::Opl::writes`]), Sound Blaster DMA samples and DAC writes
 //! ([`crate::sblaster::SoundBlaster::pcm`], `dac`) and PC speaker tones
 //! ([`crate::pit::Pit::speaker_log`]). Rendering is separate so it can't change
-//! the machine's behavior, and two runs can be compared by their logs alone. FM synthesis uses
+//! the machine's behavior, and two runs can be compared by their logs alone. [`Renderer`]
+//! renders a log in pieces as a run goes on, for live output. FM synthesis uses
 //! the `nuked-opl3` crate (a pure-Rust port of Nuked OPL3, LGPL-2.1-or-later), at the chip's
 //! native 49 716 Hz, which is also the output rate. Mixer volumes and filters aren't applied,
 //! and the speaker plays plain square waves (no band limiting, no direct port 61h sample output).
@@ -67,95 +68,169 @@ impl AudioLog<'_> {
 
     /// Renders `duration_ns` of audio as interleaved stereo samples at [`SAMPLE_RATE_HZ`].
     pub fn render(&self, duration_ns: u64) -> Vec<i16> {
-        let frames = (u128::from(duration_ns) * u128::from(SAMPLE_RATE_HZ) / NANOS_PER_SECOND) as usize;
-        let mut mix = vec![0i32; frames * 2];
-        self.render_opl(&mut mix);
-        self.render_pcm(&mut mix);
-        self.render_dac(&mut mix);
-        self.render_speaker(&mut mix);
-        mix.into_iter().map(|s| s.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16).collect()
+        let mut out = Vec::new();
+        Renderer::default().render(self, duration_ns, &mut out);
+        out
+    }
+}
+
+/// The output frame playing at `nanos` (the first one at or after it).
+fn frame_at_nanos(nanos: u64) -> usize {
+    (u128::from(nanos) * u128::from(SAMPLE_RATE_HZ)).div_ceil(NANOS_PER_SECOND) as usize
+}
+
+/// The time of output frame `frame`.
+fn frame_nanos(frame: usize) -> u64 {
+    (frame as u128 * NANOS_PER_SECOND / u128::from(SAMPLE_RATE_HZ)) as u64
+}
+
+/// Renders a log a piece at a time while a run goes on (`rec-host play` does this every
+/// frame). It keeps the OPL chip and its place in each log, and gives exactly the samples
+/// [`AudioLog::render`] gives for the whole log, as long as each piece ends no later than the
+/// time up to which the log is final (`Machine::audio_settled_ns`).
+#[derive(Default)]
+pub struct Renderer {
+    /// The next output frame.
+    frame: usize,
+    /// Created at the first register write.
+    chip: Option<Opl3Chip>,
+    /// The next OPL write to apply.
+    opl: usize,
+    /// The first PCM segment that may still be playing.
+    pcm: usize,
+    /// The first DAC write that may still be playing.
+    dac: usize,
+    /// The speaker event in effect at `frame`.
+    speaker: usize,
+}
+
+impl Renderer {
+    /// Where rendering has got to: rendering up to this time gives the same frames.
+    pub fn rendered_ns(&self) -> u64 {
+        (self.frame as u128 * NANOS_PER_SECOND).div_ceil(u128::from(SAMPLE_RATE_HZ)) as u64
     }
 
-    fn render_opl(&self, mix: &mut [i32]) {
-        if self.opl.is_empty() {
+    /// Appends the audio from where the last call stopped up to `until_ns` to `out`, as
+    /// interleaved stereo samples at [`SAMPLE_RATE_HZ`].
+    pub fn render(&mut self, log: &AudioLog, until_ns: u64, out: &mut Vec<i16>) {
+        let end = (u128::from(until_ns) * u128::from(SAMPLE_RATE_HZ) / NANOS_PER_SECOND) as usize;
+        if end <= self.frame {
             return;
         }
-        let mut chip = Opl3Chip::new(SAMPLE_RATE_HZ);
-        let mut writes = self.opl.iter().peekable();
+        let mut mix = vec![0i32; (end - self.frame) * 2];
+        self.render_opl(log.opl, &mut mix);
+        self.render_pcm(log.pcm, &mut mix);
+        self.render_dac(log.dac, &mut mix);
+        self.render_speaker(log.speaker, &mut mix);
+        self.frame = end;
+        out.extend(mix.into_iter().map(|s| s.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16));
+    }
+
+    fn render_opl(&mut self, writes: &[OplWrite], mix: &mut [i32]) {
         let mut sample = [0i16; 2];
-        for (frame, out) in mix.chunks_exact_mut(2).enumerate() {
-            let now = (frame as u128 * NANOS_PER_SECOND / u128::from(SAMPLE_RATE_HZ)) as u64;
-            while let Some(w) = writes.next_if(|w| w.nanos <= now) {
+        for (i, out) in mix.chunks_exact_mut(2).enumerate() {
+            let now = frame_nanos(self.frame + i);
+            while let Some(w) = writes.get(self.opl).filter(|w| w.nanos <= now) {
+                let chip = self.chip.get_or_insert_with(|| Opl3Chip::new(SAMPLE_RATE_HZ));
                 chip.write_register_buffered(w.register, w.value);
+                self.opl += 1;
             }
+            let Some(chip) = &mut self.chip else { continue };
             let _ = chip.generate(&mut sample);
             out[0] += i32::from(sample[0]);
             out[1] += i32::from(sample[1]);
         }
     }
 
-    fn render_pcm(&self, mix: &mut [i32]) {
-        let frames = mix.len() / 2;
-        for segment in self.pcm {
+    fn render_pcm(&mut self, segments: &[PcmSegment], mix: &mut [i32]) {
+        let (first_frame, end) = (self.frame, self.frame + mix.len() / 2);
+        let mut all_done = true;
+        for (index, segment) in segments.iter().enumerate().skip(self.pcm) {
             let channels = if segment.stereo { 2 } else { 1 };
             let length = segment.samples.len() / channels;
-            if length == 0 || segment.rate_hz == 0 {
-                continue;
+            let first = frame_at_nanos(segment.start_ns);
+            if first >= end {
+                break;
             }
-            let first = (u128::from(segment.start_ns) * u128::from(SAMPLE_RATE_HZ)).div_ceil(NANOS_PER_SECOND) as usize;
-            for frame in first..frames {
-                // Position in the segment's samples, nearest earlier sample.
-                let t = (frame as u128 * NANOS_PER_SECOND / u128::from(SAMPLE_RATE_HZ))
-                    .saturating_sub(u128::from(segment.start_ns));
-                let source = (t * u128::from(segment.rate_hz) / NANOS_PER_SECOND) as usize;
-                if source >= length {
-                    break;
+            let mut done = length == 0 || segment.rate_hz == 0;
+            if !done {
+                for frame in first.max(first_frame)..end {
+                    // Position in the segment's samples, nearest earlier sample.
+                    let t = u128::from(frame_nanos(frame).saturating_sub(segment.start_ns));
+                    let source = (t * u128::from(segment.rate_hz) / NANOS_PER_SECOND) as usize;
+                    if source >= length {
+                        done = true;
+                        break;
+                    }
+                    let (left, right) = if segment.stereo {
+                        (segment.samples[source * 2], segment.samples[source * 2 + 1])
+                    } else {
+                        (segment.samples[source], segment.samples[source])
+                    };
+                    let at = (frame - first_frame) * 2;
+                    mix[at] += i32::from(left);
+                    mix[at + 1] += i32::from(right);
                 }
-                let (left, right) = if segment.stereo {
-                    (segment.samples[source * 2], segment.samples[source * 2 + 1])
-                } else {
-                    (segment.samples[source], segment.samples[source])
-                };
-                mix[frame * 2] += i32::from(left);
-                mix[frame * 2 + 1] += i32::from(right);
+            }
+            // The last segment can still grow, so it is never passed.
+            all_done &= done && index + 1 < segments.len();
+            if all_done {
+                self.pcm = index + 1;
             }
         }
     }
 
-    fn render_dac(&self, mix: &mut [i32]) {
-        // Each DAC byte plays until the next one (at most 1 ms after the last).
-        let frames = mix.len() / 2;
-        for (i, write) in self.dac.iter().enumerate() {
-            let until = self.dac.get(i + 1).map_or(write.nanos + 1_000_000, |next| next.nanos);
-            let to_frame = |ns: u64| (u128::from(ns) * u128::from(SAMPLE_RATE_HZ)).div_ceil(NANOS_PER_SECOND) as usize;
+    fn render_dac(&mut self, writes: &[DacWrite], mix: &mut [i32]) {
+        // Each DAC byte plays until the next one, for at most 1 ms (programs write the DAC at
+        // their sample rate; a longer gap means playback stopped).
+        let (first_frame, end) = (self.frame, self.frame + mix.len() / 2);
+        let until = |i: usize| {
+            let held = writes[i].nanos + 1_000_000;
+            frame_at_nanos(writes.get(i + 1).map_or(held, |next| next.nanos.min(held)))
+        };
+        for (i, write) in writes.iter().enumerate().skip(self.dac) {
+            let from = frame_at_nanos(write.nanos);
+            if from >= end {
+                break;
+            }
             let value = (i32::from(write.value) - 128) << 8;
-            for frame in to_frame(write.nanos)..to_frame(until).min(frames) {
-                mix[frame * 2] += value;
-                mix[frame * 2 + 1] += value;
+            for frame in from.max(first_frame)..until(i).min(end) {
+                let at = (frame - first_frame) * 2;
+                mix[at] += value;
+                mix[at + 1] += value;
             }
         }
+        while self.dac < writes.len() && until(self.dac) <= end {
+            self.dac += 1;
+        }
     }
-}
 
-impl AudioLog<'_> {
-    fn render_speaker(&self, mix: &mut [i32]) {
+    fn render_speaker(&mut self, events: &[SpeakerEvent], mix: &mut [i32]) {
         const LEVEL: i32 = 8000;
-        let frames = mix.len() / 2;
+        let (first_frame, end) = (self.frame, self.frame + mix.len() / 2);
         let to_frame =
             |tick: u64| (u128::from(tick) * u128::from(SAMPLE_RATE_HZ)).div_ceil(u128::from(PIT_HZ)) as usize;
-        for (i, event) in self.speaker.iter().enumerate() {
+        for (i, event) in events.iter().enumerate().skip(self.speaker) {
+            let from = to_frame(event.pit_tick);
+            if from >= end {
+                break;
+            }
             if !event.on {
                 continue;
             }
             let period = if event.divisor == 0 { 65536 } else { u64::from(event.divisor) };
-            let end = self.speaker.get(i + 1).map_or(frames, |next| to_frame(next.pit_tick).min(frames));
-            for frame in to_frame(event.pit_tick)..end {
+            let until = events.get(i + 1).map_or(end, |next| to_frame(next.pit_tick).min(end));
+            for frame in from.max(first_frame)..until {
                 // Channel 2 in mode 3: a square wave, high for the first half of each period.
                 let tick = (frame as u128 * u128::from(PIT_HZ) / u128::from(SAMPLE_RATE_HZ)) as u64;
                 let value = if (tick % period) * 2 < period { LEVEL } else { -LEVEL };
-                mix[frame * 2] += value;
-                mix[frame * 2 + 1] += value;
+                let at = (frame - first_frame) * 2;
+                mix[at] += value;
+                mix[at + 1] += value;
             }
+        }
+        while events.get(self.speaker + 1).is_some_and(|next| to_frame(next.pit_tick) <= end) {
+            self.speaker += 1;
         }
     }
 }
@@ -232,6 +307,58 @@ mod tests {
         let edges = left[..497].windows(2).filter(|w| w[0] < 0 && w[1] > 0).count();
         assert!((9..=10).contains(&edges), "about 10 periods in 10 ms: {edges}");
         assert!(left[600..].iter().all(|&s| s == 0), "silent after it's turned off");
+    }
+
+    #[test]
+    fn rendering_in_pieces_matches_rendering_at_once() {
+        let mut opl = tone(3_000_000);
+        opl.push(OplWrite { nanos: 21_000_000, register: 0xB0, value: 0x11 }); // key off
+        let pcm = [
+            PcmSegment {
+                start_ns: 2_000_000,
+                rate_hz: 11_025,
+                stereo: false,
+                samples: (0..100).map(|i| i * 50).collect(),
+            },
+            PcmSegment { start_ns: 15_000_000, rate_hz: 22_050, stereo: true, samples: vec![-3000; 200] },
+        ];
+        let dac: Vec<DacWrite> =
+            (0..40).map(|i| DacWrite { nanos: 5_000_000 + i * 90_000, value: (i * 6) as u8 }).collect();
+        let speaker = [
+            SpeakerEvent { pit_tick: PIT_HZ / 200, on: true, divisor: 600 },
+            SpeakerEvent { pit_tick: PIT_HZ / 50, on: false, divisor: 600 },
+            SpeakerEvent { pit_tick: PIT_HZ / 40, on: true, divisor: 2000 },
+        ];
+        let log = AudioLog { opl: &opl, pcm: &pcm, dac: &dac, speaker: &speaker };
+        let whole = log.render(40_000_000);
+        for step in [1_000_000, 7_333_333, 14_285_714] {
+            let mut renderer = Renderer::default();
+            let mut pieces = Vec::new();
+            let mut until = 0;
+            while until < 40_000_000 {
+                until = (until + step).min(40_000_000);
+                renderer.render(&log, until, &mut pieces);
+            }
+            assert_eq!(pieces.len(), whole.len());
+            assert!(pieces == whole, "pieces of {step} ns differ");
+            assert_eq!(log.render(renderer.rendered_ns()).len(), whole.len());
+        }
+        assert!(whole.iter().any(|&s| s != 0));
+    }
+
+    #[test]
+    fn a_growing_log_renders_like_the_final_one() {
+        // The last PCM segment grows and DAC writes arrive while rendering goes on.
+        let mut pcm = vec![PcmSegment { start_ns: 0, rate_hz: 10_000, stereo: false, samples: vec![1000; 50] }];
+        let mut dac = vec![DacWrite { nanos: 1_000_000, value: 200 }];
+        let mut renderer = Renderer::default();
+        let mut pieces = Vec::new();
+        renderer.render(&AudioLog { pcm: &pcm, dac: &dac, ..AudioLog::default() }, 4_000_000, &mut pieces);
+        pcm[0].samples.extend([2000; 50]);
+        dac.push(DacWrite { nanos: 4_500_000, value: 50 });
+        let log = AudioLog { pcm: &pcm, dac: &dac, ..AudioLog::default() };
+        renderer.render(&log, 12_000_000, &mut pieces);
+        assert!(pieces == log.render(12_000_000));
     }
 
     #[test]

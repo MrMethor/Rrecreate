@@ -17,6 +17,11 @@ use crate::dma::Dma;
 use crate::opl::OplMode;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
+/// Samples that follow the last PCM segment within this much time continue it.
+const SEGMENT_SLACK_NS: u64 = 1_000_000;
+/// DMA playback is read in steps of about this much time (DOSBox's mixer reads it every
+/// millisecond), so the PCM log and the DMA count follow playback closely.
+const READ_STEP_HZ: u64 = 1000;
 /// DMA transfer units per sample in 14-bit fixed point (DOSBox's `SbShift`).
 const SHIFT: u32 = 14;
 
@@ -392,7 +397,8 @@ impl SoundBlaster {
         self.dma.consumed = 0;
     }
 
-    /// When the current block ends, or another timed action is due.
+    /// When the next millisecond of DMA playback is due, the current block ends, or another
+    /// timed action is due.
     pub fn next_event(&self) -> Option<u64> {
         let mut next = self.timed_irq_ns;
         if let DspState::ResetWait(at) = self.state {
@@ -400,13 +406,28 @@ impl SoundBlaster {
         }
         let rate = self.unit_rate();
         if self.mode == Mode::Dma && self.dma.mode != DmaMode::None && rate > 0 {
-            let units = self.dma.consumed + u64::from(self.dma.left.max(1));
+            let step = (rate / READ_STEP_HZ).max(1).min(u64::from(self.dma.left.max(1)));
+            let units = self.dma.consumed + step;
             let at = self.dma.anchor_ns
                 + (u128::from(units) * NANOS_PER_SECOND).div_ceil(u128::from(rate)).min(u128::from(u64::MAX / 2))
                     as u64;
             next = Some(next.map_or(at, |n| n.min(at)));
         }
         next
+    }
+
+    /// Up to when the PCM log is final at `now`: samples logged later all start after it.
+    /// Playback being read is logged a step behind, and samples that continue a segment can
+    /// be placed up to [`SEGMENT_SLACK_NS`] early.
+    pub fn settled_ns(&self, now: u64) -> u64 {
+        let rate = self.unit_rate();
+        let mut settled = now;
+        if self.mode == Mode::Dma && self.dma.mode != DmaMode::None && rate > 0 {
+            let played =
+                self.dma.anchor_ns + (u128::from(self.dma.consumed) * NANOS_PER_SECOND / u128::from(rate)) as u64;
+            settled = settled.min(played);
+        }
+        settled.saturating_sub(SEGMENT_SLACK_NS)
     }
 
     /// Brings the card up to time `now`: finishes resets, delivers timed interrupts, and plays
@@ -573,7 +594,7 @@ impl SoundBlaster {
             let frames = (last.samples.len() / if stereo { 2 } else { 1 }) as u128;
             let end = last.start_ns + (frames * NANOS_PER_SECOND / u128::from(rate_hz)) as u64;
             // Continue the segment when these samples follow on without a gap (1 ms slack).
-            if start_ns.abs_diff(end) <= 1_000_000 {
+            if start_ns.abs_diff(end) <= SEGMENT_SLACK_NS {
                 last.samples.extend(samples);
                 return;
             }
@@ -1186,6 +1207,8 @@ mod tests {
         sb.update(5_000_000, &mut dma, &mut mem); // 5 ms: 50 bytes
         assert_eq!(sb.pcm.iter().map(|s| s.samples.len()).sum::<usize>(), 50);
         assert_eq!(sb.irq_change, Some(false), "starting the transfer withdrew old interrupts");
+        assert_eq!(sb.next_event(), Some(6_000_000), "the next millisecond is read at 6 ms");
+        sb.update(9_000_000, &mut dma, &mut mem);
         assert_eq!(sb.next_event(), Some(10_000_000), "the block ends at 10 ms");
         sb.update(10_000_000, &mut dma, &mut mem);
         assert_eq!(sb.irq_change, Some(true));

@@ -567,6 +567,13 @@ impl Machine {
         }
     }
 
+    /// Up to when [`Machine::audio_log`] is final: what the devices log later all happens after
+    /// this time, so audio rendered up to it never changes. A little behind [`Machine::elapsed_ns`].
+    pub fn audio_settled_ns(&self) -> u64 {
+        let now = self.elapsed_ns();
+        self.devices.sb.as_ref().map_or(now, |sb| sb.settled_ns(now))
+    }
+
     /// Nanoseconds of emulated time elapsed.
     pub fn elapsed_ns(&self) -> u64 {
         self.devices.clock.nanos(self.cpu.cycles)

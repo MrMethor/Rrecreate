@@ -1,8 +1,8 @@
-//! `rec-host play`: a window showing the emulated screen, with keyboard input.
+//! `rec-host play`: a window showing the emulated screen, with keyboard input and live sound.
 //!
-//! The emulator runs one 70 Hz frame of virtual time per window refresh. Keys are delivered
-//! at the cycle where the emulator paused, which is what makes a recorded session replay
-//! exactly.
+//! The emulator runs about one 70 Hz frame of virtual time per window refresh, a little more or
+//! less to keep pace with the sound output ([`crate::live_audio`]). Keys are delivered at the
+//! cycle where the emulator paused, which is what makes a recorded session replay exactly.
 
 use std::process::ExitCode;
 
@@ -10,6 +10,7 @@ use dos::{Input, Machine, Stop};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, Window, WindowOptions};
 
 use crate::Options;
+use crate::live_audio::LiveAudio;
 use crate::session::Session;
 
 const WIDTH: usize = 640;
@@ -33,12 +34,14 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     window.set_cursor_visibility(false); // the program draws its own cursor
 
     let cycles_per_frame = (ips / 70).max(1);
+    let mut audio = (!o.no_audio).then(|| LiveAudio::start(o.midi_out.clone()));
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
     let mut recorded: Vec<(u64, Input)> = Vec::new();
     let mut last_mouse = None;
     let mut stop = None;
 
-    while window.is_open() {
+    let limit = o.seconds.map(|s| (s * ips as f64) as u64);
+    while window.is_open() && limit.is_none_or(|limit| m.cpu.cycles < limit) {
         let now = m.cpu.cycles;
         let pressed = window.get_keys_pressed(KeyRepeat::No).into_iter().filter_map(|k| scancodes(k, true));
         let released = window.get_keys_released().into_iter().filter_map(|k| scancodes(k, false));
@@ -53,12 +56,16 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
             recorded.push((now, mouse));
             last_mouse = Some(mouse);
         }
-        match m.run(cycles_per_frame) {
+        let cycles = audio.as_ref().map_or(cycles_per_frame, |a| a.frame_cycles(cycles_per_frame));
+        match m.run(cycles) {
             Stop::CycleLimit | Stop::WaitingForInput => {}
             other => {
                 stop = Some(other);
                 break;
             }
+        }
+        if let Some(audio) = &mut audio {
+            audio.update(&m);
         }
         render(&m, &mut buffer);
         window.update_with_buffer(&buffer, WIDTH, HEIGHT).map_err(|e| e.to_string())?;
@@ -66,7 +73,7 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
 
     match &stop {
         Some(stop) => eprintln!("rec-host: program stopped: {stop:?}"),
-        None => eprintln!("rec-host: window closed after {} ms of emulated time", m.elapsed_ms()),
+        None => eprintln!("rec-host: stopped after {} ms of emulated time", m.elapsed_ms()),
     }
     for issue in &m.diagnostics {
         eprintln!("rec-host: issue: {issue}");

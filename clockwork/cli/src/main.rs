@@ -5,6 +5,7 @@
 //! --replay` reproduces bit for bit.
 
 mod hotspots;
+mod live_audio;
 mod play;
 mod session;
 
@@ -25,7 +26,7 @@ usage:
 options:
   --args TEXT        command line passed to the program
   --ips N            emulated instructions per second (default 8000000)
-  --seconds N        run: emulated seconds to run (default 10)
+  --seconds N        emulated seconds to run (run: default 10; play: until the window closes)
   --type TEXT        run: type TEXT on the keyboard (\\r = Enter, \\e = Esc)
   --type-at MS       run: when typing starts, in emulated ms (default 500)
   --replay FILE      run: replay a session recorded by play (program may be omitted)
@@ -43,6 +44,9 @@ options:
   --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
                      (or: here, for the current CS:IP)
   --record FILE      play: record keyboard input as a session
+  --no-audio         play: no sound and no MIDI output
+  --midi-out NAME    play: send MIDI to the host MIDI output whose name contains NAME (default:
+                     the first one, e.g. Microsoft GS Wavetable Synth; none: no MIDI)
   --cpu 286|386      processor the program sees (default 386)
   --no-fpu           no x87 coprocessor (escape opcodes do nothing)
   --cd LETTER[=DIR]  add a CD-ROM drive (with MSCDEX) showing the same files as C:, or only its
@@ -65,7 +69,7 @@ struct Options {
     program: Option<String>,
     args: String,
     ips: Option<u64>,
-    seconds: f64,
+    seconds: Option<f64>,
     type_text: Option<String>,
     type_at_ms: u64,
     replay: Option<PathBuf>,
@@ -74,6 +78,8 @@ struct Options {
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
     record: Option<PathBuf>,
+    no_audio: bool,
+    midi_out: Option<String>,
     scale: usize,
     cpu: dos::CpuModel,
     cd_drive: Option<char>,
@@ -117,7 +123,7 @@ fn main() -> ExitCode {
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
-    let mut options = Options { seconds: 10.0, type_at_ms: 500, scale: 2, ..Options::default() };
+    let mut options = Options { type_at_ms: 500, scale: 2, ..Options::default() };
     let mut positional = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -125,7 +131,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         match arg.as_str() {
             "--args" => options.args = value(arg)?,
             "--ips" => options.ips = Some(value(arg)?.parse().map_err(|_| "--ips needs a whole number")?),
-            "--seconds" => options.seconds = value(arg)?.parse().map_err(|_| "--seconds needs a number")?,
+            "--seconds" => options.seconds = Some(value(arg)?.parse().map_err(|_| "--seconds needs a number")?),
             "--type" => options.type_text = Some(value(arg)?.replace("\\r", "\r").replace("\\e", "\x1b")),
             "--type-at" => options.type_at_ms = value(arg)?.parse().map_err(|_| "--type-at needs milliseconds")?,
             "--replay" => options.replay = Some(value(arg)?.into()),
@@ -142,6 +148,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--dump" => options.dump = Some(value(arg)?),
             "--hotspots" => options.hotspots = value(arg)?.parse().map_err(|_| "--hotspots needs a count")?,
             "--record" => options.record = Some(value(arg)?.into()),
+            "--no-audio" => options.no_audio = true,
+            "--midi-out" => options.midi_out = Some(value(arg)?),
             "--scale" => options.scale = value(arg)?.parse().map_err(|_| "--scale needs a whole number")?,
             "--ems" => options.ems_kb = Some(value(arg)?.parse().map_err(|_| "--ems needs kilobytes")?),
             "--memory" => {
@@ -189,7 +197,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     if options.program.is_none() && options.replay.is_none() {
         return Err("missing <program>".into());
     }
-    if !options.seconds.is_finite() || options.seconds <= 0.0 || options.scale == 0 {
+    if options.seconds.is_some_and(|s| !s.is_finite() || s <= 0.0) || options.scale == 0 {
         return Err("--seconds and --scale must be positive".into());
     }
     Ok(options)
@@ -282,7 +290,7 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         let start = (u32::from(segment) << 4).wrapping_add(offset);
         m.exec_watch = Some(start..start.wrapping_add(length));
     }
-    let limit = (o.seconds * ips as f64) as u64;
+    let limit = (o.seconds.unwrap_or(10.0) * ips as f64) as u64;
     let (stop, profile) = if o.hotspots > 0 {
         let (stop, profile) = hotspots::run_sampled(&mut m, limit);
         (stop, Some(profile))

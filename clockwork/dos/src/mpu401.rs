@@ -3,6 +3,9 @@
 //! Commands are acknowledged so drivers detect the card; MIDI bytes the program sends are
 //! recorded with their time, which is the audio observation channel for MIDI music
 //! (PROJECT.md §5.2). Nothing is synthesized.
+//!
+//! [`MidiParser`], which splits the recorded bytes into whole messages for a MIDI device, is
+//! ported from DOSBox Staging `src/midi/midi.cpp` (`MIDI_RawOutByte`, GPL-2.0-or-later).
 
 use std::collections::VecDeque;
 
@@ -60,9 +63,103 @@ impl Mpu401 {
     }
 }
 
+/// Message lengths by status byte, the status byte included (0 for data bytes and for SysEx,
+/// which ends at the next status byte).
+const MESSAGE_LENGTH: [u8; 16] = [
+    3, 3, 3, 3, 3, 3, 3, 3, // data bytes: unused
+    3, 3, 3, 3, 2, 2, 3, 0, // 8x-Ex channel messages; Fx below
+];
+const SYSTEM_LENGTH: [u8; 16] = [0, 2, 3, 2, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0];
+/// Longest SysEx message kept (as in DOSBox); longer ones are cut short.
+const MAX_SYSEX: usize = 20 * 1024;
+
+/// Splits a stream of MIDI bytes, as programs send them to the MPU-401, into whole messages:
+/// running status is expanded (each message carries its status byte), SysEx messages are
+/// collected up to their end, and real-time bytes pass through on their own.
+#[derive(Debug, Clone, Default)]
+pub struct MidiParser {
+    status: u8,
+    message: [u8; 3],
+    position: usize,
+    length: usize,
+    sysex: Vec<u8>,
+}
+
+impl MidiParser {
+    /// Takes the next byte and passes each message it completes to `emit`.
+    pub fn push(&mut self, byte: u8, mut emit: impl FnMut(&[u8])) {
+        if byte >= 0xF8 {
+            emit(&[byte]);
+            return;
+        }
+        if self.status == 0xF0 {
+            if byte < 0x80 {
+                if self.sysex.len() < MAX_SYSEX - 1 {
+                    self.sysex.push(byte);
+                }
+                return;
+            }
+            // Any status byte ends the SysEx message (F7 normally).
+            self.sysex.push(0xF7);
+            emit(&self.sysex);
+        }
+        if byte >= 0x80 {
+            self.status = byte;
+            self.position = 0;
+            self.length = usize::from(if byte >= 0xF0 {
+                SYSTEM_LENGTH[usize::from(byte & 0x0F)]
+            } else {
+                MESSAGE_LENGTH[usize::from(byte >> 4)]
+            });
+            if byte == 0xF0 {
+                self.sysex.clear();
+                self.sysex.push(0xF0);
+            }
+        }
+        if self.length > 0 {
+            self.message[self.position] = byte;
+            self.position += 1;
+            if self.position >= self.length {
+                emit(&self.message[..self.length]);
+                self.position = 1; // running status
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn messages(bytes: &[u8]) -> Vec<Vec<u8>> {
+        let mut parser = MidiParser::default();
+        let mut out = Vec::new();
+        for &b in bytes {
+            parser.push(b, |m| out.push(m.to_vec()));
+        }
+        out
+    }
+
+    #[test]
+    fn running_status_and_short_messages() {
+        let out = messages(&[0x45, 0x90, 60, 100, 64, 90, 0xC1, 5, 6, 0xE0, 0, 0x40]);
+        assert_eq!(out, [vec![0x90, 60, 100], vec![0x90, 64, 90], vec![0xC1, 5], vec![0xC1, 6], vec![0xE0, 0, 0x40]]);
+    }
+
+    #[test]
+    fn sysex_and_real_time_bytes() {
+        let out = messages(&[0xF0, 0x41, 0x10, 0xF8, 0x42, 0xF7, 0x80, 60, 0, 0xF0, 1, 0xB0, 7, 100]);
+        assert_eq!(
+            out,
+            [
+                vec![0xF8],
+                vec![0xF0, 0x41, 0x10, 0x42, 0xF7],
+                vec![0x80, 60, 0],
+                vec![0xF0, 1, 0xF7], // ended by the next status byte
+                vec![0xB0, 7, 100],
+            ]
+        );
+    }
 
     #[test]
     fn reset_and_uart_handshake() {
