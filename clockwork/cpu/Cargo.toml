@@ -12,6 +12,8 @@ license.workspace = true
 libm = "0.2"
 
 [dev-dependencies]
+# Reads the gzipped SingleStepTests suites (examples/singlestep.rs).
+flate2 = "1"
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "code_asm"] }
 
 [lints]

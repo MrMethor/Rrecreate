@@ -801,15 +801,18 @@ impl Cpu {
     pub(crate) fn deliver<B: Bus>(&mut self, bus: &mut B, num: u8, how: IntKind, error: Option<u32>) -> Res<()> {
         let return_ip = self.regs.ip;
         if !self.protected_mode() {
+            // The vector is read before the frame is pushed: it matters when the stack overlaps
+            // the vector table (SingleStepTests).
+            let entry = self.idtr.base.wrapping_add(u32::from(num) * 4);
+            let ip = self.read_system(bus, entry, Width::Word)?;
+            let new_cs = self.read_system(bus, entry + 2, Width::Word)? as u16;
             let flags = self.regs.flags & 0xFFFF;
             self.push(bus, Width::Word, flags)?;
             let cs = u32::from(self.regs.seg[CS]);
             self.push(bus, Width::Word, cs)?;
             self.push(bus, Width::Word, return_ip)?;
             self.regs.flags &= !u32::from(IF | TF);
-            let entry = self.idtr.base.wrapping_add(u32::from(num) * 4);
-            let ip = self.read_system(bus, entry, Width::Word)?;
-            let cs = self.read_system(bus, entry + 2, Width::Word)? as u16;
+            let cs = new_cs;
             self.load_segment_real(CS, cs);
             self.regs.ip = ip;
             return Ok(());

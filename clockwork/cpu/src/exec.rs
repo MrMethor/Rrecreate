@@ -92,6 +92,8 @@ pub(crate) struct Prefixes {
     pub(crate) op32: bool,
     /// 32-bit addressing: the code segment's default, toggled by 67h.
     addr32: bool,
+    /// A LOCK prefix (F0h).
+    lock: bool,
 }
 
 impl Prefixes {
@@ -110,6 +112,12 @@ impl Prefixes {
     }
 }
 
+/// #UD: an encoding the processor defines as invalid (a register where only memory is allowed,
+/// an unused group member, a misplaced LOCK).
+fn invalid_opcode() -> Abort {
+    Abort::Fault(Fault::new(vector::INVALID_OPCODE))
+}
+
 impl Cpu {
     #[inline(always)]
     pub(crate) fn exec<B: Bus>(&mut self, bus: &mut B, start_ip: u32) -> Res<()> {
@@ -118,7 +126,7 @@ impl Cpu {
         self.fetch.base = self.segment_base(CS);
         self.fetch.ip_mask = if default32 { u32::MAX } else { 0xFFFF };
         self.fetch.paged = self.paging();
-        let mut p = Prefixes { seg: None, rep: Rep::None, op32: default32, addr32: default32 };
+        let mut p = Prefixes { seg: None, rep: Rep::None, op32: default32, addr32: default32, lock: false };
         let mut prefixes = 0;
         let op = loop {
             let byte = self.fetch8(bus)?;
@@ -131,7 +139,7 @@ impl Cpu {
                 0x65 if i386 => p.seg = Some(GS),
                 0x66 if i386 => p.op32 = !default32,
                 0x67 if i386 => p.addr32 = !default32,
-                0xF0 => {} // LOCK: no effect on a single CPU
+                0xF0 => p.lock = true, // no effect on a single CPU, but checked below
                 0xF2 => p.rep = Rep::Repne,
                 0xF3 => p.rep = Rep::Repe,
                 _ => break byte,
@@ -141,6 +149,9 @@ impl Cpu {
                 return Err(self.unimplemented(bus, start_ip));
             }
         };
+        if p.lock && i386 {
+            self.check_lock(bus, op)?;
+        }
         let v = p.v();
 
         match op {
@@ -227,16 +238,21 @@ impl Cpu {
                     let value = self.pop(bus, v)?;
                     self.write_reg(r as u8, v, value);
                 }
-                self.pop(bus, v)?; // the saved SP is discarded
+                // The saved ESP is discarded, except that a POPAD on a 16-bit stack takes ESP's
+                // upper half from it (as the 386 does; seen in SingleStepTests).
+                let saved_sp = self.pop(bus, v)?;
                 for r in [BX, DX, CX, AX] {
                     let value = self.pop(bus, v)?;
                     self.write_reg(r as u8, v, value);
+                }
+                if v == Width::Dword && !self.stack32() {
+                    self.regs.gpr[SP] = (saved_sp & 0xFFFF_0000) | (self.regs.gpr[SP] & 0xFFFF);
                 }
             }
             0x62 => {
                 let m = self.modrm(bus, &p)?;
                 let Rm::Mem { seg, off, mask } = m.rm else {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 };
                 let index = v.sign_extend(self.read_reg(m.reg, v));
                 let lower = v.sign_extend(self.read_mem(bus, seg, off, mask, v)?);
@@ -319,7 +335,7 @@ impl Cpu {
             0x8C => {
                 let m = self.modrm(bus, &p)?;
                 if usize::from(m.reg) >= self.segment_count() {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 }
                 let value = u32::from(self.regs.seg[usize::from(m.reg)]);
                 // A register destination takes the operand size; memory is always 16 bits.
@@ -329,7 +345,7 @@ impl Cpu {
             0x8D => {
                 let m = self.modrm(bus, &p)?;
                 let Rm::Mem { off, .. } = m.rm else {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 };
                 self.write_reg(m.reg, v, off & v.mask());
             }
@@ -337,7 +353,7 @@ impl Cpu {
                 let m = self.modrm(bus, &p)?;
                 let target = usize::from(m.reg);
                 if target == CS || target >= self.segment_count() {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 }
                 let value = self.read_rm(bus, m.rm, Width::Word)? as u16;
                 self.load_segment(bus, target, value)?;
@@ -346,11 +362,13 @@ impl Cpu {
                 }
             }
             0x8F => {
-                let m = self.modrm(bus, &p)?;
-                if m.reg != 0 {
-                    return Err(self.unimplemented(bus, start_ip));
+                let byte = self.fetch8(bus)?;
+                if (byte >> 3) & 7 != 0 {
+                    return Err(invalid_opcode());
                 }
+                // The destination's address is computed with ESP after the pop.
                 let value = self.pop(bus, v)?;
+                let m = self.decode_modrm(bus, &p, byte)?;
                 self.write_rm(bus, m.rm, v, value)?;
             }
             0x90..=0x97 => {
@@ -426,12 +444,12 @@ impl Cpu {
                 self.regs.ip = if p.op32 { ip } else { ip & 0xFFFF };
                 self.release_stack(u32::from(release));
             }
-            0xC4 | 0xC5 => self.load_far_pointer(bus, &p, start_ip, if op == 0xC4 { ES } else { DS })?,
+            0xC4 | 0xC5 => self.load_far_pointer(bus, &p, if op == 0xC4 { ES } else { DS })?,
             0xC6 | 0xC7 => {
                 let w = p.width(op);
                 let m = self.modrm(bus, &p)?;
                 if m.reg != 0 {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 }
                 let value = self.fetch(bus, w)?;
                 self.write_rm(bus, m.rm, w, value)?;
@@ -568,7 +586,7 @@ impl Cpu {
                 }
                 let m = self.decode_modrm(bus, &p, byte)?;
                 if m.reg > 1 {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 }
                 let value = self.read_rm(bus, m.rm, Width::Byte)?;
                 let cf = self.regs.flag(CF);
@@ -577,7 +595,7 @@ impl Cpu {
                 self.regs.set_flag(CF, cf);
                 self.write_rm(bus, m.rm, Width::Byte, result)?;
             }
-            0xFF => self.group5(bus, &p, start_ip)?,
+            0xFF => self.group5(bus, &p)?,
             _ => return Err(self.unimplemented(bus, start_ip)),
         }
         Ok(())
@@ -663,7 +681,7 @@ impl Cpu {
                 let m = self.modrm(bus, p)?;
                 let offset = u32::from(self.fetch8(bus)?);
                 if m.reg < 4 {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 }
                 self.bit_test(bus, m.reg & 3, m.rm, v, offset, false)?;
             }
@@ -690,7 +708,7 @@ impl Cpu {
                     0xB4 => FS,
                     _ => GS,
                 };
-                self.load_far_pointer(bus, p, start_ip, target)?;
+                self.load_far_pointer(bus, p, target)?;
             }
             0xB6 | 0xB7 | 0xBE | 0xBF if i386 => {
                 let source = if op & 1 == 0 { Width::Byte } else { Width::Word };
@@ -889,7 +907,7 @@ impl Cpu {
         self.regs.set_flag(OF, overflow);
     }
 
-    fn group5<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32) -> Res<()> {
+    fn group5<B: Bus>(&mut self, bus: &mut B, p: &Prefixes) -> Res<()> {
         let v = p.v();
         let m = self.modrm(bus, p)?;
         match m.reg {
@@ -909,7 +927,7 @@ impl Cpu {
             4 => self.regs.ip = self.read_rm(bus, m.rm, v)?,
             3 | 5 => {
                 let Rm::Mem { seg, off, mask } = m.rm else {
-                    return Err(self.unimplemented(bus, start_ip));
+                    return Err(invalid_opcode());
                 };
                 let offset = self.read_mem(bus, seg, off, mask, v)?;
                 let segment = self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, Width::Word)? as u16;
@@ -923,7 +941,7 @@ impl Cpu {
                 let value = self.read_rm(bus, m.rm, v)?;
                 self.push(bus, v, value)?;
             }
-            _ => return Err(self.unimplemented(bus, start_ip)),
+            _ => return Err(invalid_opcode()), // FF /7
         }
         Ok(())
     }
@@ -962,11 +980,11 @@ impl Cpu {
     }
 
     /// LES, LDS, LSS, LFS, LGS: a far pointer from memory into a register and `target`.
-    fn load_far_pointer<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32, target: usize) -> Res<()> {
+    fn load_far_pointer<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, target: usize) -> Res<()> {
         let v = p.v();
         let m = self.modrm(bus, p)?;
         let Rm::Mem { seg, off, mask } = m.rm else {
-            return Err(self.unimplemented(bus, start_ip));
+            return Err(invalid_opcode());
         };
         let offset = self.read_mem(bus, seg, off, mask, v)?;
         let segment = self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, Width::Word)? as u16;
@@ -1011,12 +1029,21 @@ impl Cpu {
         self.write_rm(bus, rm, w, result)
     }
 
-    /// SHLD (`left`) or SHRD with a nonzero count already masked to 5 bits.
+    /// SHLD (`left`) or SHRD with a nonzero count already masked to 5 bits. A 16-bit operand
+    /// shifts through dest:src:src (SHLD) or src:src:dest (SHRD), which is what the 386 does
+    /// with counts of 17-31 (found with SingleStepTests; Bochs repeats dest instead).
     fn double_shift(&mut self, w: Width, dest: u32, src: u32, count: u32, left: bool) -> u32 {
         let bits = w.bits();
-        let count = count.min(bits);
         let (dest64, src64) = (u64::from(dest), u64::from(src));
-        let (result, cf) = if left {
+        let (result, cf) = if w == Width::Word {
+            if left {
+                let shifted = ((dest64 << 32) | (src64 << 16) | src64) << count;
+                (((shifted >> 32) & 0xFFFF) as u32, (shifted >> 48) & 1 != 0)
+            } else {
+                let triple = (src64 << 32) | (src64 << 16) | dest64;
+                (((triple >> count) & 0xFFFF) as u32, (triple >> (count - 1)) & 1 != 0)
+            }
+        } else if left {
             let r = ((dest64 << count) | (src64 >> (bits - count))) as u32 & w.mask();
             (r, (dest64 >> (bits - count)) & 1 != 0)
         } else {
@@ -1249,19 +1276,27 @@ impl Cpu {
             3 => {
                 let mut r = value;
                 let mut cf = self.regs.flag(CF);
-                self.regs.set_flag(OF, msb(r) != cf);
                 for _ in 0..count % (bits + 1) {
                     let out = r & 1 != 0;
                     r = (r >> 1) | (u32::from(cf) << (bits - 1));
                     cf = out;
                 }
+                // The 386 sets OF from the result's top two bits, even when the count is a
+                // multiple of width + 1 and nothing moved (SingleStepTests).
                 self.regs.set_flag(CF, cf);
+                self.regs.set_flag(OF, msb(r) != (r & (w.sign() >> 1) != 0));
                 r
             }
             4 | 6 => {
                 let shifted = wide << count;
                 let r = shifted as u32 & mask;
-                let cf = count <= bits && (shifted >> bits) & 1 != 0;
+                // Past the width CF is clear, except that on the 386 a byte shifted by 16 or 24
+                // acts like one shifted by 8 (SingleStepTests).
+                let cf = if count <= bits {
+                    (shifted >> bits) & 1 != 0
+                } else {
+                    self.model == Model::I386 && w == Width::Byte && count % 8 == 0 && value & 1 != 0
+                };
                 self.regs.set_flag(CF, cf);
                 self.regs.set_flag(OF, msb(r) != cf);
                 self.regs.set_flag(AF, false);
@@ -1269,9 +1304,17 @@ impl Cpu {
                 r
             }
             5 => {
+                // OF is the sign before the last 1-bit step. Past the width CF is clear, except
+                // that on the 386 a byte shifted by 16 or 24 acts like one shifted by 8
+                // (SingleStepTests).
                 let r = value >> count;
-                self.regs.set_flag(CF, (value >> (count - 1)) & 1 != 0);
-                self.regs.set_flag(OF, msb(value));
+                let cf = if count <= bits {
+                    (value >> (count - 1)) & 1 != 0
+                } else {
+                    self.model == Model::I386 && w == Width::Byte && count % 8 == 0 && value & 0x80 != 0
+                };
+                self.regs.set_flag(CF, cf);
+                self.regs.set_flag(OF, msb(value >> (count - 1)));
                 self.regs.set_flag(AF, false);
                 self.set_szp(w, r);
                 r
@@ -1399,7 +1442,10 @@ impl Cpu {
             if base == 5 && md == 0 {
                 disp32_only = true;
             } else {
-                ea = ea.wrapping_add(g[base]);
+                // With no index, the 386 applies the scale to the base instead (an undocumented
+                // quirk later processors dropped; seen in SingleStepTests).
+                let base_value = if index == 4 { g[base] << scale } else { g[base] };
+                ea = ea.wrapping_add(base_value);
                 if base == SP || base == BP {
                     default_seg = SS;
                 }
@@ -1573,6 +1619,28 @@ impl Cpu {
             Width::Word => Ok(u32::from(self.fetch16(bus)?)),
             Width::Dword => self.fetch32(bus),
         }
+    }
+
+    /// The 386 accepts LOCK only on the read-modify-write instructions with a memory
+    /// destination (ADD..XOR except CMP, the immediate group, XCHG, NOT, NEG, INC, DEC, BTS,
+    /// BTR, BTC); anything else raises #UD. The operand bytes are peeked, not consumed.
+    fn check_lock<B: Bus>(&mut self, bus: &mut B, op: u8) -> Res<()> {
+        let ip = self.regs.ip;
+        let second = if op == 0x0F { Some(self.fetch8(bus)?) } else { None };
+        let modrm = self.fetch8(bus)?;
+        self.regs.ip = ip;
+        let reg = (modrm >> 3) & 7;
+        let lockable = match (op, second) {
+            (0x00..=0x3F, None) => op & 7 < 2 && op >> 3 != 7,
+            (0x80..=0x83, None) => reg != 7,
+            (0x86 | 0x87, None) => true,
+            (0xF6 | 0xF7, None) => reg == 2 || reg == 3,
+            (0xFE | 0xFF, None) => reg < 2,
+            (0x0F, Some(0xAB | 0xB3 | 0xBB)) => true,
+            (0x0F, Some(0xBA)) => reg >= 5,
+            _ => false,
+        };
+        if lockable && modrm >> 6 != 3 { Ok(()) } else { Err(invalid_opcode()) }
     }
 
     pub(crate) fn unimplemented<B: Bus>(&mut self, bus: &mut B, start_ip: u32) -> Abort {
