@@ -709,3 +709,234 @@ fn entering_protected_mode_stops_the_run() {
         other => panic!("expected an unsupported-feature fault, got {other:?}"),
     }
 }
+
+fn boot_with(config: Config, files: &[(&str, &[u8])], program: &str) -> Machine {
+    let mut drive = Vfs::new();
+    for (path, data) in files {
+        drive.insert_file(path, data.to_vec());
+    }
+    Machine::with_program(config, drive, program, "").unwrap()
+}
+
+/// The word at `offset` in the COM program's segment.
+fn word_at_offset(m: &Machine, offset: i32) -> u16 {
+    m.mem.read_u16((u32::from(m.dos.psp) << 4) + offset as u32)
+}
+
+/// Stores AX and the carry flag (as 0 or FFFFh) in the two words at label `slot`.
+fn store_result(a: &mut Asm, slot: &'static str) -> Result<(), IcedError> {
+    let at = a.addr(slot) as u32;
+    a.mov(word_ptr(at), ax)?;
+    a.sbb(si, si)?;
+    a.mov(word_ptr(at + 2), si)
+}
+
+#[test]
+fn cd_drive_with_mscdex_is_read_only() {
+    let slots = ["count", "letter", "open_d", "write_d", "create_d", "write_c"];
+    let program = com(|a| {
+        a.mov(ax, 0x1500)?;
+        a.int(0x2F)?;
+        let (count, letter) = (a.addr("count") as u32, a.addr("letter") as u32);
+        a.mov(word_ptr(count), bx)?;
+        a.mov(word_ptr(letter), cx)?;
+        // Open D:\DATA.TXT read/write: succeeds, read-only underneath.
+        load_dx(a, "d_name")?;
+        a.mov(ax, 0x3D02)?;
+        a.int(0x21)?;
+        store_result(a, "open_d")?;
+        a.mov(bx, ax)?;
+        load_dx(a, "byte")?;
+        a.mov(cx, 1)?;
+        a.mov(ah, 0x40)?;
+        a.int(0x21)?;
+        store_result(a, "write_d")?;
+        // Create D:\NEW.TXT: access denied.
+        load_dx(a, "d_new")?;
+        a.xor(cx, cx)?;
+        a.mov(ah, 0x3C)?;
+        a.int(0x21)?;
+        store_result(a, "create_d")?;
+        // Open C:\DATA.TXT read/write and write a byte: works.
+        load_dx(a, "c_name")?;
+        a.mov(ax, 0x3D02)?;
+        a.int(0x21)?;
+        a.mov(bx, ax)?;
+        load_dx(a, "byte")?;
+        a.mov(cx, 1)?;
+        a.mov(ah, 0x40)?;
+        a.int(0x21)?;
+        store_result(a, "write_c")?;
+        exit(a, 0)?;
+        for (label, text) in [
+            ("d_name", &b"D:\\DATA.TXT\0"[..]),
+            ("d_new", b"D:\\NEW.TXT\0"),
+            ("c_name", b"C:\\DATA.TXT\0"),
+            ("byte", b"!"),
+        ] {
+            a.here(label)?;
+            a.db(text)?;
+        }
+        for label in slots {
+            a.here(label)?;
+            a.dw(&[0, 0])?;
+        }
+        Ok(())
+    });
+    let config = Config { cd_drive: Some('D'), ..Config::default() };
+    let mut m = boot_with(config, &[("T.COM", &program), ("DATA.TXT", b"abc")], "T.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    // The result slots are the program's last bytes, 4 per slot.
+    let base = 0x100 + program.len() as i32 - 4 * slots.len() as i32;
+    let slot = |i: i32| (word_at_offset(&m, base + i * 4), word_at_offset(&m, base + i * 4 + 2));
+    assert_eq!(slot(0).0, 1, "one CD drive");
+    assert_eq!(slot(1).0, 3, "drive D:");
+    assert_eq!(slot(2).1, 0, "opening D: read/write succeeds");
+    assert_eq!(slot(3), (5, 0xFFFF), "writing to the CD fails with access denied");
+    assert_eq!(slot(4), (5, 0xFFFF), "creating on the CD fails");
+    assert_eq!(slot(5), (1, 0), "C: is writable");
+    assert_eq!(m.drive.file("DATA.TXT"), Some(&b"!bc"[..]), "C: and D: show the same files");
+}
+
+#[test]
+fn without_a_cd_drive_mscdex_is_absent() {
+    let program = com(|a| {
+        a.xor(bx, bx)?;
+        a.mov(ax, 0x1500)?;
+        a.int(0x2F)?;
+        a.mov(ax, bx)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)
+    });
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0), "BX stays 0: no CD drives");
+}
+
+#[test]
+fn start_drive_and_environment_variables() {
+    let program = com(|a| {
+        a.mov(ah, 0x19)?;
+        a.int(0x21)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)
+    });
+    let config = Config {
+        cd_drive: Some('D'),
+        start_drive: 'D',
+        environment: vec![("ARENADATA".into(), "C:".into())],
+        ..Config::default()
+    };
+    let mut m = boot_with(config, &[("GAME.COM", &program)], "GAME.COM");
+    let env_segment = m.mem.read_u16((u32::from(m.dos.psp) << 4) + 0x2C);
+    let env = m.mem.read_bytes(u32::from(env_segment) << 4, 128);
+    let text = String::from_utf8_lossy(&env);
+    assert!(text.contains("ARENADATA=C:\0"), "{text:?}");
+    assert!(text.contains("D:\\GAME.COM"), "program path on the current drive: {text:?}");
+    assert_eq!(m.run(SECOND), Stop::Exited(3), "current drive is D:");
+}
+
+#[test]
+fn expanded_memory_pages_and_moves() {
+    // Allocate 4 pages; write 11h through logical page 0 and 22h through logical page 1, both
+    // via physical page 0; map them back and read through physical pages 0 and 1. Then move
+    // "XYZ" from conventional memory to logical page 2, offset 5 (AH=57h) and read it mapped.
+    let program = com(|a| {
+        let handle = a.addr("handle") as u32;
+        let results: Vec<u32> = ["r0", "r1", "r2", "r3"].iter().map(|r| a.addr(r) as u32).collect();
+        let map = |a: &mut Asm, physical: i32, logical: i32| -> Result<(), IcedError> {
+            a.mov(ax, 0x4400 | physical)?;
+            a.mov(bx, logical)?;
+            a.mov(dx, word_ptr(handle))?;
+            a.int(0x67)
+        };
+        let poke = |a: &mut Asm, offset: u32, value: i32| -> Result<(), IcedError> {
+            a.mov(ax, 0xE000)?;
+            a.mov(ds, ax)?;
+            a.mov(byte_ptr(offset), value)?;
+            a.push(cs)?;
+            a.pop(ds)
+        };
+        let peek = |a: &mut Asm, offset: u32, slot: u32| -> Result<(), IcedError> {
+            a.mov(ax, 0xE000)?;
+            a.mov(ds, ax)?;
+            a.mov(al, byte_ptr(offset))?;
+            a.push(cs)?;
+            a.pop(ds)?;
+            a.mov(byte_ptr(slot), al)
+        };
+        a.mov(ah, 0x43)?;
+        a.mov(bx, 4)?;
+        a.int(0x67)?;
+        a.mov(word_ptr(handle), dx)?;
+        map(a, 0, 0)?;
+        poke(a, 0, 0x11)?;
+        map(a, 0, 1)?;
+        poke(a, 0, 0x22)?;
+        map(a, 0, 0)?;
+        peek(a, 0, results[0])?;
+        map(a, 1, 1)?;
+        peek(a, 0x4000, results[1])?;
+        let request = a.addr("request") as u32;
+        a.mov(dx, word_ptr(handle))?;
+        a.mov(word_ptr(request + 12), dx)?; // destination handle
+        a.mov(word_ptr(request + 9), ds)?; // source segment
+        a.mov(si, request as i32)?;
+        a.mov(ax, 0x5700)?;
+        a.int(0x67)?;
+        map(a, 2, 2)?;
+        peek(a, 0x8000 + 6, results[2])?;
+        a.mov(ah, 0x45)?;
+        a.mov(dx, word_ptr(handle))?;
+        a.int(0x67)?;
+        a.mov(byte_ptr(results[3]), ah)?;
+        exit(a, 0)?;
+        a.here("text")?;
+        a.db(b"XYZ")?;
+        a.here("request")?;
+        // Length 3; source: conventional, handle 0, offset = text, segment (patched);
+        // destination: expanded, handle (patched), offset 5, logical page 2.
+        let text = a.addr("text") as u16;
+        let mut request_bytes = vec![3, 0, 0, 0, 0, 0, 0];
+        request_bytes.extend(text.to_le_bytes());
+        request_bytes.extend([0, 0, 1, 0, 0, 5, 0, 2, 0]);
+        a.db(&request_bytes)?;
+        for label in ["handle", "r0", "r1", "r2", "r3"] {
+            a.here(label)?;
+            a.dw(&[0])?;
+        }
+        Ok(())
+    });
+    let mut m = boot(&[("EMS.COM", &program)], "EMS.COM");
+    // Detection: the INT 67h vector's segment has the driver name at offset 0Ah.
+    let segment = m.mem.read_u16(0x67 * 4 + 2);
+    assert_eq!(&m.mem.read_bytes((u32::from(segment) << 4) + 0x0A, 8), b"EMMXXXX0");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let base = 0x100 + program.len() as i32 - 10;
+    let result = |i: i32| word_at_offset(&m, base + i * 2) as u8;
+    assert_eq!(result(1), 0x11, "logical page 0 kept its data while unmapped");
+    assert_eq!(result(2), 0x22, "logical page 1 shows through physical page 1");
+    assert_eq!(result(3), b'Y', "AH=57h moved XYZ to page 2, offset 5");
+    assert_eq!(result(4), 0, "pages freed");
+    assert_eq!(u32::from(m.ems.free_pages()), m.config.ems_kb / 16);
+}
+
+#[test]
+fn service_trace_records_calls() {
+    let program = com(|a| {
+        load_dx(a, "name")?;
+        a.mov(ax, 0x3D00)?;
+        a.int(0x21)?;
+        exit(a, 0)?;
+        a.here("name")?;
+        a.db(b"MISSING.DAT\0")
+    });
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    m.service_trace = Some(Vec::new());
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let calls = m.service_trace.as_ref().unwrap();
+    let open = calls.iter().find(|c| c.before.ah() == 0x3D).expect("the open was traced");
+    assert_eq!(open.path.as_deref(), Some("MISSING.DAT"));
+    assert_eq!(open.after.ax(), 2);
+    assert!(open.returned_flags);
+    assert!(open.to_string().contains("\"MISSING.DAT\" -> AX=0002"), "{open}");
+}

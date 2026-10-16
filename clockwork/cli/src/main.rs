@@ -4,11 +4,12 @@
 //! `play` opens a window, takes keyboard input, and can record it as a session that `run
 //! --replay` reproduces bit for bit.
 
+mod hotspots;
 mod play;
 mod session;
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use dos::{Config, Machine, Stop, Vfs};
@@ -30,8 +31,17 @@ options:
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final mode 13h screen as a BMP
   --json             run: print the summary as JSON
+  --hotspots N       run: sample CS:IP while running and show the N hottest addresses
+  --trace FILE       run: write every BIOS/DOS/EMS service call to FILE
+  --midi FILE        run: write the MIDI bytes sent to the MPU-401, one line per PIT tick
+  --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
+                     (or: here, for the current CS:IP)
   --record FILE      play: record keyboard input as a session
   --cpu 286|386      processor the program sees (default 386)
+  --cd LETTER        add a CD-ROM drive (with MSCDEX) showing the same files as C:
+  --drive LETTER     the current drive when the program starts (default C)
+  --env NAME=VALUE   set an environment variable (repeatable)
+  --ems KB           expanded memory size (default 4096; 0 disables EMS)
   --scale N          play: window scale (default 2)";
 
 #[derive(Default)]
@@ -49,6 +59,14 @@ struct Options {
     record: Option<PathBuf>,
     scale: usize,
     cpu: dos::CpuModel,
+    cd_drive: Option<char>,
+    start_drive: Option<char>,
+    environment: Vec<(String, String)>,
+    ems_kb: Option<u32>,
+    hotspots: usize,
+    disasm: Option<String>,
+    trace: Option<PathBuf>,
+    midi: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -86,8 +104,20 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--replay" => options.replay = Some(value(arg)?.into()),
             "--screenshot" => options.screenshot = Some(value(arg)?.into()),
             "--json" => options.json = true,
+            "--trace" => options.trace = Some(value(arg)?.into()),
+            "--midi" => options.midi = Some(value(arg)?.into()),
+            "--disasm" => options.disasm = Some(value(arg)?),
+            "--hotspots" => options.hotspots = value(arg)?.parse().map_err(|_| "--hotspots needs a count")?,
             "--record" => options.record = Some(value(arg)?.into()),
             "--scale" => options.scale = value(arg)?.parse().map_err(|_| "--scale needs a whole number")?,
+            "--ems" => options.ems_kb = Some(value(arg)?.parse().map_err(|_| "--ems needs kilobytes")?),
+            "--cd" => options.cd_drive = Some(drive_letter(&value(arg)?)?),
+            "--drive" => options.start_drive = Some(drive_letter(&value(arg)?)?),
+            "--env" => {
+                let assignment = value(arg)?;
+                let (name, text) = assignment.split_once('=').ok_or("--env needs NAME=VALUE")?;
+                options.environment.push((name.to_ascii_uppercase(), text.to_owned()));
+            }
             "--cpu" => {
                 options.cpu = match value(arg)?.as_str() {
                     "286" => dos::CpuModel::I286,
@@ -116,8 +146,22 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
+fn parse_address(text: &str) -> Result<(u16, u16), String> {
+    let (segment, offset) = text.split_once(':').ok_or_else(|| format!("expected SEG:OFF in hex, not {text:?}"))?;
+    let hex = |part: &str| u16::from_str_radix(part, 16).map_err(|_| format!("bad hex number {part:?}"));
+    Ok((hex(segment)?, hex(offset)?))
+}
+
+fn drive_letter(text: &str) -> Result<char, String> {
+    match text.trim_end_matches(':').chars().collect::<Vec<_>>()[..] {
+        [letter] if letter.is_ascii_alphabetic() => Ok(letter.to_ascii_uppercase()),
+        _ => Err(format!("expected a drive letter, not {text:?}")),
+    }
+}
+
 /// Loads the game folder as drive C: and the program into a fresh machine.
-fn boot(game_dir: &Path, program: &str, args: &str, ips: u64, cpu_model: dos::CpuModel) -> Result<Machine, String> {
+fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, String> {
+    let game_dir = o.game_dir.as_path();
     let (drive, warnings) = Vfs::from_host_dir(game_dir).map_err(|e| format!("{}: {e}", game_dir.display()))?;
     for warning in warnings.iter().take(5) {
         eprintln!("rec-host: warning: {warning}");
@@ -125,7 +169,15 @@ fn boot(game_dir: &Path, program: &str, args: &str, ips: u64, cpu_model: dos::Cp
     if warnings.len() > 5 {
         eprintln!("rec-host: warning: ... {} more", warnings.len() - 5);
     }
-    let config = Config { instructions_per_second: ips, cpu_model, ..Config::default() };
+    let config = Config {
+        instructions_per_second: ips,
+        cpu_model: o.cpu,
+        cd_drive: o.cd_drive,
+        start_drive: o.start_drive.unwrap_or('C'),
+        environment: o.environment.clone(),
+        ems_kb: o.ems_kb.unwrap_or(Config::default().ems_kb),
+        ..Config::default()
+    };
     Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())
 }
 
@@ -135,7 +187,7 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         Some(s) => (s.program.clone(), s.args.clone(), o.ips.unwrap_or(s.instructions_per_second)),
         None => (o.program.clone().unwrap_or_default(), o.args.clone(), o.ips.unwrap_or(8_000_000)),
     };
-    let mut m = boot(&o.game_dir, &program, &args, ips, o.cpu)?;
+    let mut m = boot(o, &program, &args, ips)?;
     if let Some(session) = &session {
         for &(cycle, code) in &session.inputs {
             m.queue_scancodes(cycle, &[code]);
@@ -145,8 +197,16 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         let start = m.cycle_at_ms(o.type_at_ms);
         m.type_text(start, text, m.cycle_at_ms(60));
     }
+    if o.trace.is_some() {
+        m.service_trace = Some(Vec::new());
+    }
     let limit = (o.seconds * ips as f64) as u64;
-    let stop = m.run(limit);
+    let (stop, profile) = if o.hotspots > 0 {
+        let (stop, profile) = hotspots::run_sampled(&mut m, limit);
+        (stop, Some(profile))
+    } else {
+        (m.run(limit), None)
+    };
 
     if let Some(path) = &o.screenshot {
         match m.screen_rgb() {
@@ -157,6 +217,26 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         }
     }
     let summary = Summary::new(&m, &stop);
+    if let Some(profile) = &profile {
+        profile.print(&m, o.hotspots);
+    }
+    if let Some(path) = &o.midi {
+        let mut text = String::new();
+        for chunk in m.devices.mpu.midi_log.chunk_by(|a, b| a.pit_tick == b.pit_tick) {
+            let bytes: Vec<String> = chunk.iter().map(|b| format!("{:02X}", b.value)).collect();
+            text.push_str(&format!("{:>12} {}\n", chunk[0].pit_tick, bytes.join(" ")));
+        }
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if let (Some(path), Some(calls)) = (&o.trace, &m.service_trace) {
+        let text: String = calls.iter().map(|call| format!("{call}\n")).collect();
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("trace     {} service calls written to {}", calls.len(), path.display());
+    }
+    if let Some(at) = &o.disasm {
+        let (cs, ip) = if at == "here" { (m.cpu.regs.cs(), m.cpu.regs.ip) } else { parse_address(at)? };
+        hotspots::print_listing(&m, cs, ip, 40);
+    }
     if o.json {
         println!("{}", summary.json());
     } else {
@@ -172,6 +252,8 @@ struct Summary {
     elapsed_ms: u64,
     frames: usize,
     distinct_frames: usize,
+    midi_bytes: usize,
+    speaker_events: usize,
     last_frame: Option<dos::Frame>,
     state_hash: u64,
     console_hash: u64,
@@ -200,6 +282,8 @@ impl Summary {
             elapsed_ms: m.elapsed_ms(),
             frames: m.frames.len(),
             distinct_frames: m.frames.iter().map(|f| f.hash).collect::<BTreeSet<_>>().len(),
+            midi_bytes: m.devices.mpu.midi_log.len(),
+            speaker_events: m.devices.pit.speaker_log.len(),
             last_frame: m.frames.last().copied(),
             state_hash: m.state_hash(),
             console_hash: fnv64(&m.console),
@@ -217,6 +301,9 @@ impl Summary {
                 self.frames, self.distinct_frames, f.mode, f.hash
             ),
             None => println!("frames    0"),
+        }
+        if self.midi_bytes > 0 || self.speaker_events > 0 {
+            println!("audio     {} MIDI bytes, {} PC speaker changes", self.midi_bytes, self.speaker_events);
         }
         println!("state     {:016x}", self.state_hash);
         if !self.files_changed.is_empty() {
@@ -243,13 +330,15 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{}}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{}}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
             self.elapsed_ms,
             self.frames,
             self.distinct_frames,
+            self.midi_bytes,
+            self.speaker_events,
             last_frame,
             self.state_hash,
             self.console_hash,

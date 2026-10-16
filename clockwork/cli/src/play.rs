@@ -18,7 +18,7 @@ const HEIGHT: usize = 400;
 pub fn run(o: &Options) -> Result<ExitCode, String> {
     let program = o.program.clone().ok_or("play needs <program>")?;
     let ips = o.ips.unwrap_or(8_000_000);
-    let mut m = crate::boot(&o.game_dir, &program, &o.args, ips, o.cpu)?;
+    let mut m = crate::boot(o, &program, &o.args, ips)?;
     m.stop_on_input_wait = false;
 
     let scale = match o.scale {

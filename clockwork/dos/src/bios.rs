@@ -56,7 +56,12 @@ pub(crate) mod callback {
     pub const TERMINATE: u16 = 0x20;
     pub const DOS: u16 = 0x21;
     pub const FAST_CONSOLE: u16 = 0x29;
+    pub const MULTIPLEX: u16 = 0x2F;
+    pub const EMS: u16 = 0x67;
 }
+
+/// A device driver header for the emulated CD-ROM (MSCDEX AX=1501h points at it).
+pub const ROM_CD_DEVICE: u16 = 0x9000;
 
 struct Rom {
     next: u16,
@@ -132,6 +137,7 @@ pub(crate) fn install(m: &mut Machine) {
         (0x20, callback::TERMINATE, false),
         (0x21, callback::DOS, true),
         (0x29, callback::FAST_CONSOLE, false),
+        (0x2F, callback::MULTIPLEX, false),
     ] {
         let at = rom.service(m, id, sti);
         set_vector(m, vector, ROM_SEGMENT, at);
@@ -144,6 +150,10 @@ pub(crate) fn install(m: &mut Machine) {
     // Font pointers (8×8 glyphs for INT 1Fh/43h): an empty font until one is added.
     set_vector(m, 0x1F, ROM_SEGMENT, ROM_FONT_OFFSET + 0x400);
     set_vector(m, 0x43, ROM_SEGMENT, ROM_FONT_OFFSET);
+
+    let mut cd_device = vec![0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xC8, 0, 0, 0, 0];
+    cd_device.extend(b"MSCD001 \0\0");
+    m.mem.load(Machine::lin(ROM_SEGMENT, ROM_CD_DEVICE), &cd_device);
 
     m.mem.load(Machine::lin(ROM_SEGMENT, 0xFFF5), b"06/01/94");
     m.mem.load(Machine::lin(ROM_SEGMENT, 0xFFFE), &[0xFC]); // model byte: AT

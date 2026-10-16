@@ -9,8 +9,11 @@ use machine::Memory;
 use machine::hash::Fnv64;
 
 use crate::clock::{Clock, FRAME_PIT_TICKS};
+use crate::cmos::Cmos;
 use crate::dos::DosState;
+use crate::ems::{self, Ems};
 use crate::keyboard::{ControllerEffect, Keyboard, LEFT_SHIFT, ascii_to_scancode};
+use crate::mpu401::Mpu401;
 use crate::pic::Pic;
 use crate::pit::Pit;
 use crate::time::DateTime;
@@ -26,6 +29,14 @@ pub struct Config {
     pub start_time: DateTime,
     /// Which processor programs see.
     pub cpu_model: cpu::Model,
+    /// Letter of an emulated CD-ROM drive (with MSCDEX) that shows the same files as C:, read-only.
+    pub cd_drive: Option<char>,
+    /// The drive that is current when the program starts.
+    pub start_drive: char,
+    /// Extra environment variables for the program, after COMSPEC, PATH and PROMPT.
+    pub environment: Vec<(String, String)>,
+    /// Expanded memory (LIM EMS 4.0) in KB; 0 means no EMS driver.
+    pub ems_kb: u32,
 }
 
 impl Default for Config {
@@ -34,6 +45,10 @@ impl Default for Config {
             instructions_per_second: 8_000_000,
             start_time: DateTime::new(1994, 1, 1, 8, 0, 0),
             cpu_model: cpu::Model::I386,
+            cd_drive: None,
+            start_drive: 'C',
+            environment: Vec::new(),
+            ems_kb: 4096,
         }
     }
 }
@@ -70,6 +85,8 @@ pub struct Devices {
     pub pit: Pit,
     pub keyboard: Keyboard,
     pub vga: Vga,
+    pub mpu: Mpu401,
+    pub cmos: Cmos,
     pub clock: Clock,
     port92: u8,
     /// Ports accessed that nothing emulates (reads return FFh, writes are dropped).
@@ -79,7 +96,7 @@ pub struct Devices {
 }
 
 impl Devices {
-    fn new(clock: Clock) -> Self {
+    fn new(clock: Clock, start_time: DateTime) -> Self {
         Self {
             // BIOS defaults: IRQ0, 1, 2 and 6 unmasked on the master; vectors 08h and 70h.
             pic: Pic::new(0x08, 0xB8),
@@ -87,6 +104,8 @@ impl Devices {
             pit: Pit::new(),
             keyboard: Keyboard::default(),
             vga: Vga::new(),
+            mpu: Mpu401::default(),
+            cmos: Cmos::new(start_time),
             clock,
             port92: 0,
             unknown_ports: BTreeSet::new(),
@@ -108,6 +127,9 @@ impl Devices {
             0x64 => self.keyboard.read_status(),
             0x92 => self.port92,
             0x3C0..=0x3DF => self.vga.read(port, now),
+            0x71 => self.cmos.read_data(cycles / self.clock.instructions_per_second),
+            0x330 => self.mpu.read_data(),
+            0x331 => self.mpu.read_status(),
             // Not emulated yet: no joystick, Sound Blaster or AdLib. An absent card reads FFh.
             0x201 | 0x220..=0x22F | 0x388..=0x38B => 0xFF,
             _ => {
@@ -140,6 +162,10 @@ impl Devices {
                 return Some(ControllerEffect::SetA20(value & 0x02 != 0));
             }
             0x3C0..=0x3DF => self.vga.write(port, value),
+            0x70 => self.cmos.write_index(value),
+            0x71 => self.cmos.write_data(value),
+            0x330 => self.mpu.write_data(value, now),
+            0x331 => self.mpu.write_command(value),
             0x80 => {} // POST code port, written for short I/O delays
             0x201 | 0x220..=0x22F | 0x388..=0x38B => {}
             _ => {
@@ -182,6 +208,7 @@ pub struct Machine {
     pub mem: Memory,
     pub devices: Devices,
     pub dos: DosState,
+    pub ems: Ems,
     pub drive: Vfs,
     pub config: Config,
     /// Text the program wrote through DOS or the BIOS (teletype output).
@@ -189,6 +216,9 @@ pub struct Machine {
     pub frames: Vec<Frame>,
     /// Things the emulation doesn't support that the program used; each message appears once.
     pub diagnostics: BTreeSet<String>,
+    /// When set, every host service call is recorded here (BIOS, DOS, EMS, MSCDEX); timer and
+    /// keyboard interrupts are left out. Not part of the machine state.
+    pub service_trace: Option<Vec<crate::trace::ServiceCall>>,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -200,6 +230,8 @@ pub struct Machine {
     next_event: u64,
     next_frame: u64,
     pub(crate) keyboard_e0: bool,
+    /// Set when the current service returned flags through the interrupt frame.
+    pub(crate) returned_flags: bool,
 }
 
 impl Machine {
@@ -209,13 +241,15 @@ impl Machine {
         let mut machine = Self {
             cpu: Cpu::with_model(config.cpu_model),
             mem: Memory::new(),
-            devices: Devices::new(clock),
+            devices: Devices::new(clock, config.start_time),
             dos: DosState::default(),
+            ems: Ems::new(config.ems_kb),
             drive,
             config,
             console: Vec::new(),
             frames: Vec::new(),
             diagnostics: BTreeSet::new(),
+            service_trace: None,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -224,8 +258,10 @@ impl Machine {
             next_event: 0,
             next_frame: 0,
             keyboard_e0: false,
+            returned_flags: false,
         };
         bios::install(&mut machine);
+        ems::install(&mut machine);
         dos::install(&mut machine);
         machine
     }
@@ -329,6 +365,7 @@ impl Machine {
         self.mem.hash(&mut h);
         self.devices.hash(&mut h);
         self.dos.hash(&mut h);
+        self.ems.hash(&mut h);
         self.drive.hash(&mut h);
         h.finish()
     }
@@ -378,6 +415,7 @@ impl Machine {
     /// Sets a flag in the FLAGS image an `IRET` will restore. Valid inside a service entered
     /// through a ROM stub (`[STI] callback; IRET`), where SS:SP points at the interrupt frame.
     pub(crate) fn set_return_flag(&mut self, mask: u16, on: bool) {
+        self.returned_flags = true;
         self.cpu.regs.set_flag(mask, on);
         let addr = self.cpu.linear(seg::SS, self.cpu.regs.sp().wrapping_add(4));
         let flags = self.mem.read_u16(addr);
@@ -407,8 +445,17 @@ impl Machine {
 
     fn callback(&mut self, id: u16) {
         self.waiting_for_input = false;
+        self.returned_flags = false;
+        let traced =
+            self.service_trace.is_some() && !matches!(id, bios::callback::TIMER_IRQ | bios::callback::KEYBOARD_IRQ);
+        let call = traced.then(|| crate::trace::ServiceCall::begin(self, id));
         if !bios::dispatch(self, id) && !dos::dispatch(self, id) {
             self.diagnostic(format!("unknown host callback {id:#06x}"));
+        }
+        if let (Some(mut call), Some(trace)) = (call, self.service_trace.as_mut()) {
+            call.after = self.cpu.regs;
+            call.returned_flags = self.returned_flags;
+            trace.push(call);
         }
     }
 

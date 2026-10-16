@@ -5,13 +5,17 @@
 
 pub mod bios;
 pub mod clock;
+pub mod cmos;
 pub mod dos;
+pub mod ems;
 pub mod keyboard;
 mod machine;
+pub mod mpu401;
 mod mz;
 pub mod pic;
 pub mod pit;
 pub mod time;
+pub mod trace;
 pub mod vfs;
 pub mod vga;
 

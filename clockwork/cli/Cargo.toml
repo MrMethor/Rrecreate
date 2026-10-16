@@ -14,6 +14,7 @@ path = "src/main.rs"
 dos.workspace = true
 machine.workspace = true
 minifb = "0.29"
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "intel"] }
 
 [lints]
 workspace = true

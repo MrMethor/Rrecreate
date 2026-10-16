@@ -17,7 +17,11 @@ pub const FIRST_MCB: u16 = 0x0100;
 pub const MEMORY_END: u16 = 0xA000;
 const MAX_HANDLES: usize = 20;
 const MAX_MCBS: usize = 4096;
-const DEVICES: [&str; 10] = ["CON", "NUL", "PRN", "AUX", "CLOCK$", "LPT1", "LPT2", "LPT3", "COM1", "COM2"];
+const DEVICES: [&str; 11] = ["CON", "NUL", "PRN", "AUX", "CLOCK$", "LPT1", "LPT2", "LPT3", "COM1", "COM2", "EMMXXXX0"];
+/// Drive number of C: (0 = A:).
+pub const C_DRIVE: u8 = 2;
+/// Drive letters DOS reports as present (LASTDRIVE=E).
+const LAST_DRIVE: u8 = 5;
 /// Every file reports 1994-01-01 00:00 so runs don't depend on host timestamps.
 const FILE_DATE: u16 = ((1994 - 1980) << 9) | (1 << 5) | 1;
 const FILE_TIME: u16 = 0;
@@ -42,15 +46,19 @@ pub mod error {
 pub enum Handle {
     Console,
     Null,
-    File { path: String, pos: u32, write: bool },
+    File { path: String, pos: u32, write: bool, drive: u8 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DosState {
     pub psp: u16,
     pub dta: (u16, u16),
-    /// Current directory on C:, canonical (no drive, no leading backslash).
-    pub cwd: String,
+    /// Current drive (0 = A:).
+    pub drive: u8,
+    /// Drive number of the emulated CD-ROM: the same files as C:, read-only, announced by MSCDEX.
+    pub cd_drive: Option<u8>,
+    /// Current directory per drive number, canonical (no drive, no leading backslash).
+    pub cwd: Vec<String>,
     pub handles: Vec<Option<Handle>>,
     pub last_error: u16,
     pub break_check: bool,
@@ -59,6 +67,12 @@ pub struct DosState {
     pub program: String,
     /// Directories referenced by FindFirst/FindNext state stored in DTAs.
     search_dirs: Vec<String>,
+}
+
+impl DosState {
+    pub fn drive_exists(&self, drive: u8) -> bool {
+        drive == C_DRIVE || Some(drive) == self.cd_drive
+    }
 }
 
 impl Default for DosState {
@@ -72,7 +86,9 @@ impl Default for DosState {
         Self {
             psp: 0,
             dta: (0, 0x80),
-            cwd: String::new(),
+            drive: C_DRIVE,
+            cd_drive: None,
+            cwd: vec![String::new(); 26],
             handles,
             last_error: 0,
             break_check: false,
@@ -94,7 +110,7 @@ pub enum LoadError {
 impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::NotFound(p) => write!(f, "{p}: not found on drive C:"),
+            LoadError::NotFound(p) => write!(f, "{p}: not found on the emulated drives"),
             LoadError::BadFormat(why) => write!(f, "bad executable: {why}"),
             LoadError::Unsupported(why) => write!(f, "unsupported executable: {why}"),
             LoadError::InsufficientMemory { needed, available } => {
@@ -108,6 +124,27 @@ impl std::error::Error for LoadError {}
 
 pub(crate) fn install(m: &mut Machine) {
     write_mcb(m, FIRST_MCB, b'Z', 0, MEMORY_END - FIRST_MCB - 1);
+    let number = |letter: char| (letter.to_ascii_uppercase() as u8).wrapping_sub(b'A');
+    m.dos.cd_drive = m.config.cd_drive.map(number).filter(|&d| d < 26 && d != C_DRIVE);
+    let start = number(m.config.start_drive);
+    m.dos.drive = if m.dos.drive_exists(start) { start } else { C_DRIVE };
+}
+
+/// The drive a guest path refers to: its `X:` prefix, or the current drive.
+fn path_drive(m: &Machine, raw: &[u8]) -> u8 {
+    match raw {
+        [letter, b':', ..] if letter.is_ascii_alphabetic() => letter.to_ascii_uppercase() - b'A',
+        _ => m.dos.drive,
+    }
+}
+
+fn on_cd(m: &Machine, raw: &[u8]) -> bool {
+    Some(path_drive(m, raw)) == m.dos.cd_drive
+}
+
+/// A drive number from a DL-style argument (0 = current, 1 = A:, ...).
+fn drive_argument(m: &Machine, dl: u8) -> u8 {
+    if dl == 0 { m.dos.drive } else { dl - 1 }
 }
 
 /// The emulated wall clock: the configured start time plus elapsed virtual time.
@@ -121,6 +158,8 @@ pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
         callback::TERMINATE => m.terminate(0),
         callback::DOS => int21(m),
         callback::FAST_CONSOLE => bios::teletype(m, m.cpu.regs.al()),
+        callback::MULTIPLEX => multiplex(m),
+        callback::EMS => crate::ems::service(m),
         _ => return false,
     }
     true
@@ -193,8 +232,13 @@ fn int21(m: &mut Machine) {
                 int21(m);
             }
         }
-        0x0E => m.cpu.regs.set_al(3), // drives A–C
-        0x19 => m.cpu.regs.set_al(2), // C:
+        0x0E => {
+            if m.dos.drive_exists(r.dl()) {
+                m.dos.drive = r.dl();
+            }
+            m.cpu.regs.set_al(LAST_DRIVE);
+        }
+        0x19 => m.cpu.regs.set_al(m.dos.drive),
         0x1A => m.dos.dta = (r.ds(), r.dx()),
         0x25 => {
             let at = u32::from(r.al()) * 4;
@@ -248,7 +292,13 @@ fn int21(m: &mut Machine) {
             m.cpu.regs.set_es(segment);
         }
         0x36 => {
-            if matches!(r.dl(), 0 | 3) {
+            let drive = drive_argument(m, r.dl());
+            if Some(drive) == m.dos.cd_drive {
+                m.cpu.regs.set_ax(1); // a full CD: 2048-byte sectors, nothing free
+                m.cpu.regs.set_bx(0);
+                m.cpu.regs.set_cx(2048);
+                m.cpu.regs.set_dx(0xFFFF);
+            } else if drive == C_DRIVE {
                 m.cpu.regs.set_ax(8); // sectors per cluster
                 m.cpu.regs.set_bx(0x7FFF); // free clusters (~128 MB)
                 m.cpu.regs.set_cx(512);
@@ -257,16 +307,20 @@ fn int21(m: &mut Machine) {
                 m.cpu.regs.set_ax(0xFFFF);
             }
         }
-        0x39 => path_op(m, |m, path| if m.drive.make_dir(&path) { Ok(()) } else { Err(error::ACCESS_DENIED) }),
-        0x3A => path_op(m, |m, path| if m.drive.remove_dir(&path) { Ok(()) } else { Err(error::ACCESS_DENIED) }),
-        0x3B => path_op(m, |m, path| {
-            if m.drive.is_dir(&path) {
-                m.dos.cwd = path;
-                Ok(())
-            } else {
-                Err(error::PATH_NOT_FOUND)
+        0x39 => path_op(m, true, |m, path| if m.drive.make_dir(&path) { Ok(()) } else { Err(error::ACCESS_DENIED) }),
+        0x3A => path_op(m, true, |m, path| if m.drive.remove_dir(&path) { Ok(()) } else { Err(error::ACCESS_DENIED) }),
+        0x3B => {
+            let raw = read_asciiz(m, r.ds(), r.dx());
+            let drive = path_drive(m, &raw);
+            match resolve(m, &raw, false) {
+                Ok(Target::Path(path)) if m.drive.is_dir(&path) => {
+                    m.dos.cwd[usize::from(drive)] = path;
+                    ok(m);
+                }
+                Ok(_) => fail(m, error::PATH_NOT_FOUND),
+                Err(code) => fail(m, code),
             }
-        }),
+        }
         0x3C => create(m, false),
         0x5B => create(m, true),
         0x3D => open(m, r.al()),
@@ -279,7 +333,9 @@ fn int21(m: &mut Machine) {
         },
         0x3F => read(m),
         0x40 => write(m),
-        0x41 => path_op(m, |m, path| if m.drive.remove_file(&path) { Ok(()) } else { Err(error::FILE_NOT_FOUND) }),
+        0x41 => {
+            path_op(m, true, |m, path| if m.drive.remove_file(&path) { Ok(()) } else { Err(error::FILE_NOT_FOUND) })
+        }
         0x42 => seek(m),
         0x43 => attributes(m),
         0x44 => ioctl(m),
@@ -305,8 +361,9 @@ fn int21(m: &mut Machine) {
             }
         }
         0x47 => {
-            if matches!(r.dl(), 0 | 3) {
-                let mut cwd = m.dos.cwd.clone().into_bytes();
+            let drive = drive_argument(m, r.dl());
+            if m.dos.drive_exists(drive) {
+                let mut cwd = m.dos.cwd[usize::from(drive)].clone().into_bytes();
                 cwd.push(0);
                 write_bytes(m, r.ds(), r.si(), &cwd);
                 ok(m);
@@ -342,9 +399,12 @@ fn int21(m: &mut Machine) {
         0x50 => m.dos.psp = r.bx(),
         0x51 | 0x62 => m.cpu.regs.set_bx(m.dos.psp),
         0x56 => {
-            let from = resolve(m, &read_asciiz(m, r.ds(), r.dx()), false);
-            let to = resolve(m, &read_asciiz(m, r.es(), r.di()), false);
+            let (from_raw, to_raw) = (read_asciiz(m, r.ds(), r.dx()), read_asciiz(m, r.es(), r.di()));
+            let read_only = on_cd(m, &from_raw) || on_cd(m, &to_raw);
+            let from = resolve(m, &from_raw, false);
+            let to = resolve(m, &to_raw, false);
             match (from, to) {
+                _ if read_only => fail(m, error::ACCESS_DENIED),
                 (Ok(Target::Path(from)), Ok(Target::Path(to))) => {
                     if !m.drive.is_file(&from) {
                         fail(m, error::FILE_NOT_FOUND);
@@ -406,9 +466,9 @@ pub(crate) enum Target {
     Path(String),
 }
 
-/// Resolves a guest path against the current directory. Only drive C: exists. Components are
-/// upper-cased and truncated to 8.3 like DOS does; wildcards are allowed in the last component
-/// only when `wildcards` is set.
+/// Resolves a guest path against its drive's current directory. C: and the optional CD drive
+/// show the same files. Components are upper-cased and truncated to 8.3 like DOS does;
+/// wildcards are allowed in the last component only when `wildcards` is set.
 pub(crate) fn resolve(m: &Machine, raw: &[u8], wildcards: bool) -> Result<Target, u16> {
     let mut text = raw;
     while let [rest @ .., b' '] = text {
@@ -417,15 +477,17 @@ pub(crate) fn resolve(m: &Machine, raw: &[u8], wildcards: bool) -> Result<Target
     if text.is_empty() {
         return Err(error::PATH_NOT_FOUND);
     }
+    let drive = path_drive(m, text);
+    if !m.dos.drive_exists(drive) {
+        return Err(error::PATH_NOT_FOUND);
+    }
     if text.len() >= 2 && text[1] == b':' {
-        if !text[0].eq_ignore_ascii_case(&b'C') {
-            return Err(error::PATH_NOT_FOUND);
-        }
         text = &text[2..];
     }
     let absolute = matches!(text.first(), Some(b'\\' | b'/'));
+    let cwd = &m.dos.cwd[usize::from(drive)];
     let mut parts: Vec<String> =
-        if absolute { Vec::new() } else { m.dos.cwd.split('\\').filter(|p| !p.is_empty()).map(String::from).collect() };
+        if absolute { Vec::new() } else { cwd.split('\\').filter(|p| !p.is_empty()).map(String::from).collect() };
     let components: Vec<&[u8]> = text.split(|&b| b == b'\\' || b == b'/').collect();
     let last = components.len() - 1;
     for (i, component) in components.into_iter().enumerate() {
@@ -462,9 +524,13 @@ fn normalize_name(name: &[u8], wildcards: bool) -> Option<String> {
     Some(if ext.is_empty() { base } else { format!("{base}.{ext}") })
 }
 
-fn path_op(m: &mut Machine, op: impl FnOnce(&mut Machine, String) -> Result<(), u16>) {
+/// Resolves DS:DX and runs `op` on it. Operations that `write` are refused on the CD drive.
+fn path_op(m: &mut Machine, write: bool, op: impl FnOnce(&mut Machine, String) -> Result<(), u16>) {
     let r = m.cpu.regs;
     let raw = read_asciiz(m, r.ds(), r.dx());
+    if write && on_cd(m, &raw) {
+        return fail(m, error::ACCESS_DENIED);
+    }
     let result = match resolve(m, &raw, false) {
         Ok(Target::Path(path)) => op(m, path),
         Ok(Target::Device(_)) => Err(error::ACCESS_DENIED),
@@ -497,6 +563,7 @@ fn device_handle(device: &str) -> Handle {
 }
 
 fn open_target(m: &mut Machine, raw: &[u8], mode: u8) -> Result<u16, u16> {
+    let drive = path_drive(m, raw);
     let handle = match resolve(m, raw, false)? {
         Target::Device(device) => device_handle(device),
         Target::Path(path) => {
@@ -506,16 +573,26 @@ fn open_target(m: &mut Machine, raw: &[u8], mode: u8) -> Result<u16, u16> {
             if mode & 7 > 2 {
                 return Err(error::INVALID_FUNCTION);
             }
-            Handle::File { path, pos: 0, write: mode & 7 != 0 }
+            // On the CD drive, read/write opens succeed read-only and writes fail later, as with
+            // MSCDEX (and DOSBox); write-only opens are refused.
+            let on_cd = Some(drive) == m.dos.cd_drive;
+            if on_cd && mode & 7 == 1 {
+                return Err(error::ACCESS_DENIED);
+            }
+            Handle::File { path, pos: 0, write: mode & 7 != 0 && !on_cd, drive }
         }
     };
     install_handle(m, handle)
 }
 
 fn create_target(m: &mut Machine, raw: &[u8], must_not_exist: bool) -> Result<u16, u16> {
+    let drive = path_drive(m, raw);
     let handle = match resolve(m, raw, false)? {
         Target::Device(device) => device_handle(device),
         Target::Path(path) => {
+            if Some(drive) == m.dos.cd_drive {
+                return Err(error::ACCESS_DENIED);
+            }
             if !m.drive.parent_exists(&path) {
                 return Err(error::PATH_NOT_FOUND);
             }
@@ -527,7 +604,7 @@ fn create_target(m: &mut Machine, raw: &[u8], must_not_exist: bool) -> Result<u1
             }
             free_handle(m).ok_or(error::TOO_MANY_FILES)?;
             m.drive.create(&path);
-            Handle::File { path, pos: 0, write: true }
+            Handle::File { path, pos: 0, write: true, drive }
         }
     };
     install_handle(m, handle)
@@ -703,23 +780,32 @@ fn ioctl(m: &mut Machine) {
                 m.cpu.regs.set_dx(0x8084);
                 ok(m);
             }
-            Some(Handle::File { .. }) => {
-                m.cpu.regs.set_dx(0x0002); // a file on drive C:
+            Some(Handle::File { drive, .. }) => {
+                m.cpu.regs.set_dx(u16::from(drive)); // a file, with its drive number
                 ok(m);
             }
             None => fail(m, error::INVALID_HANDLE),
         },
         0x01 => ok(m),
-        0x08 => {
-            m.cpu.regs.set_ax(1); // fixed disk
-            ok(m);
-        }
-        0x09 => {
-            m.cpu.regs.set_dx(0); // local
+        0x08 | 0x09 => {
+            let drive = drive_argument(m, r.bl());
+            if !m.dos.drive_exists(drive) {
+                return fail(m, error::INVALID_DRIVE);
+            }
+            let cd = Some(drive) == m.dos.cd_drive;
+            if r.al() == 0x08 {
+                m.cpu.regs.set_ax(u16::from(!cd)); // 1 = fixed disk, 0 = removable
+            } else {
+                m.cpu.regs.set_dx(if cd { 0x1000 } else { 0 }); // CD drives are network-redirected
+            }
             ok(m);
         }
         0x0E => {
             m.cpu.regs.set_al(0);
+            ok(m);
+        }
+        0x06 | 0x07 => {
+            m.cpu.regs.set_al(0xFF); // input/output status: ready
             ok(m);
         }
         al => {
@@ -727,6 +813,89 @@ fn ioctl(m: &mut Machine) {
             fail(m, error::INVALID_FUNCTION);
         }
     }
+}
+
+// ---- MSCDEX (INT 2Fh AH=15h) ----
+
+/// INT 2Fh. Only MSCDEX is answered, and only when a CD drive is configured; everything else
+/// returns unchanged, as if no TSR were installed.
+fn multiplex(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let Some(cd) = m.dos.cd_drive else { return };
+    if r.ah() != 0x15 {
+        return;
+    }
+    match r.al() {
+        0x00 => {
+            m.cpu.regs.set_bx(1); // one CD drive
+            m.cpu.regs.set_cx(u16::from(cd));
+        }
+        0x01 => {
+            // Drive device list: subunit, then a far pointer to the driver header.
+            let [lo, hi] = bios::ROM_CD_DEVICE.to_le_bytes();
+            let [seg_lo, seg_hi] = bios::ROM_SEGMENT.to_le_bytes();
+            write_bytes(m, r.es(), r.bx(), &[0, lo, hi, seg_lo, seg_hi]);
+        }
+        0x0B => {
+            m.cpu.regs.set_ax(if r.cx() == u16::from(cd) { 0x5AD8 } else { 0 });
+            m.cpu.regs.set_bx(0xADAD);
+        }
+        0x0C => m.cpu.regs.set_bx(0x0215), // MSCDEX 2.21
+        0x0D => write_bytes(m, r.es(), r.bx(), &[cd]),
+        0x10 => cd_device_request(m),
+        al => m.diagnostic(format!("MSCDEX INT 2Fh AX=15{al:02X}h is not implemented")),
+    }
+}
+
+/// AX=1510h: a device driver request for the CD drive, header at ES:BX. The disc is the game
+/// folder, so only status queries are answered; there is no raw sector or audio access.
+fn cd_device_request(m: &mut Machine) {
+    const DONE: u16 = 0x0100;
+    const UNKNOWN_COMMAND: u16 = 0x8103;
+    let header = Machine::lin(m.cpu.regs.es(), m.cpu.regs.bx());
+    let command = m.mem.read_u8(header + 2);
+    let status = match command {
+        0x03 => {
+            // IOCTL input: the first byte of the transfer buffer selects what to return.
+            let buffer = Machine::lin(m.mem.read_u16(header + 0x10), m.mem.read_u16(header + 0x0E));
+            match m.mem.read_u8(buffer) {
+                0x00 => {
+                    m.mem.write_u16(buffer + 1, bios::ROM_CD_DEVICE);
+                    m.mem.write_u16(buffer + 3, bios::ROM_SEGMENT);
+                    DONE
+                }
+                0x06 => {
+                    // Device status: door closed and unlocked, cooked reads, data and audio.
+                    m.mem.write_u32(buffer + 1, 0x0000_0312);
+                    DONE
+                }
+                0x07 => {
+                    m.mem.write_u8(buffer + 1, 0); // cooked mode
+                    m.mem.write_u16(buffer + 2, 2048);
+                    DONE
+                }
+                0x08 => {
+                    m.mem.write_u32(buffer + 1, 300_000); // volume size in sectors
+                    DONE
+                }
+                0x09 => {
+                    m.mem.write_u8(buffer + 1, 1); // media not changed
+                    DONE
+                }
+                code => {
+                    m.diagnostic(format!("MSCDEX IOCTL input {code:02X}h is not implemented"));
+                    UNKNOWN_COMMAND
+                }
+            }
+        }
+        // IOCTL output, open, close, stop and resume audio: accepted, nothing to do.
+        0x0C | 0x0D | 0x0E | 0x85 | 0x88 => DONE,
+        command => {
+            m.diagnostic(format!("MSCDEX device request {command:02X}h is not implemented"));
+            UNKNOWN_COMMAND
+        }
+    };
+    m.mem.write_u16(header + 3, status);
 }
 
 // ---- FindFirst / FindNext ----
@@ -979,9 +1148,14 @@ impl Machine {
         }
 
         // Environment block: variables, then a word count and the program's full path.
-        let mut env = b"COMSPEC=C:\\COMMAND.COM\0PATH=C:\\\0PROMPT=$P$G\0\0".to_vec();
+        let mut env = b"COMSPEC=C:\\COMMAND.COM\0PATH=C:\\\0PROMPT=$P$G\0".to_vec();
+        for (name, value) in &self.config.environment {
+            env.extend(format!("{name}={value}\0").bytes());
+        }
+        env.push(0);
         env.extend(1u16.to_le_bytes());
-        env.extend(format!("C:\\{path}\0").bytes());
+        let drive_letter = char::from(b'A' + path_drive(self, program.as_bytes()));
+        env.extend(format!("{drive_letter}:\\{path}\0").bytes());
         let env_paragraphs = env.len().div_ceil(16) as u16;
         let env_segment = allocate(self, env_paragraphs, 0x0008).map_err(|(_, available)| {
             LoadError::InsufficientMemory { needed: env_paragraphs.into(), available: available.into() }
