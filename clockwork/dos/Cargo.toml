@@ -1,6 +1,6 @@
 [package]
 name = "dos"
-description = "DOS, BIOS and PC device services (high-level emulation) for the Recreated host"
+description = "DOS, BIOS and PC device services (high-level emulation) for the Recreate host"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

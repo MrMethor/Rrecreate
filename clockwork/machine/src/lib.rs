@@ -1,4 +1,4 @@
-//! Machine model for the Recreated host (PROJECT.md §5.2).
+//! Machine model for the Recreate host (PROJECT.md §5.2).
 //!
 //! Phase 0 holds the pieces shared with the Python tooling: function identifiers and
 //! real-mode address helpers. The memory image, `CpuBackend` trait, snapshots and the

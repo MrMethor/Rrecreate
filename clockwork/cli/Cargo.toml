@@ -1,6 +1,6 @@
 [package]
 name = "frontend"
-description = "Windowed and headless runners for the Recreated host"
+description = "Windowed and headless runners for the Recreate host"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
