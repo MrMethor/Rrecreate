@@ -97,12 +97,9 @@ fn mouse_input(window: &Window, m: &Machine) -> Option<Input> {
     })
 }
 
-/// Scales the emulated screen to the window; modes that aren't displayed yet show black.
+/// Scales the emulated screen to the window.
 fn render(m: &Machine, buffer: &mut [u32]) {
-    let Some((w, h, pixels)) = m.screen_rgb() else {
-        buffer.fill(0);
-        return;
-    };
+    let (w, h, pixels) = m.screen_rgb();
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let i = ((y * h / HEIGHT) * w + x * w / WIDTH) * 3;

@@ -365,7 +365,7 @@ fn mode_13h_frames_and_palette() {
     });
     let mut m = boot(&[("GFX.COM", &program)], "GFX.COM");
     assert_eq!(m.run(SECOND), Stop::Exited(0));
-    let (width, height, rgb) = m.screen_rgb().expect("mode 13h");
+    let (width, height, rgb) = m.screen_rgb();
     assert_eq!((width, height), (320, 200));
     assert_eq!(&rgb[..3], &[255, 0, 0]);
     assert_eq!(&rgb[rgb.len() - 3..], &[255, 0, 0]);
@@ -1024,7 +1024,7 @@ fn mouse_cursor_is_drawn_and_erased_in_mode_13h() {
         let idle = a.l("idle");
         a.jmp(idle)
     });
-    let pixel = |m: &Machine, x: u32, y: u32| m.mem.read_u8(0xA_0000 + y * 320 + x);
+    let pixel = |m: &Machine, x: u32, y: u32| m.devices.vga.peek(y * 320 + x);
     let mut m = boot(&[("C.COM", &program)], "C.COM");
     m.queue_mouse(SECOND / 2, 2, 1, 0);
     assert_eq!(m.run(SECOND / 4), Stop::CycleLimit);
@@ -1036,7 +1036,7 @@ fn mouse_cursor_is_drawn_and_erased_in_mode_13h() {
 }
 
 fn pixel_13h(m: &Machine, x: u32, y: u32) -> u8 {
-    m.mem.read_u8(0xA_0000 + y * 320 + x)
+    m.devices.vga.peek(y * 320 + x)
 }
 
 /// The 8×8 glyph of `ch` as drawn at character cell (column, row) in mode 13h: true = foreground.
@@ -1157,8 +1157,8 @@ fn write_string_with_attributes_and_text_rendering() {
     m.run(SECOND / 10);
     assert_eq!(m.mem.read_bytes(0xB_8000, 4), &[b'H', 0x1F, b'i', 0x4E]);
     assert_eq!(m.mem.read_u16(0x450), 0x0002, "cursor after the string");
-    let (width, height, rgb) = m.screen_rgb().expect("text mode is rendered");
-    assert_eq!((width, height), (640, 400));
+    let (width, height, rgb) = m.screen_rgb();
+    assert_eq!((width, height), (720, 400), "80 columns of 9-dot characters");
     let pixel =
         |x: usize, y: usize| [rgb[(y * width + x) * 3], rgb[(y * width + x) * 3 + 1], rgb[(y * width + x) * 3 + 2]];
     assert_eq!(pixel(0, 0), [0, 0, 170], "blue background of attribute 1Fh");
@@ -1168,4 +1168,205 @@ fn write_string_with_attributes_and_text_rendering() {
         .find(|&(x, y)| dos::fonts::FONT_8X16[usize::from(b'H') * 16 + y] & (0x80 >> x) != 0);
     let (x, y) = lit.expect("H has pixels");
     assert_eq!(pixel(x, y), [255, 255, 255]);
+}
+
+/// The displayed picture (DAC indices), rendered from the VGA state.
+fn picture(m: &Machine) -> dos::vga_draw::Picture {
+    m.devices.vga.picture(m.mem.slice(0xB_0000, dos::vga_draw::LOW_RAM_SIZE))
+}
+
+fn hold(a: &mut Asm) -> Result<(), IcedError> {
+    a.here("hold")?;
+    a.hlt()?;
+    let hold = a.l("hold");
+    a.jmp(hold)
+}
+
+#[test]
+fn planar_mode_12h_pixels_text_and_scrolling() {
+    let program = com(|a| {
+        a.mov(ax, 0x0012)?;
+        a.int(0x10)?;
+        // Yellow pixel at (10, 20), read it back, then XOR it with 15.
+        a.mov(ax, 0x0C0E)?;
+        a.xor(bx, bx)?;
+        a.mov(cx, 10)?;
+        a.mov(dx, 20)?;
+        a.int(0x10)?;
+        a.mov(ah, 0x0D)?;
+        a.int(0x10)?;
+        store_result(a, "pixel")?;
+        a.mov(ax, 0x0C8F)?;
+        a.int(0x10)?;
+        // 'A' in light red at row 1, column 0, then scroll the screen up one row.
+        a.mov(ah, 2)?;
+        a.mov(dx, 0x0100)?;
+        a.int(0x10)?;
+        a.mov(ax, 0x0E41)?;
+        a.mov(bl, 0x0C)?;
+        a.int(0x10)?;
+        a.mov(ax, 0x0601)?;
+        a.xor(bx, bx)?;
+        a.xor(cx, cx)?;
+        a.mov(dx, 0x1D4F)?;
+        a.int(0x10)?;
+        hold(a)?;
+        a.here("pixel")?;
+        a.dw(&[0, 0])
+    });
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    m.run(SECOND / 4);
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+    assert_eq!(word_at_offset(&m, 0x100 + program.len() as i32 - 4) & 0xFF, 0x0E, "AH=0Dh reads the color back");
+    let p = picture(&m);
+    assert_eq!((p.width, p.height), (640, 480));
+    let vga = &m.devices.vga;
+    // The pixel scrolled up with its row: (10, 20) is now (10, 4).
+    assert_eq!(p.pixels[4 * 640 + 10], vga.attribute_color(0x0E ^ 0x0F));
+    for y in 0..16 {
+        let bits = dos::fonts::FONT_8X16[usize::from(b'A') * 16 + y];
+        for x in 0..8 {
+            let expected = vga.attribute_color(if bits & (0x80 >> x) != 0 { 0x0C } else { 0 });
+            assert_eq!(p.pixels[y * 640 + x], expected, "'A' moved to row 0: pixel ({x}, {y})");
+            assert_eq!(p.pixels[(16 + y) * 640 + x], vga.attribute_color(0), "row 1 cleared");
+        }
+    }
+}
+
+#[test]
+fn mode_x_unchained_320x240_with_page_flipping() {
+    let program = com(|a| {
+        a.mov(ax, 0x0013)?;
+        a.int(0x10)?;
+        a.mov(dx, 0x3C4)?;
+        a.mov(ax, 0x0604)?; // chain-4 off
+        a.out(dx, ax)?;
+        // Unprotect CRTC 0-7, then the 320×240 timing (Abrash's Mode X table).
+        a.mov(dx, 0x3D4)?;
+        a.mov(al, 0x11)?;
+        a.out(dx, al)?;
+        a.inc(dx)?;
+        a.in_(al, dx)?;
+        a.and(al, 0x7F)?;
+        a.out(dx, al)?;
+        a.dec(dx)?;
+        for word in [0x0D06, 0x3E07, 0x4109, 0xEA10, 0xAC11, 0xDF12, 0x0014, 0xE715, 0x0616, 0xE317] {
+            a.mov(ax, word)?;
+            a.out(dx, ax)?;
+        }
+        // Plane 1: pixel (9, 239) on page 0 and (5, 0) on the page at 19200.
+        a.mov(dx, 0x3C4)?;
+        a.mov(ax, 0x0202)?;
+        a.out(dx, ax)?;
+        a.push(ds)?;
+        a.mov(ax, 0xA000)?;
+        a.mov(ds, ax)?;
+        a.mov(byte_ptr(80 * 239 + 2), 7)?;
+        a.mov(byte_ptr(19200 + 1), 9)?;
+        // Read plane 1 back through read map select.
+        a.mov(dx, 0x3CE)?;
+        a.mov(ax, 0x0104)?;
+        a.out(dx, ax)?;
+        a.mov(al, byte_ptr(19200 + 1))?;
+        a.pop(ds)?;
+        let read = byte_at(a, "read");
+        a.mov(read, al)?;
+        // Show the second page.
+        a.mov(dx, 0x3D4)?;
+        a.mov(ax, 0x4B0C)?;
+        a.out(dx, ax)?;
+        a.mov(ax, 0x000D)?;
+        a.out(dx, ax)?;
+        hold(a)?;
+        a.here("read")?;
+        a.db(&[0])
+    });
+    let mut m = boot(&[("X.COM", &program)], "X.COM");
+    m.run(SECOND / 4);
+    assert_eq!(m.mem.read_u8((u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32 - 1), 9);
+    let p = picture(&m);
+    assert_eq!((p.width, p.height), (320, 240));
+    assert_eq!(p.pixels[5], 9, "page 2 is displayed");
+    assert_eq!(p.pixels[(239 - 48) * 320 + 9], 0, "page 2 doesn't show page 0's pixel");
+    let (width, height, _) = m.screen_rgb();
+    assert_eq!((width, height), (320, 240));
+}
+
+#[test]
+fn text_font_load_gives_80x50() {
+    let program = com(|a| {
+        a.mov(ax, 0x1112)?; // load and activate the 8×8 font
+        a.xor(bl, bl)?;
+        a.int(0x10)?;
+        a.mov(ah, 2)?;
+        a.xor(bh, bh)?;
+        a.mov(dx, 0x2D00)?; // row 45
+        a.int(0x10)?;
+        a.mov(ax, 0x0E51)?;
+        a.int(0x10)?;
+        hold(a)
+    });
+    let mut m = boot(&[("F.COM", &program)], "F.COM");
+    m.run(SECOND / 4);
+    assert_eq!((m.mem.read_u8(0x484), m.mem.read_u8(0x485)), (49, 8));
+    let text = m.screen_text().expect("text mode");
+    assert_eq!(text.len(), 50);
+    assert_eq!(text[45], "Q");
+    let p = picture(&m);
+    assert_eq!((p.width, p.height), (720, 400));
+    // The glyph comes from plane 2, now holding the 8×8 font.
+    let bits = dos::fonts::FONT_8X8[usize::from(b'Q') * 8 + 1];
+    let lit = (0..8).find(|x| bits & (0x80 >> x) != 0).unwrap();
+    assert_eq!(p.pixels[(45 * 8 + 1) * 720 + lit], m.devices.vga.attribute_color(7));
+}
+
+#[test]
+fn cga_mode_4_pixels_and_palette() {
+    let program = com(|a| {
+        a.mov(ax, 0x0004)?;
+        a.int(0x10)?;
+        a.mov(ax, 0x0C03)?;
+        a.xor(bx, bx)?;
+        a.mov(cx, 7)?;
+        a.mov(dx, 1)?;
+        a.int(0x10)?;
+        a.mov(ah, 0x0B)?;
+        a.mov(bx, 0x0100)?; // palette 0: green, red, brown
+        a.int(0x10)?;
+        hold(a)
+    });
+    let mut m = boot(&[("C.COM", &program)], "C.COM");
+    m.run(SECOND / 4);
+    assert_eq!(m.mem.read_u8(0xB_8000 + 0x2000 + 1) & 3, 3, "odd lines in the second bank");
+    let (width, height, rgb) = m.screen_rgb();
+    assert_eq!((width, height), (320, 200));
+    let at = (320 + 7) * 3;
+    assert_eq!(&rgb[at..at + 3], &[255, 255, 85], "color 3 of high-intensity palette 0 is yellow");
+}
+
+#[test]
+fn mouse_cursor_in_planar_mode() {
+    let program = com(|a| {
+        a.mov(ax, 0x0012)?;
+        a.int(0x10)?;
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.mov(ax, 4)?;
+        a.mov(cx, 100)?;
+        a.mov(dx, 50)?;
+        a.int(0x33)?;
+        a.mov(ax, 1)?;
+        a.int(0x33)?;
+        hold(a)
+    });
+    let mut m = boot(&[("M.COM", &program)], "M.COM");
+    m.queue_mouse(SECOND / 2, 300, 300, 0);
+    m.run(SECOND / 4);
+    let white = m.devices.vga.attribute_color(0x0F);
+    assert_eq!(picture(&m).pixels[51 * 640 + 101], white, "arrow at (100, 50)");
+    m.run(SECOND / 2);
+    let p = picture(&m);
+    assert_eq!(p.pixels[51 * 640 + 101], m.devices.vga.attribute_color(0), "background restored");
+    assert_eq!(p.pixels[301 * 640 + 301], white, "arrow moved");
+    assert_eq!(m.devices.vga.gc[8], 0xFF, "the program's VGA registers are restored");
 }

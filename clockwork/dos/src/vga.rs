@@ -1,10 +1,17 @@
-//! VGA registers, DAC palette and display timing.
+//! VGA: registers, DAC palette, display timing and the 256 KB of planar video memory.
 //!
-//! Supported so far: text mode 3 and chained 256-color mode 13h, both read straight from the
-//! memory image (B8000h and A0000h). Register writes for the planar modes (Mode X, EGA) are
-//! stored but don't change how memory is interpreted yet (PROJECT.md §13, Phase 7).
+//! Video memory access is ported from DOSBox Staging `src/hardware/video/vga_memory.cpp` and the
+//! register semantics from `vga_gfx.cpp`, `vga_seq.cpp`, `vga_crtc.cpp` and `vga_attr.cpp`
+//! (GPL-2.0-or-later). As in DOSBox, chain-4 (mode 13h) accesses go straight to memory, while
+//! unchained accesses (planar EGA modes, Mode X) go through the latches, write modes 0-3, the
+//! logical operations, bit mask and map mask, and read modes 0-1.
+//!
+//! The CPU reaches this memory through the A0000-AFFFF window (when the memory map select allows
+//! it). Text and CGA modes keep their screen in ordinary RAM at B0000-BFFFF, read by the
+//! renderer in `vga_draw.rs`; the text font lives in plane 2, as on real hardware.
 
 use crate::clock::{FRAME_PIT_TICKS, LINES_PER_FRAME};
+use machine::hash::fnv64;
 
 /// Scan lines (from the start of a frame) during which the vertical retrace pulse is active.
 const RETRACE_LINES: u64 = 2;
@@ -13,9 +20,48 @@ const BLANK_LINES: u64 = 49;
 
 pub const TEXT_BASE: u32 = 0xB_8000;
 pub const GRAPHICS_BASE: u32 = 0xA_0000;
+pub const VRAM_SIZE: usize = 256 * 1024;
+
+/// Video memory: four 64 KB planes, interleaved (byte `offset * 4 + plane`), as in DOSBox.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Vram(Box<[u8]>);
+
+impl std::fmt::Debug for Vram {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Vram({:016x})", fnv64(&self.0))
+    }
+}
+
+impl std::ops::Deref for Vram {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Vram {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+/// How the attribute and graphics controllers interpret memory (DOSBox `VGA_DetermineMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayKind {
+    Text,
+    /// CGA 4-color graphics (modes 4, 5), from RAM at B8000.
+    Cga4,
+    /// CGA 2-color graphics (mode 6), from RAM at B8000.
+    Cga2,
+    /// 16-color planar graphics (modes 0Dh-12h).
+    Ega,
+    /// 256-color graphics: mode 13h (chain-4) and Mode X (unchained).
+    Vga256,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Vga {
+    /// The mode number of the last BIOS mode set (informational; drawing follows the registers).
     pub mode: u8,
     /// 6-bit RGB per entry.
     pub dac: [[u8; 3]; 256],
@@ -35,7 +81,13 @@ pub struct Vga {
     pub gc: [u8; 9],
     crtc_index: u8,
     pub crtc: [u8; 0x19],
-    misc_output: u8,
+    pub misc_output: u8,
+    pub vram: Vram,
+    latch: u32,
+    /// Set by anything that can change the picture; cleared when a frame is fingerprinted.
+    pub(crate) changed: bool,
+    /// Fingerprint of the video-memory part of the picture as of the last `changed`.
+    pub(crate) display_hash: u64,
 }
 
 impl Default for Vga {
@@ -44,8 +96,8 @@ impl Default for Vga {
     }
 }
 
-/// The 16 standard colors in 6-bit RGB.
-const EGA_COLORS: [[u8; 3]; 16] = [
+/// The 16 CGA colors in 6-bit RGB, as VGA cards emulate them.
+const CGA_COLORS: [[u8; 3]; 16] = [
     [0, 0, 0],
     [0, 0, 42],
     [0, 42, 0],
@@ -109,10 +161,10 @@ const HUE_RING: [[usize; 3]; 24] = [
     [0, 1, 4],
 ];
 
-/// The palette the BIOS loads for mode 13h.
-fn default_256_palette() -> [[u8; 3]; 256] {
+/// The palette the BIOS loads for 256-color modes.
+pub fn default_256_palette() -> [[u8; 3]; 256] {
     let mut dac = [[0; 3]; 256];
-    dac[..16].copy_from_slice(&EGA_COLORS);
+    dac[..16].copy_from_slice(&CGA_COLORS);
     for (i, &g) in GRAY_RAMP.iter().enumerate() {
         dac[16 + i] = [g; 3];
     }
@@ -124,9 +176,40 @@ fn default_256_palette() -> [[u8; 3]; 256] {
     dac // 248–255 stay black
 }
 
+/// The 64-color EGA palette (bits rgbRGB) in the first 64 DAC entries: text, 350/480-line modes.
+pub fn ega_palette() -> [[u8; 3]; 64] {
+    std::array::from_fn(|i| {
+        let level = |hi: usize, lo: usize| (((i >> hi) & 1) * 42 + ((i >> lo) & 1) * 21) as u8;
+        [level(2, 5), level(1, 4), level(0, 3)]
+    })
+}
+
+/// The CGA colors spread over 64 entries (bit 4 = intensity): 200-line graphics modes.
+pub fn cga64_palette() -> [[u8; 3]; 64] {
+    std::array::from_fn(|i| CGA_COLORS[(i & 7) | ((i >> 1) & 8)])
+}
+
+/// Each plane's byte set to `value`.
+fn expand(value: u8) -> u32 {
+    u32::from(value) * 0x0101_0101
+}
+
+/// 0xFF in the bytes of the planes whose bit is set in `planes`.
+fn fill(planes: u8) -> u32 {
+    (0..4).filter(|p| planes & (1 << p) != 0).fold(0, |acc, p| acc | (0xFF << (8 * p)))
+}
+
+/// Where a chain-4 CPU address lands in interleaved memory (DOSBox `ToLinear`).
+pub fn chained_index(address: u32) -> usize {
+    (((address & !3) << 2) + (address & 3)) as usize & (VRAM_SIZE - 1)
+}
+
+/// Font block offsets in plane 2, selected by the character map select register.
+pub const FONT_BLOCKS: [u32; 8] = [0x0000, 0x4000, 0x8000, 0xC000, 0x2000, 0x6000, 0xA000, 0xE000];
+
 impl Vga {
     pub fn new() -> Self {
-        let mut vga = Self {
+        Self {
             mode: 3,
             dac: [[0; 3]; 256],
             dac_write_index: 0,
@@ -136,7 +219,7 @@ impl Vga {
             dac_latch: [0; 3],
             dac_reading: false,
             pel_mask: 0xFF,
-            attr_index: 0,
+            attr_index: 0x20,
             attr_expect_data: false,
             attr: [0; 0x15],
             seq_index: 0,
@@ -146,41 +229,172 @@ impl Vga {
             crtc_index: 0,
             crtc: [0; 0x19],
             misc_output: 0x67,
-        };
-        vga.set_mode(3);
-        vga
-    }
-
-    /// Resets the registers and palette the way the video BIOS does on a mode set.
-    pub fn set_mode(&mut self, mode: u8) {
-        self.mode = mode;
-        self.pel_mask = 0xFF;
-        if mode == 0x13 {
-            self.dac = default_256_palette();
-            self.seq[4] = 0x0E; // chain-4
-            self.attr[0x10] = 0x41;
-        } else {
-            // Text modes: the 64-color EGA palette in the DAC, attribute registers mapping the
-            // 16 text colors onto it.
-            for i in 0..64u8 {
-                let level = |hi: u8, lo: u8| ((i >> hi) & 1) * 42 + ((i >> lo) & 1) * 21;
-                self.dac[usize::from(i)] = [level(2, 5), level(1, 4), level(0, 3)];
-            }
-            const TEXT_ATTR: [u8; 16] = [0, 1, 2, 3, 4, 5, 20, 7, 56, 57, 58, 59, 60, 61, 62, 63];
-            self.attr[..16].copy_from_slice(&TEXT_ATTR);
-            self.seq[4] = 0x02;
-            self.attr[0x10] = 0x0C;
+            vram: Vram(vec![0; VRAM_SIZE].into_boxed_slice()),
+            latch: 0,
+            changed: true,
+            display_hash: 0,
         }
     }
 
-    /// Chained 256-color mode with chain-4 still enabled (what this module can display).
-    pub fn is_chained_256(&self) -> bool {
-        self.mode == 0x13 && self.seq[4] & 0x08 != 0
+    /// Loads one entry of the BIOS parameter table into the registers (`vga_params.rs` layout).
+    pub fn load_parameters(&mut self, params: &[u8; 64]) {
+        self.seq[0] = 0x03;
+        self.seq[1..5].copy_from_slice(&params[5..9]);
+        self.misc_output = params[9];
+        self.crtc.copy_from_slice(&params[10..35]);
+        self.attr[..0x14].copy_from_slice(&params[35..55]);
+        self.attr[0x14] = 0;
+        self.gc.copy_from_slice(&params[55..64]);
+        self.attr_index = 0x20;
+        self.attr_expect_data = false;
+        self.pel_mask = 0xFF;
+        self.changed = true;
+    }
+
+    pub fn display_kind(&self) -> DisplayKind {
+        if self.attr[0x10] & 0x01 == 0 {
+            DisplayKind::Text
+        } else if self.gc[5] & 0x40 != 0 {
+            DisplayKind::Vga256
+        } else if self.gc[5] & 0x20 != 0 {
+            DisplayKind::Cga4
+        } else if self.gc[6] & 0x0C == 0x0C {
+            DisplayKind::Cga2
+        } else {
+            DisplayKind::Ega
+        }
+    }
+
+    /// The CPU's A0000-AFFFF window reaches video memory (memory map select 0 or 1).
+    pub fn maps_a0000(&self) -> bool {
+        self.gc[6] & 0x0C <= 0x04
+    }
+
+    fn chain4(&self) -> bool {
+        self.seq[4] & 0x08 != 0
+    }
+
+    /// The four plane bytes at `offset`, plane 0 in the low byte.
+    pub fn planes(&self, offset: u32) -> u32 {
+        let at = (offset as usize & 0xFFFF) * 4;
+        u32::from_le_bytes([self.vram[at], self.vram[at + 1], self.vram[at + 2], self.vram[at + 3]])
+    }
+
+    fn set_planes(&mut self, offset: u32, value: u32) {
+        let at = (offset as usize & 0xFFFF) * 4;
+        self.vram[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn raster_op(&self, input: u32, mask: u32) -> u32 {
+        match (self.gc[3] >> 3) & 3 {
+            0 => (input & mask) | (self.latch & !mask),
+            1 => (input | !mask) & self.latch,
+            2 => (input & mask) | self.latch,
+            _ => (input & mask) ^ self.latch,
+        }
+    }
+
+    /// The four plane bytes a CPU write of `value` produces, before the map mask.
+    fn mode_operation(&self, value: u8) -> u32 {
+        let rotate = u32::from(self.gc[3] & 7);
+        let bit_mask = expand(self.gc[8]);
+        match self.gc[5] & 3 {
+            0 => {
+                let enable = fill(self.gc[1] & 0x0F);
+                let full = (expand(value.rotate_right(rotate)) & !enable) | fill(self.gc[0] & self.gc[1] & 0x0F);
+                self.raster_op(full, bit_mask)
+            }
+            1 => self.latch,
+            2 => self.raster_op(fill(value & 0x0F), bit_mask),
+            _ => self.raster_op(fill(self.gc[0] & 0x0F), expand(value.rotate_right(rotate)) & bit_mask),
+        }
+    }
+
+    /// A CPU read at `offset` in the A0000 window: loads the latches (unchained) and applies the
+    /// read mode.
+    pub fn cpu_read(&mut self, offset: u32) -> u8 {
+        let offset = offset & 0xFFFF;
+        if self.chain4() {
+            return self.vram[chained_index(offset)];
+        }
+        self.latch = self.planes(offset);
+        if self.gc[5] & 0x08 == 0 {
+            (self.latch >> (8 * (self.gc[4] & 3))) as u8
+        } else {
+            // Color compare: a bit is set where every plane not marked "don't care" matches.
+            let dont_care = self.gc[7] & 0x0F;
+            let t = (self.latch & fill(dont_care)) ^ fill(self.gc[2] & dont_care);
+            !((t | (t >> 8) | (t >> 16) | (t >> 24)) as u8)
+        }
+    }
+
+    /// A CPU write at `offset` in the A0000 window.
+    pub fn cpu_write(&mut self, offset: u32, value: u8) {
+        let offset = offset & 0xFFFF;
+        self.changed = true;
+        if self.chain4() {
+            self.vram[chained_index(offset)] = value;
+            return;
+        }
+        let data = self.mode_operation(value);
+        let map_mask = fill(self.seq[2] & 0x0F);
+        let old = self.planes(offset);
+        self.set_planes(offset, (old & !map_mask) | (data & map_mask));
+    }
+
+    /// What a CPU read would return, without loading the latches (for tools and tests).
+    pub fn peek(&self, offset: u32) -> u8 {
+        let offset = offset & 0xFFFF;
+        if self.chain4() {
+            self.vram[chained_index(offset)]
+        } else {
+            (self.planes(offset) >> (8 * (self.gc[4] & 3))) as u8
+        }
+    }
+
+    /// Writes character patterns into a font block of plane 2, 32 bytes per character, as the
+    /// BIOS font loader does (DOSBox `load_font`).
+    pub fn load_font(&mut self, block: u8, first: usize, height: usize, glyphs: &[u8]) {
+        let base = FONT_BLOCKS[usize::from(block & 7)] as usize;
+        for (i, glyph) in glyphs.chunks(height.max(1)).enumerate() {
+            for (line, &bits) in glyph.iter().enumerate() {
+                let offset = (base + (first + i) * 32 + line) & 0xFFFF;
+                self.vram[offset * 4 + 2] = bits;
+            }
+        }
+        self.changed = true;
+    }
+
+    /// Plane 2 byte `offset` (font data).
+    pub fn font_byte(&self, offset: u32) -> u8 {
+        self.vram[(offset as usize & 0xFFFF) * 4 + 2]
+    }
+
+    /// Clears all four planes.
+    pub fn clear_memory(&mut self) {
+        self.vram.fill(0);
+        self.changed = true;
+    }
+
+    /// I/O ports 3B4h/3B5h/3BAh answer when the CRTC is at the monochrome address
+    /// (miscellaneous output bit 0 clear), 3D4h/3D5h/3DAh when it is at the color address.
+    fn crtc_port(&self, port: u16) -> Option<u16> {
+        let color = self.misc_output & 1 != 0;
+        match port {
+            0x3B4 | 0x3B5 | 0x3BA if !color => Some(port + 0x20),
+            0x3D4 | 0x3D5 | 0x3DA if color => Some(port),
+            0x3B0..=0x3BF | 0x3D0..=0x3DF => None,
+            _ => Some(port),
+        }
     }
 
     pub fn read(&mut self, port: u16, now: u64) -> u8 {
+        let Some(port) = self.crtc_port(port) else { return 0xFF };
         match port {
+            0x3C0 => self.attr_index,
             0x3C1 => self.attr.get(usize::from(self.attr_index & 0x1F)).copied().unwrap_or(0),
+            0x3C2 => 0x70,
+            0x3C4 => self.seq_index,
             0x3C5 => self.seq.get(usize::from(self.seq_index)).copied().unwrap_or(0),
             0x3C6 => self.pel_mask,
             0x3C7 => {
@@ -200,21 +414,23 @@ impl Vga {
                 }
                 value
             }
+            0x3CA => 0x00,
             0x3CC => self.misc_output,
+            0x3CE => self.gc_index,
             0x3CF => self.gc.get(usize::from(self.gc_index)).copied().unwrap_or(0),
+            0x3D4 => self.crtc_index,
             0x3D5 => self.crtc.get(usize::from(self.crtc_index)).copied().unwrap_or(0),
             0x3DA => {
                 self.attr_expect_data = false;
                 status(now)
             }
-            0x3C4 => self.seq_index,
-            0x3CE => self.gc_index,
-            0x3D4 => self.crtc_index,
             _ => 0xFF,
         }
     }
 
     pub fn write(&mut self, port: u16, value: u8) {
+        let Some(port) = self.crtc_port(port) else { return };
+        self.changed = true;
         match port {
             0x3C0 => {
                 if self.attr_expect_data {
@@ -222,7 +438,7 @@ impl Vga {
                         *r = value;
                     }
                 } else {
-                    self.attr_index = value;
+                    self.attr_index = value & 0x3F;
                 }
                 self.attr_expect_data = !self.attr_expect_data;
             }
@@ -261,7 +477,14 @@ impl Vga {
             }
             0x3D4 => self.crtc_index = value,
             0x3D5 => {
-                if let Some(r) = self.crtc.get_mut(usize::from(self.crtc_index)) {
+                let index = usize::from(self.crtc_index);
+                // CRTC registers 0-7 are write-protected by bit 7 of register 11h, except the
+                // line compare bit 8 in register 7.
+                if index <= 7 && self.crtc[0x11] & 0x80 != 0 {
+                    if index == 7 {
+                        self.crtc[7] = (self.crtc[7] & !0x10) | (value & 0x10);
+                    }
+                } else if let Some(r) = self.crtc.get_mut(index) {
                     *r = value;
                 }
             }
@@ -285,6 +508,21 @@ pub fn status(now: u64) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn set(vga: &mut Vga, index_port: u16, index: u8, value: u8) {
+        vga.write(index_port, index);
+        vga.write(index_port + 1, value);
+    }
+
+    /// A VGA in mode 12h-like planar state: unchained, write mode 0, all planes enabled.
+    fn planar() -> Vga {
+        let mut vga = Vga::new();
+        set(&mut vga, 0x3C4, 4, 0x06);
+        set(&mut vga, 0x3C4, 2, 0x0F);
+        set(&mut vga, 0x3CE, 5, 0x00);
+        set(&mut vga, 0x3CE, 6, 0x05);
+        vga
+    }
 
     #[test]
     fn dac_write_and_read_back() {
@@ -311,19 +549,115 @@ mod tests {
     }
 
     #[test]
-    fn mode_13h_palette() {
+    fn palettes() {
+        let dac = default_256_palette();
+        assert_eq!(dac[15], [63, 63, 63]);
+        assert_eq!(dac[31], [63, 63, 63]);
+        assert_eq!(dac[32], [0, 0, 63], "blue starts the first hue ring");
+        assert_eq!(dac[40], [63, 0, 0]);
+        assert_eq!(dac[104], [0, 0, 28], "medium-intensity ring");
+        assert_eq!(dac[247], [11, 12, 16]);
+        assert_eq!(dac[248], [0, 0, 0]);
+        let ega = ega_palette();
+        assert_eq!((ega[6], ega[20], ega[63]), ([42, 42, 0], [42, 21, 0], [63, 63, 63]));
+        let cga = cga64_palette();
+        assert_eq!((cga[6], cga[0x14], cga[0x17]), ([42, 21, 0], [63, 21, 21], [63, 63, 63]));
+    }
+
+    #[test]
+    fn chain4_writes_go_to_plane_address_mod_4() {
         let mut vga = Vga::new();
-        vga.set_mode(0x13);
-        assert!(vga.is_chained_256());
-        assert_eq!(vga.dac[15], [63, 63, 63]);
-        assert_eq!(vga.dac[31], [63, 63, 63]);
-        assert_eq!(vga.dac[32], [0, 0, 63], "blue starts the first hue ring");
-        assert_eq!(vga.dac[40], [63, 0, 0]);
-        assert_eq!(vga.dac[104], [0, 0, 28], "medium-intensity ring");
-        assert_eq!(vga.dac[247], [11, 12, 16]);
-        assert_eq!(vga.dac[248], [0, 0, 0]);
-        vga.write(0x3C4, 4);
-        vga.write(0x3C5, 0x06); // chain-4 off: Mode X
-        assert!(!vga.is_chained_256());
+        set(&mut vga, 0x3C4, 4, 0x0E);
+        vga.cpu_write(5, 0xAB);
+        assert_eq!(vga.vram[(4 << 2) + 1], 0xAB, "offset 4 (address & !3), plane 1");
+        assert_eq!(vga.cpu_read(5), 0xAB);
+        // Mode X: unchained, plane 1 selected for reading sees the same byte at offset 4.
+        set(&mut vga, 0x3C4, 4, 0x06);
+        set(&mut vga, 0x3CE, 4, 1);
+        assert_eq!(vga.cpu_read(4), 0xAB);
+    }
+
+    #[test]
+    fn map_mask_selects_planes() {
+        let mut vga = planar();
+        set(&mut vga, 0x3C4, 2, 0x05);
+        vga.cpu_write(10, 0x5A);
+        assert_eq!(vga.planes(10), 0x005A_005A);
+    }
+
+    #[test]
+    fn set_reset_and_bit_mask() {
+        let mut vga = planar();
+        set(&mut vga, 0x3CE, 0, 0x0C); // set/reset color 12
+        set(&mut vga, 0x3CE, 1, 0x0F); // enabled on all planes
+        set(&mut vga, 0x3CE, 8, 0xF0); // only the left four pixels
+        vga.cpu_read(0); // latch the (zero) background
+        vga.cpu_write(0, 0x00);
+        assert_eq!(vga.planes(0), 0xF0F0_0000, "planes 2 and 3 set in the masked bits");
+    }
+
+    #[test]
+    fn write_mode_1_copies_latches() {
+        let mut vga = planar();
+        vga.set_planes(100, 0x1122_3344);
+        set(&mut vga, 0x3CE, 5, 0x01);
+        vga.cpu_read(100);
+        vga.cpu_write(200, 0x00);
+        assert_eq!(vga.planes(200), 0x1122_3344);
+    }
+
+    #[test]
+    fn write_mode_2_and_xor() {
+        let mut vga = planar();
+        set(&mut vga, 0x3CE, 5, 0x02);
+        set(&mut vga, 0x3CE, 8, 0x81);
+        vga.cpu_read(0);
+        vga.cpu_write(0, 0x05); // color 5 at pixels 0 and 7
+        assert_eq!(vga.planes(0), 0x0081_0081);
+        set(&mut vga, 0x3CE, 3, 0x18); // XOR
+        set(&mut vga, 0x3CE, 8, 0x01);
+        vga.cpu_read(0);
+        vga.cpu_write(0, 0x0F); // pixel 7 becomes 5 ^ 15 = 10
+        assert_eq!(vga.planes(0), 0x0180_0180);
+    }
+
+    #[test]
+    fn write_mode_3_uses_rotated_data_as_mask() {
+        let mut vga = planar();
+        set(&mut vga, 0x3CE, 5, 0x03);
+        set(&mut vga, 0x3CE, 0, 0x02); // color 2
+        set(&mut vga, 0x3CE, 3, 0x01); // rotate right by 1
+        vga.cpu_read(0);
+        vga.cpu_write(0, 0x03); // rotated: 0x81
+        assert_eq!(vga.planes(0), 0x0000_8100);
+    }
+
+    #[test]
+    fn read_mode_1_compares_colors() {
+        let mut vga = planar();
+        // Pixels: bit 7 color 3, bit 6 color 1, the rest 0.
+        vga.set_planes(0, 0x0000_80C0);
+        set(&mut vga, 0x3CE, 5, 0x08);
+        set(&mut vga, 0x3CE, 2, 0x03);
+        set(&mut vga, 0x3CE, 7, 0x0F);
+        assert_eq!(vga.cpu_read(0), 0x80);
+        set(&mut vga, 0x3CE, 7, 0x01); // only plane 0 matters: colors 1 and 3 both match
+        assert_eq!(vga.cpu_read(0), 0xC0);
+    }
+
+    #[test]
+    fn crtc_write_protect_and_mono_ports() {
+        let mut vga = Vga::new();
+        set(&mut vga, 0x3D4, 0x11, 0x80);
+        set(&mut vga, 0x3D4, 0x01, 0x55);
+        assert_eq!(vga.crtc[1], 0);
+        set(&mut vga, 0x3D4, 0x07, 0xFF);
+        assert_eq!(vga.crtc[7], 0x10, "only line compare bit 8 gets through");
+        // Color CRTC address: 3B4h is not decoded.
+        set(&mut vga, 0x3B4, 0x0C, 0x12);
+        assert_eq!(vga.crtc[0x0C], 0);
+        vga.write(0x3C2, 0x66);
+        set(&mut vga, 0x3B4, 0x0C, 0x12);
+        assert_eq!(vga.crtc[0x0C], 0x12);
     }
 }

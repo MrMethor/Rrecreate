@@ -11,7 +11,8 @@ use crate::clock::PIT_HZ;
 use crate::fonts;
 use crate::keyboard::scancode_ascii;
 use crate::machine::Machine;
-use crate::vga::TEXT_BASE;
+use crate::vga::{self, DisplayKind, TEXT_BASE};
+use crate::vga_params;
 
 pub const ROM_SEGMENT: u16 = 0xF000;
 /// ROM fonts (offsets in the BIOS segment). The first half of the 8×8 font is also at FA6Eh,
@@ -38,12 +39,15 @@ pub const BDA_CURSOR: u32 = 0x450;
 pub const BDA_CURSOR_SHAPE: u32 = 0x460;
 pub const BDA_ACTIVE_PAGE: u32 = 0x462;
 pub const BDA_CRTC_PORT: u32 = 0x463;
+pub const BDA_CGA_MODE: u32 = 0x465;
+pub const BDA_CGA_PALETTE: u32 = 0x466;
 pub const BDA_TICKS: u32 = 0x46C;
 pub const BDA_MIDNIGHT: u32 = 0x470;
 pub const BDA_KBD_START: u32 = 0x480;
 pub const BDA_KBD_END: u32 = 0x482;
 pub const BDA_ROWS: u32 = 0x484;
 pub const BDA_CHAR_HEIGHT: u32 = 0x485;
+pub const BDA_VIDEO_CONTROL: u32 = 0x487;
 
 /// Keyboard buffer bounds as offsets from segment 0040h.
 const KBD_BUFFER_START: u16 = 0x1E;
@@ -360,22 +364,45 @@ pub(crate) fn pop_key(m: &mut Machine) -> Option<u16> {
 
 // ---- video ----
 //
-// Character output in graphics modes, graphics scrolling, the ROM font pointers and the INT 10h
-// font functions follow DOSBox Staging `src/ints/int10_char.cpp`, `int10.cpp` and
-// `int10_modes.cpp` (GPL-2.0-or-later).
+// Ported from DOSBox Staging `src/ints/int10_modes.cpp`, `int10_char.cpp`, `int10_put_pixel.cpp`,
+// `int10_memory.cpp` and `int10.cpp` (GPL-2.0-or-later): mode sets load the registers from the
+// VGA parameter table (`vga_params.rs`); character output, scrolling and pixels work in text,
+// CGA, planar EGA/VGA and 256-color modes; text fonts are loaded into plane 2.
 
-fn is_text_mode(mode: u8) -> bool {
-    mode <= 3 || mode == 7
+/// Entry of the parameter table a mode number uses (400-line text, as a VGA BIOS sets it).
+fn parameter_entry(mode: u8) -> Option<usize> {
+    Some(match mode {
+        0 | 1 => 0x17,
+        2 | 3 => 0x18,
+        4..=6 => usize::from(mode),
+        7 => 0x19,
+        0x0D | 0x0E => usize::from(mode),
+        0x0F => 0x11,
+        0x10 => 0x12,
+        0x11 => 0x1A,
+        0x12 => 0x1B,
+        0x13 => 0x1C,
+        _ => return None,
+    })
 }
 
-/// Character height of a mode's ROM font, and its number of text rows.
-fn font_metrics(mode: u8) -> (u8, u8) {
-    match mode {
-        0..=3 | 7 => (16, 25),
-        0x0F | 0x10 => (14, 25),
-        0x11 | 0x12 => (16, 30),
-        _ => (8, 25),
-    }
+fn display_kind(m: &Machine) -> DisplayKind {
+    m.devices.vga.display_kind()
+}
+
+fn is_text(m: &Machine) -> bool {
+    display_kind(m) == DisplayKind::Text
+}
+
+/// Screen size of a BIOS graphics mode in pixels (the mouse driver scales to it).
+pub(crate) fn graphics_size(mode: u8) -> (i32, i32) {
+    let width = if matches!(mode, 4 | 5 | 0x0D | 0x13) { 320 } else { 640 };
+    let height = match mode {
+        0x0F | 0x10 => 350,
+        0x11 | 0x12 => 480,
+        _ => 200,
+    };
+    (width, height)
 }
 
 /// ROM offset of the font a mode's INT 43h vector points at.
@@ -387,23 +414,81 @@ fn font_for_height(height: u8) -> u16 {
     }
 }
 
-pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
-    let supported = is_text_mode(mode) || mode == 0x13;
-    if supported {
-        m.devices.vga.set_mode(mode);
-    } else {
-        m.devices.vga.mode = mode;
-        m.diagnostic(format!("video mode {mode:02X}h is not emulated; its frames are raw memory hashes"));
+fn rom_font(height: u8) -> &'static [u8] {
+    match height {
+        14 => &fonts::FONT_8X14,
+        16 => &fonts::FONT_8X16,
+        _ => &fonts::FONT_8X8,
     }
-    let text = is_text_mode(mode);
-    let columns: u16 = match mode {
-        0 | 1 | 4 | 5 | 0x0D | 0x13 => 40,
-        _ => 80,
+}
+
+/// Loads a ROM font into a plane-2 font block, with the 9-dot alternate glyphs when the
+/// sequencer is in 9-dot mode (DOSBox `INT10_ReloadFont`).
+fn load_rom_font(m: &mut Machine, block: u8, height: u8) {
+    let vga = &mut m.devices.vga;
+    vga.load_font(block, 0, usize::from(height), rom_font(height));
+    let nine_dot = vga.seq[1] & 0x01 == 0;
+    let alternates: &[u8] = match height {
+        14 if nine_dot => &fonts::FONT_9X14_ALTERNATE,
+        16 if nine_dot => &fonts::FONT_9X16_ALTERNATE,
+        _ => &[],
     };
-    let (height, rows) = font_metrics(mode);
+    let mut rest = alternates;
+    while let [ch, glyph @ ..] = rest
+        && *ch != 0
+        && glyph.len() >= usize::from(height)
+    {
+        vga.load_font(block, usize::from(*ch), usize::from(height), &glyph[..usize::from(height)]);
+        rest = &glyph[usize::from(height)..];
+    }
+}
+
+/// CGA mode control register values the BIOS keeps at 40:65h, per mode.
+const CGA_MODE_CONTROL: [u8; 8] = [0x2C, 0x28, 0x2D, 0x29, 0x2A, 0x2E, 0x1E, 0x29];
+
+pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
+    let Some(entry) = parameter_entry(mode) else {
+        m.diagnostic(format!("video mode {mode:02X}h is not emulated"));
+        return;
+    };
+    let params = &vga_params::VGA_PARAMETERS[entry];
+    let text = mode <= 3 || mode == 7;
+    let vga = &mut m.devices.vga;
+    vga.load_parameters(params);
+    vga.mode = mode;
+    if text {
+        // Planes 0 and 1 with odd/even addressing, as on IBM's VGA (DOSBox's table dump has
+        // all planes enabled, which only matters for its own text-mode memory handler).
+        vga.seq[2] = 0x03;
+        vga.seq[4] = 0x02;
+    }
+    match mode {
+        0x13 => vga.dac = vga::default_256_palette(),
+        4..=6 | 0x0D | 0x0E => vga.dac[..64].copy_from_slice(&vga::cga64_palette()),
+        _ => vga.dac[..64].copy_from_slice(&vga::ega_palette()),
+    }
+    let (columns, rows, height) = (params[0], params[1], params[2]);
+    let page_size = u16::from_le_bytes([params[3], params[4]]);
+    if clear {
+        if text || mode <= 6 {
+            let (base, fill) = match mode {
+                7 => (0xB_0000, 0x0720),
+                0..=3 => (TEXT_BASE, 0x0720),
+                _ => (TEXT_BASE, 0),
+            };
+            for i in 0..0x4000u32 {
+                m.mem.write_u16(base + i * 2, fill);
+            }
+        } else {
+            m.devices.vga.clear_memory();
+        }
+    }
+    if text {
+        load_rom_font(m, 0, height);
+    }
     m.mem.write_u8(BDA_VIDEO_MODE, mode);
-    m.mem.write_u16(BDA_COLUMNS, columns);
-    m.mem.write_u16(BDA_PAGE_SIZE, if text { columns * 25 * 2 } else { 0 });
+    m.mem.write_u16(BDA_COLUMNS, u16::from(columns));
+    m.mem.write_u16(BDA_PAGE_SIZE, page_size);
     m.mem.write_u16(BDA_PAGE_OFFSET, 0);
     for page in 0..8 {
         m.mem.write_u16(BDA_CURSOR + page * 2, 0);
@@ -411,22 +496,20 @@ pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
     // Graphics modes leave the cursor shape word 0; some programs test it to detect them.
     m.mem.write_u16(BDA_CURSOR_SHAPE, if text { 0x0607 } else { 0 });
     m.mem.write_u8(BDA_ACTIVE_PAGE, 0);
-    m.mem.write_u8(BDA_ROWS, rows - 1);
+    m.mem.write_u16(BDA_CRTC_PORT, if matches!(mode, 7 | 0x0F) { 0x3B4 } else { 0x3D4 });
+    m.mem.write_u8(BDA_CGA_MODE, CGA_MODE_CONTROL.get(usize::from(mode)).copied().unwrap_or(0x29));
+    m.mem.write_u8(BDA_CGA_PALETTE, if mode == 6 { 0x3F } else { 0x30 });
+    m.mem.write_u8(BDA_ROWS, rows);
     m.mem.write_u16(BDA_CHAR_HEIGHT, u16::from(height));
+    m.mem.write_u8(BDA_VIDEO_CONTROL, 0x60 | if clear { 0 } else { 0x80 });
     let font = if text { ROM_FONT_8X8 } else { font_for_height(height) };
     set_vector(m, 0x43, ROM_SEGMENT, font);
-    if clear {
-        if text {
-            for i in 0..0x4000u32 {
-                m.mem.write_u16(TEXT_BASE + i * 2, 0x0720);
-            }
-        } else {
-            for i in 0..0x1_0000u32 {
-                m.mem.write_u8(0xA_0000 + i, 0);
-            }
-        }
-    }
     crate::mouse::video_mode_changed(m);
+}
+
+fn crtc_write(m: &mut Machine, index: usize, value: u8) {
+    m.devices.vga.crtc[index] = value;
+    m.devices.vga.changed = true;
 }
 
 fn cursor(m: &Machine, page: u8) -> (u16, u16) {
@@ -434,16 +517,74 @@ fn cursor(m: &Machine, page: u8) -> (u16, u16) {
     (u16::from(m.mem.read_u8(at)), u16::from(m.mem.read_u8(at + 1)))
 }
 
+/// Moves a page's cursor; on the active page the CRTC cursor follows (DOSBox
+/// `INT10_SetCursorPos`).
 fn set_cursor(m: &mut Machine, page: u8, column: u16, row: u16) {
     let at = BDA_CURSOR + u32::from(page & 7) * 2;
     m.mem.write_u8(at, column as u8);
     m.mem.write_u8(at + 1, row as u8);
+    if page & 7 == m.mem.read_u8(BDA_ACTIVE_PAGE) {
+        let columns = m.mem.read_u16(BDA_COLUMNS);
+        let page_start = u16::from(page & 7).wrapping_mul(m.mem.read_u16(BDA_PAGE_SIZE)) / 2;
+        let address = page_start.wrapping_add(row.wrapping_mul(columns)).wrapping_add(column);
+        crtc_write(m, 0x0E, (address >> 8) as u8);
+        crtc_write(m, 0x0F, address as u8);
+    }
+}
+
+/// INT 10h AH=01h: stores the cursor shape and programs the CRTC, scaling CGA-style shapes to
+/// the character height in text modes (DOSBox `INT10_SetCursorShape`).
+fn set_cursor_shape(m: &mut Machine, first: u8, last: u8) {
+    m.mem.write_u16(BDA_CURSOR_SHAPE, (u16::from(first) << 8) | u16::from(last));
+    let (mut first, mut last) = (first, last);
+    let emulate = is_text(m) && m.mem.read_u8(BDA_VIDEO_CONTROL) & 0x08 == 0;
+    if emulate && (first | last) & 0xE0 == 0 {
+        let height = (m.mem.read_u16(BDA_CHAR_HEIGHT) as u8).wrapping_sub(1);
+        if last < first {
+            if last != 0 {
+                first = last;
+                last = height;
+            }
+        } else if ((first | last) >= height || last != height.wrapping_sub(1) || first != height) && last > 3 {
+            if first + 2 < last {
+                if first > 2 {
+                    first = height.div_ceil(2);
+                }
+                last = height;
+            } else {
+                first = first.wrapping_sub(last).wrapping_add(height);
+                last = height;
+                if height > 0x0C {
+                    first = first.wrapping_sub(1);
+                    last = last.wrapping_sub(1);
+                }
+            }
+        }
+    }
+    crtc_write(m, 0x0A, first);
+    crtc_write(m, 0x0B, last);
+}
+
+/// INT 10h AH=05h: shows another page (DOSBox `INT10_SetActivePage`).
+fn set_active_page(m: &mut Machine, page: u8) {
+    if page > 7 {
+        return;
+    }
+    let offset = u16::from(page).wrapping_mul(m.mem.read_u16(BDA_PAGE_SIZE));
+    m.mem.write_u16(BDA_PAGE_OFFSET, offset);
+    let start = if m.devices.vga.mode < 8 { offset >> 1 } else { offset };
+    crtc_write(m, 0x0C, (start >> 8) as u8);
+    crtc_write(m, 0x0D, start as u8);
+    m.mem.write_u8(BDA_ACTIVE_PAGE, page);
+    let (column, row) = cursor(m, page);
+    set_cursor(m, page, column, row);
 }
 
 fn text_cell(m: &Machine, page: u8, column: u16, row: u16) -> u32 {
     let columns = u32::from(m.mem.read_u16(BDA_COLUMNS).max(1));
     let page_size = u32::from(m.mem.read_u16(BDA_PAGE_SIZE));
-    TEXT_BASE + u32::from(page & 7) * page_size + (u32::from(row) * columns + u32::from(column)) * 2
+    let base = if m.devices.vga.mode == 7 { 0xB_0000 } else { TEXT_BASE };
+    base + u32::from(page & 7) * page_size + (u32::from(row) * columns + u32::from(column)) * 2
 }
 
 /// Columns and rows of the current mode's character grid.
@@ -455,17 +596,108 @@ fn char_height(m: &Machine) -> u32 {
     u32::from(m.mem.read_u16(BDA_CHAR_HEIGHT).clamp(1, 32))
 }
 
-fn put_pixel_256(m: &mut Machine, x: u32, y: u32, color: u8) {
-    if x < 320 && y < 200 {
-        m.mem.write_u8(0xA_0000 + y * 320 + x, color);
+/// A byte of video memory as the CPU sees it: the A0000 window goes through the VGA (latches,
+/// read mode), other addresses are RAM.
+fn video_read(m: &mut Machine, addr: u32) -> u8 {
+    if addr & 0xFFFF_0000 == vga::GRAPHICS_BASE { m.devices.vga.cpu_read(addr & 0xFFFF) } else { m.mem.read_u8(addr) }
+}
+
+fn video_write(m: &mut Machine, addr: u32, value: u8) {
+    if addr & 0xFFFF_0000 == vga::GRAPHICS_BASE {
+        m.devices.vga.cpu_write(addr & 0xFFFF, value);
+    } else {
+        m.mem.write_u8(addr, value);
     }
 }
 
-/// Writes one character at a cell. In text modes `attribute` is stored only if `use_attribute`;
-/// in graphics modes it is the foreground color, and in 256-color modes `page` is the
-/// background color (as on a real VGA BIOS).
+/// INT 10h AH=0Ch: color bit 7 XORs the pixel in CGA and planar modes.
+pub(crate) fn put_pixel(m: &mut Machine, x: u16, y: u16, page: u8, color: u8) {
+    let (x32, y32) = (u32::from(x), u32::from(y));
+    match display_kind(m) {
+        DisplayKind::Cga4 => {
+            let at = TEXT_BASE + (y32 >> 1) * 80 + (x32 >> 2) + (y32 & 1) * 0x2000;
+            let shift = 2 * (3 - (x & 3));
+            let old = m.mem.read_u8(at);
+            let new = if color & 0x80 != 0 {
+                old ^ ((color & 3) << shift)
+            } else {
+                (old & !(3 << shift)) | ((color & 3) << shift)
+            };
+            m.mem.write_u8(at, new);
+        }
+        DisplayKind::Cga2 => {
+            let at = TEXT_BASE + (y32 >> 1) * 80 + (x32 >> 3) + (y32 & 1) * 0x2000;
+            let shift = 7 - (x & 7);
+            let old = m.mem.read_u8(at);
+            let new = if color & 0x80 != 0 {
+                old ^ ((color & 1) << shift)
+            } else {
+                (old & !(1 << shift)) | ((color & 1) << shift)
+            };
+            m.mem.write_u8(at, new);
+        }
+        DisplayKind::Ega => {
+            let vga = &mut m.devices.vga;
+            vga.seq[2] = 0x0F;
+            vga.gc[8] = 0x80 >> (x & 7);
+            vga.gc[0] = color;
+            vga.gc[1] = 0x0F;
+            if color & 0x80 != 0 {
+                vga.gc[3] = 0x18;
+            }
+            let page_size = u32::from(m.mem.read_u16(BDA_PAGE_SIZE));
+            let columns = u32::from(m.mem.read_u16(BDA_COLUMNS));
+            let offset = page_size * u32::from(page) + ((y32 * columns * 8 + x32) >> 3);
+            let vga = &mut m.devices.vga;
+            vga.cpu_read(offset);
+            vga.cpu_write(offset, 0xFF);
+            vga.gc[8] = 0xFF;
+            vga.gc[1] = 0;
+            if color & 0x80 != 0 {
+                vga.gc[3] = 0;
+            }
+        }
+        DisplayKind::Vga256 => m.devices.vga.cpu_write(y32 * 320 + x32, color),
+        DisplayKind::Text => {}
+    }
+}
+
+/// INT 10h AH=0Dh.
+pub(crate) fn get_pixel(m: &mut Machine, x: u16, y: u16, page: u8) -> u8 {
+    let (x32, y32) = (u32::from(x), u32::from(y));
+    match display_kind(m) {
+        DisplayKind::Cga4 => {
+            let at = TEXT_BASE + (y32 >> 1) * 80 + (x32 >> 2) + (y32 & 1) * 0x2000;
+            (m.mem.read_u8(at) >> (2 * (3 - (x & 3)))) & 3
+        }
+        DisplayKind::Cga2 => {
+            let at = TEXT_BASE + (y32 >> 1) * 80 + (x32 >> 3) + (y32 & 1) * 0x2000;
+            (m.mem.read_u8(at) >> (7 - (x & 7))) & 1
+        }
+        DisplayKind::Ega => {
+            let page_size = u32::from(m.mem.read_u16(BDA_PAGE_SIZE));
+            let columns = u32::from(m.mem.read_u16(BDA_COLUMNS));
+            let offset = page_size * u32::from(page) + ((y32 * columns * 8 + x32) >> 3);
+            let shift = 7 - (x & 7);
+            let vga = &mut m.devices.vga;
+            let mut color = 0;
+            for plane in 0..4 {
+                vga.gc[4] = plane;
+                color |= ((vga.cpu_read(offset) >> shift) & 1) << plane;
+            }
+            color
+        }
+        DisplayKind::Vga256 => m.devices.vga.cpu_read(y32 * 320 + x32),
+        DisplayKind::Text => 0,
+    }
+}
+
+/// Writes one character at a cell (DOSBox `WriteChar`). In text modes `attribute` is stored
+/// only if `use_attribute`; in graphics modes it is the color (bit 7: XOR), and in 256-color
+/// modes `page` is the background color.
 fn write_char(m: &mut Machine, column: u16, row: u16, page: u8, ch: u8, attribute: u8, use_attribute: bool) {
-    if is_text_mode(m.devices.vga.mode) {
+    let kind = display_kind(m);
+    if kind == DisplayKind::Text {
         let cell = text_cell(m, page, column, row);
         m.mem.write_u8(cell, ch);
         if use_attribute {
@@ -473,63 +705,139 @@ fn write_char(m: &mut Machine, column: u16, row: u16, page: u8, ch: u8, attribut
         }
         return;
     }
-    if !m.devices.vga.is_chained_256() {
-        let mode = m.devices.vga.mode;
-        m.diagnostic(format!("BIOS text output in video mode {mode:02X}h isn't drawn yet"));
-        return;
-    }
     let height = char_height(m);
-    let (font_offset, font_segment) = (m.mem.read_u16(0x43 * 4), m.mem.read_u16(0x43 * 4 + 2));
+    let cga = matches!(kind, DisplayKind::Cga4 | DisplayKind::Cga2);
+    let (ch, vector) = if cga && ch >= 0x80 { (ch - 0x80, 0x1F) } else { (ch, 0x43) };
+    let (font_offset, font_segment) = (m.mem.read_u16(vector * 4), m.mem.read_u16(vector * 4 + 2));
     let glyph = Machine::lin(font_segment, font_offset) + u32::from(ch) * height;
-    let (x0, y0) = (u32::from(column) * 8, u32::from(row) * height);
-    for line in 0..height {
-        let bits = m.mem.read_u8(glyph + line);
-        for bit in 0..8 {
-            let color = if bits & (0x80 >> bit) != 0 { attribute } else { page };
-            put_pixel_256(m, x0 + bit, y0 + line, color);
-        }
-    }
-}
-
-/// Copies character row `from` to `to`, columns `left..=right`.
-fn copy_row(m: &mut Machine, left: u16, right: u16, from: u16, to: u16, page: u8) {
-    if is_text_mode(m.devices.vga.mode) {
-        for column in left..=right {
-            let value = m.mem.read_u16(text_cell(m, page, column, from));
-            m.mem.write_u16(text_cell(m, page, column, to), value);
-        }
-    } else if m.devices.vga.is_chained_256() {
-        let height = char_height(m);
-        let pitch = 8 * u32::from(grid(m).0);
-        for line in 0..height {
-            let source = 0xA_0000 + (u32::from(from) * height + line) * pitch + 8 * u32::from(left);
-            let dest = 0xA_0000 + (u32::from(to) * height + line) * pitch + 8 * u32::from(left);
-            for x in 0..8 * u32::from(right - left + 1) {
-                let value = m.mem.read_u8(source + x);
-                m.mem.write_u8(dest + x, value);
-            }
-        }
-    }
-}
-
-/// Blanks character row `row`, columns `left..=right`, with `attribute` (a color in graphics).
-fn fill_row(m: &mut Machine, left: u16, right: u16, row: u16, attribute: u8, page: u8) {
-    if is_text_mode(m.devices.vga.mode) {
-        for column in left..=right {
-            m.mem.write_u16(text_cell(m, page, column, row), (u16::from(attribute) << 8) | 0x20);
-        }
-    } else if m.devices.vga.is_chained_256() {
-        let height = char_height(m);
-        let pitch = 8 * u32::from(grid(m).0);
-        for line in 0..height {
-            let dest = 0xA_0000 + (u32::from(row) * height + line) * pitch + 8 * u32::from(left);
-            for x in 0..8 * u32::from(right - left + 1) {
-                m.mem.write_u8(dest + x, attribute);
-            }
-        }
+    let mut attribute = if use_attribute {
+        attribute
     } else {
-        let mode = m.devices.vga.mode;
-        m.diagnostic(format!("BIOS scrolling in video mode {mode:02X}h isn't emulated yet"));
+        match kind {
+            DisplayKind::Cga4 => 3,
+            DisplayKind::Cga2 => 1,
+            _ => 0x0F,
+        }
+    };
+    if m.devices.vga.mode == 6 {
+        attribute = (attribute & 0x80) | 1;
+    }
+    let (background, page) = match kind {
+        DisplayKind::Vga256 => (page, 0),
+        DisplayKind::Ega => {
+            // All planes enabled for EGA modes (DOSBox: "Ultima 1 colour bug").
+            m.devices.vga.seq[2] = 0x0F;
+            (attribute & 0x80, page)
+        }
+        _ => (attribute & 0x80, page),
+    };
+    let (x, y) = (column * 8, row * height as u16);
+    for line in 0..height as u16 {
+        let bits = m.mem.read_u8(glyph + u32::from(line));
+        for bit in 0..8 {
+            let color = if bits & (0x80 >> bit) != 0 { attribute } else { background };
+            put_pixel(m, x + bit, y + line, page, color);
+        }
+    }
+}
+
+/// Copies character row `from` to `to`, columns `left..=right`, on the page at `base`
+/// (DOSBox `*_CopyRow`).
+fn copy_row(m: &mut Machine, left: u16, right: u16, from: u16, to: u16, base: u32) {
+    let (columns, height) = (u32::from(grid(m).0), char_height(m));
+    let (left, count, from, to) = (u32::from(left), u32::from(right - left + 1), u32::from(from), u32::from(to));
+    match display_kind(m) {
+        DisplayKind::Text => {
+            for column in 0..count {
+                let source = base + ((from * columns + left + column) * 2);
+                let dest = base + ((to * columns + left + column) * 2);
+                let value = m.mem.read_u16(source);
+                m.mem.write_u16(dest, value);
+            }
+        }
+        kind @ (DisplayKind::Cga4 | DisplayKind::Cga2) => {
+            let bytes = if kind == DisplayKind::Cga4 { 2 } else { 1 };
+            let pitch = columns * bytes;
+            let lines = height / 2;
+            for line in 0..lines {
+                for bank in [0, 0x2000] {
+                    for x in 0..count * bytes {
+                        let source = base + bank + (from * lines + line) * pitch + left * bytes + x;
+                        let dest = base + bank + (to * lines + line) * pitch + left * bytes + x;
+                        let value = m.mem.read_u8(source);
+                        m.mem.write_u8(dest, value);
+                    }
+                }
+            }
+        }
+        DisplayKind::Ega => {
+            m.devices.vga.gc[5] = 0x01; // write mode 1: copy the latches
+            m.devices.vga.seq[2] = 0x0F;
+            for line in 0..height {
+                for x in 0..count {
+                    let value = video_read(m, base + (from * height + line) * columns + left + x);
+                    video_write(m, base + (to * height + line) * columns + left + x, value);
+                }
+            }
+            m.devices.vga.gc[5] = 0x00;
+        }
+        DisplayKind::Vga256 => {
+            let pitch = 8 * columns;
+            for line in 0..height {
+                for x in 0..8 * count {
+                    let value = video_read(m, base + (from * height + line) * pitch + 8 * left + x);
+                    video_write(m, base + (to * height + line) * pitch + 8 * left + x, value);
+                }
+            }
+        }
+    }
+}
+
+/// Blanks character row `row`, columns `left..=right`, with `attribute` (a color in graphics)
+/// (DOSBox `*_FillRow`).
+fn fill_row(m: &mut Machine, left: u16, right: u16, row: u16, attribute: u8, base: u32) {
+    let (columns, height) = (u32::from(grid(m).0), char_height(m));
+    let (left, count, row) = (u32::from(left), u32::from(right - left + 1), u32::from(row));
+    match display_kind(m) {
+        DisplayKind::Text => {
+            for column in 0..count {
+                m.mem.write_u16(base + (row * columns + left + column) * 2, (u16::from(attribute) << 8) | 0x20);
+            }
+        }
+        kind @ (DisplayKind::Cga4 | DisplayKind::Cga2) => {
+            let bytes = if kind == DisplayKind::Cga4 { 2 } else { 1 };
+            let pitch = columns * bytes;
+            let lines = height / 2;
+            let pattern = (attribute & 3) * 0x55;
+            for line in 0..lines {
+                for bank in [0, 0x2000] {
+                    for x in 0..count * bytes {
+                        m.mem.write_u8(base + bank + (row * lines + line) * pitch + left * bytes + x, pattern);
+                    }
+                }
+            }
+        }
+        DisplayKind::Ega => {
+            let vga = &mut m.devices.vga;
+            vga.gc[8] = 0xFF;
+            vga.gc[0] = attribute;
+            vga.gc[1] = 0x0F;
+            vga.seq[2] = 0x0F;
+            for line in 0..height {
+                for x in 0..count {
+                    video_write(m, base + (row * height + line) * columns + left + x, 0xFF);
+                }
+            }
+            m.devices.vga.gc[1] = 0;
+        }
+        DisplayKind::Vga256 => {
+            let pitch = 8 * columns;
+            for line in 0..height {
+                for x in 0..8 * count {
+                    video_write(m, base + (row * height + line) * pitch + 8 * left + x, attribute);
+                }
+            }
+        }
     }
 }
 
@@ -542,37 +850,49 @@ struct Window {
     right: u16,
 }
 
-/// Scrolls a window up (or down) by `lines`; 0 clears it. Blank rows get `attribute`.
-fn scroll(m: &mut Machine, window: Window, lines: u8, attribute: u8, up: bool) {
+/// Scrolls a window up (or down) by `lines`; 0 clears it. Blank rows get `attribute`. `page`
+/// is a text page, or `None` for the displayed one (DOSBox `INT10_ScrollWindow`).
+fn scroll(m: &mut Machine, window: Window, lines: u8, attribute: u8, up: bool, page: Option<u8>) {
     let (columns, rows) = grid(m);
     let Window { top, left, bottom, right } = window;
     let (bottom, right) = (bottom.min(rows - 1), right.min(columns - 1));
     if top > bottom || left > right {
         return;
     }
-    let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
+    let kind = display_kind(m);
+    let page = if kind == DisplayKind::Text { page } else { None };
+    let start = match kind {
+        DisplayKind::Text if m.devices.vga.mode == 7 => 0xB_0000,
+        DisplayKind::Text | DisplayKind::Cga4 | DisplayKind::Cga2 => TEXT_BASE,
+        DisplayKind::Ega | DisplayKind::Vga256 => vga::GRAPHICS_BASE,
+    };
+    let base = start
+        + match page {
+            Some(page) => u32::from(page) * u32::from(m.mem.read_u16(BDA_PAGE_SIZE)),
+            None => u32::from(m.mem.read_u16(BDA_PAGE_OFFSET)),
+        };
     let height = bottom - top + 1;
     let lines = if lines == 0 || u16::from(lines) > height { height } else { u16::from(lines) };
     if up {
         for row in top..=bottom - lines {
-            copy_row(m, left, right, row + lines, row, page);
+            copy_row(m, left, right, row + lines, row, base);
         }
         for row in bottom + 1 - lines..=bottom {
-            fill_row(m, left, right, row, attribute, page);
+            fill_row(m, left, right, row, attribute, base);
         }
     } else {
         for row in (top + lines..=bottom).rev() {
-            copy_row(m, left, right, row - lines, row, page);
+            copy_row(m, left, right, row - lines, row, base);
         }
         for row in top..top + lines {
-            fill_row(m, left, right, row, attribute, page);
+            fill_row(m, left, right, row, attribute, base);
         }
     }
 }
 
 /// Console output as DOS does it: teletype on the active page in light gray.
 pub(crate) fn teletype(m: &mut Machine, ch: u8) {
-    let text = is_text_mode(m.devices.vga.mode);
+    let text = is_text(m);
     let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
     teletype_output(m, ch, 0x07, !text, page);
 }
@@ -581,7 +901,7 @@ pub(crate) fn teletype(m: &mut Machine, ch: u8) {
 /// scrolling at the bottom. In graphics modes the attribute is the color.
 fn teletype_output(m: &mut Machine, ch: u8, attribute: u8, use_attribute: bool, page: u8) {
     m.console.push(ch);
-    let text = is_text_mode(m.devices.vga.mode);
+    let text = is_text(m);
     let (columns, rows) = grid(m);
     let (mut column, mut row) = cursor(m, page);
     match ch {
@@ -601,7 +921,7 @@ fn teletype_output(m: &mut Machine, ch: u8, attribute: u8, use_attribute: bool, 
     if row == rows {
         // Text modes fill with the attribute under the cursor, graphics modes with black.
         let fill = if text { (m.mem.read_u16(text_cell(m, page, column, row - 1)) >> 8) as u8 } else { 0 };
-        scroll(m, Window { top: 0, left: 0, bottom: rows - 1, right: columns - 1 }, 1, fill, true);
+        scroll(m, Window { top: 0, left: 0, bottom: rows - 1, right: columns - 1 }, 1, fill, true, Some(page));
         row -= 1;
     }
     set_cursor(m, page, column, row);
@@ -610,10 +930,10 @@ fn teletype_output(m: &mut Machine, ch: u8, attribute: u8, use_attribute: bool, 
 fn video(m: &mut Machine) {
     let r = m.cpu.regs;
     let mode = m.devices.vga.mode;
-    let text = is_text_mode(mode);
+    let text = is_text(m);
     match r.ah() {
         0x00 => set_video_mode(m, r.al() & 0x7F, r.al() & 0x80 == 0),
-        0x01 => m.mem.write_u16(BDA_CURSOR_SHAPE, r.cx()),
+        0x01 => set_cursor_shape(m, r.ch(), r.cl()),
         0x02 => set_cursor(m, r.bh(), u16::from(r.dl()), u16::from(r.dh())),
         0x03 => {
             let (column, row) = cursor(m, r.bh());
@@ -621,11 +941,7 @@ fn video(m: &mut Machine) {
             let shape = m.mem.read_u16(BDA_CURSOR_SHAPE);
             m.cpu.regs.set_cx(shape);
         }
-        0x05 => {
-            m.mem.write_u8(BDA_ACTIVE_PAGE, r.al() & 7);
-            let page_size = m.mem.read_u16(BDA_PAGE_SIZE);
-            m.mem.write_u16(BDA_PAGE_OFFSET, u16::from(r.al() & 7).wrapping_mul(page_size));
-        }
+        0x05 => set_active_page(m, r.al()),
         0x06 | 0x07 => {
             let window = Window {
                 top: u16::from(r.ch()),
@@ -633,7 +949,7 @@ fn video(m: &mut Machine) {
                 bottom: u16::from(r.dh()),
                 right: u16::from(r.dl()),
             };
-            scroll(m, window, r.al(), r.bh(), r.ah() == 0x06);
+            scroll(m, window, r.al(), r.bh(), r.ah() == 0x06, None);
         }
         0x08 if text => {
             let (column, row) = cursor(m, r.bh());
@@ -643,12 +959,13 @@ fn video(m: &mut Machine) {
         0x09 | 0x0A => {
             // Graphics modes always use the attribute as color; 256-color modes take the cursor of
             // page 0 and use BH as the background.
-            let cursor_page = if text { r.bh() } else { 0 };
+            let cursor_page = if display_kind(m) == DisplayKind::Vga256 { 0 } else { r.bh() };
             let (mut column, mut row) = cursor(m, cursor_page);
             let (columns, _) = grid(m);
             let use_attribute = r.ah() == 0x09 || !text;
+            let attribute = if r.ah() == 0x09 && mode == 0x11 { (r.bl() & 0x80) | 0x3F } else { r.bl() };
             for _ in 0..r.cx() {
-                write_char(m, column, row, r.bh(), r.al(), r.bl(), use_attribute);
+                write_char(m, column, row, r.bh(), r.al(), attribute, use_attribute);
                 column += 1;
                 if column == columns {
                     column = 0;
@@ -656,13 +973,10 @@ fn video(m: &mut Machine) {
                 }
             }
         }
-        0x0C if mode == 0x13 => put_pixel_256(m, u32::from(r.cx()), u32::from(r.dx()), r.al()),
-        0x0D if mode == 0x13 => {
-            let pixel = if r.cx() < 320 && r.dx() < 200 {
-                m.mem.read_u8(0xA_0000 + u32::from(r.dx()) * 320 + u32::from(r.cx()))
-            } else {
-                0
-            };
+        0x0B => cga_palette(m),
+        0x0C => put_pixel(m, r.cx(), r.dx(), r.bh(), r.al()),
+        0x0D => {
+            let pixel = get_pixel(m, r.cx(), r.dx(), r.bh());
             m.cpu.regs.set_al(pixel);
         }
         0x0E => {
@@ -717,8 +1031,41 @@ fn video(m: &mut Machine) {
     }
 }
 
-/// INT 10h AH=11h: font information and graphics font selection. Loading fonts into the text
-/// mode character generator isn't emulated.
+/// INT 10h AH=0Bh: CGA background/border color (BH=0) and palette (BH=1), through the
+/// attribute controller as a VGA BIOS does it (DOSBox `INT10_SetBackgroundBorder` and
+/// `INT10_SetColorSelect`).
+fn cga_palette(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let value = r.bl();
+    let mut select = m.mem.read_u8(BDA_CGA_PALETTE);
+    let first = if r.bh() == 0 {
+        select = (select & 0xE0) | (value & 0x1F);
+        (select & 0x10) | 2 | ((select & 0x20) >> 5)
+    } else {
+        select = (select & 0xDF) | if value & 1 != 0 { 0x20 } else { 0 };
+        (select & 0x10) | 2 | value
+    };
+    m.mem.write_u8(BDA_CGA_PALETTE, select);
+    let text = m.devices.vga.mode <= 3;
+    let vga = &mut m.devices.vga;
+    vga.changed = true;
+    if r.bh() == 0 {
+        let color = ((value << 1) & 0x10) | (value & 7);
+        vga.attr[0x11] = color; // overscan
+        if text {
+            return;
+        }
+        vga.attr[0] = color;
+    } else if text {
+        return;
+    }
+    for i in 0..3u8 {
+        vga.attr[usize::from(i) + 1] = first.wrapping_add(2 * i);
+    }
+}
+
+/// INT 10h AH=11h: text-mode font loading into plane 2 (DOSBox `INT10_LoadFont`), the
+/// character map select, graphics font selection and font information.
 fn fonts(m: &mut Machine) {
     let r = m.cpu.regs;
     let set_graphics_font = |m: &mut Machine, segment: u16, offset: u16, height: u16| {
@@ -733,6 +1080,29 @@ fn fonts(m: &mut Machine) {
         m.mem.write_u8(BDA_ROWS, rows.saturating_sub(1));
     };
     match r.al() {
+        0x00 | 0x10 => {
+            let height = r.bh().max(1);
+            let glyphs = m.mem.read_bytes(Machine::lin(r.es(), r.bp()), usize::from(r.cx()) * usize::from(height));
+            m.devices.vga.load_font(r.bl(), usize::from(r.dx()), usize::from(height), &glyphs);
+            if r.al() == 0x10 {
+                activate_font(m, height);
+            }
+        }
+        0x01 | 0x11 | 0x02 | 0x12 | 0x04 | 0x14 => {
+            let height = match r.al() & 0x0F {
+                0x01 => 14,
+                0x02 => 8,
+                _ => 16,
+            };
+            m.devices.vga.load_font(r.bl(), 0, usize::from(height), rom_font(height));
+            if r.al() & 0x10 != 0 {
+                activate_font(m, height);
+            }
+        }
+        0x03 => {
+            m.devices.vga.seq[3] = r.bl();
+            m.devices.vga.changed = true;
+        }
         0x30 => {
             let (segment, offset) = match r.bh() {
                 0x00 => (m.mem.read_u16(0x1F * 4 + 2), m.mem.read_u16(0x1F * 4)),
@@ -755,12 +1125,29 @@ fn fonts(m: &mut Machine) {
         0x22 => set_graphics_font(m, ROM_SEGMENT, ROM_FONT_8X14, 14),
         0x23 => set_graphics_font(m, ROM_SEGMENT, ROM_FONT_8X8, 8),
         0x24 => set_graphics_font(m, ROM_SEGMENT, ROM_FONT_8X16, 16),
-        al => m.diagnostic(format!("INT 10h AX=11{al:02X}h (text-mode font loading) is not emulated")),
+        al => m.diagnostic(format!("INT 10h AX=11{al:02X}h is not implemented")),
     }
+}
+
+/// After loading a text font with AL=1xh: character height, rows and cursor follow the new
+/// font (DOSBox `load_font` with `reload`). Text modes are 400 lines tall.
+fn activate_font(m: &mut Machine, height: u8) {
+    const SCREEN_LINES: u16 = 400;
+    let crtc9 = m.devices.vga.crtc[9];
+    crtc_write(m, 9, (crtc9 & 0xE0) | (height - 1));
+    let rows = SCREEN_LINES / u16::from(height);
+    crtc_write(m, 0x12, (rows * u16::from(height) - 1) as u8);
+    m.mem.write_u8(BDA_ROWS, (rows - 1) as u8);
+    m.mem.write_u16(BDA_CHAR_HEIGHT, u16::from(height));
+    let columns = m.mem.read_u16(BDA_COLUMNS);
+    m.mem.write_u16(BDA_PAGE_SIZE, rows * columns * 2 + 0x100);
+    let cursor_height = if height >= 14 { height - 1 } else { height };
+    set_cursor_shape(m, cursor_height - 2, cursor_height - 1);
 }
 
 fn palette(m: &mut Machine) {
     let r = m.cpu.regs;
+    m.devices.vga.changed = true;
     let vga = &mut m.devices.vga;
     match r.al() {
         0x00 => {
@@ -774,10 +1161,23 @@ fn palette(m: &mut Machine) {
                 vga.attr[usize::from(i)] = m.mem.read_u8(Machine::lin(r.es(), r.dx().wrapping_add(i)));
             }
         }
-        0x03 => {}
+        0x03 => {
+            // BL=0: intensity backgrounds, BL=1: blinking.
+            vga.attr[0x10] = (vga.attr[0x10] & !0x08) | if r.bl() & 1 != 0 { 0x08 } else { 0 };
+        }
         0x07 => {
             let value = vga.attr.get(usize::from(r.bl())).copied().unwrap_or(0);
             m.cpu.regs.set_bh(value);
+        }
+        0x08 => {
+            let value = vga.attr[0x11];
+            m.cpu.regs.set_bh(value);
+        }
+        0x09 => {
+            for i in 0..17u16 {
+                let value = m.devices.vga.attr[usize::from(i)];
+                m.mem.write_u8(Machine::lin(r.es(), r.dx().wrapping_add(i)), value);
+            }
         }
         0x10 => vga.dac[usize::from(r.bl())] = [r.dh() & 0x3F, r.ch() & 0x3F, r.cl() & 0x3F],
         0x12 => {
@@ -785,6 +1185,16 @@ fn palette(m: &mut Machine) {
                 let at = Machine::lin(r.es(), r.dx().wrapping_add(i * 3));
                 let index = usize::from(r.bx().wrapping_add(i) as u8);
                 vga.dac[index] = [0, 1, 2].map(|c| m.mem.read_u8(at + c) & 0x3F);
+            }
+        }
+        0x13 => {
+            // Color page state: BL=0 selects 4×64 or 16×16 paging (attribute mode bit 7), BL=1
+            // the page (color select register).
+            if r.bl() == 0 {
+                vga.attr[0x10] = (vga.attr[0x10] & 0x7F) | ((r.bh() & 1) << 7);
+            } else {
+                let page = if vga.attr[0x10] & 0x80 != 0 { r.bh() & 0x0F } else { (r.bh() & 3) << 2 };
+                vga.attr[0x14] = page;
             }
         }
         0x15 => {
@@ -802,7 +1212,16 @@ fn palette(m: &mut Machine) {
                 }
             }
         }
-        0x1A => m.cpu.regs.set_bx(0),
+        0x18 => vga.pel_mask = r.bl(),
+        0x19 => {
+            let mask = vga.pel_mask;
+            m.cpu.regs.set_bl(mask);
+        }
+        0x1A => {
+            let (paging, page) = (vga.attr[0x10] >> 7, vga.attr[0x14]);
+            let page = if paging != 0 { page & 0x0F } else { (page >> 2) & 3 };
+            m.cpu.regs.set_bx((u16::from(page) << 8) | u16::from(paging));
+        }
         al => m.diagnostic(format!("INT 10h AX=10{al:02X}h is not implemented")),
     }
 }

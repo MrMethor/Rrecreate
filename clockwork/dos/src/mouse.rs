@@ -3,16 +3,16 @@
 //! The host supplies absolute positions in the driver's coordinate space (640×200 in text and
 //! 320×200 modes, like the Microsoft driver). Programs poll with function 03h or install an
 //! event handler (0Ch/14h); the handler is called from the IRQ 12 ROM stub with the usual
-//! registers. In mode 13h the cursor is drawn into video memory with the driver's masks, saving
-//! and restoring the pixels under it, as a real driver does; in text modes the cell's
-//! attribute is inverted.
+//! registers. In graphics modes the cursor is drawn with the driver's masks through the BIOS
+//! pixel functions, saving and restoring the pixels under it; in text modes the cell is masked.
 //!
 //! Ranges and reporting granularity per video mode follow the Microsoft driver as DOSBox
-//! Staging (`src/hardware/input/mouseif_dos_driver.cpp`) implements it; no code is copied.
+//! Staging (`src/hardware/input/mouseif_dos_driver.cpp`, GPL-2.0-or-later) implements it; the
+//! graphics cursor drawing is ported from its `draw_cursor`.
 
 use crate::bios::{self, ROM_SEGMENT};
 use crate::machine::Machine;
-use crate::vga::{GRAPHICS_BASE, TEXT_BASE};
+use crate::vga::{DisplayKind, TEXT_BASE};
 
 /// ROM offset of the far pointer the IRQ stub calls through (written by the host).
 pub(crate) const HANDLER_SLOT: u16 = 0x9100;
@@ -54,8 +54,13 @@ struct Handler {
     offset: u16,
 }
 
-/// Pixels saved from under a drawn cursor: (linear address, original value).
-type Background = Vec<(u32, u8)>;
+/// What a drawn cursor covers: a text cell (linear address, character and attribute) or
+/// graphics pixels (x, y, color).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Background {
+    Text(u32, u16),
+    Pixels(Vec<(u16, u16, u8)>),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Mouse {
@@ -371,53 +376,76 @@ fn handler_from(mask: u16, segment: u16, offset: u16) -> Option<Handler> {
     (mask != 0 && (segment, offset) != (0, 0)).then_some(Handler { mask, segment, offset })
 }
 
-/// Draws the cursor at the current position, saving what it covers.
+/// VGA registers the graphics cursor changes, saved around drawing (DOSBox
+/// `save_vga_registers`): graphics controller 0-8 and the map mask.
+struct SavedRegisters {
+    gc: [u8; 9],
+    map_mask: u8,
+}
+
+fn save_vga_registers(m: &mut Machine) -> SavedRegisters {
+    let vga = &mut m.devices.vga;
+    let saved = SavedRegisters { gc: vga.gc, map_mask: vga.seq[2] };
+    vga.gc[3] = 0; // no rotation or logical operation
+    vga.gc[5] &= 0xF0; // read and write mode 0
+    vga.seq[2] = 0x0F;
+    saved
+}
+
+fn restore_vga_registers(m: &mut Machine, saved: SavedRegisters) {
+    m.devices.vga.gc = saved.gc;
+    m.devices.vga.seq[2] = saved.map_mask;
+}
+
+/// Draws the cursor at the current position, saving what it covers. Graphics cursors go
+/// through the BIOS pixel functions in any graphics mode, as DOSBox's `draw_cursor` does.
 fn draw(m: &mut Machine) {
-    let mode = m.devices.vga.mode;
-    let mut saved = Vec::new();
-    if m.devices.vga.is_chained_256() {
-        let (hx, hy) = m.mouse.hot_spot;
-        let (left, top) = (m.mouse.x / 2 - hx, m.mouse.y - hy);
-        for row in 0..16 {
-            for column in 0..16 {
-                let (px, py) = (left + column, top + row as i32);
-                if !(0..320).contains(&px) || !(0..200).contains(&py) {
-                    continue;
-                }
-                let bit = 0x8000u16 >> column;
-                let keep = m.mouse.screen_mask[row] & bit != 0;
-                let set = m.mouse.cursor_mask[row] & bit != 0;
-                if keep && !set {
-                    continue;
-                }
-                let addr = GRAPHICS_BASE + (py * 320 + px) as u32;
-                let old = m.mem.read_u8(addr);
-                saved.push((addr, old));
-                let new = (if keep { old } else { 0 }) ^ if set { 0x0F } else { 0 };
-                m.mem.write_u8(addr, new);
-            }
-        }
-    } else if mode <= 3 || mode == 7 {
+    if m.devices.vga.display_kind() == DisplayKind::Text {
         let columns = i32::from(m.mem.read_u16(bios::BDA_COLUMNS).max(1));
         let (column, row) = (m.mouse.x / 8, m.mouse.y / 8);
         let addr = TEXT_BASE + ((row * columns + column) * 2) as u32;
         let cell = m.mem.read_u16(addr);
-        saved.push((addr, cell as u8));
-        saved.push((addr + 1, (cell >> 8) as u8));
         let (screen, cursor) = m.mouse.text_masks;
-        let new = (cell & screen) ^ cursor;
-        m.mem.write_u16(addr, new);
-    } else {
-        m.diagnostic(format!("mouse cursor isn't drawn in video mode {mode:02X}h"));
+        m.mem.write_u16(addr, (cell & screen) ^ cursor);
+        m.mouse.drawn = Some(Background::Text(addr, cell));
+        return;
     }
-    m.mouse.drawn = Some(saved);
+    let (width, height) = bios::graphics_size(m.devices.vga.mode);
+    let x_ratio = (640 / width).max(1);
+    let (hx, hy) = m.mouse.hot_spot;
+    let (left, top) = (m.mouse.x / x_ratio - hx, m.mouse.y - hy);
+    let registers = save_vga_registers(m);
+    let mut saved = Vec::new();
+    for row in 0..16 {
+        for column in 0..16 {
+            let (x, y) = (left + column, top + row);
+            if (0..width).contains(&x) && (0..height).contains(&y) {
+                saved.push((x as u16, y as u16, bios::get_pixel(m, x as u16, y as u16, 0)));
+            }
+        }
+    }
+    for &(x, y, old) in &saved {
+        let (row, bit) = ((i32::from(y) - top) as usize, 0x8000u16 >> (i32::from(x) - left));
+        let keep = m.mouse.screen_mask[row] & bit != 0;
+        let set = m.mouse.cursor_mask[row] & bit != 0;
+        let pixel = (if keep { old } else { 0 }) ^ if set { 0x0F } else { 0 };
+        bios::put_pixel(m, x, y, 0, pixel);
+    }
+    restore_vga_registers(m, registers);
+    m.mouse.drawn = Some(Background::Pixels(saved));
 }
 
 /// Restores what the cursor covered.
 fn erase(m: &mut Machine) {
-    if let Some(saved) = m.mouse.drawn.take() {
-        for (addr, value) in saved.into_iter().rev() {
-            m.mem.write_u8(addr, value);
+    match m.mouse.drawn.take() {
+        Some(Background::Text(addr, cell)) => m.mem.write_u16(addr, cell),
+        Some(Background::Pixels(saved)) => {
+            let registers = save_vga_registers(m);
+            for (x, y, color) in saved {
+                bios::put_pixel(m, x, y, 0, color);
+            }
+            restore_vga_registers(m, registers);
         }
+        None => {}
     }
 }

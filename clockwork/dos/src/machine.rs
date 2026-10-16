@@ -20,6 +20,7 @@ use crate::pit::Pit;
 use crate::time::DateTime;
 use crate::vfs::Vfs;
 use crate::vga::{self, Vga};
+use crate::vga_draw;
 use crate::{bios, dos};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -154,7 +155,7 @@ impl Devices {
             0x61 => self.pit.read_port61(now),
             0x64 => self.keyboard.read_status(),
             0x92 => self.port92,
-            0x3C0..=0x3DF => self.vga.read(port, now),
+            0x3B0..=0x3BB | 0x3C0..=0x3DF => self.vga.read(port, now),
             0x71 => self.cmos.read_data(cycles / self.clock.instructions_per_second),
             0x330 => self.mpu.read_data(),
             0x331 => self.mpu.read_status(),
@@ -189,7 +190,7 @@ impl Devices {
                 self.port92 = value;
                 return Some(ControllerEffect::SetA20(value & 0x02 != 0));
             }
-            0x3C0..=0x3DF => self.vga.write(port, value),
+            0x3B0..=0x3BB | 0x3C0..=0x3DF => self.vga.write(port, value),
             0x70 => self.cmos.write_index(value),
             0x71 => self.cmos.write_data(value),
             0x330 => self.mpu.write_data(value, now),
@@ -210,12 +211,37 @@ pub(crate) struct PcBus<'a> {
     now: u64,
 }
 
+impl PcBus<'_> {
+    // The A0000 window is kept out of line so the common RAM path stays small enough to inline.
+    #[inline(never)]
+    fn window_read(&mut self, addr: u32) -> u8 {
+        if self.dev.vga.maps_a0000() { self.dev.vga.cpu_read(addr & 0xFFFF) } else { self.mem.read_u8(addr) }
+    }
+
+    #[inline(never)]
+    fn window_write(&mut self, addr: u32, value: u8) {
+        if self.dev.vga.maps_a0000() {
+            self.dev.vga.cpu_write(addr & 0xFFFF, value);
+        } else {
+            self.mem.write_u8(addr, value);
+        }
+    }
+}
+
 impl Bus for PcBus<'_> {
+    #[inline(always)]
     fn read_u8(&mut self, addr: u32) -> u8 {
+        if addr & 0xFFFF_0000 == vga::GRAPHICS_BASE {
+            return self.window_read(addr);
+        }
         self.mem.read_u8(addr)
     }
 
+    #[inline(always)]
     fn write_u8(&mut self, addr: u32, value: u8) {
+        if addr & 0xFFFF_0000 == vga::GRAPHICS_BASE {
+            return self.window_write(addr, value);
+        }
         self.mem.write_u8(addr, value);
     }
 
@@ -412,57 +438,45 @@ impl Machine {
         h.finish()
     }
 
-    /// The mode 13h screen as 320×200 RGB bytes, or `None` in other modes.
-    /// The screen as RGB bytes: 320×200 in mode 13h; text modes rendered with the 8×16 ROM font
-    /// (640×400, or 320×400 with 40 columns). `None` in modes that aren't displayed yet.
-    pub fn screen_rgb(&self) -> Option<(usize, usize, Vec<u8>)> {
+    /// Memory B0000-BFFFF, where text and CGA screens live.
+    fn low_video_ram(&self) -> &[u8] {
+        self.mem.slice(0xB_0000, vga_draw::LOW_RAM_SIZE)
+    }
+
+    /// The displayed screen as RGB bytes (width, height, pixels), rendered from the VGA registers
+    /// and memory the way the card would show it.
+    pub fn screen_rgb(&self) -> (usize, usize, Vec<u8>) {
+        self.devices.vga.rgb(self.low_video_ram())
+    }
+
+    /// Reads memory the way the CPU sees it, with the A0000 window going to video memory
+    /// (without loading the VGA latches).
+    pub fn peek_bytes(&self, addr: u32, len: usize) -> Vec<u8> {
         let vga = &self.devices.vga;
-        let expand = |c: u8| (c << 2) | (c >> 4);
-        if vga.is_chained_256() {
-            let pixels = self.mem.slice(vga::GRAPHICS_BASE, 320 * 200);
-            let rgb = pixels.iter().flat_map(|&p| vga.dac[usize::from(p & vga.pel_mask)].map(expand)).collect();
-            return Some((320, 200, rgb));
-        }
-        if vga.mode > 3 && vga.mode != 7 {
-            return None;
-        }
-        let columns = if vga.mode < 2 { 40 } else { 80 };
-        let (width, height) = (columns * 8, 25 * 16);
-        let page_offset = u32::from(self.mem.read_u16(bios::BDA_PAGE_OFFSET));
-        // Text colors go through the attribute controller's palette into the DAC.
-        let color = |index: u8| vga.dac[usize::from(vga.attr[usize::from(index & 0x0F)] & 0x3F)].map(expand);
-        let mut rgb = vec![0u8; width * height * 3];
-        for row in 0..25 {
-            for column in 0..columns {
-                let cell = vga::TEXT_BASE + page_offset + ((row * columns + column) * 2) as u32;
-                let (ch, attribute) = (self.mem.read_u8(cell), self.mem.read_u8(cell + 1));
-                let (foreground, background) = (color(attribute & 0x0F), color((attribute >> 4) & 0x07));
-                for y in 0..16 {
-                    let bits = crate::fonts::FONT_8X16[usize::from(ch) * 16 + y];
-                    for x in 0..8 {
-                        let pixel = if bits & (0x80 >> x) != 0 { foreground } else { background };
-                        let at = ((row * 16 + y) * width + column * 8 + x) * 3;
-                        rgb[at..at + 3].copy_from_slice(&pixel);
-                    }
+        (0..len as u32)
+            .map(|i| {
+                let at = addr.wrapping_add(i);
+                if at & 0xFFFF_0000 == vga::GRAPHICS_BASE && vga.maps_a0000() {
+                    vga.peek(at & 0xFFFF)
+                } else {
+                    self.mem.read_u8(at)
                 }
-            }
-        }
-        Some((width, height, rgb))
+            })
+            .collect()
     }
 
     /// The text screen as lines, or `None` in graphics modes.
     pub fn screen_text(&self) -> Option<Vec<String>> {
-        let mode = self.devices.vga.mode;
-        if mode > 3 && mode != 7 {
+        let vga = &self.devices.vga;
+        if vga.display_kind() != vga::DisplayKind::Text {
             return None;
         }
-        let columns = if mode < 2 { 40 } else { 80 };
-        let cells = self.mem.slice(vga::TEXT_BASE, columns * 25 * 2);
+        let cells: Vec<(u8, u8)> = vga.text_cells(self.low_video_ram()).collect();
         Some(
             cells
-                .chunks(columns * 2)
+                .chunks(vga.char_clocks())
                 .map(|row| {
-                    let line: String = row.chunks(2).map(|cell| cp437_to_char(cell[0])).collect();
+                    let line: String = row.iter().map(|&(ch, _)| cp437_to_char(ch)).collect();
                     line.trim_end().to_owned()
                 })
                 .collect(),
@@ -578,19 +592,10 @@ impl Machine {
     }
 
     fn capture_frame(&mut self) {
-        let vga = &self.devices.vga;
-        let mut h = Fnv64::default();
-        if vga.is_chained_256() {
-            h.write(self.mem.slice(vga::GRAPHICS_BASE, 320 * 200));
-            h.write(vga.dac.as_flattened());
-            h.write(&[vga.pel_mask]);
-        } else if vga.mode <= 3 || vga.mode == 7 {
-            h.write(self.mem.slice(vga::TEXT_BASE, 80 * 25 * 2));
-            h.write(&self.mem.read_u16(bios::BDA_CURSOR).to_le_bytes());
-        } else {
-            h.write(self.mem.slice(vga::GRAPHICS_BASE, 0x1_0000));
-        }
-        self.frames.push(Frame { number: self.next_frame, cycle: self.cpu.cycles, mode: vga.mode, hash: h.finish() });
+        let low_ram = self.mem.slice(0xB_0000, vga_draw::LOW_RAM_SIZE);
+        let hash = self.devices.vga.fingerprint(low_ram);
+        let mode = self.devices.vga.mode;
+        self.frames.push(Frame { number: self.next_frame, cycle: self.cpu.cycles, mode, hash });
     }
 }
 

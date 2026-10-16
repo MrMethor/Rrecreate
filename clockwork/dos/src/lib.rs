@@ -20,6 +20,8 @@ pub mod time;
 pub mod trace;
 pub mod vfs;
 pub mod vga;
+pub mod vga_draw;
+pub mod vga_params;
 
 pub use cpu::Model as CpuModel;
 pub use dos::LoadError;

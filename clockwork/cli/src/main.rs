@@ -152,7 +152,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 fn print_dump(m: &Machine, segment: u16, offset: u16, length: usize) {
     println!("dump      {segment:04X}:{offset:04X}, {length:#x} bytes");
     let base = (u32::from(segment) << 4) + u32::from(offset);
-    for (row, chunk) in m.mem.read_bytes(base, length).chunks(16).enumerate() {
+    for (row, chunk) in m.peek_bytes(base, length).chunks(16).enumerate() {
         let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02X}")).collect();
         let text: String = chunk.iter().map(|&b| dos::cp437_to_char(b)).collect();
         println!("  {segment:04X}:{:04X}  {:<48} {text}", offset.wrapping_add(row as u16 * 16), hex.join(" "));
@@ -222,12 +222,8 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     };
 
     if let Some(path) = &o.screenshot {
-        match m.screen_rgb() {
-            Some((w, h, rgb)) => {
-                std::fs::write(path, bmp(w, h, &rgb)).map_err(|e| format!("{}: {e}", path.display()))?
-            }
-            None => eprintln!("rec-host: warning: no screenshot: this video mode isn't displayed yet"),
-        }
+        let (w, h, rgb) = m.screen_rgb();
+        std::fs::write(path, bmp(w, h, &rgb)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let summary = Summary::new(&m, &stop);
     if let Some(profile) = &profile {
