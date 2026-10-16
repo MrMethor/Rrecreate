@@ -268,6 +268,39 @@ fn page_fault_is_handled_and_the_access_retried() {
 }
 
 #[test]
+fn debugger_peeks_translate_without_side_effects() {
+    let (mut cpu, mut m) = world(|a| {
+        a.mov(eax, 0x5_0000)?;
+        a.mov(cr3, eax)?;
+        a.mov(eax, cr0)?;
+        a.or(eax, 0x8000_0000u32 as i32)?;
+        a.mov(cr0, eax)?;
+        a.hlt()
+    });
+    // Identity-map the first 4 MB, except: linear 9_0000h isn't present, 8_0000h shows 4_1000h.
+    m.put(0x5_0000, &(0x5_1000u32 | 7).to_le_bytes());
+    for page in 0..1024u32 {
+        let pte = match page {
+            0x90 => 0,
+            0x80 => 0x4_1000 | 7,
+            _ => (page << 12) | 7,
+        };
+        m.put(0x5_1000 + 4 * page, &pte.to_le_bytes());
+    }
+    run(&mut cpu, &mut m);
+    let before = m.bytes.clone();
+    let read = |at: u32| m.dword(at);
+    assert_eq!(cpu.peek_translate(read, 0x8_0123), Some(0x4_1123));
+    assert_eq!(cpu.peek_translate(read, 0x9_0010), None, "not present");
+    let byte = |at: u32| cpu.peek_translate(read, at).map(|p| m.bytes[p as usize]);
+    assert_eq!(cpu.peek_segment(CODE0, byte), Some((0, true)), "loaded in CS: from its cache");
+    assert_eq!(cpu.peek_segment(CODE16, byte), Some((BOOT, false)), "read from the GDT");
+    assert_eq!(cpu.peek_segment(0, byte), None, "the null selector");
+    assert_eq!(cpu.peek_segment(0x200, byte), None, "beyond the GDT's limit");
+    assert!(m.bytes == before, "no accessed bits, nothing written");
+}
+
+#[test]
 fn virtual_8086_mode_runs_real_mode_code_and_traps_interrupts() {
     let (mut cpu, mut m) = world(|a| {
         a.mov(ax, TSS_SELECTOR as u32)?;

@@ -119,6 +119,40 @@ impl Descriptor {
     }
 }
 
+impl Cpu {
+    /// For debuggers: the base address and default size (true: 32-bit) of `selector`'s segment
+    /// as code would use it now, read without side effects. Real and V86 mode: selector × 16;
+    /// protected mode: a loaded segment register's cache, or the GDT or LDT entry, read through
+    /// `read_linear`. `None` for the null selector or one beyond its table.
+    pub fn peek_segment(&self, selector: u16, read_linear: impl Fn(u32) -> Option<u8>) -> Option<(u32, bool)> {
+        if self.real_addressing() {
+            return Some((u32::from(selector) << 4, false));
+        }
+        if selector & !3 == 0 {
+            return None;
+        }
+        if let Some(cache) = self.segs.iter().zip(self.regs.seg).find(|(c, s)| c.selector == selector && *s == selector)
+        {
+            return Some((cache.0.base, cache.0.big));
+        }
+        let (base, limit) = if selector & 4 != 0 {
+            (self.ldtr.base, self.ldtr.limit)
+        } else {
+            (self.gdtr.base, u32::from(self.gdtr.limit))
+        };
+        let index = u32::from(selector & !7);
+        if index + 7 > limit {
+            return None;
+        }
+        let byte = |i: u32| read_linear(base.wrapping_add(index + i)).map(u32::from);
+        let word = |at: u32| -> Option<u32> {
+            Some(byte(at)? | byte(at + 1)? << 8 | byte(at + 2)? << 16 | byte(at + 3)? << 24)
+        };
+        let d = Descriptor { low: word(0)?, high: word(4)? };
+        Some((d.base(), d.big()))
+    }
+}
+
 fn fault(vector: u8, code: u32) -> Abort {
     Abort::Fault(Fault::with_code(vector, code))
 }

@@ -62,6 +62,21 @@ impl Cpu {
         self.cr0 & (cr0::PG | cr0::PE) == (cr0::PG | cr0::PE)
     }
 
+    /// For debuggers: the physical address the page tables map `linear` to now, or `None` if the
+    /// page isn't present. Unlike a real access it changes nothing (no TLB fill, no accessed or
+    /// dirty bits, no fault). `read_u32` reads physical memory.
+    pub fn peek_translate(&self, read_u32: impl Fn(u32) -> u32, linear: u32) -> Option<u32> {
+        if !self.paging() {
+            return Some(linear);
+        }
+        let pde = read_u32((self.cr3 & !0xFFF) | ((linear >> 22) << 2));
+        if pde & 1 == 0 {
+            return None;
+        }
+        let pte = read_u32((pde & !0xFFF) | (((linear >> 12) & 0x3FF) << 2));
+        (pte & 1 != 0).then_some((pte & !0xFFF) | (linear & 0xFFF))
+    }
+
     /// The physical address of `linear` for an access by the current privilege (`user`: CPL 3),
     /// walking the page tables when the cache misses.
     pub(crate) fn translate<B: Bus>(&mut self, bus: &mut B, linear: u32, write: bool, user: bool) -> Res<u32> {

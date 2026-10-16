@@ -12,6 +12,7 @@ name = "rec-host"
 path = "src/main.rs"
 
 [dependencies]
+cpu.workspace = true
 dos.workspace = true
 machine.workspace = true
 minifb = "0.29"

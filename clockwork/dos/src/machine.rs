@@ -388,6 +388,9 @@ pub struct Machine {
     /// When set, every host service call is recorded here (BIOS, DOS, EMS, MSCDEX); timer and
     /// keyboard interrupts are left out. Not part of the machine state.
     pub service_trace: Option<Vec<crate::trace::ServiceCall>>,
+    /// Hardware interrupts delivered to the CPU, per IRQ line (0-15). Not part of the machine
+    /// state; for debugging.
+    pub irq_counts: [u64; 16],
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -421,6 +424,7 @@ impl Machine {
             frames: Vec::new(),
             diagnostics: BTreeSet::new(),
             service_trace: None,
+            irq_counts: [0; 16],
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -463,6 +467,7 @@ impl Machine {
                 && let Some(vector) = self.devices.acknowledge()
             {
                 self.halted = false;
+                self.count_irq(vector);
                 let (cpu, mut bus) = self.split();
                 if let Err(exit) = cpu.interrupt(&mut bus, vector) {
                     return Stop::Fault(exit);
@@ -486,6 +491,16 @@ impl Machine {
                 Err(cpu::Exit::Callback(id)) => self.callback(id),
                 Err(cpu::Exit::Halt) => self.halted = true,
                 Err(fault) => return Stop::Fault(fault),
+            }
+        }
+    }
+
+    fn count_irq(&mut self, vector: u8) {
+        for (pic, first_line) in [(&self.devices.pic, 0), (&self.devices.pic2, 8)] {
+            let line = vector.wrapping_sub(pic.vector_base());
+            if line < 8 {
+                self.irq_counts[usize::from(first_line + line)] += 1;
+                return;
             }
         }
     }
@@ -595,6 +610,25 @@ impl Machine {
 
     /// Reads memory the way the CPU sees it, with the A0000 window going to video memory
     /// (without loading the VGA latches).
+    /// Reads `len` bytes at a linear address the way the CPU sees them now: through the page
+    /// tables when paging is on, without side effects. Bytes on pages that aren't present are
+    /// `None`.
+    pub fn peek_linear(&self, linear: u32, len: usize) -> Vec<Option<u8>> {
+        (0..len as u32)
+            .map(|i| {
+                let physical = self.cpu.peek_translate(|at| self.mem.read_u32(at), linear.wrapping_add(i))?;
+                Some(self.peek_bytes(physical, 1)[0])
+            })
+            .collect()
+    }
+
+    /// Where `selector:offset` is now, as a linear address, and whether its segment is 32-bit
+    /// (for debuggers; see [`cpu::Cpu::peek_segment`]).
+    pub fn peek_address(&self, selector: u16, offset: u32) -> Option<(u32, bool)> {
+        let (base, big) = self.cpu.peek_segment(selector, |at| self.peek_linear(at, 1)[0])?;
+        Some((base.wrapping_add(offset), big))
+    }
+
     pub fn peek_bytes(&self, addr: u32, len: usize) -> Vec<u8> {
         let vga = &self.devices.vga;
         (0..len as u32)

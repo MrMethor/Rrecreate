@@ -35,6 +35,7 @@ options:
   --hotspots N       run: sample CS:IP while running and show the N hottest addresses
   --trace FILE       run: write every BIOS/DOS/EMS service call to FILE
   --midi FILE        run: write the MIDI bytes sent to the MPU-401, one line per PIT tick
+  --opl FILE         run: write the OPL register writes, one line each (ms, register, value)
   --dump SEG:OFF[:LEN]  run: afterwards, hex-dump LEN bytes (default 64) of memory there
   --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
                      (or: here, for the current CS:IP)
@@ -87,6 +88,7 @@ struct Options {
     dump: Option<String>,
     trace: Option<PathBuf>,
     midi: Option<PathBuf>,
+    opl: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -128,6 +130,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--json" => options.json = true,
             "--trace" => options.trace = Some(value(arg)?.into()),
             "--midi" => options.midi = Some(value(arg)?.into()),
+            "--opl" => options.opl = Some(value(arg)?.into()),
             "--disasm" => options.disasm = Some(value(arg)?),
             "--dump" => options.dump = Some(value(arg)?),
             "--hotspots" => options.hotspots = value(arg)?.parse().map_err(|_| "--hotspots needs a count")?,
@@ -185,20 +188,25 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
-fn print_dump(m: &Machine, segment: u16, offset: u16, length: usize) {
-    println!("dump      {segment:04X}:{offset:04X}, {length:#x} bytes");
-    let base = (u32::from(segment) << 4) + u32::from(offset);
-    for (row, chunk) in m.peek_bytes(base, length).chunks(16).enumerate() {
-        let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02X}")).collect();
-        let text: String = chunk.iter().map(|&b| dos::cp437_to_char(b)).collect();
-        println!("  {segment:04X}:{:04X}  {:<48} {text}", offset.wrapping_add(row as u16 * 16), hex.join(" "));
+/// Hex-dumps memory at `segment:offset` as the CPU sees it now: a selector's descriptor in
+/// protected mode, and the page tables when paging is on (`--` for bytes on missing pages).
+fn print_dump(m: &Machine, segment: u16, offset: u32, length: usize) -> Result<(), String> {
+    let (linear, _) = m.peek_address(segment, offset).ok_or_else(|| format!("no segment {segment:04X} now"))?;
+    println!("dump      {segment:04X}:{offset:04X} (linear {linear:08X}), {length:#x} bytes");
+    for (row, chunk) in m.peek_linear(linear, length).chunks(16).enumerate() {
+        let hex: Vec<String> = chunk.iter().map(|b| b.map_or("--".into(), |b| format!("{b:02X}"))).collect();
+        let text: String = chunk.iter().map(|b| b.map_or(' ', dos::cp437_to_char)).collect();
+        println!("  {segment:04X}:{:04X}  {:<48} {text}", offset.wrapping_add(row as u32 * 16), hex.join(" "));
     }
+    Ok(())
 }
 
-fn parse_address(text: &str) -> Result<(u16, u16), String> {
+/// `SEG:OFF` in hex; the offset may be 32-bit (protected mode).
+fn parse_address(text: &str) -> Result<(u16, u32), String> {
     let (segment, offset) = text.split_once(':').ok_or_else(|| format!("expected SEG:OFF in hex, not {text:?}"))?;
-    let hex = |part: &str| u16::from_str_radix(part, 16).map_err(|_| format!("bad hex number {part:?}"));
-    Ok((hex(segment)?, hex(offset)?))
+    let segment = u16::from_str_radix(segment, 16).map_err(|_| format!("bad hex number {segment:?}"))?;
+    let offset = u32::from_str_radix(offset, 16).map_err(|_| format!("bad hex number {offset:?}"))?;
+    Ok((segment, offset))
 }
 
 fn drive_letter(text: &str) -> Result<char, String> {
@@ -284,6 +292,23 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         }
         std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
+    if let Some(path) = &o.opl {
+        let text: String = m
+            .audio_log()
+            .opl
+            .iter()
+            .map(|w| {
+                format!(
+                    "{:>10.3} {:03X} {:02X}
+",
+                    w.nanos as f64 / 1e6,
+                    w.register,
+                    w.value
+                )
+            })
+            .collect();
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
     if let (Some(path), Some(calls)) = (&o.trace, &m.service_trace) {
         let text: String = calls.iter().map(|call| format!("{call}\n")).collect();
         std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -297,16 +322,17 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
             _ => (at.as_str(), 64),
         };
         let (segment, offset) = parse_address(address)?;
-        print_dump(&m, segment, offset, length);
+        print_dump(&m, segment, offset, length)?;
     }
     if let Some(at) = &o.disasm {
-        let (cs, ip) = if at == "here" {
-            (m.cpu.regs.cs(), m.cpu.regs.ip)
+        let (cs, ip, code) = if at == "here" {
+            (m.cpu.regs.cs(), m.cpu.regs.ip, hotspots::current_code(&m))
         } else {
             let (cs, ip) = parse_address(at)?;
-            (cs, u32::from(ip))
+            let (linear, big) = m.peek_address(cs, ip).ok_or_else(|| format!("no segment {cs:04X} now"))?;
+            (cs, ip, hotspots::Code { linear, bits: if big { 32 } else { 16 } })
         };
-        hotspots::print_listing(&m, cs, ip, 40);
+        hotspots::print_listing(&m, cs, ip, code, 40);
     }
     if o.json {
         println!("{}", summary.json());
@@ -329,6 +355,7 @@ struct Summary {
     pcm_frames: usize,
     audio_hash: u64,
     timer: String,
+    irqs: String,
     last_frame: Option<dos::Frame>,
     state_hash: u64,
     console_hash: u64,
@@ -363,6 +390,7 @@ impl Summary {
             pcm_frames: m.audio_log().pcm.iter().map(|s| s.samples.len() / if s.stereo { 2 } else { 1 }).sum(),
             audio_hash: m.audio_log().hash(),
             timer: timer_summary(m),
+            irqs: irq_summary(m),
             last_frame: m.frames.last().copied(),
             state_hash: m.state_hash(),
             console_hash: fnv64(&m.console),
@@ -388,6 +416,7 @@ impl Summary {
             );
         }
         println!("timer     {}", self.timer);
+        println!("irqs      {}", self.irqs);
         println!("state     {:016x}", self.state_hash);
         if !self.files_changed.is_empty() {
             println!("files     changed: {}", self.files_changed.join(", "));
@@ -443,6 +472,21 @@ fn timer_summary(m: &Machine) -> String {
     format!(
         "channel 0 mode {} at {hz:.1} Hz; INT 08h -> {s8:04X}:{o8:04X}, INT 1Ch -> {s1c:04X}:{o1c:04X}",
         channel.mode
+    )
+}
+
+/// How often each IRQ line was delivered, and which lines the PICs mask now.
+fn irq_summary(m: &Machine) -> String {
+    let taken: Vec<String> =
+        m.irq_counts.iter().enumerate().filter(|(_, n)| **n > 0).map(|(line, n)| format!("{line}: {n}")).collect();
+    let imr = u16::from(m.devices.pic.imr()) | (u16::from(m.devices.pic2.imr()) << 8);
+    let masked: Vec<String> = (0..16).filter(|line| imr & (1 << line) != 0).map(|line| line.to_string()).collect();
+    format!(
+        "taken {}; masked {}; vectors {:02X}h/{:02X}h",
+        if taken.is_empty() { "none".into() } else { taken.join(", ") },
+        if masked.is_empty() { "none".into() } else { masked.join(" ") },
+        m.devices.pic.vector_base(),
+        m.devices.pic2.vector_base()
     )
 }
 

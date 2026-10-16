@@ -261,6 +261,7 @@ fn timer_interrupt_hook_counts_ticks() {
     assert_eq!(m.run(SECOND), Stop::Exited(5));
     let ms = m.elapsed_ms();
     assert!((270..=280).contains(&ms), "5 ticks of 54.9 ms, took {ms} ms");
+    assert!((5..=6).contains(&m.irq_counts[0]), "IRQ 0 delivered once per tick: {:?}", m.irq_counts);
 }
 
 #[test]
