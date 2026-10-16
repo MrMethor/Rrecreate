@@ -20,6 +20,7 @@ pub mod opl;
 pub mod pic;
 pub mod pit;
 pub mod sblaster;
+pub mod tables;
 pub mod time;
 pub mod trace;
 pub mod vfs;

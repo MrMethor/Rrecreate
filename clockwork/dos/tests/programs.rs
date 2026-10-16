@@ -552,16 +552,185 @@ fn unsupported_services_are_reported_once() {
 fn load_errors() {
     let drive = Vfs::new();
     assert!(matches!(Machine::with_program(Config::default(), drive, "GAME.EXE", ""), Err(LoadError::NotFound(_))));
-    let mut le = vec![0u8; 0x80];
+}
+
+/// `mov ah,40h` to stdout: `len` bytes at offset `at`.
+fn write_out(a: &mut Asm, at: i32, len: i32) -> Result<(), IcedError> {
+    a.mov(dx, at)?;
+    a.mov(cx, len)?;
+    a.mov(bx, 1)?;
+    a.mov(ah, 0x40)?;
+    a.int(0x21)
+}
+
+#[test]
+fn start_directory_cd_folder_and_volume_labels() {
+    // Like Steam's DOSBox setup for a CD game: the installed game in C:\GAME (started there), the
+    // disc's contents in C:\CD shown as D: with the disc's label.
+    let program = com(|a| {
+        load_dx(a, "dta")?;
+        a.mov(ah, 0x1A)?;
+        a.int(0x21)?;
+        for (mask, len) in [("cd_mask", 11), ("c_mask", 7)] {
+            load_dx(a, mask)?;
+            a.mov(cx, 8)?; // volume label only
+            a.mov(ah, 0x4E)?;
+            a.int(0x21)?;
+            let name = a.addr("dta") + 0x1E;
+            write_out(a, name, len)?;
+        }
+        a.mov(dl, 3)?; // C:
+        let cwd = a.addr("cwd");
+        a.mov(si, cwd)?;
+        a.mov(ah, 0x47)?;
+        a.int(0x21)?;
+        write_out(a, cwd, 4)?;
+        let fail = a.l("fail");
+        load_dx(a, "on_cd")?;
+        a.mov(ax, 0x3D00)?;
+        a.int(0x21)?;
+        a.jc(fail)?;
+        load_dx(a, "escape")?; // ".." can't leave the CD's folder
+        a.mov(ax, 0x3D00)?;
+        a.int(0x21)?;
+        a.jnc(fail)?;
+        exit(a, 1)?;
+        a.here("fail")?;
+        exit(a, 2)?;
+        a.here("cd_mask")?;
+        a.db(b"D:\\*.*\0")?;
+        a.here("c_mask")?;
+        a.db(b"C:\\*.*\0")?;
+        a.here("on_cd")?;
+        a.db(b"D:\\INSTALL.SCR\0")?;
+        a.here("escape")?;
+        a.db(b"D:\\..\\GAME\\GAME.COM\0")?;
+        a.here("cwd")?;
+        a.db(&[0; 64])?;
+        a.here("dta")?;
+        a.db(&[0; 43])
+    });
+    let config = Config {
+        start_dir: "GAME".into(),
+        cd_drive: Some('D'),
+        cd_root: "CD".into(),
+        cd_label: "Daggerfall".into(),
+        ..Config::default()
+    };
+    let mut m = boot_with(config, &[("GAME\\GAME.COM", &program), ("CD\\INSTALL.SCR", b"x")], "GAME.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(1), "{}", console(&m));
+    // CD labels keep their case and split after eight characters, as MSCDEX shows them.
+    assert_eq!(console(&m), "Daggerfa.llC_DRIVEGAME");
+
+    let config = Config { start_dir: "NOWHERE".into(), ..Config::default() };
+    let mut drive = Vfs::new();
+    drive.insert_file("GAME.COM", fpu_detection_program());
+    assert!(matches!(Machine::with_program(config, drive, "GAME.COM", ""), Err(LoadError::NotFound(_))));
+}
+
+#[test]
+fn parse_file_names_into_fcbs() {
+    // INT 21h AH=29h into FCBs at 400h and 420h; AL results at 440h/441h, SI advances at 442h/444h.
+    let program = com(|a| {
+        for (i, text) in ["text1", "text2"].into_iter().enumerate() {
+            let i = i as u32;
+            let at = a.addr(text);
+            a.mov(si, at)?;
+            a.mov(di, 0x400 + 0x20 * i as i32)?;
+            a.mov(ax, 0x2901)?; // skip a leading separator
+            a.int(0x21)?;
+            a.mov(byte_ptr(0x440 + i), al)?;
+            a.mov(bx, at)?; // (sub si, imm would change size between the passes)
+            a.sub(si, bx)?;
+            a.mov(word_ptr(0x442 + 2 * i), si)?;
+        }
+        exit(a, 0)?;
+        a.here("text1")?;
+        a.db(b" c:foo*.c rest\0")?;
+        a.here("text2")?;
+        a.db(b"x:bar.txt\0")
+    });
+    let mut m = boot(&[("FCB.COM", &program)], "FCB.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let at = |offset: u32| (u32::from(m.dos.psp) << 4) + offset;
+    assert_eq!(m.mem.read_bytes(at(0x400), 12), b"\x03FOO?????C  ");
+    assert_eq!(m.mem.read_u8(at(0x440)), 1, "wildcards");
+    assert_eq!(m.mem.read_u16(at(0x442)), 9);
+    assert_eq!(m.mem.read_bytes(at(0x420), 12), b"\x18BAR     TXT");
+    assert_eq!(m.mem.read_u8(at(0x441)), 0xFF, "no drive X:, but the name is parsed");
+    assert_eq!(m.mem.read_u16(at(0x444)), 9);
+}
+
+#[test]
+fn dos_internal_tables() {
+    // Results at DS:400h: first MCB, files in the SFT chain, InDOS, the SDA's PSP, temp handle.
+    let program = com(|a| {
+        a.mov(ah, 0x52)?;
+        a.int(0x21)?;
+        a.mov(ax, word_ptr(bx - 2).es())?;
+        a.mov(word_ptr(0x400), ax)?;
+        a.les(di, dword_ptr(bx + 4).es())?;
+        a.xor(cx, cx)?;
+        let next = a.l("next");
+        let done = a.l("done");
+        a.here("next")?;
+        a.add(cx, word_ptr(di + 4).es())?;
+        a.cmp(word_ptr(di).es(), -1)?;
+        a.je(done)?;
+        a.les(di, dword_ptr(di).es())?;
+        a.jmp(next)?;
+        a.here("done")?;
+        a.mov(word_ptr(0x402), cx)?;
+        a.mov(ah, 0x34)?;
+        a.int(0x21)?;
+        a.mov(al, byte_ptr(bx).es())?;
+        a.mov(byte_ptr(0x404), al)?;
+        a.mov(ax, 0x5D06)?;
+        a.int(0x21)?;
+        a.mov(ax, word_ptr(si + 0x10))?; // current PSP, read through DS = the SDA
+        a.push(cs)?;
+        a.pop(ds)?;
+        a.mov(word_ptr(0x406), ax)?;
+        // A temporary file in C:\ (the name is appended to the path).
+        a.mov(word_ptr(0x500), 0x3A43)?; // "C:"
+        a.mov(word_ptr(0x502), 0x005C)?; // "\" and NUL
+        a.mov(dx, 0x500)?;
+        a.xor(cx, cx)?;
+        a.mov(ah, 0x5A)?;
+        a.int(0x21)?;
+        let fail = a.l("fail");
+        a.jc(fail)?;
+        exit(a, 0)?;
+        a.here("fail")?;
+        exit(a, 1)
+    });
+    let mut m = boot(&[("TABLES.COM", &program)], "TABLES.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let at = |offset: u32| (u32::from(m.dos.psp) << 4) + offset;
+    assert_eq!(m.mem.read_u16(at(0x400)), dos::dos::FIRST_MCB);
+    assert_eq!(m.mem.read_u16(at(0x402)), 100, "FILES=100 across the SFT chain");
+    assert_eq!(m.mem.read_u8(at(0x404)), 0, "never inside DOS between instructions");
+    assert_eq!(m.mem.read_u16(at(0x406)), m.dos.psp);
+    let name = String::from_utf8(m.mem.read_bytes(at(0x500), 11)).unwrap();
+    assert!(name.starts_with("C:\\") && name[3..].chars().all(|c| c.is_ascii_hexdigit()), "{name:?}");
+    assert!(m.drive.changed().any(|path| path == &name[3..]), "the temporary file exists");
+}
+
+#[test]
+fn extended_executables_run_their_dos_stub() {
+    // An MZ stub (`mov ax, 4C07h; int 21h`) followed by an LE header, like a DOS-extended game:
+    // DOS runs the stub, which would be the extender.
+    let mut le = vec![0u8; 0x90];
     le[..2].copy_from_slice(b"MZ");
+    le[0x02] = 0x45; // the MZ image ends at 45h
     le[0x04] = 1; // one page
     le[0x08] = 4; // 4 header paragraphs
     le[0x18] = 0x40;
-    le[0x3C] = 0x40;
-    le[0x40..0x42].copy_from_slice(b"LE");
-    let mut drive = Vfs::new();
-    drive.insert_file("DOOM.EXE", le);
-    assert!(matches!(Machine::with_program(Config::default(), drive, "DOOM.EXE", ""), Err(LoadError::Unsupported(_))));
+    le[0x3C] = 0x80; // the LE header, past the MZ image
+    le[0x40..0x45].copy_from_slice(&[0xB8, 0x07, 0x4C, 0xCD, 0x21]);
+    le[0x80..0x82].copy_from_slice(b"LE");
+    let mut m = boot(&[("DOOM.EXE", &le)], "DOOM.EXE");
+    assert_eq!(m.run(SECOND), Stop::Exited(7));
 }
 
 #[test]

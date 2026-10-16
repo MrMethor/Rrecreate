@@ -41,8 +41,12 @@ options:
   --record FILE      play: record keyboard input as a session
   --cpu 286|386      processor the program sees (default 386)
   --no-fpu           no x87 coprocessor (escape opcodes do nothing)
-  --cd LETTER        add a CD-ROM drive (with MSCDEX) showing the same files as C:
+  --cd LETTER[=DIR]  add a CD-ROM drive (with MSCDEX) showing the same files as C:, or only its
+                     folder DIR (like DOSBox mounting a game's CD folder)
+  --cd-label NAME    the CD's volume label (default: its folder's name, or CDROM)
   --drive LETTER     the current drive when the program starts (default C)
+  --cwd PATH         the current directory when the program starts, as if CD ran first;
+                     a relative program path starts there
   --env NAME=VALUE   set an environment variable (repeatable)
   --ems KB           expanded memory size (default 4096; 0 disables EMS)
   --memory MB        total memory of the PC, 1-16 (default 16)
@@ -69,7 +73,10 @@ struct Options {
     scale: usize,
     cpu: dos::CpuModel,
     cd_drive: Option<char>,
+    cd_root: String,
+    cd_label: String,
     start_drive: Option<char>,
+    start_dir: String,
     environment: Vec<(String, String)>,
     ems_kb: Option<u32>,
     memory_mb: Option<u32>,
@@ -136,8 +143,15 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--no-xms" => options.no_xms = true,
             "--no-fpu" => options.no_fpu = true,
-            "--cd" => options.cd_drive = Some(drive_letter(&value(arg)?)?),
+            "--cd" => {
+                let spec = value(arg)?;
+                let (letter, root) = spec.split_once('=').unwrap_or((&spec, ""));
+                options.cd_drive = Some(drive_letter(letter)?);
+                options.cd_root = root.to_string();
+            }
+            "--cd-label" => options.cd_label = value(arg)?,
             "--drive" => options.start_drive = Some(drive_letter(&value(arg)?)?),
+            "--cwd" => options.start_dir = value(arg)?,
             "--env" => {
                 let assignment = value(arg)?;
                 let (name, text) = assignment.split_once('=').ok_or("--env needs NAME=VALUE")?;
@@ -208,7 +222,10 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         instructions_per_second: ips,
         cpu_model: o.cpu,
         cd_drive: o.cd_drive,
+        cd_root: o.cd_root.clone(),
+        cd_label: o.cd_label.clone(),
         start_drive: o.start_drive.unwrap_or('C'),
+        start_dir: o.start_dir.clone(),
         environment: o.environment.clone(),
         ems_kb: o.ems_kb.unwrap_or(Config::default().ems_kb),
         sound_blaster: o.sound_blaster.unwrap_or(Config::default().sound_blaster),

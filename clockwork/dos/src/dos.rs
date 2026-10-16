@@ -69,8 +69,10 @@ pub struct DosState {
     pub dta: (u16, u16),
     /// Current drive (0 = A:).
     pub drive: u8,
-    /// Drive number of the emulated CD-ROM: the same files as C:, read-only, announced by MSCDEX.
+    /// Drive number of the emulated CD-ROM: read-only, announced by MSCDEX.
     pub cd_drive: Option<u8>,
+    /// The folder of C: the CD drive shows (canonical; empty: all of C:).
+    pub cd_root: String,
     /// Current directory per drive number, canonical (no drive, no leading backslash).
     pub cwd: Vec<String>,
     /// The system file table: open files, shared by the handles that refer to them through each
@@ -107,6 +109,7 @@ impl Default for DosState {
             dta: (0, 0x80),
             drive: C_DRIVE,
             cd_drive: None,
+            cd_root: String::new(),
             cwd: vec![String::new(); 26],
             files,
             return_code: 0,
@@ -147,8 +150,11 @@ pub(crate) fn install(m: &mut Machine) {
     write_mcb(m, FIRST_MCB, b'Z', 0, MEMORY_END - FIRST_MCB - 1);
     let number = |letter: char| (letter.to_ascii_uppercase() as u8).wrapping_sub(b'A');
     m.dos.cd_drive = m.config.cd_drive.map(number).filter(|&d| d < 26 && d != C_DRIVE);
+    let root = m.config.cd_root.to_ascii_uppercase().replace('/', "\\");
+    m.dos.cd_root = root.split('\\').filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\\");
     let start = number(m.config.start_drive);
     m.dos.drive = if m.dos.drive_exists(start) { start } else { C_DRIVE };
+    crate::tables::install(m, SYSTEM_FILES as u16, LAST_DRIVE);
 }
 
 /// The drive a guest path refers to: its `X:` prefix, or the current drive.
@@ -161,6 +167,50 @@ fn path_drive(m: &Machine, raw: &[u8]) -> u8 {
 
 fn on_cd(m: &Machine, raw: &[u8]) -> bool {
     Some(path_drive(m, raw)) == m.dos.cd_drive
+}
+
+/// A drive's volume label as DOS shows it (DOSBox `Set_Label`): C: is `C_DRIVE` as in DOSBox;
+/// the CD's label keeps its case, as MSCDEX does (Daggerfall checks for `Daggerfa.ll`).
+fn volume_label(m: &Machine, drive: u8) -> String {
+    let cd = Some(drive) == m.dos.cd_drive;
+    let name = match (cd, m.config.cd_label.as_str()) {
+        (false, _) => format!("{}_DRIVE", char::from(b'A' + drive)),
+        (true, "") if m.dos.cd_root.is_empty() => "CDROM".to_string(),
+        (true, "") => vfs::name_of(&m.dos.cd_root).to_string(),
+        (true, label) => label.to_string(),
+    };
+    // Eight characters, a dot, three more; a dot in the first eight starts the extension early.
+    let mut label = String::new();
+    let mut chars = name.chars().peekable();
+    let (mut left, mut dotted) = (8, false);
+    while left > 0 {
+        let Some(c) = chars.next() else { break };
+        if !dotted && c == '.' {
+            (left, dotted) = (4, true);
+        }
+        label.push(if cd { c } else { c.to_ascii_uppercase() });
+        left -= 1;
+        if left == 0 && !dotted {
+            chars.next_if_eq(&'.');
+            label.push('.');
+            (left, dotted) = (3, true);
+        }
+    }
+    // A trailing dot goes, except after exactly eight characters on a CD (an MSCDEX quirk that
+    // FIFA 96's CD check relies on).
+    if label.ends_with('.') && !(cd && label.len() == 9) {
+        label.pop();
+    }
+    label
+}
+
+/// A resolved path as the program sees it on `drive`: without the CD drive's root folder.
+fn guest_path<'a>(m: &Machine, drive: u8, path: &'a str) -> &'a str {
+    if Some(drive) != m.dos.cd_drive || m.dos.cd_root.is_empty() {
+        return path;
+    }
+    let rest = &path[m.dos.cd_root.len().min(path.len())..];
+    rest.strip_prefix('\\').unwrap_or(rest)
 }
 
 /// A drive number from a DL-style argument (0 = current, 1 = A:, ...).
@@ -177,7 +227,10 @@ pub(crate) fn wall_clock(m: &Machine) -> DateTime {
 pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
     match id {
         callback::TERMINATE => terminate_process(m, 0, false),
-        callback::DOS => int21(m),
+        callback::DOS => {
+            int21(m);
+            crate::tables::sync(m);
+        }
         callback::FAST_CONSOLE => bios::teletype(m, m.cpu.regs.al()),
         callback::MULTIPLEX => multiplex(m),
         callback::EMS => crate::ems::service(m),
@@ -294,6 +347,37 @@ fn int21(m: &mut Machine) {
             m.cpu.regs.set_cx(0);
         }
         0x26 => new_psp(m, r.dx(), false),
+        0x29 => parse_fcb_name(m),
+        0x34 => {
+            let (segment, offset) = crate::tables::in_dos_flag();
+            m.cpu.regs.set_es(segment);
+            m.cpu.regs.set_bx(offset);
+        }
+        0x52 => {
+            let (segment, offset) = crate::tables::list_of_lists();
+            m.cpu.regs.set_es(segment);
+            m.cpu.regs.set_bx(offset);
+        }
+        0x5A => create_temp_file(m),
+        0x5D => match r.al() {
+            0x06 => {
+                // The swappable data area: DS:SI, its size while in DOS (CX) and always (DX).
+                m.cpu.regs.set_ds(crate::tables::SDA);
+                m.cpu.regs.set_si(0);
+                m.cpu.regs.set_cx(crate::tables::SDA_IN_DOS_SIZE);
+                m.cpu.regs.set_dx(crate::tables::SDA_ALWAYS_SIZE);
+                ok(m);
+            }
+            0x0A => {
+                // Set extended error information: the error code is the first word at DS:DX.
+                m.dos.last_error = m.mem.read_u16(Machine::lin(r.ds(), r.dx()));
+                ok(m);
+            }
+            al => {
+                m.diagnostic(format!("INT 21h AX=5D{al:02X}h is not implemented"));
+                fail(m, error::INVALID_FUNCTION);
+            }
+        },
         0x31 => {
             // Keep DX paragraphs of the program's memory and return to the parent.
             let _ = resize(m, m.dos.psp, r.dx().max(6));
@@ -341,7 +425,7 @@ fn int21(m: &mut Machine) {
             let drive = path_drive(m, &raw);
             match resolve(m, &raw, false) {
                 Ok(Target::Path(path)) if m.drive.is_dir(&path) => {
-                    m.dos.cwd[usize::from(drive)] = path;
+                    m.dos.cwd[usize::from(drive)] = guest_path(m, drive, &path).to_string();
                     ok(m);
                 }
                 Ok(_) => fail(m, error::PATH_NOT_FOUND),
@@ -490,9 +574,10 @@ pub(crate) enum Target {
     Path(String),
 }
 
-/// Resolves a guest path against its drive's current directory. C: and the optional CD drive
-/// show the same files. Components are upper-cased and truncated to 8.3 like DOS does;
-/// wildcards are allowed in the last component only when `wildcards` is set.
+/// Resolves a guest path against its drive's current directory, to a path in the virtual drive.
+/// The CD drive shows C: or one of its folders. Components are upper-cased and truncated to 8.3
+/// like DOS does; wildcards are allowed in the last component only when `wildcards` is set.
+/// `..` never climbs above a drive's root.
 pub(crate) fn resolve(m: &Machine, raw: &[u8], wildcards: bool) -> Result<Target, u16> {
     let mut text = raw;
     while let [rest @ .., b' '] = text {
@@ -528,6 +613,9 @@ pub(crate) fn resolve(m: &Machine, raw: &[u8], wildcards: bool) -> Result<Target
         if let Some(device) = DEVICES.iter().find(|&&d| d == base) {
             return Ok(Target::Device(device));
         }
+    }
+    if Some(drive) == m.dos.cd_drive && !m.dos.cd_root.is_empty() {
+        parts.insert(0, m.dos.cd_root.clone());
     }
     Ok(Target::Path(parts.join("\\")))
 }
@@ -749,6 +837,37 @@ fn open(m: &mut Machine, mode: u8) {
             ok(m);
         }
         Err(code) => fail(m, code),
+    }
+}
+
+/// INT 21h AH=5Ah: creates a file with a new name in the directory DS:DX names (which must have
+/// room for the name to be appended), returning its handle. DOS makes the name from the clock;
+/// here it comes from the cycle counter (DOSBox's are random), so runs stay deterministic.
+fn create_temp_file(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let mut dir = read_asciiz(m, r.ds(), r.dx());
+    if !matches!(dir.last(), Some(b'\\' | b'/')) {
+        dir.push(b'\\');
+    }
+    let mut stamp = m.cpu.cycles as u32;
+    loop {
+        let mut path = dir.clone();
+        path.extend(format!("{stamp:08X}").bytes());
+        let exists =
+            matches!(resolve(m, &path, false), Ok(Target::Path(ref p)) if m.drive.is_file(p) || m.drive.is_dir(p));
+        if !exists {
+            match create_target(m, &path, true) {
+                Ok(handle) => {
+                    path.push(0);
+                    write_bytes(m, r.ds(), r.dx(), &path);
+                    m.cpu.regs.set_ax(handle);
+                    ok(m);
+                }
+                Err(code) => fail(m, code),
+            }
+            return;
+        }
+        stamp = stamp.wrapping_add(1);
     }
 }
 
@@ -1088,13 +1207,40 @@ fn find_first(m: &mut Machine) {
         }
     };
     let (segment, offset) = m.dos.dta;
+    let pattern = pattern_fcb(vfs::name_of(&path));
     let mut state = vec![3u8];
-    state.extend(pattern_fcb(vfs::name_of(&path)));
+    state.extend(pattern);
     state.push(r.cl());
     state.extend(0u16.to_le_bytes());
     state.extend((dir_id as u16).to_le_bytes());
     write_bytes(m, segment, offset, &state);
+    // The volume label (DOSBox `localDrive::FindFirst`): a search for the label alone gets it on
+    // any drive (a CD's even when empty), and a hard disk's root search that includes labels
+    // gets it first when it matches the pattern.
+    let drive = path_drive(m, &raw);
+    let cd = Some(drive) == m.dos.cd_drive;
+    let root = guest_path(m, drive, vfs::parent_of(&path)).is_empty();
+    let label = volume_label(m, drive);
+    if r.cl() == 0x08 && (cd || !label.is_empty())
+        || r.cl() & 0x08 != 0 && !cd && root && fcb_matches(&pattern, &to_fcb(&label))
+    {
+        return found(m, &label, 0x08, 0);
+    }
     find_next(m);
+}
+
+/// Fills the DTA's result fields for a found entry.
+fn found(m: &mut Machine, name: &str, attr: u8, size: u32) {
+    let (segment, offset) = m.dos.dta;
+    let at = Machine::lin(segment, offset);
+    m.mem.write_u8(at + 0x15, attr);
+    m.mem.write_u16(at + 0x16, FILE_TIME);
+    m.mem.write_u16(at + 0x18, FILE_DATE);
+    m.mem.write_u32(at + 0x1A, size);
+    let mut bytes = name.as_bytes().to_vec();
+    bytes.resize(13, 0);
+    write_bytes(m, segment, offset.wrapping_add(0x1E), &bytes);
+    ok(m);
 }
 
 fn find_next(m: &mut Machine) {
@@ -1108,6 +1254,9 @@ fn find_next(m: &mut Machine) {
     let Some(dir) = m.dos.search_dirs.get(dir_id).cloned() else {
         return fail(m, error::NO_MORE_FILES);
     };
+    if attr == 0x08 {
+        return fail(m, error::NO_MORE_FILES); // only the label matched
+    }
     let mut entries = m.drive.list(&dir).unwrap_or_default();
     if !dir.is_empty() {
         for name in ["..", "."] {
@@ -1127,14 +1276,8 @@ fn find_next(m: &mut Machine) {
             continue;
         }
         m.mem.write_u16(at + 13, index);
-        m.mem.write_u8(at + 0x15, if entry.is_dir { 0x10 } else { 0x20 });
-        m.mem.write_u16(at + 0x16, FILE_TIME);
-        m.mem.write_u16(at + 0x18, FILE_DATE);
-        m.mem.write_u32(at + 0x1A, entry.size);
-        let mut name = entry.name.clone().into_bytes();
-        name.resize(13, 0);
-        write_bytes(m, segment, offset.wrapping_add(0x1E), &name);
-        return ok(m);
+        let (name, size) = (entry.name.clone(), entry.size);
+        return found(m, &name, if entry.is_dir { 0x10 } else { 0x20 }, size);
     }
     m.mem.write_u16(at + 13, index);
     fail(m, error::NO_MORE_FILES);
@@ -1284,6 +1427,110 @@ fn find_program(m: &Machine, raw: &[u8]) -> Result<(String, Vec<u8>), LoadError>
     }
 }
 
+// ---- file control blocks ----
+
+/// Characters that end a name or extension in an FCB file name.
+fn fcb_name_char(c: u8) -> bool {
+    c > 0x1F && !b":.;,=+ \t/\"[]<>|".contains(&c)
+}
+
+/// INT 21h AH=29h: parses the file name at DS:SI into the FCB at ES:DI (DOSBox
+/// `FCB_Parsename`). AL bit 0 skips a leading separator; bits 1, 2 and 3 keep the FCB's drive,
+/// name and extension when the string has none. Returns AL = 0, 1 (wildcards) or FFh (no such
+/// drive, though the name is still parsed), with SI past what was parsed.
+fn parse_fcb_name(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let options = r.al();
+    let fcb = Machine::lin(r.es(), r.di());
+    let text = m.mem.read_bytes(Machine::lin(r.ds(), r.si()), 128);
+    let at = |i: usize| text.get(i).copied().unwrap_or(0);
+    let mut drive = m.mem.read_u8(fcb);
+    let mut name: [u8; 8] = m.mem.read_bytes(fcb + 1, 8).try_into().expect("8 bytes");
+    let mut ext: [u8; 3] = m.mem.read_bytes(fcb + 9, 3).try_into().expect("3 bytes");
+    let mut result = 0u8;
+    let (mut has_drive, mut has_name, mut has_ext) = (false, false, false);
+
+    let mut i = 0;
+    let skip_blanks = |i: &mut usize| {
+        while matches!(at(*i), b' ' | b'\t') {
+            *i += 1;
+        }
+    };
+    skip_blanks(&mut i);
+    if options & 1 != 0 && at(i) != 0 && b":;,=+".contains(&at(i)) {
+        i += 1;
+    }
+    skip_blanks(&mut i);
+    'parse: {
+        if at(i + 1) == b':' {
+            let letter = at(i).to_ascii_uppercase();
+            i += 2;
+            if !fcb_name_char(letter) {
+                break 'parse;
+            }
+            has_drive = true;
+            if !(letter.is_ascii_alphabetic() && m.dos.drive_exists(letter - b'A')) {
+                result = 0xFF; // reported, but parsing goes on
+            }
+            drive = letter.wrapping_sub(b'A').wrapping_add(1);
+        }
+        if at(i) != b'.' {
+            if !fcb_name_char(at(i)) {
+                break 'parse;
+            }
+            has_name = true;
+            i = parse_fcb_field(&text, i, &mut name, &mut result);
+            if at(i) != b'.' {
+                break 'parse;
+            }
+        }
+        has_ext = true;
+        i = parse_fcb_field(&text, i + 1, &mut ext, &mut result);
+    }
+    if !has_drive && options & 2 == 0 {
+        drive = 0;
+    }
+    if !has_name && options & 4 == 0 {
+        name = [b' '; 8];
+    }
+    if !has_ext && options & 8 == 0 {
+        ext = [b' '; 3];
+    }
+    m.mem.write_u8(fcb, drive);
+    m.mem.load(fcb + 1, &name);
+    m.mem.load(fcb + 9, &ext);
+    m.mem.write_u16(fcb + 0x0C, 0); // current block and record size, as DOS clears them
+    m.mem.write_u16(fcb + 0x0E, 0);
+    m.cpu.regs.set_al(result);
+    m.cpu.regs.set_si(r.si().wrapping_add(i as u16));
+}
+
+/// Copies one FCB name field from `text` at `i`, upper-cased and blank-padded; `*` fills the
+/// rest with `?`. Sets `result` to 1 for a wildcard (unless a bad drive was reported). Returns
+/// where the field ended.
+fn parse_fcb_field(text: &[u8], mut i: usize, field: &mut [u8], result: &mut u8) -> usize {
+    let mut fill = b' ';
+    let mut index = 0;
+    loop {
+        let mut c = text.get(i).copied().unwrap_or(0).to_ascii_uppercase();
+        if c == b'*' {
+            (fill, c) = (b'?', b'?');
+        }
+        if c == b'?' && *result == 0 && index < field.len() {
+            *result = 1;
+        }
+        if !fcb_name_char(c) {
+            field[index..].fill(fill);
+            return i;
+        }
+        if index < field.len() {
+            field[index] = if fill == b'?' { fill } else { c };
+            index += 1;
+        }
+        i += 1;
+    }
+}
+
 fn parse_program(data: &[u8]) -> Result<Option<mz::MzImage<'_>>, LoadError> {
     if data.is_empty() {
         return Err(LoadError::BadFormat("empty file".into()));
@@ -1291,9 +1538,8 @@ fn parse_program(data: &[u8]) -> Result<Option<mz::MzImage<'_>>, LoadError> {
     if !mz::is_mz(data) {
         return Ok(None);
     }
-    if let Some(kind) = new_executable_kind(data) {
-        return Err(LoadError::Unsupported(format!("{kind} executables need a DOS extender or Windows")));
-    }
+    // Like DOS, run the MZ part and ignore any NE/LE/LX/PE header after it: for a DOS-extended
+    // program that part is the extender (CauseWay, DOS/4GW's stub), which loads the rest itself.
     mz::parse(data).map(Some).map_err(LoadError::BadFormat)
 }
 
@@ -1306,6 +1552,7 @@ fn make_environment(m: &mut Machine, strings: &[u8], drive: u8, path: &str) -> R
     }
     env.push(0);
     env.extend(1u16.to_le_bytes());
+    let path = guest_path(m, drive, path);
     env.extend(format!("{}:\\{path}\0", char::from(b'A' + drive)).bytes());
     let paragraphs = env.len().div_ceil(16) as u16;
     let segment = allocate(m, paragraphs, 0x0008).map_err(|(_, available)| LoadError::InsufficientMemory {
@@ -1421,8 +1668,28 @@ impl Machine {
     /// Builds a machine with `drive` as C: and loads `program` (a DOS path on that drive).
     pub fn with_program(config: crate::Config, drive: Vfs, program: &str, args: &str) -> Result<Self, LoadError> {
         let mut machine = Machine::new(config, drive);
+        if machine.dos.cd_drive.is_some() && !machine.drive.is_dir(&machine.dos.cd_root) {
+            return Err(LoadError::NotFound(format!("CD folder {}", machine.config.cd_root)));
+        }
+        let start_dir = machine.config.start_dir.clone();
+        if !start_dir.is_empty() {
+            machine.change_dir(&start_dir)?;
+        }
         machine.load_program(program, args)?;
         Ok(machine)
+    }
+
+    /// Makes `path` the current directory of its drive, as `CD` does at the DOS prompt.
+    pub fn change_dir(&mut self, path: &str) -> Result<(), LoadError> {
+        let raw = path.replace('/', "\\");
+        let drive = path_drive(self, raw.as_bytes());
+        match resolve(self, raw.as_bytes(), false) {
+            Ok(Target::Path(dir)) if self.drive.is_dir(&dir) => {
+                self.dos.cwd[usize::from(drive)] = guest_path(self, drive, &dir).to_string();
+                Ok(())
+            }
+            _ => Err(LoadError::NotFound(path.to_string())),
+        }
     }
 
     /// Loads an MZ or COM program as the first process (as if started from the DOS prompt)
@@ -1691,20 +1958,6 @@ fn new_psp(m: &mut Machine, segment: u16, child: bool) {
         let top = m.mem.read_u16(Machine::lin(current, 2));
         m.mem.write_u16(Machine::lin(segment, 2), top);
         save_vectors(m, segment);
-    }
-}
-
-fn new_executable_kind(data: &[u8]) -> Option<&'static str> {
-    if data.len() < 0x40 || u16::from_le_bytes([data[0x18], data[0x19]]) < 0x40 {
-        return None;
-    }
-    let lfanew = u32::from_le_bytes([data[0x3C], data[0x3D], data[0x3E], data[0x3F]]) as usize;
-    match data.get(lfanew..lfanew + 2)? {
-        b"PE" => Some("PE"),
-        b"NE" => Some("NE"),
-        b"LE" => Some("LE"),
-        b"LX" => Some("LX"),
-        _ => None,
     }
 }
 

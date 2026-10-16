@@ -37,10 +37,18 @@ pub struct Config {
     pub cpu_model: cpu::Model,
     /// Whether an x87 coprocessor is installed (BIOS and CMOS report it).
     pub fpu: bool,
-    /// Letter of an emulated CD-ROM drive (with MSCDEX) that shows the same files as C:, read-only.
+    /// Letter of an emulated CD-ROM drive (with MSCDEX), read-only.
     pub cd_drive: Option<char>,
+    /// The folder of C: that the CD drive shows as its root (empty: all of C:), so a game folder
+    /// holding both the installed game and the disc's contents can be set up like DOSBox mounts.
+    pub cd_root: String,
+    /// The CD's volume label (empty: the name of its folder, or "CDROM"). Some games check it.
+    pub cd_label: String,
     /// The drive that is current when the program starts.
     pub start_drive: char,
+    /// The current directory when the program starts, as if `CD` ran first (empty: the root).
+    /// A relative program path starts there.
+    pub start_dir: String,
     /// Extra environment variables for the program, after COMSPEC, PATH and PROMPT.
     pub environment: Vec<(String, String)>,
     /// Expanded memory (LIM EMS 4.0) in KB; 0 means no EMS driver.
@@ -63,7 +71,10 @@ impl Default for Config {
             cpu_model: cpu::Model::I386,
             fpu: true,
             cd_drive: None,
+            cd_root: String::new(),
+            cd_label: String::new(),
             start_drive: 'C',
+            start_dir: String::new(),
             environment: Vec::new(),
             ems_kb: 4096,
             extended_kb: 15 * 1024,
