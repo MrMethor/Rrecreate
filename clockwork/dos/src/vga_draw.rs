@@ -6,17 +6,29 @@
 //! character height and scan doubling, so page flipping, smooth scrolling and Mode X resolutions
 //! show as they would on the card. Not modelled: per-scanline register changes within a frame,
 //! cursor blinking and character blinking (blinking text is always shown).
+//!
+//! SVGA modes follow DOSBox's `setup_drawing` for the S3: the extended overflow, offset and
+//! start address bits widen the CRTC values, 256-color modes show 8 pixels per character clock
+//! in enhanced mode (CR3A bit 4) and 4 otherwise, high-color modes 4 and true-color modes 8.
 
-use crate::vga::{DisplayKind, FONT_BLOCKS, VRAM_SIZE, Vga, chained_index};
+use crate::vga::{DisplayKind, FONT_BLOCKS, Vga, chained_index};
 use machine::hash::Fnv64;
 use std::hash::Hasher;
 
-/// A rendered screen: one DAC index per pixel, row by row.
+/// A rendered screen, row by row: one DAC index per pixel in `pixels`, or for the direct-color
+/// SVGA modes three bytes (red, green, blue) per pixel in `rgb`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Picture {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<u8>,
+    pub rgb: Vec<u8>,
+}
+
+impl Picture {
+    fn indexed(width: usize, height: usize, pixels: Vec<u8>) -> Self {
+        Self { width, height, pixels, rgb: Vec::new() }
+    }
 }
 
 /// Bytes of B0000-BFFFF the renderer reads text and CGA screens from.
@@ -25,25 +37,35 @@ pub const LOW_RAM_SIZE: usize = 0x1_0000;
 impl Vga {
     fn vertical_display_end(&self) -> u32 {
         let crtc7 = u32::from(self.crtc[7]);
-        (u32::from(self.crtc[0x12]) | ((crtc7 & 0x02) << 7) | ((crtc7 & 0x40) << 3)) + 1
+        let bit10 = u32::from(self.s3.ver_overflow & 0x02) << 9;
+        (u32::from(self.crtc[0x12]) | ((crtc7 & 0x02) << 7) | ((crtc7 & 0x40) << 3) | bit10) + 1
     }
 
     fn line_compare(&self) -> u32 {
-        u32::from(self.crtc[0x18]) | (u32::from(self.crtc[7] & 0x10) << 4) | (u32::from(self.crtc[9] & 0x40) << 3)
+        u32::from(self.crtc[0x18])
+            | (u32::from(self.crtc[7] & 0x10) << 4)
+            | (u32::from(self.crtc[9] & 0x40) << 3)
+            | (u32::from(self.s3.ver_overflow & 0x40) << 4)
     }
 
-    /// CRTC start address (registers 0Ch-0Dh), in CRTC address units.
+    /// CRTC start address (registers 0Ch-0Dh and the S3's bits 16-20), in CRTC address units.
     pub fn start_address(&self) -> u32 {
-        (u32::from(self.crtc[0x0C]) << 8) | u32::from(self.crtc[0x0D])
+        (u32::from(self.s3.start_high) << 16) | (u32::from(self.crtc[0x0C]) << 8) | u32::from(self.crtc[0x0D])
+    }
+
+    /// The offset register with the S3's bits 8-9 (DOSBox `scan_len`).
+    pub fn scan_length(&self) -> u32 {
+        u32::from(self.crtc[0x13]) | (u32::from(self.s3.scan_high) << 8)
     }
 
     /// Address units from one character row to the next (offset register × 2).
     fn row_offset(&self) -> u32 {
-        u32::from(self.crtc[0x13]) * 2
+        self.scan_length() * 2
     }
 
+    /// Character clocks of display per line (horizontal display end + 1, with the S3's bit 8).
     pub(crate) fn char_clocks(&self) -> usize {
-        usize::from(self.crtc[1]) + 1
+        (usize::from(self.crtc[1]) | (usize::from(self.s3.hor_overflow & 0x02) << 7)) + 1
     }
 
     fn scan_doubling(&self) -> u32 {
@@ -98,15 +120,20 @@ impl Vga {
         match self.display_kind() {
             DisplayKind::Text => self.text_picture(low_ram),
             DisplayKind::Vga256 => self.vga256_picture(),
-            DisplayKind::Ega => self.ega_picture(),
+            DisplayKind::Ega | DisplayKind::Svga16 => self.ega_picture(),
             DisplayKind::Cga4 => self.cga_picture(low_ram, 2),
             DisplayKind::Cga2 => self.cga_picture(low_ram, 1),
+            DisplayKind::Svga256 => self.svga256_picture(),
+            kind => self.direct_color_picture(kind),
         }
     }
 
     /// The screen as RGB bytes.
     pub fn rgb(&self, low_ram: &[u8]) -> (usize, usize, Vec<u8>) {
         let picture = self.picture(low_ram);
+        if !picture.rgb.is_empty() {
+            return (picture.width, picture.height, picture.rgb);
+        }
         let expand = |c: u8| (c << 2) | (c >> 4);
         let palette: Vec<[u8; 3]> = (0..256).map(|i| self.dac[i & usize::from(self.pel_mask)].map(expand)).collect();
         let rgb = picture.pixels.iter().flat_map(|&p| palette[usize::from(p)]).collect();
@@ -125,6 +152,7 @@ impl Vga {
         // (one per plane) per address.
         let chained = self.seq[4] & 0x08 != 0 && self.crtc[0x14] & 0x40 != 0;
         let per_row = self.scan_doubling() * self.char_height();
+        let wrap = self.wrap();
         let mut pixels = Vec::with_capacity(width * height as usize);
         for row in 0..height {
             let (base, split) = self.row_address(row, per_row);
@@ -136,7 +164,7 @@ impl Vga {
                     let at = group << 2;
                     pixels.extend_from_slice(&self.vram[at..at + 4]);
                 }
-            } else if !chained && start + width <= VRAM_SIZE {
+            } else if !chained && start + width <= wrap {
                 pixels.extend_from_slice(&self.vram[start..start + width]);
             } else {
                 for x in 0..width as u32 {
@@ -144,12 +172,70 @@ impl Vga {
                     pixels.push(if chained {
                         self.vram[chained_index(at & 0xFFFF)]
                     } else {
-                        self.vram[at as usize & (VRAM_SIZE - 1)]
+                        self.vram[at as usize & (wrap - 1)]
                     });
                 }
             }
         }
-        Picture { width, height: height as usize, pixels }
+        Picture::indexed(width, height as usize, pixels)
+    }
+
+    /// Byte address in video memory of each displayed row of an SVGA mode: the start address
+    /// and the offset register count 4 bytes, the pel panning register bytes (pixel pairs in
+    /// 256-color modes).
+    fn svga_rows(&self, height: u32, pel_shift: u32) -> impl Iterator<Item = usize> + '_ {
+        let per_row = self.scan_doubling() * self.char_height();
+        (0..height).map(move |row| {
+            let (base, split) = self.row_address(row, per_row);
+            ((base + self.bytes_skip()) * 4 + (self.pel_panning(split) >> pel_shift)) as usize
+        })
+    }
+
+    fn svga256_picture(&self) -> Picture {
+        let clocks = self.char_clocks();
+        let pixel_doubling = self.crtc[0x17] & 0x08 != 0;
+        let width = if pixel_doubling || self.s3.reg_3a & 0x10 == 0 { clocks * 4 } else { clocks * 8 };
+        let height = self.graphics_rows();
+        let wrap = self.wrap();
+        let mut pixels = Vec::with_capacity(width * height as usize);
+        for start in self.svga_rows(height, 1) {
+            if start + width <= wrap {
+                pixels.extend_from_slice(&self.vram[start..start + width]);
+            } else {
+                pixels.extend((0..width).map(|x| self.vram[(start + x) & (wrap - 1)]));
+            }
+        }
+        Picture::indexed(width, height as usize, pixels)
+    }
+
+    /// 15-, 16-, 24- and 32-bit pixels, converted to 8-bit red, green and blue.
+    fn direct_color_picture(&self, kind: DisplayKind) -> Picture {
+        let clocks = self.char_clocks();
+        let (width, bytes) = match kind {
+            DisplayKind::HiColor15 | DisplayKind::HiColor16 => (clocks * 4, 2),
+            DisplayKind::TrueColor24 => (clocks * 8, 3),
+            _ => (clocks * 8, 4),
+        };
+        let height = self.graphics_rows();
+        let mask = self.wrap() - 1;
+        let five = |v: u16| ((v << 3) | (v >> 2)) as u8;
+        let mut rgb = Vec::with_capacity(width * height as usize * 3);
+        for start in self.svga_rows(height, 0) {
+            for x in 0..width {
+                let at = start + x * bytes;
+                let byte = |i: usize| self.vram[(at + i) & mask];
+                let word = u16::from_le_bytes([byte(0), byte(1)]);
+                rgb.extend_from_slice(&match kind {
+                    DisplayKind::HiColor15 => [five((word >> 10) & 0x1F), five((word >> 5) & 0x1F), five(word & 0x1F)],
+                    DisplayKind::HiColor16 => {
+                        let green = (word >> 5) & 0x3F;
+                        [five(word >> 11), ((green << 2) | (green >> 4)) as u8, five(word & 0x1F)]
+                    }
+                    _ => [byte(2), byte(1), byte(0)],
+                });
+            }
+        }
+        Picture { width, height: height as usize, pixels: Vec::new(), rgb }
     }
 
     fn ega_picture(&self) -> Picture {
@@ -172,7 +258,7 @@ impl Vga {
                 pixels.push(colors[color as usize]);
             }
         }
-        Picture { width, height: height as usize, pixels }
+        Picture::indexed(width, height as usize, pixels)
     }
 
     /// CGA graphics from RAM at B8000: `bits` per pixel (2 or 1), scan lines of a character row
@@ -193,7 +279,7 @@ impl Vga {
                 pixels.push(colors[usize::from((byte >> shift) & ((1 << bits) - 1) as u8)]);
             }
         }
-        Picture { width, height: lines as usize, pixels }
+        Picture::indexed(width, lines as usize, pixels)
     }
 
     /// Offset of the text screen in `low_ram`: B0000 for memory map 2, B8000 otherwise.
@@ -257,7 +343,7 @@ impl Vga {
                 }
             }
         }
-        Picture { width, height, pixels }
+        Picture::indexed(width, height, pixels)
     }
 
     /// A fingerprint of what is displayed, for frame comparison. Graphics in video memory are
@@ -281,8 +367,12 @@ impl Vga {
                         h.write(&font);
                     }
                 }
-                DisplayKind::Ega | DisplayKind::Vga256 => h.write(&self.picture(low_ram).pixels),
                 DisplayKind::Cga4 | DisplayKind::Cga2 => {}
+                _ => {
+                    let picture = self.picture(low_ram);
+                    h.write(&picture.pixels);
+                    h.write(&picture.rgb);
+                }
             }
             self.display_hash = h.finish();
         }
@@ -294,7 +384,7 @@ impl Vga {
                 h.write(&cells);
             }
             DisplayKind::Cga4 | DisplayKind::Cga2 => h.write(&self.picture(low_ram).pixels),
-            DisplayKind::Ega | DisplayKind::Vga256 => {}
+            _ => {}
         }
         h.finish()
     }

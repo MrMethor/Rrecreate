@@ -23,6 +23,7 @@ pub mod sblaster;
 pub mod tables;
 pub mod time;
 pub mod trace;
+pub mod vesa;
 pub mod vfs;
 pub mod vga;
 pub mod vga_draw;

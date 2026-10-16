@@ -2153,3 +2153,300 @@ fn exec_loads_an_overlay() {
     let result = m.mem.read_u16((u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32 - 2);
     assert_eq!(result, 0x1234);
 }
+
+// --- VESA BIOS Extensions -------------------------------------------------------------------
+
+/// Where the program's trailing data lives: `results` (16 bytes), `info` (256), `buf` (512).
+struct VbeData {
+    results: u32,
+    info: u32,
+    buf: u32,
+}
+
+fn vbe_data(m: &Machine, program: &[u8]) -> VbeData {
+    let end = (u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32;
+    VbeData { results: end - 784, info: end - 768, buf: end - 512 }
+}
+
+/// Stores a 16-bit register in result word `slot`.
+fn store<R>(a: &mut Asm, slot: u32, value: R) -> Result<(), IcedError>
+where
+    CodeAssembler: iced_x86::code_asm::asm_traits::CodeAsmMov<AsmMemoryOperand, R>,
+{
+    let at = word_ptr(a.addr("results") as u32 + 2 * slot);
+    a.mov(at, value)
+}
+
+fn vbe_data_area(a: &mut Asm) -> Result<(), IcedError> {
+    a.here("results")?;
+    a.db(&[0; 16])?;
+    a.here("info")?;
+    a.db(&[0; 256])?;
+    a.here("buf")?;
+    a.db(&[0; 512])
+}
+
+fn far_to_linear(far: u32) -> u32 {
+    ((far >> 16) << 4) + (far & 0xFFFF)
+}
+
+fn c_string(m: &Machine, at: u32) -> String {
+    let bytes = m.mem.read_bytes(at, 64);
+    String::from_utf8_lossy(&bytes[..bytes.iter().position(|&b| b == 0).unwrap()]).into_owned()
+}
+
+#[test]
+fn vbe_controller_and_mode_information() {
+    let program = com(|a| {
+        a.push(cs)?;
+        a.pop(es)?;
+        let buf = a.addr("buf");
+        a.mov(dword_ptr(buf as u32), u32::from_le_bytes(*b"VBE2"))?;
+        a.mov(di, buf)?;
+        a.mov(ax, 0x4F00)?;
+        a.int(0x10)?;
+        store(a, 0, ax)?;
+        let info = a.addr("info");
+        a.mov(di, info)?;
+        a.mov(ax, 0x4F01)?;
+        a.mov(cx, 0x111)?;
+        a.int(0x10)?;
+        store(a, 1, ax)?;
+        a.mov(ax, 0x4F01)?;
+        a.mov(cx, 0x10D)?; // 320x200 15-bit: not among the compatible modes
+        a.int(0x10)?;
+        store(a, 2, ax)?;
+        a.mov(ax, 0x4F08)?; // DAC width: not supported (AL = 0)
+        a.int(0x10)?;
+        store(a, 3, ax)?;
+        hold(a)?;
+        vbe_data_area(a)
+    });
+    let mut m = boot(&[("V.COM", &program)], "V.COM");
+    m.run(SECOND / 10);
+    let VbeData { results, info, buf } = vbe_data(&m, &program);
+    let word = |at: u32| m.mem.read_u16(at);
+    assert_eq!(word(results), 0x004F);
+    assert_eq!(m.mem.read_bytes(buf, 4), b"VESA");
+    assert_eq!(word(buf + 4), 0x0200, "VBE 2.0");
+    assert_eq!(c_string(&m, far_to_linear(m.mem.read_u32(buf + 6))), "S3 Incorporated. Trio64");
+    assert_eq!(c_string(&m, far_to_linear(m.mem.read_u32(buf + 0x16))), "Recreate", "vendor");
+    assert_eq!(word(buf + 0x12), 64, "4 MB in 64 KB blocks");
+    let list = far_to_linear(m.mem.read_u32(buf + 0x0E));
+    let modes: Vec<u16> = (0..).map(|i| word(list + 2 * i)).take_while(|&mode| mode != 0xFFFF).collect();
+    assert_eq!(&modes[..3], [0x100, 0x101, 0x102]);
+    assert!(modes.contains(&0x111) && modes.contains(&0x215));
+    assert!(!modes.contains(&0x10D) && !modes.contains(&0x150), "left out by DOSBox's compatible filter");
+    assert!(!modes.contains(&0x11B), "1280x1024x32 needs more than 4 MB");
+
+    assert_eq!(word(results + 2), 0x004F);
+    assert_eq!(word(info) & 0x9B, 0x9B, "supported, color, graphics, linear frame buffer");
+    assert_eq!((word(info + 0x10), word(info + 0x12), word(info + 0x14)), (1280, 640, 480));
+    assert_eq!((word(info + 0x04), word(info + 0x06), word(info + 0x08)), (64, 64, 0xA000), "64 KB window at A000h");
+    assert_eq!(m.mem.read_u32(info + 0x0C), 0xF000_9220, "window function");
+    assert_eq!(m.mem.read_u8(info + 0x19), 16, "bits per pixel");
+    assert_eq!(m.mem.read_bytes(info + 0x1F, 6), [5, 11, 6, 5, 5, 0], "5:6:5 masks");
+    assert_eq!(m.mem.read_u32(info + 0x28), 0xC000_0000, "linear frame buffer");
+    assert_eq!(word(results + 4), 0x014F);
+    assert_eq!(word(results + 6) & 0xFF, 0x00, "unsupported functions return AL = 0");
+}
+
+#[test]
+fn vbe_256_color_mode_through_banks() {
+    let program = com(|a| {
+        a.mov(ax, 0x4F02)?;
+        a.mov(bx, 0x101)?; // 640x480, 256 colors
+        a.int(0x10)?;
+        store(a, 0, ax)?;
+        a.push(cs)?;
+        a.pop(es)?;
+        let info = a.addr("info");
+        a.mov(di, info)?;
+        a.mov(ax, 0x4F01)?;
+        a.mov(cx, 0x101)?;
+        a.int(0x10)?;
+        a.mov(ax, 0xA000)?;
+        a.mov(es, ax)?;
+        a.mov(byte_ptr(5u32).es(), 7)?; // bank 0: (5, 0)
+        a.mov(ax, 0x4F05)?;
+        a.xor(bx, bx)?;
+        a.mov(dx, 1)?;
+        a.int(0x10)?;
+        a.mov(byte_ptr(10u32).es(), 9)?; // bank 1: byte 65546 = (266, 102)
+        a.xor(bx, bx)?;
+        a.mov(dx, 2)?;
+        a.call(dword_ptr(info as u32 + 0x0C))?; // the far-callable window function
+        a.mov(byte_ptr(20u32).es(), 11)?; // bank 2: byte 131092 = (532, 204)
+        a.mov(ax, 0x4F05)?;
+        a.mov(bx, 0x0100)?; // get the bank
+        a.int(0x10)?;
+        store(a, 1, dx)?;
+        a.mov(ax, 0x4F03)?;
+        a.int(0x10)?;
+        store(a, 2, bx)?;
+        hold(a)?;
+        vbe_data_area(a)
+    });
+    let mut m = boot(&[("V.COM", &program)], "V.COM");
+    m.run(SECOND / 10);
+    let results = vbe_data(&m, &program).results;
+    assert_eq!(m.mem.read_u16(results), 0x004F);
+    assert_eq!(m.mem.read_u16(results + 2), 2, "the window function switched to bank 2");
+    assert_eq!(m.mem.read_u16(results + 4), 0x101, "4F03h reports the mode");
+    assert_eq!(m.mem.read_u8(0x449), 0x69, "BIOS mode byte: 101h - 98h, as S3 BIOSes keep it");
+    let vga = &m.devices.vga;
+    assert_eq!(vga.display_kind(), dos::vga::DisplayKind::Svga256);
+    let picture = vga.picture(&[0; dos::vga_draw::LOW_RAM_SIZE]);
+    assert_eq!((picture.width, picture.height), (640, 480));
+    assert_eq!(picture.pixels[5], 7);
+    assert_eq!(picture.pixels[102 * 640 + 266], 9);
+    assert_eq!(picture.pixels[204 * 640 + 532], 11);
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn vbe_high_color_scan_lines_and_display_start() {
+    let program = com(|a| {
+        a.mov(ax, 0x4F02)?;
+        a.mov(bx, 0x111)?; // 640x480, 5:6:5
+        a.int(0x10)?;
+        a.mov(ax, 0xA000)?;
+        a.mov(es, ax)?;
+        a.mov(word_ptr(2u32).es(), 0xF800)?; // (1, 0) red
+        a.mov(word_ptr(1280u32).es(), 0x07E0)?; // (0, 1) green
+        a.mov(ax, 0x4F06)?;
+        a.mov(bl, 1)?; // get the scan line length
+        a.int(0x10)?;
+        store(a, 0, bx)?;
+        store(a, 1, cx)?;
+        store(a, 2, dx)?;
+        a.mov(ax, 0x4F07)?;
+        a.xor(bx, bx)?;
+        a.xor(cx, cx)?;
+        a.mov(dx, 1)?; // start the display at line 1
+        a.int(0x10)?;
+        store(a, 3, ax)?;
+        a.mov(ax, 0x4F07)?;
+        a.mov(bx, 1)?;
+        a.int(0x10)?;
+        store(a, 4, cx)?;
+        store(a, 5, dx)?;
+        hold(a)?;
+        vbe_data_area(a)
+    });
+    let mut m = boot(&[("V.COM", &program)], "V.COM");
+    m.run(SECOND / 10);
+    let results = vbe_data(&m, &program).results;
+    let word = |i: u32| m.mem.read_u16(results + 2 * i);
+    assert_eq!((word(0), word(1), word(2)), (1280, 640, 3276), "bytes, pixels, lines that fit in 4 MB");
+    assert_eq!(word(3), 0x004F);
+    assert_eq!((word(4), word(5)), (0, 1), "display start read back");
+    let (width, height, rgb) = m.screen_rgb();
+    assert_eq!((width, height), (640, 480));
+    assert_eq!(rgb[..3], [0, 255, 0], "line 1 is now at the top");
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn vbe_linear_frame_buffer_from_unreal_mode() {
+    let program = com(|a| {
+        a.mov(ax, 0x4F02)?;
+        a.mov(bx, 0x4101)?; // 640x480x8 with the linear frame buffer
+        a.int(0x10)?;
+        a.cli()?;
+        // A flat 4 GB data segment in FS, kept after returning to real mode.
+        a.xor(eax, eax)?;
+        a.mov(ax, cs)?;
+        a.shl(eax, 4)?;
+        let gdt = a.addr("gdt");
+        a.add(eax, gdt)?;
+        let gdtr = a.addr("gdtr") as u32;
+        a.mov(dword_ptr(gdtr + 2), eax)?;
+        a.lgdt(ptr(gdtr))?;
+        a.mov(eax, cr0)?;
+        a.or(al, 1)?;
+        a.mov(cr0, eax)?;
+        a.mov(bx, 8)?;
+        a.mov(fs, bx)?;
+        a.and(al, 0xFE)?;
+        a.mov(cr0, eax)?;
+        a.sti()?;
+        a.mov(esi, 0xC000_0000u32 + 2 * 640 + 3)?;
+        a.mov(byte_ptr(esi).fs(), 13)?; // (3, 2)
+        hold(a)?;
+        a.here("gdtr")?;
+        a.dw(&[15, 0, 0])?;
+        a.here("gdt")?;
+        a.dq(&[0, 0x00CF_9200_0000_FFFF])
+    });
+    let mut m = boot(&[("V.COM", &program)], "V.COM");
+    m.run(SECOND / 10);
+    let picture = m.devices.vga.picture(&[0; dos::vga_draw::LOW_RAM_SIZE]);
+    assert_eq!(picture.pixels[2 * 640 + 3], 13);
+    assert_eq!(m.devices.vga.vesa_mode, Some(0x4101));
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn standard_mode_after_vesa_mode_resets_the_card() {
+    let program = com(|a| {
+        a.mov(ax, 0x4F02)?;
+        a.mov(bx, 0x112)?; // 640x480x32
+        a.int(0x10)?;
+        a.mov(ax, 0x0003)?;
+        a.int(0x10)?;
+        print(a, "msg")?;
+        hold(a)?;
+        a.here("msg")?;
+        a.db(b"back$")
+    });
+    let mut m = boot(&[("V.COM", &program)], "V.COM");
+    m.run(SECOND / 10);
+    let vga = &m.devices.vga;
+    assert_eq!(vga.display_kind(), dos::vga::DisplayKind::Text);
+    assert_eq!((vga.s3.reg_31, vga.s3.misc_control_2, vga.s3.bank), (0x05, 0, 0));
+    assert_eq!(vga.vesa_mode, None);
+    assert_eq!(m.screen_text().unwrap()[0].trim_end(), "back");
+}
+
+#[test]
+fn vbe_protected_mode_interface_is_valid_32_bit_code() {
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic};
+    let program = com(|a| {
+        a.mov(ax, 0x4F0A)?;
+        a.xor(bx, bx)?;
+        a.int(0x10)?;
+        store(a, 0, ax)?;
+        store(a, 1, es)?;
+        store(a, 2, di)?;
+        store(a, 3, cx)?;
+        hold(a)?;
+        vbe_data_area(a)
+    });
+    let mut m = boot(&[("V.COM", &program)], "V.COM");
+    m.run(SECOND / 10);
+    let results = vbe_data(&m, &program).results;
+    let word = |i: u32| m.mem.read_u16(results + 2 * i);
+    assert_eq!(word(0), 0x004F);
+    let table = (u32::from(word(1)) << 4) + u32::from(word(2));
+    let code = m.mem.read_bytes(table, usize::from(word(3)));
+    let offset = |i: usize| usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]]));
+    let (window, start, palette) = (offset(0), offset(1), offset(2));
+    assert_eq!(offset(3), 0, "no port list");
+    assert!(8 <= window && window < start && start < palette && palette < code.len());
+    for (from, to) in [(window, start), (start, palette), (palette, code.len())] {
+        let mut decoder = Decoder::with_ip(32, &code[from..to], from as u64, DecoderOptions::NONE);
+        let instructions: Vec<_> = decoder.iter().collect();
+        let boundaries: Vec<u64> = instructions.iter().map(|i| i.ip()).chain([to as u64]).collect();
+        for i in &instructions {
+            assert!(!i.is_invalid(), "invalid code at {:#x}", i.ip());
+            if matches!(i.mnemonic(), Mnemonic::Je | Mnemonic::Jne | Mnemonic::Jecxz | Mnemonic::Loop) {
+                assert!(boundaries.contains(&i.near_branch_target()), "branch at {:#x} into an instruction", i.ip());
+            }
+        }
+        assert_eq!(instructions.last().unwrap().mnemonic(), Mnemonic::Ret);
+        let pushes = instructions.iter().filter(|i| i.mnemonic() == Mnemonic::Push).count();
+        let pops = instructions.iter().filter(|i| i.mnemonic() == Mnemonic::Pop).count();
+        assert_eq!(pushes, pops, "balanced stack in the function at {from:#x}");
+    }
+}

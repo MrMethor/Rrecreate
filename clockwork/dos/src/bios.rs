@@ -12,7 +12,7 @@ use crate::fonts;
 use crate::keyboard::scancode_ascii;
 use crate::machine::Machine;
 use crate::vga::{self, DisplayKind, TEXT_BASE};
-use crate::vga_params;
+use crate::{vesa, vga_params};
 
 pub const ROM_SEGMENT: u16 = 0xF000;
 /// ROM fonts (offsets in the BIOS segment). The first half of the 8×8 font is also at FA6Eh,
@@ -74,6 +74,8 @@ pub(crate) mod callback {
     pub const MOUSE_IRQ: u16 = 0x74;
     /// The XMS driver's far-call entry point (not an interrupt).
     pub const XMS: u16 = 0x0143;
+    /// The VBE far-callable bank switch (`WinFuncPtr` in the mode information).
+    pub const VESA_WINDOW: u16 = 0x0144;
 }
 
 /// A device driver header for the emulated CD-ROM (MSCDEX AX=1501h points at it).
@@ -198,6 +200,9 @@ pub(crate) fn install(m: &mut Machine) {
     cd_device.extend(b"MSCD001 \0\0");
     m.mem.load(Machine::lin(ROM_SEGMENT, ROM_CD_DEVICE), &cd_device);
 
+    assert!(rom.next < ROM_CD_DEVICE, "ROM code overlaps the fixed ROM areas");
+    vesa::install(m);
+
     m.mem.load(Machine::lin(ROM_SEGMENT, 0xFFF5), b"06/01/94");
     m.mem.load(Machine::lin(ROM_SEGMENT, 0xFFFE), &[0xFC]); // model byte: AT
 
@@ -212,7 +217,7 @@ pub(crate) fn install(m: &mut Machine) {
     m.mem.write_u16(BDA_CRTC_PORT, 0x3D4);
     let since_midnight = u64::from(m.config.start_time.seconds_since_midnight());
     m.mem.write_u32(BDA_TICKS, (since_midnight * PIT_HZ / 65536) as u32);
-    set_video_mode(m, 3, true);
+    set_video_mode(m, 3);
 }
 
 /// Handles a BIOS callback; returns false if `id` isn't one.
@@ -235,6 +240,7 @@ pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
         callback::TIME => time(m),
         callback::MOUSE => crate::mouse::service(m),
         callback::MOUSE_IRQ => crate::mouse::irq(m),
+        callback::VESA_WINDOW => vesa::window_function(m),
         _ => return false,
     }
     true
@@ -402,7 +408,10 @@ fn is_text(m: &Machine) -> bool {
 }
 
 /// Screen size of a BIOS graphics mode in pixels (the mouse driver scales to it).
-pub(crate) fn graphics_size(mode: u8) -> (i32, i32) {
+pub(crate) fn graphics_size(mode: u16) -> (i32, i32) {
+    if let Some(block) = vesa::find(mode) {
+        return (i32::from(block.width), i32::from(block.height));
+    }
     let width = if matches!(mode, 4 | 5 | 0x0D | 0x13) { 320 } else { 640 };
     let height = match mode {
         0x0F | 0x10 => 350,
@@ -431,7 +440,7 @@ fn rom_font(height: u8) -> &'static [u8] {
 
 /// Loads a ROM font into a plane-2 font block, with the 9-dot alternate glyphs when the
 /// sequencer is in 9-dot mode (DOSBox `INT10_ReloadFont`).
-fn load_rom_font(m: &mut Machine, block: u8, height: u8) {
+pub(crate) fn load_rom_font(m: &mut Machine, block: u8, height: u8) {
     let vga = &mut m.devices.vga;
     vga.load_font(block, 0, usize::from(height), rom_font(height));
     let nine_dot = vga.seq[1] & 0x01 == 0;
@@ -453,16 +462,39 @@ fn load_rom_font(m: &mut Machine, block: u8, height: u8) {
 /// CGA mode control register values the BIOS keeps at 40:65h, per mode.
 const CGA_MODE_CONTROL: [u8; 8] = [0x2C, 0x28, 0x2D, 0x29, 0x2A, 0x2E, 0x1E, 0x29];
 
-pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
-    let Some(entry) = parameter_entry(mode) else {
+/// INT 10h AH=00h and VBE 4F02h (DOSBox `INT10_SetVideoMode`): bit 7 of a BIOS mode number and
+/// bit 15 of a VESA one keep video memory; bit 14 (the linear frame buffer) needs nothing, as
+/// the frame buffer is always there. Returns false, reporting it, for a mode the card lacks.
+pub(crate) fn set_video_mode(m: &mut Machine, number: u16) -> bool {
+    let (mut mode, mut clear) = (number, true);
+    if mode >= 0x100 {
+        clear = mode & 0x8000 == 0;
+        mode &= 0x0FFF;
+    }
+    if mode <= 0x100 && mode & 0x80 != 0 {
+        clear = false;
+        mode -= 0x80;
+    }
+    m.devices.vga.vesa_mode = None;
+    if let Some(entry) = u8::try_from(mode).ok().and_then(parameter_entry) {
+        set_standard_mode(m, mode as u8, entry, clear);
+        true
+    } else if let Some(block) = vesa::find(mode) {
+        vesa::set_mode(m, block, clear);
+        true
+    } else {
         m.diagnostic(format!("video mode {mode:02X}h is not emulated"));
-        return;
-    };
+        false
+    }
+}
+
+/// A standard VGA mode, from the BIOS parameter table.
+fn set_standard_mode(m: &mut Machine, mode: u8, entry: usize, clear: bool) {
     let params = &vga_params::VGA_PARAMETERS[entry];
     let text = mode <= 3 || mode == 7;
     let vga = &mut m.devices.vga;
     vga.load_parameters(params);
-    vga.mode = mode;
+    vga.mode = u16::from(mode);
     if text {
         // Planes 0 and 1 with odd/even addressing, as on IBM's VGA (DOSBox's table dump has
         // all planes enabled, which only matters for its own text-mode memory handler).
@@ -476,6 +508,7 @@ pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
     }
     let (columns, rows, height) = (params[0], params[1], params[2]);
     let page_size = u16::from_le_bytes([params[3], params[4]]);
+    vesa::s3_mode_registers(m, None, 0, (0, 0));
     if clear {
         if text || mode <= 6 {
             let (base, fill) = match mode {
@@ -496,21 +529,26 @@ pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
     m.mem.write_u8(BDA_VIDEO_MODE, mode);
     m.mem.write_u16(BDA_COLUMNS, u16::from(columns));
     m.mem.write_u16(BDA_PAGE_SIZE, page_size);
-    m.mem.write_u16(BDA_PAGE_OFFSET, 0);
-    for page in 0..8 {
-        m.mem.write_u16(BDA_CURSOR + page * 2, 0);
-    }
-    // Graphics modes leave the cursor shape word 0; some programs test it to detect them.
-    m.mem.write_u16(BDA_CURSOR_SHAPE, if text { 0x0607 } else { 0 });
-    m.mem.write_u8(BDA_ACTIVE_PAGE, 0);
     m.mem.write_u16(BDA_CRTC_PORT, if matches!(mode, 7 | 0x0F) { 0x3B4 } else { 0x3D4 });
     m.mem.write_u8(BDA_CGA_MODE, CGA_MODE_CONTROL.get(usize::from(mode)).copied().unwrap_or(0x29));
     m.mem.write_u8(BDA_CGA_PALETTE, if mode == 6 { 0x3F } else { 0x30 });
     m.mem.write_u8(BDA_ROWS, rows);
     m.mem.write_u16(BDA_CHAR_HEIGHT, u16::from(height));
     m.mem.write_u8(BDA_VIDEO_CONTROL, 0x60 | if clear { 0 } else { 0x80 });
-    let font = if text { ROM_FONT_8X8 } else { font_for_height(height) };
-    set_vector(m, 0x43, ROM_SEGMENT, font);
+    after_mode_set(m, text, if text { 8 } else { height });
+}
+
+/// The end of every mode set (DOSBox `finish_set_mode`): the INT 43h font for `font_height`
+/// (the standard text modes use the 8×8 one), the cursor shape (0 in graphics modes; some
+/// programs test it to detect them), cursor positions, the active page, and the mouse driver.
+pub(crate) fn after_mode_set(m: &mut Machine, text: bool, font_height: u8) {
+    set_vector(m, 0x43, ROM_SEGMENT, font_for_height(font_height));
+    m.mem.write_u16(BDA_CURSOR_SHAPE, if text { 0x0607 } else { 0 });
+    m.mem.write_u16(BDA_PAGE_OFFSET, 0);
+    for page in 0..8 {
+        m.mem.write_u16(BDA_CURSOR + page * 2, 0);
+    }
+    m.mem.write_u8(BDA_ACTIVE_PAGE, 0);
     crate::mouse::video_mode_changed(m);
 }
 
@@ -665,7 +703,13 @@ pub(crate) fn put_pixel(m: &mut Machine, x: u16, y: u16, page: u8, color: u8) {
             }
         }
         DisplayKind::Vga256 => m.devices.vga.cpu_write(y32 * 320 + x32, color),
+        // Through the linear frame buffer, as DOSBox does.
+        DisplayKind::Svga256 => {
+            let columns = u32::from(m.mem.read_u16(BDA_COLUMNS));
+            m.devices.vga.lfb_write(x32 + y32 * columns * 8, color);
+        }
         DisplayKind::Text => {}
+        kind => m.diagnostic(format!("INT 10h pixels in {kind:?} modes are not implemented")),
     }
 }
 
@@ -695,7 +739,15 @@ pub(crate) fn get_pixel(m: &mut Machine, x: u16, y: u16, page: u8) -> u8 {
             color
         }
         DisplayKind::Vga256 => m.devices.vga.cpu_read(y32 * 320 + x32),
+        DisplayKind::Svga256 => {
+            let columns = u32::from(m.mem.read_u16(BDA_COLUMNS));
+            m.devices.vga.lfb_read(x32 + y32 * columns * 8)
+        }
         DisplayKind::Text => 0,
+        kind => {
+            m.diagnostic(format!("INT 10h pixels in {kind:?} modes are not implemented"));
+            0
+        }
     }
 }
 
@@ -730,7 +782,7 @@ fn write_char(m: &mut Machine, column: u16, row: u16, page: u8, ch: u8, attribut
         attribute = (attribute & 0x80) | 1;
     }
     let (background, page) = match kind {
-        DisplayKind::Vga256 => (page, 0),
+        DisplayKind::Vga256 | DisplayKind::Svga256 => (page, 0),
         DisplayKind::Ega => {
             // All planes enabled for EGA modes (DOSBox: "Ultima 1 colour bug").
             m.devices.vga.seq[2] = 0x0F;
@@ -797,6 +849,7 @@ fn copy_row(m: &mut Machine, left: u16, right: u16, from: u16, to: u16, base: u3
                 }
             }
         }
+        kind => m.diagnostic(format!("INT 10h scrolling in {kind:?} modes is not implemented")),
     }
 }
 
@@ -845,6 +898,7 @@ fn fill_row(m: &mut Machine, left: u16, right: u16, row: u16, attribute: u8, bas
                 }
             }
         }
+        kind => m.diagnostic(format!("INT 10h scrolling in {kind:?} modes is not implemented")),
     }
 }
 
@@ -871,7 +925,7 @@ fn scroll(m: &mut Machine, window: Window, lines: u8, attribute: u8, up: bool, p
     let start = match kind {
         DisplayKind::Text if m.devices.vga.mode == 7 => 0xB_0000,
         DisplayKind::Text | DisplayKind::Cga4 | DisplayKind::Cga2 => TEXT_BASE,
-        DisplayKind::Ega | DisplayKind::Vga256 => vga::GRAPHICS_BASE,
+        _ => vga::GRAPHICS_BASE,
     };
     let base = start
         + match page {
@@ -939,7 +993,9 @@ fn video(m: &mut Machine) {
     let mode = m.devices.vga.mode;
     let text = is_text(m);
     match r.ah() {
-        0x00 => set_video_mode(m, r.al() & 0x7F, r.al() & 0x80 == 0),
+        0x00 => {
+            set_video_mode(m, u16::from(r.al()));
+        }
         0x01 => set_cursor_shape(m, r.ch(), r.cl()),
         0x02 => set_cursor(m, r.bh(), u16::from(r.dl()), u16::from(r.dh())),
         0x03 => {
@@ -966,7 +1022,8 @@ fn video(m: &mut Machine) {
         0x09 | 0x0A => {
             // Graphics modes always use the attribute as color; 256-color modes take the cursor of
             // page 0 and use BH as the background.
-            let cursor_page = if display_kind(m) == DisplayKind::Vga256 { 0 } else { r.bh() };
+            let cursor_page =
+                if matches!(display_kind(m), DisplayKind::Vga256 | DisplayKind::Svga256) { 0 } else { r.bh() };
             let (mut column, mut row) = cursor(m, cursor_page);
             let (columns, _) = grid(m);
             let use_attribute = r.ah() == 0x09 || !text;
@@ -991,8 +1048,10 @@ fn video(m: &mut Machine) {
             teletype_output(m, r.al(), r.bl(), !text, page);
         }
         0x0F => {
+            // The mode byte of the BIOS data area, with bit 7 set if memory was kept.
             let columns = m.mem.read_u16(BDA_COLUMNS) as u8;
             let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
+            let mode = m.mem.read_u8(BDA_VIDEO_MODE) | (m.mem.read_u8(BDA_VIDEO_CONTROL) & 0x80);
             m.cpu.regs.set_ax((u16::from(columns) << 8) | u16::from(mode));
             m.cpu.regs.set_bh(page);
         }
@@ -1034,6 +1093,7 @@ fn video(m: &mut Machine) {
             m.cpu.regs.set_al(0x1A);
             m.cpu.regs.set_bx(0x0008); // VGA with analog color display
         }
+        0x4F => vesa::service(m),
         ah => m.diagnostic(format!("INT 10h AH={ah:02X}h AL={:02X}h in mode {mode:02X}h is not implemented", r.al())),
     }
 }

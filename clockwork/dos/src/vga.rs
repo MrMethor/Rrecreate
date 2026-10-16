@@ -9,6 +9,13 @@
 //! The CPU reaches this memory through the A0000-AFFFF window (when the memory map select allows
 //! it). Text and CGA modes keep their screen in ordinary RAM at B0000-BFFFF, read by the
 //! renderer in `vga_draw.rs`; the text font lives in plane 2, as on real hardware.
+//!
+//! The card is an S3 Trio64 with 4 MB, as DOSBox's default SVGA card. Its extended registers
+//! ([`S3`]) are ported from DOSBox Staging `src/hardware/video/vga_s3.cpp` and the SVGA memory
+//! access from `vga_memory.cpp` (GPL-2.0-or-later): with enhanced mapping (CR31 bit 3) the
+//! window reaches all of video memory through a 64 KB bank (CR6A), chained accesses address it
+//! linearly, and the linear frame buffer at [`LFB_BASE`] shows it whole. The hardware cursor
+//! and the graphics engine are not emulated.
 
 use crate::clock::{FRAME_PIT_TICKS, LINES_PER_FRAME};
 use machine::hash::fnv64;
@@ -20,9 +27,16 @@ const BLANK_LINES: u64 = 49;
 
 pub const TEXT_BASE: u32 = 0xB_8000;
 pub const GRAPHICS_BASE: u32 = 0xA_0000;
-pub const VRAM_SIZE: usize = 256 * 1024;
+/// Video memory on the card.
+pub const VRAM_SIZE: usize = 4 * 1024 * 1024;
+/// The part VGA-compatible addressing reaches (DOSBox's `vmemwrap` without enhanced mapping).
+pub const VGA_MEMORY: usize = 256 * 1024;
+/// Physical address of the linear frame buffer, which the BIOS programs into CR59/CR5A
+/// (DOSBox `PciGfxLfbBase`).
+pub const LFB_BASE: u32 = 0xC000_0000;
 
-/// Video memory: four 64 KB planes, interleaved (byte `offset * 4 + plane`), as in DOSBox.
+/// Video memory. In VGA-compatible modes it is four planes, interleaved (byte
+/// `offset * 4 + plane`), as in DOSBox; SVGA modes address the same bytes linearly.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Vram(Box<[u8]>);
 
@@ -57,12 +71,85 @@ pub enum DisplayKind {
     Ega,
     /// 256-color graphics: mode 13h (chain-4) and Mode X (unchained).
     Vga256,
+    /// 16-color planar SVGA graphics beyond 256 KB (DOSBox `M_LIN4`).
+    Svga16,
+    /// 256-color SVGA graphics, one byte per pixel (`M_LIN8`).
+    Svga256,
+    /// 15-bit high color, 5:5:5 (`M_LIN15`).
+    HiColor15,
+    /// 16-bit high color, 5:6:5 (`M_LIN16`).
+    HiColor16,
+    /// 24-bit true color, blue-green-red bytes (`M_LIN24`).
+    TrueColor24,
+    /// 32-bit true color, blue-green-red-unused bytes (`M_LIN32`).
+    TrueColor32,
 }
+
+impl DisplayKind {
+    /// Pixels are colors themselves rather than palette indexes.
+    pub fn is_direct_color(self) -> bool {
+        matches!(self, Self::HiColor15 | Self::HiColor16 | Self::TrueColor24 | Self::TrueColor32)
+    }
+}
+
+/// The S3 Trio64's extended registers: CRTC indexes 2Dh-6Bh and sequencer indexes 08h-18h
+/// (DOSBox `SVGA_S3_WriteCRTC`, `SVGA_S3_ReadCRTC`, `SVGA_S3_WriteSEQ`, `SVGA_S3_ReadSEQ`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct S3 {
+    /// CR31 memory configuration; bit 3 enables enhanced mapping (memory above 256 KB).
+    pub reg_31: u8,
+    reg_35: u8,
+    reg_lock1: u8,
+    reg_lock2: u8,
+    /// CR3A; bit 4 selects the enhanced 256-color mode (8 pixels per character clock).
+    pub reg_3a: u8,
+    reg_40: u8,
+    reg_41: u8,
+    reg_43: u8,
+    cursor_mode: u8,
+    cursor_origin: [u16; 2],
+    cursor_colors: [[u8; 3]; 2],
+    cursor_stack: [usize; 2],
+    cursor_start: u16,
+    cursor_pattern: [u8; 2],
+    reg_50: u8,
+    reg_51: u8,
+    reg_52: u8,
+    reg_53: u8,
+    reg_55: u8,
+    reg_58: u8,
+    /// CR59/CR5A: the linear frame buffer's physical address bits 16-31 (0 = not mapped yet).
+    pub la_window: u16,
+    /// CR5D/CR5E: bit 8 of the horizontal and bit 10 of the vertical timing registers.
+    pub hor_overflow: u8,
+    pub ver_overflow: u8,
+    reg_63: u8,
+    /// CR67 bits 4-7: pixel format (0 and 1: 8-bit, 3: 15-bit, 5: 16-bit, 7: 24-bit, 13: 32-bit).
+    pub misc_control_2: u8,
+    reg_6b: u8,
+    /// The 64 KB bank the A0000 window shows (CR6A; also CR35 bits 0-3 and CR51 bits 2-3).
+    pub bank: u8,
+    /// Display start address bits 16-20 (CR31 bits 4-5, CR51 bits 0-1, CR69).
+    pub start_high: u8,
+    /// Offset register bits 8-9 (CR51 bits 4-5, CR43 bit 2).
+    pub scan_high: u8,
+    /// SR08: 06h unlocks sequencer registers 09h and up.
+    pll_lock: u8,
+    /// SR10-SR18 (clock synthesizer), as written.
+    sr: [u8; 0x19],
+}
+
+/// CR36 for 4 MB of fast-page DRAM (DOSBox `SVGA_Setup_S3`).
+const S3_REG_36: u8 = 0b0001_1110;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Vga {
-    /// The mode number of the last BIOS mode set (informational; drawing follows the registers).
-    pub mode: u8,
+    /// The mode number of the last BIOS mode set, VESA modes included (informational; drawing
+    /// follows the registers).
+    pub mode: u16,
+    /// The mode VBE function 4F02h set, with its flags (what 4F03h reports); cleared by any
+    /// other mode set.
+    pub vesa_mode: Option<u16>,
     /// 6-bit RGB per entry.
     pub dac: [[u8; 3]; 256],
     dac_write_index: u8,
@@ -82,6 +169,7 @@ pub struct Vga {
     crtc_index: u8,
     pub crtc: [u8; 0x19],
     pub misc_output: u8,
+    pub s3: S3,
     pub vram: Vram,
     latch: u32,
     /// Set by anything that can change the picture; cleared when a frame is fingerprinted.
@@ -204,6 +292,18 @@ pub fn chained_index(address: u32) -> usize {
     (((address & !3) << 2) + (address & 3)) as usize & (VRAM_SIZE - 1)
 }
 
+/// How a CPU access in the window reaches memory (DOSBox's page handler choice in
+/// `VGA_SetupHandlers`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Access {
+    /// Chain-4 in VGA-compatible addressing: interleaved, plane = address & 3.
+    Chained,
+    /// Enhanced chain-4 and the direct-color modes: byte for byte.
+    Linear,
+    /// Through the latches and write modes, four planes per address.
+    Planar,
+}
+
 /// Font block offsets in plane 2, selected by the character map select register.
 pub const FONT_BLOCKS: [u32; 8] = [0x0000, 0x4000, 0x8000, 0xC000, 0x2000, 0x6000, 0xA000, 0xE000];
 
@@ -211,6 +311,7 @@ impl Vga {
     pub fn new() -> Self {
         Self {
             mode: 3,
+            vesa_mode: None,
             dac: [[0; 3]; 256],
             dac_write_index: 0,
             dac_read_index: 0,
@@ -229,6 +330,7 @@ impl Vga {
             crtc_index: 0,
             crtc: [0; 0x19],
             misc_output: 0x67,
+            s3: S3::default(),
             vram: Vram(vec![0; VRAM_SIZE].into_boxed_slice()),
             latch: 0,
             changed: true,
@@ -251,38 +353,99 @@ impl Vga {
         self.changed = true;
     }
 
+    /// DOSBox `VGA_DetermineMode`: the S3 pixel format (CR67) first, then the attribute and
+    /// graphics controllers; enhanced mapping (CR31 bit 3) turns the 16- and 256-color modes
+    /// into their SVGA forms.
     pub fn display_kind(&self) -> DisplayKind {
+        match self.s3.misc_control_2 >> 4 {
+            1 => return DisplayKind::Svga256,
+            3 => return DisplayKind::HiColor15,
+            5 => return DisplayKind::HiColor16,
+            7 => return DisplayKind::TrueColor24,
+            13 => return DisplayKind::TrueColor32,
+            _ => {}
+        }
+        let enhanced = self.s3.reg_31 & 0x08 != 0;
         if self.attr[0x10] & 0x01 == 0 {
             DisplayKind::Text
         } else if self.gc[5] & 0x40 != 0 {
-            DisplayKind::Vga256
+            if enhanced { DisplayKind::Svga256 } else { DisplayKind::Vga256 }
         } else if self.gc[5] & 0x20 != 0 {
             DisplayKind::Cga4
         } else if self.gc[6] & 0x0C == 0x0C {
             DisplayKind::Cga2
+        } else if enhanced {
+            DisplayKind::Svga16
         } else {
             DisplayKind::Ega
         }
-    }
-
-    /// The CPU's A0000-AFFFF window reaches video memory (memory map select 0 or 1).
-    pub fn maps_a0000(&self) -> bool {
-        self.gc[6] & 0x0C <= 0x04
     }
 
     fn chain4(&self) -> bool {
         self.seq[4] & 0x08 != 0
     }
 
+    /// Video memory addressing wraps at this size: all of it with enhanced mapping, 256 KB
+    /// otherwise (DOSBox `vmemwrap`).
+    pub fn wrap(&self) -> usize {
+        if self.s3.reg_31 & 0x08 != 0 { VRAM_SIZE } else { VGA_MEMORY }
+    }
+
+    /// The window's bytes per memory map select: A0000-BFFFF for map 0 (S3), A0000-AFFFF for
+    /// map 1. Maps 2 and 3 (B0000, B8000) are the text and CGA screens in RAM.
+    pub fn window_size(&self) -> Option<u32> {
+        match (self.gc[6] >> 2) & 3 {
+            0 => Some(0x2_0000),
+            1 => Some(0x1_0000),
+            _ => None,
+        }
+    }
+
+    fn access(&self) -> Access {
+        // The direct-color pixel formats of CR67 (as in `display_kind`), checked cheaply: this
+        // runs on every access.
+        if matches!(self.s3.misc_control_2 >> 4, 3 | 5 | 7 | 13) {
+            Access::Linear
+        } else if !self.chain4() {
+            Access::Planar
+        } else if self.s3.reg_31 & 0x08 != 0 {
+            Access::Linear
+        } else {
+            Access::Chained
+        }
+    }
+
+    /// Byte offset in video memory of window offset `offset`, after the bank.
+    fn banked(&self, offset: u32) -> u32 {
+        offset + u32::from(self.s3.bank) * 0x1_0000
+    }
+
     /// The four plane bytes at `offset`, plane 0 in the low byte.
     pub fn planes(&self, offset: u32) -> u32 {
-        let at = (offset as usize & 0xFFFF) * 4;
+        let at = (offset as usize & (self.wrap() / 4 - 1)) * 4;
         u32::from_le_bytes([self.vram[at], self.vram[at + 1], self.vram[at + 2], self.vram[at + 3]])
     }
 
     fn set_planes(&mut self, offset: u32, value: u32) {
-        let at = (offset as usize & 0xFFFF) * 4;
+        let at = (offset as usize & (self.wrap() / 4 - 1)) * 4;
         self.vram[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    /// A byte of the linear frame buffer (`offset` from [`LFB_BASE`]).
+    pub fn lfb_read(&self, offset: u32) -> u8 {
+        self.vram[offset as usize & (self.wrap() - 1)]
+    }
+
+    pub fn lfb_write(&mut self, offset: u32, value: u8) {
+        let at = offset as usize & (self.wrap() - 1);
+        self.vram[at] = value;
+        self.changed = true;
+    }
+
+    /// Where the linear frame buffer is, once the BIOS has programmed it.
+    pub fn lfb_range(&self) -> Option<std::ops::Range<u32>> {
+        let base = u32::from(self.s3.la_window) << 16;
+        (base != 0).then(|| base..base.saturating_add(VRAM_SIZE as u32))
     }
 
     fn raster_op(&self, input: u32, mask: u32) -> u32 {
@@ -310,12 +473,14 @@ impl Vga {
         }
     }
 
-    /// A CPU read at `offset` in the A0000 window: loads the latches (unchained) and applies the
+    /// A CPU read at `offset` in the window: loads the latches (unchained) and applies the
     /// read mode.
     pub fn cpu_read(&mut self, offset: u32) -> u8 {
-        let offset = offset & 0xFFFF;
-        if self.chain4() {
-            return self.vram[chained_index(offset)];
+        let offset = self.banked(offset);
+        match self.access() {
+            Access::Chained => return self.vram[chained_index(offset & (VGA_MEMORY as u32 - 1))],
+            Access::Linear => return self.vram[offset as usize & (self.wrap() - 1)],
+            Access::Planar => {}
         }
         self.latch = self.planes(offset);
         if self.gc[5] & 0x08 == 0 {
@@ -328,13 +493,21 @@ impl Vga {
         }
     }
 
-    /// A CPU write at `offset` in the A0000 window.
+    /// A CPU write at `offset` in the window.
     pub fn cpu_write(&mut self, offset: u32, value: u8) {
-        let offset = offset & 0xFFFF;
+        let offset = self.banked(offset);
         self.changed = true;
-        if self.chain4() {
-            self.vram[chained_index(offset)] = value;
-            return;
+        match self.access() {
+            Access::Chained => {
+                self.vram[chained_index(offset & (VGA_MEMORY as u32 - 1))] = value;
+                return;
+            }
+            Access::Linear => {
+                let at = offset as usize & (self.wrap() - 1);
+                self.vram[at] = value;
+                return;
+            }
+            Access::Planar => {}
         }
         let data = self.mode_operation(value);
         let map_mask = fill(self.seq[2] & 0x0F);
@@ -344,11 +517,11 @@ impl Vga {
 
     /// What a CPU read would return, without loading the latches (for tools and tests).
     pub fn peek(&self, offset: u32) -> u8 {
-        let offset = offset & 0xFFFF;
-        if self.chain4() {
-            self.vram[chained_index(offset)]
-        } else {
-            (self.planes(offset) >> (8 * (self.gc[4] & 3))) as u8
+        let offset = self.banked(offset);
+        match self.access() {
+            Access::Chained => self.vram[chained_index(offset & (VGA_MEMORY as u32 - 1))],
+            Access::Linear => self.vram[offset as usize & (self.wrap() - 1)],
+            Access::Planar => (self.planes(offset) >> (8 * (self.gc[4] & 3))) as u8,
         }
     }
 
@@ -370,7 +543,7 @@ impl Vga {
         self.vram[(offset as usize & 0xFFFF) * 4 + 2]
     }
 
-    /// Clears all four planes.
+    /// Clears all of video memory.
     pub fn clear_memory(&mut self) {
         self.vram.fill(0);
         self.changed = true;
@@ -395,7 +568,10 @@ impl Vga {
             0x3C1 => self.attr.get(usize::from(self.attr_index & 0x1F)).copied().unwrap_or(0),
             0x3C2 => 0x70,
             0x3C4 => self.seq_index,
-            0x3C5 => self.seq.get(usize::from(self.seq_index)).copied().unwrap_or(0),
+            0x3C5 => match self.seq.get(usize::from(self.seq_index)) {
+                Some(&value) => value,
+                None => self.s3_read_seq(self.seq_index),
+            },
             0x3C6 => self.pel_mask,
             0x3C7 => {
                 if self.dac_reading {
@@ -419,7 +595,10 @@ impl Vga {
             0x3CE => self.gc_index,
             0x3CF => self.gc.get(usize::from(self.gc_index)).copied().unwrap_or(0),
             0x3D4 => self.crtc_index,
-            0x3D5 => self.crtc.get(usize::from(self.crtc_index)).copied().unwrap_or(0),
+            0x3D5 => match self.crtc.get(usize::from(self.crtc_index)) {
+                Some(&value) => value,
+                None => self.s3_read_crtc(self.crtc_index),
+            },
             0x3DA => {
                 self.attr_expect_data = false;
                 status(now)
@@ -444,11 +623,10 @@ impl Vga {
             }
             0x3C2 => self.misc_output = value,
             0x3C4 => self.seq_index = value,
-            0x3C5 => {
-                if let Some(r) = self.seq.get_mut(usize::from(self.seq_index)) {
-                    *r = value;
-                }
-            }
+            0x3C5 => match self.seq.get_mut(usize::from(self.seq_index)) {
+                Some(r) => *r = value,
+                None => self.s3_write_seq(self.seq_index, value),
+            },
             0x3C6 => self.pel_mask = value,
             0x3C7 => {
                 self.dac_read_index = value;
@@ -486,9 +664,157 @@ impl Vga {
                     }
                 } else if let Some(r) = self.crtc.get_mut(index) {
                     *r = value;
+                } else {
+                    self.s3_write_crtc(self.crtc_index, value);
                 }
             }
             _ => {}
+        }
+    }
+
+    fn s3_write_crtc(&mut self, index: u8, value: u8) {
+        let s3 = &mut self.s3;
+        match index {
+            0x31 => {
+                s3.reg_31 = value;
+                s3.start_high = (s3.start_high & !0x03) | ((value >> 4) & 0x03);
+            }
+            0x35 => {
+                // Only with the registers unlocked (uvconfig's detection depends on it).
+                if s3.reg_lock1 == 0x48 {
+                    s3.reg_35 = value & 0xF0;
+                    s3.bank = (s3.bank & 0xF0) | (value & 0x0F);
+                }
+            }
+            0x38 => s3.reg_lock1 = value,
+            0x39 => s3.reg_lock2 = value,
+            0x3A => s3.reg_3a = value,
+            0x40 => s3.reg_40 = value,
+            0x41 => s3.reg_41 = value,
+            0x43 => {
+                s3.reg_43 = value & !0x04;
+                s3.scan_high = (s3.scan_high & !0x01) | ((value >> 2) & 0x01);
+            }
+            0x45 => s3.cursor_mode = value,
+            0x46 => s3.cursor_origin[0] = (s3.cursor_origin[0] & 0x00FF) | (u16::from(value) << 8),
+            0x47 => s3.cursor_origin[0] = (s3.cursor_origin[0] & 0xFF00) | u16::from(value),
+            0x48 => s3.cursor_origin[1] = (s3.cursor_origin[1] & 0x00FF) | (u16::from(value) << 8),
+            0x49 => s3.cursor_origin[1] = (s3.cursor_origin[1] & 0xFF00) | u16::from(value),
+            0x4A | 0x4B => {
+                let which = usize::from(index - 0x4A);
+                if s3.cursor_stack[which] > 2 {
+                    s3.cursor_stack[which] = 0;
+                }
+                s3.cursor_colors[which][s3.cursor_stack[which]] = value;
+                s3.cursor_stack[which] += 1;
+            }
+            0x4C => {
+                let start = (s3.cursor_start & 0xFF) | (u16::from(value & 0x0F) << 8);
+                // A pattern beyond video memory is refused, as in DOSBox.
+                if (usize::from(start) << 10) + 64 * 64 * 2 / 8 <= VRAM_SIZE {
+                    s3.cursor_start = start;
+                }
+            }
+            0x4D => s3.cursor_start = (s3.cursor_start & 0xFF00) | u16::from(value),
+            0x4E => s3.cursor_pattern[0] = value & 0x3F,
+            0x4F => s3.cursor_pattern[1] = value & 0x3F,
+            0x50 => s3.reg_50 = value,
+            0x51 => {
+                s3.reg_51 = value & 0xC0;
+                s3.start_high = (s3.start_high & !0x0C) | ((value & 0x03) << 2);
+                s3.bank = (s3.bank & 0xCF) | ((value & 0x0C) << 2);
+                s3.scan_high = (value >> 4) & 0x03;
+            }
+            0x52 => s3.reg_52 = value,
+            0x53 => s3.reg_53 = value,
+            0x55 => s3.reg_55 = value,
+            0x58 => s3.reg_58 = value,
+            0x59 => s3.la_window = (s3.la_window & 0x00FF) | (u16::from(value) << 8),
+            0x5A => s3.la_window = (s3.la_window & 0xFF00) | u16::from(value),
+            0x5D => s3.hor_overflow = value,
+            0x5E => s3.ver_overflow = value,
+            0x63 => s3.reg_63 = value,
+            0x67 => s3.misc_control_2 = value,
+            0x69 => s3.start_high = value & 0x1F,
+            0x6A => s3.bank = value & 0x7F,
+            0x6B => s3.reg_6b = value,
+            _ => {}
+        }
+    }
+
+    fn s3_read_crtc(&mut self, index: u8) -> u8 {
+        let s3 = &mut self.s3;
+        match index {
+            0x24 | 0x26 => self.attr_index & 0x3F,
+            0x2D => 0x88, // extended chip ID: PCI device ID high byte
+            0x2E => 0x11, // Trio64
+            0x2F => 0x00,
+            0x30 => 0xE1,
+            0x31 => s3.reg_31,
+            0x35 => s3.reg_35 | (s3.bank & 0x0F),
+            0x36 => S3_REG_36,
+            0x37 => 0x2B,
+            0x38 => s3.reg_lock1,
+            0x39 => s3.reg_lock2,
+            0x3A => s3.reg_3a,
+            0x40 => s3.reg_40,
+            0x41 => s3.reg_41,
+            0x42 => 0x0D, // not interlaced
+            0x43 => s3.reg_43 | ((s3.scan_high & 0x01) << 2),
+            0x45 => {
+                s3.cursor_stack = [0, 0];
+                s3.cursor_mode | 0xA0
+            }
+            0x46 => (s3.cursor_origin[0] >> 8) as u8,
+            0x47 => s3.cursor_origin[0] as u8,
+            0x48 => (s3.cursor_origin[1] >> 8) as u8,
+            0x49 => s3.cursor_origin[1] as u8,
+            0x4A | 0x4B => {
+                let which = usize::from(index - 0x4A);
+                s3.cursor_colors[which][s3.cursor_stack[which].min(2)]
+            }
+            0x50 => s3.reg_50,
+            0x51 => ((s3.start_high >> 2) & 0x03) | ((s3.bank & 0x30) >> 2) | ((s3.scan_high & 0x03) << 4) | s3.reg_51,
+            0x52 => s3.reg_52,
+            0x53 => s3.reg_53,
+            0x55 => s3.reg_55,
+            0x58 => s3.reg_58,
+            0x59 => (s3.la_window >> 8) as u8,
+            0x5A => s3.la_window as u8,
+            0x5D => s3.hor_overflow,
+            0x5E => s3.ver_overflow,
+            0x63 => s3.reg_63,
+            0x67 => s3.misc_control_2,
+            0x69 => s3.start_high & 0x1F,
+            0x6A => s3.bank & 0x7F,
+            0x6B => s3.reg_6b,
+            _ => 0,
+        }
+    }
+
+    fn s3_write_seq(&mut self, index: u8, value: u8) {
+        let s3 = &mut self.s3;
+        if index > 0x08 && s3.pll_lock != 0x06 {
+            return;
+        }
+        match index {
+            0x08 => s3.pll_lock = value,
+            0x10 | 0x12 => s3.sr[usize::from(index)] = value & 0x7F, // PLL N and R
+            0x11 | 0x13 => s3.sr[usize::from(index)] = value & 0x7F, // PLL M
+            0x15 | 0x18 => s3.sr[usize::from(index)] = value,
+            _ => {}
+        }
+    }
+
+    fn s3_read_seq(&self, index: u8) -> u8 {
+        let s3 = &self.s3;
+        if index > 0x08 && s3.pll_lock != 0x06 {
+            return if index < 0x1B { 0 } else { index };
+        }
+        match index {
+            0x08 => s3.pll_lock,
+            0x10..=0x13 | 0x15 | 0x18 => s3.sr[usize::from(index)],
+            _ => 0,
         }
     }
 }

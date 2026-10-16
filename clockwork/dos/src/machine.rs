@@ -133,7 +133,8 @@ pub const MAX_EXTENDED_KB: u32 = 15 * 1024;
 pub struct Frame {
     pub number: u64,
     pub cycle: u64,
-    pub mode: u8,
+    /// The BIOS video mode (VESA modes included).
+    pub mode: u16,
     pub hash: u64,
 }
 
@@ -344,19 +345,44 @@ pub(crate) struct PcBus<'a> {
     now: u64,
 }
 
+/// Physical addresses from here up can't be RAM (16 MB at most); the linear frame buffer is
+/// among them.
+const ABOVE_RAM: u32 = 0x0100_0000;
+
 impl PcBus<'_> {
-    // The A0000 window is kept out of line so the common RAM path stays small enough to inline.
+    // The video window and the frame buffer are kept out of line so the common RAM path stays
+    // small enough to inline.
     #[inline(never)]
     fn window_read(&mut self, addr: u32) -> u8 {
-        if self.dev.vga.maps_a0000() { self.dev.vga.cpu_read(addr & 0xFFFF) } else { self.mem.read_u8(addr) }
+        let offset = addr - vga::GRAPHICS_BASE;
+        match self.dev.vga.window_size() {
+            Some(size) if offset < size => self.dev.vga.cpu_read(offset),
+            _ => self.mem.read_u8(addr),
+        }
     }
 
     #[inline(never)]
     fn window_write(&mut self, addr: u32, value: u8) {
-        if self.dev.vga.maps_a0000() {
-            self.dev.vga.cpu_write(addr & 0xFFFF, value);
-        } else {
-            self.mem.write_u8(addr, value);
+        let offset = addr - vga::GRAPHICS_BASE;
+        match self.dev.vga.window_size() {
+            Some(size) if offset < size => self.dev.vga.cpu_write(offset, value),
+            _ => self.mem.write_u8(addr, value),
+        }
+    }
+
+    #[inline(never)]
+    fn high_read(&mut self, addr: u32) -> u8 {
+        match self.dev.vga.lfb_range() {
+            Some(lfb) if lfb.contains(&addr) => self.dev.vga.lfb_read(addr - lfb.start),
+            _ => self.mem.read_u8(addr),
+        }
+    }
+
+    #[inline(never)]
+    fn high_write(&mut self, addr: u32, value: u8) {
+        match self.dev.vga.lfb_range() {
+            Some(lfb) if lfb.contains(&addr) => self.dev.vga.lfb_write(addr - lfb.start, value),
+            _ => self.mem.write_u8(addr, value),
         }
     }
 }
@@ -364,16 +390,22 @@ impl PcBus<'_> {
 impl Bus for PcBus<'_> {
     #[inline(always)]
     fn read_u8(&mut self, addr: u32) -> u8 {
-        if addr & 0xFFFF_0000 == vga::GRAPHICS_BASE {
+        if addr.wrapping_sub(vga::GRAPHICS_BASE) < 0x2_0000 {
             return self.window_read(addr);
+        }
+        if addr >= ABOVE_RAM {
+            return self.high_read(addr);
         }
         self.mem.read_u8(addr)
     }
 
     #[inline(always)]
     fn write_u8(&mut self, addr: u32, value: u8) {
-        if addr & 0xFFFF_0000 == vga::GRAPHICS_BASE {
+        if addr.wrapping_sub(vga::GRAPHICS_BASE) < 0x2_0000 {
             return self.window_write(addr, value);
+        }
+        if addr >= ABOVE_RAM {
+            return self.high_write(addr, value);
         }
         self.mem.write_u8(addr, value);
     }
@@ -688,10 +720,11 @@ impl Machine {
         (0..len as u32)
             .map(|i| {
                 let at = addr.wrapping_add(i);
-                if at & 0xFFFF_0000 == vga::GRAPHICS_BASE && vga.maps_a0000() {
-                    vga.peek(at & 0xFFFF)
-                } else {
-                    self.mem.read_u8(at)
+                let offset = at.wrapping_sub(vga::GRAPHICS_BASE);
+                match (vga.window_size(), vga.lfb_range()) {
+                    (Some(size), _) if offset < size => vga.peek(offset),
+                    (_, Some(lfb)) if lfb.contains(&at) => vga.lfb_read(at - lfb.start),
+                    _ => self.mem.read_u8(at),
                 }
             })
             .collect()

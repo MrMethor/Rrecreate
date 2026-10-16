@@ -147,7 +147,12 @@ fn range_for_mode(m: &Machine) -> ((i32, i32), (u16, u16)) {
         0x0D | 0x13 => ((639, 199), (0xFFFE, 0xFFFF)),
         0x0F | 0x10 => ((639, 349), (0xFFFF, 0xFFFF)),
         0x11 | 0x12 => ((639, 479), (0xFFFF, 0xFFFF)),
-        _ => ((639, 199), (0xFFFF, 0xFFFF)),
+        // SVGA modes: their size in pixels, or in characters for text (DOSBox's SVGA branch).
+        _ => match crate::vesa::find(mode) {
+            Some(b) if b.kind == crate::vesa::ModeType::Text => (text_size(), (0xFFF8, 0xFFF8)),
+            Some(b) => ((i32::from(b.width) - 1, i32::from(b.height) - 1), (0xFFFF, 0xFFFF)),
+            None => ((639, 199), (0xFFFF, 0xFFFF)),
+        },
     }
 }
 
