@@ -15,7 +15,10 @@ use crate::vfs::{self, Vfs};
 /// Segment of the first memory control block; conventional memory ends at A000h.
 pub const FIRST_MCB: u16 = 0x0100;
 pub const MEMORY_END: u16 = 0xA000;
-const MAX_HANDLES: usize = 20;
+/// Entries in a process's job file table (the default, inside the PSP).
+const JFT_SIZE: u16 = 20;
+/// Entries in the system file table (FILES=).
+const SYSTEM_FILES: usize = 100;
 const MAX_MCBS: usize = 4096;
 const DEVICES: [&str; 11] = ["CON", "NUL", "PRN", "AUX", "CLOCK$", "LPT1", "LPT2", "LPT3", "COM1", "COM2", "EMMXXXX0"];
 /// Drive number of C: (0 = A:).
@@ -36,6 +39,7 @@ pub mod error {
     pub const MCB_DESTROYED: u16 = 0x07;
     pub const INSUFFICIENT_MEMORY: u16 = 0x08;
     pub const INVALID_BLOCK: u16 = 0x09;
+    pub const INVALID_FORMAT: u16 = 0x0B;
     pub const INVALID_DATA: u16 = 0x0D;
     pub const INVALID_DRIVE: u16 = 0x0F;
     pub const NO_MORE_FILES: u16 = 0x12;
@@ -49,6 +53,16 @@ pub enum Handle {
     File { path: String, pos: u32, write: bool, drive: u8 },
 }
 
+/// An entry in the system file table.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OpenFile {
+    pub handle: Handle,
+    /// Job file table entries (in any process) that refer to this entry.
+    pub refs: u16,
+    /// Child processes get a copy of handles to it (open mode bit 7 clear).
+    pub inherit: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DosState {
     pub psp: u16,
@@ -59,7 +73,13 @@ pub struct DosState {
     pub cd_drive: Option<u8>,
     /// Current directory per drive number, canonical (no drive, no leading backslash).
     pub cwd: Vec<String>,
-    pub handles: Vec<Option<Handle>>,
+    /// The system file table: open files, shared by the handles that refer to them through each
+    /// process's job file table (in its PSP).
+    pub files: Vec<Option<OpenFile>>,
+    /// Exit code and termination type of the last child process (INT 21h AH=4Dh).
+    pub return_code: u16,
+    /// DOS path of each running process's program, by PSP.
+    pub process_paths: std::collections::BTreeMap<u16, String>,
     pub last_error: u16,
     pub break_check: bool,
     pub allocation_strategy: u16,
@@ -77,19 +97,20 @@ impl DosState {
 
 impl Default for DosState {
     fn default() -> Self {
-        let mut handles = vec![None; MAX_HANDLES];
-        handles[0] = Some(Handle::Console);
-        handles[1] = Some(Handle::Console);
-        handles[2] = Some(Handle::Console);
-        handles[3] = Some(Handle::Null);
-        handles[4] = Some(Handle::Null);
+        // AUX, CON and PRN; the first process's handles 0-4 refer to CON, CON, CON, AUX, PRN.
+        let mut files = vec![None; SYSTEM_FILES];
+        files[0] = Some(OpenFile { handle: Handle::Null, refs: 1, inherit: true });
+        files[1] = Some(OpenFile { handle: Handle::Console, refs: 3, inherit: true });
+        files[2] = Some(OpenFile { handle: Handle::Null, refs: 1, inherit: true });
         Self {
             psp: 0,
             dta: (0, 0x80),
             drive: C_DRIVE,
             cd_drive: None,
             cwd: vec![String::new(); 26],
-            handles,
+            files,
+            return_code: 0,
+            process_paths: std::collections::BTreeMap::new(),
             last_error: 0,
             break_check: false,
             allocation_strategy: 0,
@@ -155,7 +176,7 @@ pub(crate) fn wall_clock(m: &Machine) -> DateTime {
 
 pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
     match id {
-        callback::TERMINATE => m.terminate(0),
+        callback::TERMINATE => terminate_process(m, 0, false),
         callback::DOS => int21(m),
         callback::FAST_CONSOLE => bios::teletype(m, m.cpu.regs.al()),
         callback::MULTIPLEX => multiplex(m),
@@ -190,7 +211,7 @@ fn write_bytes(m: &mut Machine, segment: u16, offset: u16, data: &[u8]) {
 fn int21(m: &mut Machine) {
     let r = m.cpu.regs;
     match r.ah() {
-        0x00 => m.terminate(0),
+        0x00 => terminate_process(m, 0, false),
         0x01 | 0x07 | 0x08 => match bios::pop_key(m) {
             Some(key) => {
                 m.cpu.regs.set_al(key as u8);
@@ -272,7 +293,12 @@ fn int21(m: &mut Machine) {
             m.cpu.regs.set_bx(0);
             m.cpu.regs.set_cx(0);
         }
-        0x31 => m.terminate(r.al()), // terminate and stay resident: treated as exit
+        0x26 => new_psp(m, r.dx(), false),
+        0x31 => {
+            // Keep DX paragraphs of the program's memory and return to the parent.
+            let _ = resize(m, m.dos.psp, r.dx().max(6));
+            terminate_process(m, r.al(), true);
+        }
         0x33 => match r.al() {
             0x00 => {
                 let on = m.dos.break_check;
@@ -325,12 +351,9 @@ fn int21(m: &mut Machine) {
         0x3C => create(m, false),
         0x5B => create(m, true),
         0x3D => open(m, r.al()),
-        0x3E => match handle_slot(m, r.bx()) {
-            Some(slot) => {
-                *slot = None;
-                ok(m);
-            }
-            None => fail(m, error::INVALID_HANDLE),
+        0x3E => match close_handle(m, r.bx()) {
+            Ok(()) => ok(m),
+            Err(code) => fail(m, code),
         },
         0x3F => read(m),
         0x40 => write(m),
@@ -340,27 +363,17 @@ fn int21(m: &mut Machine) {
         0x42 => seek(m),
         0x43 => attributes(m),
         0x44 => ioctl(m),
-        0x45 => match m.dos.handles.get(usize::from(r.bx())).cloned().flatten() {
-            Some(h) => match free_handle(m) {
-                Some(new) => {
-                    m.dos.handles[new] = Some(h);
-                    m.cpu.regs.set_ax(new as u16);
-                    ok(m);
-                }
-                None => fail(m, error::TOO_MANY_FILES),
-            },
-            None => fail(m, error::INVALID_HANDLE),
-        },
-        0x46 => {
-            let source = m.dos.handles.get(usize::from(r.bx())).cloned().flatten();
-            match (source, usize::from(r.cx())) {
-                (Some(h), target) if target < MAX_HANDLES => {
-                    m.dos.handles[target] = Some(h);
-                    ok(m);
-                }
-                _ => fail(m, error::INVALID_HANDLE),
+        0x45 => match duplicate_handle(m, r.bx()) {
+            Ok(new) => {
+                m.cpu.regs.set_ax(new);
+                ok(m);
             }
-        }
+            Err(code) => fail(m, code),
+        },
+        0x46 => match force_duplicate(m, r.bx(), r.cx()) {
+            Ok(()) => ok(m),
+            Err(code) => fail(m, code),
+        },
         0x47 => {
             let drive = drive_argument(m, r.dl());
             if m.dos.drive_exists(drive) {
@@ -393,11 +406,17 @@ fn int21(m: &mut Machine) {
                 m.cpu.regs.set_bx(available);
             }
         },
-        0x4C => m.terminate(r.al()),
-        0x4D => m.cpu.regs.set_ax(0),
+        0x4B => exec(m),
+        0x4C => terminate_process(m, r.al(), false),
+        0x4D => {
+            let code = m.dos.return_code;
+            m.cpu.regs.set_ax(code);
+            ok(m);
+        }
         0x4E => find_first(m),
         0x4F => find_next(m),
         0x50 => m.dos.psp = r.bx(),
+        0x55 => new_psp(m, r.dx(), true),
         0x51 | 0x62 => m.cpu.regs.set_bx(m.dos.psp),
         0x56 => {
             let (from_raw, to_raw) = (read_asciiz(m, r.ds(), r.dx()), read_asciiz(m, r.es(), r.di()));
@@ -419,7 +438,7 @@ fn int21(m: &mut Machine) {
                 _ => fail(m, error::ACCESS_DENIED),
             }
         }
-        0x57 => match (r.al(), m.dos.handles.get(usize::from(r.bx())).cloned().flatten()) {
+        0x57 => match (r.al(), handle_file(m, r.bx())) {
             (0, Some(_)) => {
                 m.cpu.regs.set_cx(FILE_TIME);
                 m.cpu.regs.set_dx(FILE_DATE);
@@ -451,7 +470,11 @@ fn int21(m: &mut Machine) {
             m.cpu.regs.set_bx(0x0D01); // class: unknown, action: retry
             m.cpu.regs.set_ch(0x01);
         }
-        0x67 | 0x68 => ok(m), // set handle count, commit file
+        0x67 => match set_handle_count(m, r.bx()) {
+            Ok(()) => ok(m),
+            Err(code) => fail(m, code),
+        },
+        0x68 => ok(m), // commit file
         0x6C => extended_open(m),
         ah => {
             m.diagnostic(format!("INT 21h AH={ah:02X}h is not implemented"));
@@ -545,18 +568,123 @@ fn path_op(m: &mut Machine, write: bool, op: impl FnOnce(&mut Machine, String) -
 
 // ---- file handles ----
 
-fn free_handle(m: &Machine) -> Option<usize> {
-    m.dos.handles.iter().position(Option::is_none)
+/// The current process's job file table: its linear address and number of entries.
+fn jft(m: &Machine) -> (u32, u16) {
+    let psp = Machine::lin(m.dos.psp, 0);
+    let size = m.mem.read_u16(psp + 0x32);
+    let (offset, segment) = (m.mem.read_u16(psp + 0x34), m.mem.read_u16(psp + 0x36));
+    (Machine::lin(segment, offset), size)
 }
 
-fn handle_slot(m: &mut Machine, handle: u16) -> Option<&mut Option<Handle>> {
-    m.dos.handles.get_mut(usize::from(handle)).filter(|slot| slot.is_some())
+/// The system file table entry a handle of the current process refers to.
+fn sft_index(m: &Machine, handle: u16) -> Option<usize> {
+    let (table, size) = jft(m);
+    if handle >= size {
+        return None;
+    }
+    let index = usize::from(m.mem.read_u8(table + u32::from(handle)));
+    m.dos.files.get(index)?.as_ref()?;
+    Some(index)
 }
 
-fn install_handle(m: &mut Machine, handle: Handle) -> Result<u16, u16> {
-    let slot = free_handle(m).ok_or(error::TOO_MANY_FILES)?;
-    m.dos.handles[slot] = Some(handle);
-    Ok(slot as u16)
+fn handle_file(m: &Machine, handle: u16) -> Option<Handle> {
+    let index = sft_index(m, handle)?;
+    m.dos.files[index].as_ref().map(|f| f.handle.clone())
+}
+
+fn handle_file_mut(m: &mut Machine, handle: u16) -> Option<&mut Handle> {
+    let index = sft_index(m, handle)?;
+    m.dos.files[index].as_mut().map(|f| &mut f.handle)
+}
+
+fn free_jft_slot(m: &Machine) -> Option<u16> {
+    let (table, size) = jft(m);
+    (0..size).find(|&h| m.mem.read_u8(table + u32::from(h)) == 0xFF)
+}
+
+/// Opens a new system file table entry and a handle to it in the current process.
+fn install_handle(m: &mut Machine, handle: Handle, inherit: bool) -> Result<u16, u16> {
+    let slot = free_jft_slot(m).ok_or(error::TOO_MANY_FILES)?;
+    let index = m.dos.files.iter().position(Option::is_none).ok_or(error::TOO_MANY_FILES)?;
+    m.dos.files[index] = Some(OpenFile { handle, refs: 1, inherit });
+    let (table, _) = jft(m);
+    m.mem.write_u8(table + u32::from(slot), index as u8);
+    Ok(slot)
+}
+
+/// Drops one reference to a system file table entry, closing it with the last one.
+fn release_file(m: &mut Machine, index: usize) {
+    if let Some(file) = &mut m.dos.files[index] {
+        file.refs = file.refs.saturating_sub(1);
+        if file.refs == 0 {
+            m.dos.files[index] = None;
+        }
+    }
+}
+
+fn close_handle(m: &mut Machine, handle: u16) -> Result<(), u16> {
+    let index = sft_index(m, handle).ok_or(error::INVALID_HANDLE)?;
+    let (table, _) = jft(m);
+    m.mem.write_u8(table + u32::from(handle), 0xFF);
+    release_file(m, index);
+    Ok(())
+}
+
+/// INT 21h AH=45h: a second handle to the same open file (sharing its position).
+fn duplicate_handle(m: &mut Machine, handle: u16) -> Result<u16, u16> {
+    let index = sft_index(m, handle).ok_or(error::INVALID_HANDLE)?;
+    let slot = free_jft_slot(m).ok_or(error::TOO_MANY_FILES)?;
+    let (table, _) = jft(m);
+    m.mem.write_u8(table + u32::from(slot), index as u8);
+    if let Some(file) = &mut m.dos.files[index] {
+        file.refs += 1;
+    }
+    Ok(slot)
+}
+
+/// INT 21h AH=46h: makes `target` refer to `handle`'s file, closing it first if open.
+fn force_duplicate(m: &mut Machine, handle: u16, target: u16) -> Result<(), u16> {
+    let index = sft_index(m, handle).ok_or(error::INVALID_HANDLE)?;
+    let (table, size) = jft(m);
+    if target >= size {
+        return Err(error::INVALID_HANDLE);
+    }
+    if target == handle {
+        return Ok(());
+    }
+    if sft_index(m, target).is_some() {
+        close_handle(m, target)?;
+    }
+    m.mem.write_u8(table + u32::from(target), index as u8);
+    if let Some(file) = &mut m.dos.files[index] {
+        file.refs += 1;
+    }
+    Ok(())
+}
+
+/// INT 21h AH=67h: moves the job file table into a block of `count` entries.
+fn set_handle_count(m: &mut Machine, count: u16) -> Result<(), u16> {
+    let (table, size) = jft(m);
+    let psp = m.dos.psp;
+    let open = (0..size).filter(|&h| m.mem.read_u8(table + u32::from(h)) != 0xFF).max().map_or(0, |h| h + 1);
+    if count < open {
+        return Err(error::TOO_MANY_FILES);
+    }
+    let entries: Vec<u8> = (0..size).map(|h| m.mem.read_u8(table + u32::from(h))).collect();
+    let (segment, offset) = if count <= JFT_SIZE {
+        (psp, 0x18)
+    } else {
+        (allocate(m, count.div_ceil(16), psp).map_err(|(code, _)| code)?, 0)
+    };
+    for h in 0..count {
+        let value = entries.get(usize::from(h)).copied().unwrap_or(0xFF);
+        m.mem.write_u8(Machine::lin(segment, offset) + u32::from(h), value);
+    }
+    let at = Machine::lin(psp, 0);
+    m.mem.write_u16(at + 0x32, count);
+    m.mem.write_u16(at + 0x34, offset);
+    m.mem.write_u16(at + 0x36, segment);
+    Ok(())
 }
 
 fn device_handle(device: &str) -> Handle {
@@ -583,7 +711,7 @@ fn open_target(m: &mut Machine, raw: &[u8], mode: u8) -> Result<u16, u16> {
             Handle::File { path, pos: 0, write: mode & 7 != 0 && !on_cd, drive }
         }
     };
-    install_handle(m, handle)
+    install_handle(m, handle, mode & 0x80 == 0)
 }
 
 fn create_target(m: &mut Machine, raw: &[u8], must_not_exist: bool) -> Result<u16, u16> {
@@ -603,12 +731,14 @@ fn create_target(m: &mut Machine, raw: &[u8], must_not_exist: bool) -> Result<u1
             if must_not_exist && m.drive.is_file(&path) {
                 return Err(error::FILE_EXISTS);
             }
-            free_handle(m).ok_or(error::TOO_MANY_FILES)?;
+            if free_jft_slot(m).is_none() || !m.dos.files.iter().any(Option::is_none) {
+                return Err(error::TOO_MANY_FILES);
+            }
             m.drive.create(&path);
             Handle::File { path, pos: 0, write: true, drive }
         }
     };
-    install_handle(m, handle)
+    install_handle(m, handle, true)
 }
 
 fn open(m: &mut Machine, mode: u8) {
@@ -658,7 +788,7 @@ fn extended_open(m: &mut Machine) {
 
 fn read(m: &mut Machine) {
     let r = m.cpu.regs;
-    let Some(Some(handle)) = m.dos.handles.get(usize::from(r.bx())).cloned() else {
+    let Some(handle) = handle_file(m, r.bx()) else {
         return fail(m, error::INVALID_HANDLE);
     };
     match handle {
@@ -693,7 +823,7 @@ fn read(m: &mut Machine) {
 
 fn write(m: &mut Machine) {
     let r = m.cpu.regs;
-    let Some(Some(handle)) = m.dos.handles.get(usize::from(r.bx())).cloned() else {
+    let Some(handle) = handle_file(m, r.bx()) else {
         return fail(m, error::INVALID_HANDLE);
     };
     let data = m.mem.read_bytes(Machine::lin(r.ds(), r.dx()), usize::from(r.cx()));
@@ -715,7 +845,7 @@ fn write(m: &mut Machine) {
 }
 
 fn set_position(m: &mut Machine, handle: u16, new_pos: u32) {
-    if let Some(Some(Handle::File { pos, .. })) = m.dos.handles.get_mut(usize::from(handle)) {
+    if let Some(Handle::File { pos, .. }) = handle_file_mut(m, handle) {
         *pos = new_pos;
     }
 }
@@ -723,7 +853,7 @@ fn set_position(m: &mut Machine, handle: u16, new_pos: u32) {
 fn seek(m: &mut Machine) {
     let r = m.cpu.regs;
     let offset = ((u32::from(r.cx()) << 16) | u32::from(r.dx())) as i32;
-    let Some(Some(handle)) = m.dos.handles.get(usize::from(r.bx())).cloned() else {
+    let Some(handle) = handle_file(m, r.bx()) else {
         return fail(m, error::INVALID_HANDLE);
     };
     let Handle::File { path, pos, .. } = handle else {
@@ -772,7 +902,7 @@ fn attributes(m: &mut Machine) {
 fn ioctl(m: &mut Machine) {
     let r = m.cpu.regs;
     match r.al() {
-        0x00 => match m.dos.handles.get(usize::from(r.bx())).cloned().flatten() {
+        0x00 => match handle_file(m, r.bx()) {
             Some(Handle::Console) => {
                 m.cpu.regs.set_dx(0x80D3);
                 ok(m);
@@ -1127,7 +1257,165 @@ fn set_owner(m: &mut Machine, block: u16, owner: u16, name: &[u8]) {
     m.mem.load(at + 8, &padded);
 }
 
-// ---- program loading ----
+// ---- program loading and processes ----
+//
+// EXEC and termination follow DOSBox Staging `src/dos/dos_execute.cpp` (GPL-2.0-or-later):
+// memory sizing, load-high EXEs, the parent's saved stack and registers, the INT 22h return
+// address, and what a terminating process gives back.
+
+/// Where a loaded program starts.
+struct Entry {
+    psp: u16,
+    size: u16,
+    cs: u16,
+    ip: u16,
+    ss: u16,
+    sp: u16,
+}
+
+fn find_program(m: &Machine, raw: &[u8]) -> Result<(String, Vec<u8>), LoadError> {
+    let name = String::from_utf8_lossy(raw).into_owned();
+    match resolve(m, raw, false) {
+        Ok(Target::Path(path)) if m.drive.is_file(&path) => {
+            let data = m.drive.file(&path).expect("checked above").to_vec();
+            Ok((path, data))
+        }
+        _ => Err(LoadError::NotFound(name)),
+    }
+}
+
+fn parse_program(data: &[u8]) -> Result<Option<mz::MzImage<'_>>, LoadError> {
+    if data.is_empty() {
+        return Err(LoadError::BadFormat("empty file".into()));
+    }
+    if !mz::is_mz(data) {
+        return Ok(None);
+    }
+    if let Some(kind) = new_executable_kind(data) {
+        return Err(LoadError::Unsupported(format!("{kind} executables need a DOS extender or Windows")));
+    }
+    mz::parse(data).map(Some).map_err(LoadError::BadFormat)
+}
+
+/// Builds an environment block for a program: `strings` (NAME=VALUE entries, each ending in
+/// a NUL), an empty string, a word count of 1 and the program's full path.
+fn make_environment(m: &mut Machine, strings: &[u8], drive: u8, path: &str) -> Result<u16, LoadError> {
+    let mut env = strings.to_vec();
+    if env.is_empty() {
+        env.push(0);
+    }
+    env.push(0);
+    env.extend(1u16.to_le_bytes());
+    env.extend(format!("{}:\\{path}\0", char::from(b'A' + drive)).bytes());
+    let paragraphs = env.len().div_ceil(16) as u16;
+    let segment = allocate(m, paragraphs, 0x0008).map_err(|(_, available)| LoadError::InsufficientMemory {
+        needed: paragraphs.into(),
+        available: available.into(),
+    })?;
+    m.mem.load(Machine::lin(segment, 0), &env);
+    Ok(segment)
+}
+
+/// The NAME=VALUE strings of an environment block (up to, not including, the final NUL).
+fn environment_strings(m: &Machine, segment: u16) -> Vec<u8> {
+    let mut strings = Vec::new();
+    let at = Machine::lin(segment, 0);
+    for i in 0..0x8000u32 {
+        let byte = m.mem.read_u8(at + i);
+        if byte == 0 && (i == 0 || m.mem.read_u8(at + i - 1) == 0) {
+            break;
+        }
+        strings.push(byte);
+    }
+    strings
+}
+
+/// Allocates the program's memory block, builds its PSP and loads its image (DOS EXEC
+/// steps); the environment block becomes the new process's.
+fn create_process(
+    m: &mut Machine,
+    path: &str,
+    data: &[u8],
+    image: Option<&mz::MzImage<'_>>,
+    env_segment: u16,
+    parent: Option<u16>,
+) -> Result<Entry, LoadError> {
+    let available = match allocate(m, 0xFFFF, 0) {
+        Ok(_) => unreachable!("a 1 MB block can't be free"),
+        Err((_, largest)) => largest,
+    };
+    let (needed, wanted) = match image {
+        Some(exe) => {
+            let paragraphs = exe.image.len().div_ceil(16) as u32;
+            let max = if exe.max_alloc == 0 { 0xFFFF } else { 0x10 + paragraphs + u32::from(exe.max_alloc) };
+            (0x10 + paragraphs + u32::from(exe.min_alloc), max)
+        }
+        None => ((data.len() as u32 + 0x100 + 2).div_ceil(16), 0xFFFF),
+    };
+    if u32::from(available) < needed {
+        return Err(LoadError::InsufficientMemory { needed, available: available.into() });
+    }
+    let size = wanted.min(u32::from(available)) as u16;
+    let psp = allocate(m, size, 0x0008).expect("fits: checked against the largest block");
+    let name = vfs::name_of(path).split('.').next().unwrap_or("").to_ascii_uppercase();
+    set_owner(m, env_segment, psp, b"");
+    set_owner(m, psp, psp, name.as_bytes());
+    build_psp(m, psp, psp + size, env_segment, parent.unwrap_or(psp));
+    let entry = match image {
+        Some(exe) => {
+            // An EXE asking for no extra memory at all is loaded at the top of its block.
+            let load = if exe.min_alloc == 0 && exe.max_alloc == 0 {
+                (psp + size).wrapping_sub(exe.image.len().div_ceil(16) as u16)
+            } else {
+                psp + 0x10
+            };
+            load_image(m, data, image, load, load);
+            Entry { psp, size, cs: load.wrapping_add(exe.cs), ip: exe.ip, ss: load.wrapping_add(exe.ss), sp: exe.sp }
+        }
+        None => {
+            load_image(m, data, None, psp + 0x10, 0);
+            let sp = if size >= 0x1000 { 0xFFFE } else { size * 16 - 2 };
+            m.mem.write_u16(Machine::lin(psp, sp), 0); // RET goes to PSP:0000 (INT 20h)
+            Entry { psp, size, cs: psp, ip: 0x100, ss: psp, sp }
+        }
+    };
+    m.dos.process_paths.insert(psp, path.to_owned());
+    Ok(entry)
+}
+
+/// Copies a program image to `load` and applies its relocations with `relocation`.
+fn load_image(m: &mut Machine, data: &[u8], image: Option<&mz::MzImage<'_>>, load: u16, relocation: u16) {
+    match image {
+        Some(exe) => {
+            m.mem.load(Machine::lin(load, 0), exe.image);
+            for &(segment, offset) in &exe.relocations {
+                let at = Machine::lin(load.wrapping_add(segment), offset);
+                let value = m.mem.read_u16(at).wrapping_add(relocation);
+                m.mem.write_u16(at, value);
+            }
+        }
+        None => m.mem.load(Machine::lin(load, 0), &data[..data.len().min(0xFF00)]),
+    }
+}
+
+/// Sets the registers DOS leaves at program start and points the CPU at the entry.
+fn start_program(m: &mut Machine, entry: &Entry, ax: u16) {
+    let regs = &mut m.cpu.regs;
+    regs.set_cs(entry.cs);
+    regs.ip = entry.ip;
+    regs.set_ss(entry.ss);
+    regs.set_sp(entry.sp);
+    regs.set_ds(entry.psp);
+    regs.set_es(entry.psp);
+    regs.set_ax(ax);
+    regs.set_bx(ax);
+    regs.set_cx(0x00FF);
+    regs.set_dx(entry.psp);
+    regs.set_si(entry.ip);
+    regs.set_di(entry.sp);
+    regs.set_bp(0x091C);
+    regs.flags = cpu::flags::normalize(cpu::flags::IF);
+}
 
 impl Machine {
     /// Builds a machine with `drive` as C: and loads `program` (a DOS path on that drive).
@@ -1137,102 +1425,272 @@ impl Machine {
         Ok(machine)
     }
 
-    /// Loads an MZ or COM program the way DOS EXEC does and points the CPU at its entry.
+    /// Loads an MZ or COM program as the first process (as if started from the DOS prompt)
+    /// and points the CPU at its entry.
     pub fn load_program(&mut self, program: &str, args: &str) -> Result<(), LoadError> {
-        let path = match resolve(self, program.as_bytes(), false) {
-            Ok(Target::Path(path)) if self.drive.is_file(&path) => path,
-            _ => return Err(LoadError::NotFound(program.to_owned())),
-        };
-        let data = self.drive.file(&path).expect("checked above").to_vec();
-        let name = vfs::name_of(&path).to_owned();
-        let is_exe = mz::is_mz(&data);
-        let image = if is_exe { Some(mz::parse(&data).map_err(LoadError::BadFormat)?) } else { None };
-        if let Some(lfanew) = is_exe.then(|| new_executable_kind(&data)).flatten() {
-            return Err(LoadError::Unsupported(format!("{lfanew} executables need a DOS extender or Windows")));
-        }
-
-        // Environment block: variables, then a word count and the program's full path.
-        let mut env = b"COMSPEC=C:\\COMMAND.COM\0PATH=C:\\\0PROMPT=$P$G\0".to_vec();
+        let (path, data) = find_program(self, program.as_bytes())?;
+        let image = parse_program(&data)?;
+        let mut strings = b"COMSPEC=C:\\COMMAND.COM\0PATH=C:\\\0PROMPT=$P$G\0".to_vec();
         for (name, value) in &self.config.environment {
-            env.extend(format!("{name}={value}\0").bytes());
+            strings.extend(format!("{name}={value}\0").bytes());
         }
         if let Some(sb) = self.config.sound_blaster
             && !self.config.environment.iter().any(|(name, _)| name.eq_ignore_ascii_case("BLASTER"))
         {
-            env.extend(format!("BLASTER={}\0", sb.blaster_variable()).bytes());
+            strings.extend(format!("BLASTER={}\0", sb.blaster_variable()).bytes());
         }
-        env.push(0);
-        env.extend(1u16.to_le_bytes());
-        let drive_letter = char::from(b'A' + path_drive(self, program.as_bytes()));
-        env.extend(format!("{drive_letter}:\\{path}\0").bytes());
-        let env_paragraphs = env.len().div_ceil(16) as u16;
-        let env_segment = allocate(self, env_paragraphs, 0x0008).map_err(|(_, available)| {
-            LoadError::InsufficientMemory { needed: env_paragraphs.into(), available: available.into() }
-        })?;
-        self.mem.load(Machine::lin(env_segment, 0), &env);
-
-        let available = match allocate(self, 0xFFFF, 0) {
-            Ok(_) => unreachable!("a 1 MB block can't be free"),
-            Err((_, largest)) => largest,
-        };
-        let (needed, wanted) = match &image {
-            Some(exe) => {
-                let image_paragraphs = exe.image.len().div_ceil(16) as u32;
-                (0x10 + image_paragraphs + u32::from(exe.min_alloc), 0x10 + image_paragraphs + u32::from(exe.max_alloc))
-            }
-            None => ((data.len() as u32 + 0x100 + 2).div_ceil(16), u32::MAX),
-        };
-        if u32::from(available) < needed {
-            return Err(LoadError::InsufficientMemory { needed, available: available.into() });
-        }
-        let size = wanted.min(u32::from(available)) as u16;
-        let psp = allocate(self, size, 0x0008).expect("fits: checked against the largest block");
-        set_owner(self, env_segment, psp, b"");
-        set_owner(self, psp, psp, name.split('.').next().unwrap_or("").as_bytes());
-        build_psp(self, psp, psp + size, env_segment, args);
-
-        let regs = &mut self.cpu.regs;
-        match image {
-            Some(exe) => {
-                let load = psp + 0x10;
-                self.mem.load(Machine::lin(load, 0), exe.image);
-                for &(segment, offset) in &exe.relocations {
-                    let at = Machine::lin(load.wrapping_add(segment), offset);
-                    let value = self.mem.read_u16(at).wrapping_add(load);
-                    self.mem.write_u16(at, value);
-                }
-                regs.set_cs(load.wrapping_add(exe.cs));
-                regs.ip = exe.ip;
-                regs.set_ss(load.wrapping_add(exe.ss));
-                regs.set_sp(exe.sp);
-            }
-            None => {
-                self.mem.load(Machine::lin(psp, 0x100), &data);
-                regs.set_cs(psp);
-                regs.ip = 0x100;
-                regs.set_ss(psp);
-                let top = if size >= 0x1000 { 0xFFFE } else { size * 16 - 2 };
-                regs.set_sp(top);
-                self.mem.write_u16(Machine::lin(psp, top), 0); // RET goes to PSP:0000 (INT 20h)
-            }
-        }
-        // Register values DOS 5 leaves at program start.
-        let regs = &mut self.cpu.regs;
-        regs.set_ds(psp);
-        regs.set_es(psp);
-        regs.set_ax(0);
-        regs.set_bx(0);
-        regs.set_cx(0x00FF);
-        regs.set_dx(psp);
-        regs.set_si(regs.ip);
-        regs.set_di(regs.sp());
-        regs.set_bp(0x091C);
-        regs.flags = cpu::flags::normalize(cpu::flags::IF);
-
-        self.dos.psp = psp;
-        self.dos.dta = (psp, 0x80);
+        let drive = path_drive(self, program.as_bytes());
+        let env_segment = make_environment(self, &strings, drive, &path)?;
+        // The first process is its own parent, as when started by COMMAND.COM's /P instance.
+        let entry = create_process(self, &path, &data, image.as_ref(), env_segment, None)?;
+        let mut tail = if args.is_empty() { String::new() } else { format!(" {args}") }.into_bytes();
+        tail.truncate(126);
+        let mut block = vec![tail.len() as u8];
+        block.extend(&tail);
+        block.push(0x0D);
+        self.mem.load(Machine::lin(entry.psp, 0x80), &block);
+        self.dos.psp = entry.psp;
+        self.dos.dta = (entry.psp, 0x80);
         self.dos.program = path;
+        start_program(self, &entry, 0);
         Ok(())
+    }
+}
+
+/// DOS error code for a failed load.
+fn load_error_code(error: &LoadError) -> u16 {
+    match error {
+        LoadError::NotFound(_) => error::FILE_NOT_FOUND,
+        LoadError::InsufficientMemory { .. } => error::INSUFFICIENT_MEMORY,
+        LoadError::BadFormat(_) | LoadError::Unsupported(_) => error::INVALID_FORMAT,
+    }
+}
+
+/// INT 21h AH=4Bh: load and run a child program (AL=0), load it without running it (AL=1), or
+/// load an overlay (AL=3). The parent's registers and stack are saved below its INT 21h frame
+/// and come back when the child terminates.
+fn exec(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let raw = read_asciiz(m, r.ds(), r.dx());
+    let block = Machine::lin(r.es(), r.bx());
+    let mode = r.al();
+    if !matches!(mode, 0 | 1 | 3) {
+        return fail(m, error::INVALID_FUNCTION);
+    }
+    let (path, data) = match find_program(m, &raw) {
+        Ok(found) => found,
+        Err(e) => {
+            if vfs::name_of(&String::from_utf8_lossy(&raw)).eq_ignore_ascii_case("COMMAND.COM") {
+                m.diagnostic("EXEC of COMMAND.COM: there is no DOS shell".into());
+            }
+            return fail(m, load_error_code(&e));
+        }
+    };
+    let image = match parse_program(&data) {
+        Ok(image) => image,
+        Err(e) => {
+            m.diagnostic(format!("EXEC {path}: {e}"));
+            return fail(m, load_error_code(&e));
+        }
+    };
+    if mode == 3 {
+        let (load, relocation) = (m.mem.read_u16(block), m.mem.read_u16(block + 2));
+        load_image(m, &data, image.as_ref(), load, relocation);
+        m.cpu.regs.set_ax(0);
+        m.cpu.regs.set_dx(0);
+        return ok(m);
+    }
+
+    // Environment: the given block's strings, or a copy of the parent's.
+    let parent = m.dos.psp;
+    let source = match m.mem.read_u16(block) {
+        0 => m.mem.read_u16(Machine::lin(parent, 0x2C)),
+        segment => segment,
+    };
+    let strings = if source == 0 { Vec::new() } else { environment_strings(m, source) };
+    let drive = path_drive(m, &raw);
+    let env_segment = match make_environment(m, &strings, drive, &path) {
+        Ok(segment) => segment,
+        Err(e) => return fail(m, load_error_code(&e)),
+    };
+    let entry = match create_process(m, &path, &data, image.as_ref(), env_segment, Some(parent)) {
+        Ok(entry) => entry,
+        Err(e) => {
+            let _ = free(m, env_segment);
+            return fail(m, load_error_code(&e));
+        }
+    };
+    inherit_handles(m, parent, entry.psp);
+    // Command tail and FCBs from the parameter block.
+    let far = |m: &Machine, at: u32| Machine::lin(m.mem.read_u16(at + 2), m.mem.read_u16(at));
+    let tail = m.mem.read_bytes(far(m, block + 2), 128);
+    m.mem.load(Machine::lin(entry.psp, 0x80), &tail);
+    for (field, offset) in [(6u32, 0x5Cu16), (10, 0x6C)] {
+        let fcb = m.mem.read_bytes(far(m, block + field), 16);
+        m.mem.load(Machine::lin(entry.psp, offset), &fcb);
+    }
+
+    // The child returns to the caller's CS:IP (from its INT 21h frame) through INT 22h.
+    let (ss, sp) = (r.ss(), r.sp());
+    let frame = Machine::lin(ss, sp);
+    let (return_ip, return_cs) = (m.mem.read_u16(frame), m.mem.read_u16(frame + 2));
+    m.mem.write_u16(0x22 * 4, return_ip);
+    m.mem.write_u16(0x22 * 4 + 2, return_cs);
+    // Save the caller's registers below the frame, and that stack in its PSP.
+    let saved_sp = sp.wrapping_sub(18);
+    for (i, value) in [r.ax(), r.bx(), r.cx(), r.dx(), r.si(), r.di(), r.bp(), r.ds(), r.es()].into_iter().enumerate() {
+        m.mem.write_u16(Machine::lin(ss, saved_sp.wrapping_add(2 * i as u16)), value);
+    }
+    for psp in [parent, entry.psp] {
+        m.mem.write_u16(Machine::lin(psp, 0x2E), saved_sp);
+        m.mem.write_u16(Machine::lin(psp, 0x30), ss);
+    }
+    m.cpu.regs.set_sp(saved_sp);
+    // The child's PSP keeps the vectors to restore when it ends.
+    save_vectors(m, entry.psp);
+    m.dos.psp = entry.psp;
+    m.dos.dta = (entry.psp, 0x80);
+    m.dos.program = path;
+    // BL/BH = FFh when FCB 1/2 names a drive that doesn't exist.
+    let fcb_drive = |m: &Machine, offset: u16| {
+        let drive = m.mem.read_u8(Machine::lin(entry.psp, offset));
+        let valid = drive == 0 || m.dos.drive_exists(drive - 1);
+        if valid { 0u16 } else { 0xFF }
+    };
+    let ax = fcb_drive(m, 0x5C) | (fcb_drive(m, 0x6C) << 8);
+    if mode == 1 {
+        // Load only: the child's stack gets AX's initial value; the caller gets SS:SP and CS:IP.
+        let child_sp = entry.sp.wrapping_sub(2);
+        m.mem.write_u16(Machine::lin(entry.ss, child_sp), ax);
+        m.mem.write_u16(block + 0x0E, child_sp);
+        m.mem.write_u16(block + 0x10, entry.ss);
+        m.mem.write_u16(block + 0x12, entry.ip);
+        m.mem.write_u16(block + 0x14, entry.cs);
+        m.cpu.regs.set_sp(sp);
+        m.cpu.regs.set_ax(entry.ip);
+        m.cpu.regs.set_bx(entry.size);
+        m.cpu.regs.set_dx(0);
+        return ok(m);
+    }
+    start_program(m, &entry, ax);
+}
+
+/// Gives a child copies of the parent's inheritable handles.
+fn inherit_handles(m: &mut Machine, parent: u16, child: u16) {
+    let saved = m.dos.psp;
+    m.dos.psp = parent;
+    let (table, size) = jft(m);
+    let entries: Vec<u8> = (0..size.min(JFT_SIZE)).map(|h| m.mem.read_u8(table + u32::from(h))).collect();
+    m.dos.psp = saved;
+    for (h, &index) in entries.iter().enumerate() {
+        let inherited = match m.dos.files.get_mut(usize::from(index)).and_then(Option::as_mut) {
+            Some(file) if file.inherit => {
+                file.refs += 1;
+                index
+            }
+            _ => 0xFF,
+        };
+        m.mem.write_u8(Machine::lin(child, 0x18 + h as u16), inherited);
+    }
+}
+
+fn save_vectors(m: &mut Machine, psp: u16) {
+    for (i, vector) in [0x22u32, 0x23, 0x24].into_iter().enumerate() {
+        let at = Machine::lin(psp, 0x0A + 4 * i as u16);
+        let (offset, segment) = (m.mem.read_u16(vector * 4), m.mem.read_u16(vector * 4 + 2));
+        m.mem.write_u16(at, offset);
+        m.mem.write_u16(at + 2, segment);
+    }
+}
+
+/// Ends the current process (INT 20h, INT 21h AH=00h/31h/4Ch): back to the parent at its INT 22h
+/// address with its registers and stack, or the end of the run for the first process.
+pub(crate) fn terminate_process(m: &mut Machine, code: u8, resident: bool) {
+    let psp = m.dos.psp;
+    let at = Machine::lin(psp, 0);
+    let parent = m.mem.read_u16(at + 0x16);
+    m.dos.return_code = u16::from(code) | if resident { 0x0300 } else { 0 };
+    if parent == psp || parent == 0 {
+        m.terminate(code);
+        return;
+    }
+    if !resident {
+        let (table, size) = jft(m);
+        for h in 0..size {
+            if let Some(index) = sft_index(m, h) {
+                m.mem.write_u8(table + u32::from(h), 0xFF);
+                release_file(m, index);
+            }
+        }
+    }
+    // Restore INT 22h-24h from the PSP; INT 22h is where the parent continues.
+    let (return_ip, return_cs) = (m.mem.read_u16(at + 0x0A), m.mem.read_u16(at + 0x0C));
+    for (i, vector) in [0x22u32, 0x23, 0x24].into_iter().enumerate() {
+        let saved = at + 0x0A + 4 * i as u32;
+        let (offset, segment) = (m.mem.read_u16(saved), m.mem.read_u16(saved + 2));
+        m.mem.write_u16(vector * 4, offset);
+        m.mem.write_u16(vector * 4 + 2, segment);
+    }
+    m.dos.psp = parent;
+    if let Some(path) = m.dos.process_paths.get(&parent) {
+        m.dos.program = path.clone();
+    }
+    m.dos.process_paths.remove(&psp);
+    let parent_at = Machine::lin(parent, 0);
+    let (sp, ss) = (m.mem.read_u16(parent_at + 0x2E), m.mem.read_u16(parent_at + 0x30));
+    let saved: Vec<u16> = (0..9).map(|i| m.mem.read_u16(Machine::lin(ss, sp.wrapping_add(2 * i)))).collect();
+    let regs = &mut m.cpu.regs;
+    regs.set_ss(ss);
+    regs.set_sp(sp.wrapping_add(18));
+    regs.set_ax(saved[0]);
+    regs.set_bx(saved[1]);
+    regs.set_cx(saved[2]);
+    regs.set_dx(saved[3]);
+    regs.set_si(saved[4]);
+    regs.set_di(saved[5]);
+    regs.set_bp(saved[6]);
+    regs.set_ds(saved[7]);
+    regs.set_es(saved[8]);
+    // The service stub's IRET resumes the parent: return address and flags (IF set; IOPL 3 and
+    // NT as DOSBox sets them, for Strike Commander).
+    let frame = Machine::lin(ss, sp.wrapping_add(18));
+    m.mem.write_u16(frame, return_ip);
+    m.mem.write_u16(frame + 2, return_cs);
+    m.mem.write_u16(frame + 4, 0x7202);
+    if !resident {
+        free_process_memory(m, psp);
+    }
+}
+
+/// Frees every memory block a process owns.
+fn free_process_memory(m: &mut Machine, psp: u16) {
+    if let Ok(chain) = mcb_chain(m) {
+        for block in chain.iter().filter(|b| b.owner == psp) {
+            write_mcb(m, block.segment, block.kind, 0, block.size);
+        }
+    }
+    let _ = coalesce(m);
+}
+
+/// INT 21h AH=26h (copy the current PSP to segment DX) and AH=55h (create a child PSP at DX
+/// with SI paragraphs, inheriting handles).
+fn new_psp(m: &mut Machine, segment: u16, child: bool) {
+    let current = m.dos.psp;
+    if child {
+        let size = m.cpu.regs.si();
+        let env = m.mem.read_u16(Machine::lin(current, 0x2C));
+        build_psp(m, segment, segment.wrapping_add(size), env, current);
+        inherit_handles(m, current, segment);
+        let tail = m.mem.read_bytes(Machine::lin(current, 0x80), 128);
+        m.mem.load(Machine::lin(segment, 0x80), &tail);
+        m.dos.psp = segment;
+        m.cpu.regs.set_al(0xF0);
+    } else {
+        let psp = m.mem.read_bytes(Machine::lin(current, 0), 0x100);
+        m.mem.load(Machine::lin(segment, 0), &psp);
+        let top = m.mem.read_u16(Machine::lin(current, 2));
+        m.mem.write_u16(Machine::lin(segment, 2), top);
+        save_vectors(m, segment);
     }
 }
 
@@ -1250,7 +1708,9 @@ fn new_executable_kind(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn build_psp(m: &mut Machine, psp: u16, memory_top: u16, env_segment: u16, args: &str) {
+/// A new PSP: INT 20h at 0, memory top, saved vectors, parent, the default job file table
+/// (CON, CON, CON, AUX, PRN), environment, DOS call stub, empty FCBs and command tail.
+fn build_psp(m: &mut Machine, psp: u16, memory_top: u16, env_segment: u16, parent: u16) {
     let mut block = [0u8; 0x100];
     block[0..2].copy_from_slice(&[0xCD, 0x20]);
     block[2..4].copy_from_slice(&memory_top.to_le_bytes());
@@ -1259,23 +1719,19 @@ fn build_psp(m: &mut Machine, psp: u16, memory_top: u16, env_segment: u16, args:
         block[at..at + 2].copy_from_slice(&m.mem.read_u16(vector * 4).to_le_bytes());
         block[at + 2..at + 4].copy_from_slice(&m.mem.read_u16(vector * 4 + 2).to_le_bytes());
     }
-    block[0x16..0x18].copy_from_slice(&psp.to_le_bytes()); // parent: itself, like COMMAND.COM
+    block[0x16..0x18].copy_from_slice(&parent.to_le_bytes());
     block[0x18..0x2C].copy_from_slice(&[
         1, 1, 1, 0, 2, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     ]);
     block[0x2C..0x2E].copy_from_slice(&env_segment.to_le_bytes());
-    block[0x32..0x34].copy_from_slice(&(MAX_HANDLES as u16).to_le_bytes());
+    block[0x32..0x34].copy_from_slice(&JFT_SIZE.to_le_bytes());
     block[0x34..0x36].copy_from_slice(&0x18u16.to_le_bytes());
     block[0x36..0x38].copy_from_slice(&psp.to_le_bytes());
     block[0x50..0x53].copy_from_slice(&[0xCD, 0x21, 0xCB]);
     for fcb in [0x5C, 0x6C] {
         block[fcb + 1..fcb + 12].fill(b' ');
     }
-    let mut tail = if args.is_empty() { String::new() } else { format!(" {args}") }.into_bytes();
-    tail.truncate(126);
-    block[0x80] = tail.len() as u8;
-    block[0x81..0x81 + tail.len()].copy_from_slice(&tail);
-    block[0x81 + tail.len()] = 0x0D;
+    block[0x81] = 0x0D;
     m.mem.load(Machine::lin(psp, 0), &block);
 }
 

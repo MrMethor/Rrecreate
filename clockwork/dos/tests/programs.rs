@@ -1684,3 +1684,137 @@ fn bios_extended_memory_without_xms() {
     let copied: Vec<u8> = (0..8).map(|i| m.mem.read_phys(0x20_0000 + i)).collect();
     assert_eq!(copied, b"BLOCKMOV");
 }
+
+#[test]
+fn exec_runs_a_child_that_returns_to_its_parent() {
+    // The child writes "hi" to inherited handle 5 and exits with 10h + its command tail length.
+    let child = com(|a| {
+        a.mov(ah, 0x40)?;
+        a.mov(bx, 5)?;
+        a.mov(cx, 2)?;
+        load_dx(a, "text")?;
+        a.int(0x21)?;
+        a.mov(al, byte_ptr(0x80))?;
+        a.add(al, 0x10)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("text")?;
+        a.db(b"hi")
+    });
+    let parent = com(|a| {
+        a.mov(ah, 0x4A)?; // keep 64 KB
+        a.mov(bx, 0x1000)?;
+        a.int(0x21)?;
+        a.mov(ah, 0x3C)?; // create OUT.TXT: handle 5
+        a.xor(cx, cx)?;
+        load_dx(a, "out")?;
+        a.int(0x21)?;
+        a.mov(ah, 0x48)?; // largest free block before
+        a.mov(bx, 0xFFFF)?;
+        a.int(0x21)?;
+        let before = word_at(a, "before");
+        a.mov(before, bx)?;
+        // Parameter block: copy our environment, tail " abc", our FCBs.
+        let block = a.addr("block") as u32;
+        a.mov(word_ptr(block + 4), ds)?;
+        a.mov(word_ptr(block + 8), ds)?;
+        a.mov(word_ptr(block + 12), ds)?;
+        a.push(ds)?;
+        a.pop(es)?;
+        let at = a.addr("block");
+        a.mov(bx, at)?;
+        load_dx(a, "child")?;
+        a.mov(ax, 0x4B00)?;
+        a.int(0x21)?;
+        a.sbb(cx, cx)?;
+        let carry = word_at(a, "carry");
+        a.mov(carry, cx)?;
+        a.mov(ah, 0x4D)?;
+        a.int(0x21)?;
+        let code = word_at(a, "code");
+        a.mov(code, ax)?;
+        a.mov(ah, 0x48)?; // largest free block after
+        a.mov(bx, 0xFFFF)?;
+        a.int(0x21)?;
+        let after = word_at(a, "after");
+        a.mov(after, bx)?;
+        a.mov(ah, 0x40)?; // "!" after the child's "hi": the file position is shared
+        a.mov(bx, 5)?;
+        a.mov(cx, 1)?;
+        load_dx(a, "bang")?;
+        a.int(0x21)?;
+        a.mov(ah, 0x3E)?;
+        a.int(0x21)?;
+        exit(a, 0)?;
+        for label in ["before", "after", "carry", "code"] {
+            a.here(label)?;
+            a.dw(&[0xEEEE])?;
+        }
+        a.here("out")?;
+        a.db(b"OUT.TXT\0")?;
+        a.here("child")?;
+        a.db(b"CHILD.COM\0")?;
+        a.here("bang")?;
+        a.db(b"!")?;
+        a.here("tail")?;
+        a.db(b"\x04 abc\r")?;
+        let tail = a.addr("tail") as u16;
+        a.here("block")?;
+        a.dw(&[0, tail, 0, 0x5C, 0, 0x6C, 0])
+    });
+    let mut m = boot(&[("PARENT.COM", &parent), ("CHILD.COM", &child)], "PARENT.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+    assert_eq!(m.drive.file("OUT.TXT").unwrap(), b"hi!");
+    let base = (u32::from(m.dos.psp) << 4) + 0x100;
+    let image = m.mem.read_bytes(base, parent.len());
+    let fields = image.windows(8).position(|w| w == b"OUT.TXT\0").unwrap() as u32 - 8;
+    let word = |i: u32| m.mem.read_u16(base + fields + 2 * i);
+    assert_eq!(word(2), 0, "EXEC succeeded");
+    assert_eq!(word(3), 0x0014, "exit code 10h + tail length 4, normal termination");
+    assert_eq!(word(0), word(1), "the child's memory was freed");
+}
+
+#[test]
+fn exec_loads_an_overlay() {
+    let overlay = com(|a| {
+        a.mov(ax, 0x1234)?;
+        a.retf()
+    });
+    let program = com(|a| {
+        a.mov(ah, 0x4A)?;
+        a.mov(bx, 0x1000)?;
+        a.int(0x21)?;
+        a.mov(ah, 0x48)?;
+        a.mov(bx, 0x100)?;
+        a.int(0x21)?;
+        let block = a.addr("block") as u32;
+        a.mov(word_ptr(block), ax)?; // load segment
+        a.mov(word_ptr(block + 2), ax)?; // relocation factor
+        let entry = a.addr("entry") as u32;
+        a.mov(word_ptr(entry + 2), ax)?;
+        a.push(ds)?;
+        a.pop(es)?;
+        let at = a.addr("block");
+        a.mov(bx, at)?;
+        load_dx(a, "name")?;
+        a.mov(ax, 0x4B03)?;
+        a.int(0x21)?;
+        a.call(dword_ptr(entry))?;
+        let result = word_at(a, "result");
+        a.mov(result, ax)?;
+        exit(a, 0)?;
+        a.here("name")?;
+        a.db(b"OVL.COM\0")?;
+        a.here("block")?;
+        a.dw(&[0, 0])?;
+        a.here("entry")?;
+        a.dw(&[0, 0])?;
+        a.here("result")?;
+        a.dw(&[0])
+    });
+    let mut m = boot(&[("MAIN.COM", &program), ("OVL.COM", &overlay)], "MAIN.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let result = m.mem.read_u16((u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32 - 2);
+    assert_eq!(result, 0x1234);
+}
