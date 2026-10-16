@@ -1152,6 +1152,11 @@ impl Machine {
         for (name, value) in &self.config.environment {
             env.extend(format!("{name}={value}\0").bytes());
         }
+        if let Some(sb) = self.config.sound_blaster
+            && !self.config.environment.iter().any(|(name, _)| name.eq_ignore_ascii_case("BLASTER"))
+        {
+            env.extend(format!("BLASTER={}\0", sb.blaster_variable()).bytes());
+        }
         env.push(0);
         env.extend(1u16.to_le_bytes());
         let drive_letter = char::from(b'A' + path_drive(self, program.as_bytes()));

@@ -1370,3 +1370,162 @@ fn mouse_cursor_in_planar_mode() {
     assert_eq!(p.pixels[301 * 640 + 301], white, "arrow moved");
     assert_eq!(m.devices.vga.gc[8], 0xFF, "the program's VGA registers are restored");
 }
+
+/// `mov dx, 388h; mov al, register; out dx, al; inc dx; mov al, value; out dx, al`
+fn adlib_write(a: &mut Asm, register: u8, value: u8) -> Result<(), IcedError> {
+    a.mov(dx, 0x388)?;
+    a.mov(al, i32::from(register))?;
+    a.out(dx, al)?;
+    a.inc(dx)?;
+    a.mov(al, i32::from(value))?;
+    a.out(dx, al)
+}
+
+#[test]
+fn adlib_detection_with_the_opl_timer() {
+    let program = com(|a| {
+        adlib_write(a, 0x04, 0x60)?;
+        adlib_write(a, 0x04, 0x80)?;
+        a.mov(dx, 0x388)?;
+        a.in_(al, dx)?;
+        let first = byte_at(a, "first");
+        a.mov(first, al)?;
+        adlib_write(a, 0x02, 0xFF)?;
+        adlib_write(a, 0x04, 0x21)?;
+        a.mov(dx, 0x388)?;
+        a.mov(cx, 1000)?; // well over 80 µs
+        a.here("wait")?;
+        a.in_(al, dx)?;
+        let wait = a.l("wait");
+        a.loop_(wait)?;
+        let second = byte_at(a, "second");
+        a.mov(second, al)?;
+        adlib_write(a, 0x04, 0x60)?;
+        adlib_write(a, 0x04, 0x80)?;
+        exit(a, 0)?;
+        a.here("first")?;
+        a.db(&[0xFF])?;
+        a.here("second")?;
+        a.db(&[0])
+    });
+    let mut m = boot(&[("A.COM", &program)], "A.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let at = |back: u32| m.mem.read_u8((u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32 - back);
+    assert_eq!((at(2) & 0xE0, at(1) & 0xE0), (0x00, 0xC0), "status before and after timer 1 overflows");
+}
+
+/// Waits for the DSP to accept a byte at 22Ch, then writes `value`.
+fn dsp_write(a: &mut Asm, label: &'static str, value: u8) -> Result<(), IcedError> {
+    a.mov(dx, 0x22C)?;
+    a.here(label)?;
+    a.in_(al, dx)?;
+    a.test(al, 0x80)?;
+    let busy = a.l(label);
+    a.jnz(busy)?;
+    a.mov(al, i32::from(value))?;
+    a.out(dx, al)
+}
+
+/// A program that resets the DSP, installs an IRQ 7 handler counting interrupts at label
+/// "count", programs DMA channel 1 for `dma_count + 1` bytes at 5000:0000 (auto-init if
+/// `dsp` starts an auto-init transfer), sends `dsp` and waits.
+fn sound_blaster_program(dma_mode: u8, dma_count: u16, dsp: &'static [u8]) -> Vec<u8> {
+    const LABELS: [&str; 8] = ["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"];
+    com(move |a| {
+        a.mov(dx, 0x226)?;
+        a.mov(al, 1)?;
+        a.out(dx, al)?;
+        a.mov(cx, 50)?;
+        a.here("pause")?;
+        let pause = a.l("pause");
+        a.loop_(pause)?;
+        a.xor(al, al)?;
+        a.out(dx, al)?;
+        a.mov(dx, 0x22E)?;
+        a.here("ready")?;
+        a.in_(al, dx)?;
+        a.test(al, 0x80)?;
+        let ready = a.l("ready");
+        a.jz(ready)?;
+        a.mov(dx, 0x22A)?;
+        a.in_(al, dx)?;
+        let reset = byte_at(a, "reset");
+        a.mov(reset, al)?;
+        // INT 0Fh (IRQ 7) handler, unmasked at the PIC.
+        load_dx(a, "handler")?;
+        a.mov(ax, 0x250F)?;
+        a.int(0x21)?;
+        a.in_(al, 0x21)?;
+        a.and(al, 0x7F)?;
+        a.out(0x21, al)?;
+        for (port, value) in [(0x0A, 5), (0x0C, 0), (0x0B, dma_mode), (0x02, 0), (0x02, 0), (0x83, 5)] {
+            a.mov(al, i32::from(value))?;
+            a.out(port, al)?;
+        }
+        a.mov(al, i32::from(dma_count as u8))?;
+        a.out(0x03, al)?;
+        a.mov(al, i32::from((dma_count >> 8) as u8))?;
+        a.out(0x03, al)?;
+        a.mov(al, 1)?;
+        a.out(0x0A, al)?;
+        for (i, &byte) in dsp.iter().enumerate() {
+            dsp_write(a, LABELS[i], byte)?;
+        }
+        hold(a)?;
+        a.here("handler")?;
+        a.push(ax)?;
+        a.push(dx)?;
+        a.mov(dx, 0x22E)?; // acknowledge
+        a.in_(al, dx)?;
+        a.mov(al, 0x20)?;
+        a.out(0x20, al)?;
+        let count = byte_at(a, "count");
+        a.inc(count)?;
+        a.pop(dx)?;
+        a.pop(ax)?;
+        a.iret()?;
+        a.here("reset")?;
+        a.db(&[0])?;
+        a.here("count")?;
+        a.db(&[0])
+    })
+}
+
+#[test]
+fn sound_blaster_single_cycle_dma_interrupts_when_the_block_is_played() {
+    // 1000 bytes at 10 kHz (time constant 156): 100 ms.
+    let program = sound_blaster_program(0x49, 999, &[0xD1, 0x40, 156, 0x14, 0xE7, 0x03]);
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let byte =
+        |m: &Machine, back: u32| m.mem.read_u8((u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32 - back);
+    m.run(SECOND * 9 / 100);
+    assert_eq!(byte(&m, 2), 0xAA, "the DSP answered the reset");
+    assert_eq!(byte(&m, 1), 0, "no interrupt before the block has played");
+    m.run(SECOND * 2 / 100);
+    assert_eq!(byte(&m, 1), 1, "one interrupt at the end of the block");
+    let pcm = m.audio_log().pcm;
+    assert_eq!(pcm.iter().map(|s| s.samples.len()).sum::<usize>(), 1000);
+    assert_eq!(pcm[0].rate_hz, 10_000);
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn sound_blaster_auto_init_interrupts_every_block() {
+    // A 200-byte auto-init DMA buffer, DSP blocks of 100 bytes at 10 kHz: an IRQ every 10 ms.
+    let program = sound_blaster_program(0x59, 199, &[0x40, 156, 0x48, 99, 0x00, 0x1C]);
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    m.run(SECOND * 105 / 1000);
+    let count = m.mem.read_u8((u32::from(m.dos.psp) << 4) + 0x100 + program.len() as u32 - 1);
+    assert_eq!(count, 10);
+    let frames: usize = m.audio_log().pcm.iter().map(|s| s.samples.len()).sum();
+    assert!((1000..1050).contains(&frames), "{frames} samples");
+}
+
+#[test]
+fn blaster_variable_is_in_the_environment() {
+    let mut m = boot(&[("E.COM", &com(hold))], "E.COM");
+    m.run(SECOND / 100);
+    let env_segment = m.mem.read_u16((u32::from(m.dos.psp) << 4) + 0x2C);
+    let env = String::from_utf8_lossy(&m.mem.read_bytes(u32::from(env_segment) << 4, 256)).into_owned();
+    assert!(env.contains("BLASTER=A220 I7 D1 H5 T6\0"), "{env:?}");
+}

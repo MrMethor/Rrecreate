@@ -30,6 +30,11 @@ impl Pic {
         self.irr |= 1 << line;
     }
 
+    /// Withdraws a request on `line` that hasn't been delivered yet (the device deasserted it).
+    pub fn lower(&mut self, line: u8) {
+        self.irr &= !(1 << line);
+    }
+
     /// The line that would be delivered now: the highest-priority unmasked request that isn't
     /// blocked by an equal or higher-priority interrupt in service.
     pub fn pending_line(&self) -> Option<u8> {

@@ -10,13 +10,16 @@ use machine::hash::Fnv64;
 
 use crate::clock::{Clock, FRAME_PIT_TICKS};
 use crate::cmos::Cmos;
+use crate::dma::Dma;
 use crate::dos::DosState;
 use crate::ems::{self, Ems};
 use crate::keyboard::{ControllerEffect, Keyboard, LEFT_SHIFT, ascii_to_scancode};
 use crate::mouse::{self, Mouse};
 use crate::mpu401::Mpu401;
+use crate::opl::{Opl, OplMode};
 use crate::pic::Pic;
 use crate::pit::Pit;
+use crate::sblaster::{SbConfig, SoundBlaster};
 use crate::time::DateTime;
 use crate::vfs::Vfs;
 use crate::vga::{self, Vga};
@@ -41,6 +44,8 @@ pub struct Config {
     pub ems_kb: u32,
     /// Whether a mouse and its driver (INT 33h) are installed.
     pub mouse: bool,
+    /// The Sound Blaster card (with its OPL chips), or `None` for no sound card.
+    pub sound_blaster: Option<SbConfig>,
 }
 
 impl Default for Config {
@@ -54,6 +59,7 @@ impl Default for Config {
             environment: Vec::new(),
             ems_kb: 4096,
             mouse: true,
+            sound_blaster: Some(SbConfig::default()),
         }
     }
 }
@@ -102,6 +108,9 @@ pub struct Devices {
     pub vga: Vga,
     pub mpu: Mpu401,
     pub cmos: Cmos,
+    pub dma: Dma,
+    pub opl: Option<Opl>,
+    pub sb: Option<SoundBlaster>,
     pub clock: Clock,
     port92: u8,
     /// Ports accessed that nothing emulates (reads return FFh, writes are dropped).
@@ -111,7 +120,7 @@ pub struct Devices {
 }
 
 impl Devices {
-    fn new(clock: Clock, start_time: DateTime) -> Self {
+    fn new(clock: Clock, start_time: DateTime, sound_blaster: Option<SbConfig>) -> Self {
         Self {
             // BIOS defaults: IRQ0, 1, 2 and 6 unmasked on the master; vectors 08h and 70h.
             pic: Pic::new(0x08, 0xB8),
@@ -121,6 +130,9 @@ impl Devices {
             vga: Vga::new(),
             mpu: Mpu401::default(),
             cmos: Cmos::new(start_time),
+            dma: Dma::new(),
+            opl: sound_blaster.map(|sb| Opl::new(sb.opl_mode())),
+            sb: sound_blaster.map(SoundBlaster::new),
             clock,
             port92: 0,
             unknown_ports: BTreeSet::new(),
@@ -142,8 +154,62 @@ impl Devices {
         Some(vector)
     }
 
-    fn port_in(&mut self, port: u16, cycles: u64) -> u8 {
+    /// Brings the sound card up to `cycles` (DMA playback, timed interrupts) and passes its
+    /// interrupt line changes to the PIC.
+    pub(crate) fn update_sound(&mut self, cycles: u64, mem: &mut Memory) {
+        if let Some(sb) = &mut self.sb {
+            sb.update(self.clock.nanos(cycles), &mut self.dma, mem);
+        }
+        self.sync_sound_irq();
+    }
+
+    fn sync_sound_irq(&mut self) {
+        let Some(sb) = &mut self.sb else { return };
+        let Some(raise) = sb.irq_change.take() else { return };
+        // IRQ 2 on an AT is the slave's IRQ 9.
+        let irq = if sb.irq() == 2 { 9 } else { sb.irq() };
+        let pic = if irq < 8 { &mut self.pic } else { &mut self.pic2 };
+        if raise {
+            pic.raise(irq & 7);
+        } else {
+            pic.lower(irq & 7);
+        }
+    }
+
+    /// When the sound card next needs attention, as a cycle.
+    fn next_sound_event(&self) -> Option<u64> {
+        self.sb.as_ref()?.next_event().map(|ns| self.clock.cycle_at_nanos(ns))
+    }
+
+    /// The OPL chips answer at 388h-38Bh, and on the Sound Blaster at base+0..3 (Pro and 16)
+    /// and base+8..9.
+    fn opl_port(&self, port: u16) -> bool {
+        let Some(opl) = &self.opl else { return false };
+        if (0x388..=0x38B).contains(&port) {
+            return true;
+        }
+        let Some(sb) = &self.sb else { return false };
+        let offset = port.wrapping_sub(sb.config.base);
+        offset == 8 || offset == 9 || (offset < 4 && opl.mode != OplMode::Opl2)
+    }
+
+    fn port_in(&mut self, port: u16, cycles: u64, mem: &mut Memory) -> u8 {
         let now = self.clock.pit_ticks(cycles);
+        if self.opl_port(port) {
+            let nanos = self.clock.nanos(cycles);
+            return self.opl.as_mut().map_or(0xFF, |opl| opl.read(port, nanos));
+        }
+        if let Some(sb) = &mut self.sb
+            && sb.decodes(port)
+        {
+            let value = sb.read(port, self.clock.nanos(cycles), &mut self.dma, mem);
+            self.sync_sound_irq();
+            self.dirty = true;
+            return value;
+        }
+        if Dma::decodes(port) {
+            return self.dma.read(port);
+        }
         match port {
             0x20 | 0x21 => self.pic.read(port & 1 == 1),
             0xA0 | 0xA1 => self.pic2.read(port & 1 == 1),
@@ -159,7 +225,7 @@ impl Devices {
             0x71 => self.cmos.read_data(cycles / self.clock.instructions_per_second),
             0x330 => self.mpu.read_data(),
             0x331 => self.mpu.read_status(),
-            // Not emulated yet: no joystick, Sound Blaster or AdLib. An absent card reads FFh.
+            // Not emulated yet: no joystick. Absent cards read FFh.
             0x201 | 0x220..=0x22F | 0x388..=0x38B => 0xFF,
             _ => {
                 self.unknown_ports.insert(port);
@@ -168,8 +234,31 @@ impl Devices {
         }
     }
 
-    fn port_out(&mut self, port: u16, value: u8, cycles: u64) -> Option<ControllerEffect> {
+    fn port_out(&mut self, port: u16, value: u8, cycles: u64, mem: &mut Memory) -> Option<ControllerEffect> {
         let now = self.clock.pit_ticks(cycles);
+        if self.opl_port(port) {
+            let nanos = self.clock.nanos(cycles);
+            if let Some(opl) = &mut self.opl {
+                opl.write(port, value, nanos);
+            }
+            return None;
+        }
+        if let Some(sb) = &mut self.sb
+            && sb.decodes(port)
+        {
+            sb.write(port, value, self.clock.nanos(cycles), &mut self.dma, mem);
+            self.sync_sound_irq();
+            self.dirty = true;
+            return None;
+        }
+        if Dma::decodes(port) {
+            // Masking or reprogramming a channel pauses or resumes Sound Blaster playback.
+            self.update_sound(cycles, mem);
+            self.dma.write(port, value);
+            self.update_sound(cycles, mem);
+            self.dirty = true;
+            return None;
+        }
         match port {
             0x20 | 0x21 => self.pic.write(port & 1 == 1, value),
             0xA0 | 0xA1 => self.pic2.write(port & 1 == 1, value),
@@ -246,11 +335,11 @@ impl Bus for PcBus<'_> {
     }
 
     fn port_in_u8(&mut self, port: u16) -> u8 {
-        self.dev.port_in(port, self.now)
+        self.dev.port_in(port, self.now, self.mem)
     }
 
     fn port_out_u8(&mut self, port: u16, value: u8) {
-        if let Some(ControllerEffect::SetA20(on)) = self.dev.port_out(port, value, self.now) {
+        if let Some(ControllerEffect::SetA20(on)) = self.dev.port_out(port, value, self.now, self.mem) {
             self.mem.set_a20(on);
         }
     }
@@ -296,7 +385,7 @@ impl Machine {
         let mut machine = Self {
             cpu: Cpu::with_model(config.cpu_model),
             mem: Memory::new(),
-            devices: Devices::new(clock, config.start_time),
+            devices: Devices::new(clock, config.start_time, config.sound_blaster),
             dos: DosState::default(),
             ems: Ems::new(config.ems_kb),
             mouse: Mouse::new(config.mouse),
@@ -371,6 +460,22 @@ impl Machine {
 
     pub fn exit_code(&self) -> Option<u8> {
         self.exit_code
+    }
+
+    /// What the sound devices played so far (render it with [`crate::audio::AudioLog::render`]).
+    pub fn audio_log(&self) -> crate::audio::AudioLog<'_> {
+        let d = &self.devices;
+        crate::audio::AudioLog {
+            opl: d.opl.as_ref().map_or(&[], |opl| &opl.writes),
+            pcm: d.sb.as_ref().map_or(&[], |sb| &sb.pcm),
+            dac: d.sb.as_ref().map_or(&[], |sb| &sb.dac),
+            speaker: &d.pit.speaker_log,
+        }
+    }
+
+    /// Nanoseconds of emulated time elapsed.
+    pub fn elapsed_ns(&self) -> u64 {
+        self.devices.clock.nanos(self.cpu.cycles)
     }
 
     /// Milliseconds of emulated time elapsed.
@@ -577,6 +682,10 @@ impl Machine {
         if self.devices.pit.take_irq0(now) {
             self.devices.pic.raise(0);
         }
+        self.devices.update_sound(cycles, &mut self.mem);
+        if let Some(sb) = &mut self.devices.sb {
+            self.diagnostics.append(&mut sb.unsupported);
+        }
         while self.next_frame * FRAME_PIT_TICKS <= now {
             self.capture_frame();
             self.next_frame += 1;
@@ -586,6 +695,9 @@ impl Machine {
             next = next.min(clock.cycle_at(tick));
         }
         if let Some(&(at, _)) = self.inputs.front() {
+            next = next.min(at);
+        }
+        if let Some(at) = self.devices.next_sound_event() {
             next = next.min(at);
         }
         self.next_event = next.max(cycles + 1);

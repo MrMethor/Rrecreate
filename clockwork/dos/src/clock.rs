@@ -6,6 +6,8 @@
 
 pub const PIT_HZ: u64 = 1_193_182;
 
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
 /// VGA vertical refresh in modes 3 and 13h: 70 Hz.
 pub const FRAME_PIT_TICKS: u64 = PIT_HZ / 70;
 
@@ -37,6 +39,17 @@ impl Clock {
     /// Whole milliseconds elapsed at `cycles`.
     pub fn millis(&self, cycles: u64) -> u64 {
         (u128::from(cycles) * 1000 / u128::from(self.instructions_per_second)) as u64
+    }
+
+    /// Whole nanoseconds elapsed at `cycles` (sound devices keep time in nanoseconds).
+    pub fn nanos(&self, cycles: u64) -> u64 {
+        (u128::from(cycles) * NANOS_PER_SECOND / u128::from(self.instructions_per_second)) as u64
+    }
+
+    /// The first cycle at which `nanos(cycle) >= nanos`.
+    pub fn cycle_at_nanos(&self, nanos: u64) -> u64 {
+        let ips = u128::from(self.instructions_per_second);
+        u128::from(nanos).saturating_mul(ips).div_ceil(NANOS_PER_SECOND).min(u128::from(u64::MAX)) as u64
     }
 }
 

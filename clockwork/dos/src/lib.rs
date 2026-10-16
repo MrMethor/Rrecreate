@@ -3,9 +3,11 @@
 //!
 //! These services become the native port's runtime later (§7.3).
 
+pub mod audio;
 pub mod bios;
 pub mod clock;
 pub mod cmos;
+pub mod dma;
 pub mod dos;
 pub mod ems;
 pub mod fonts;
@@ -14,8 +16,10 @@ mod machine;
 pub mod mouse;
 pub mod mpu401;
 mod mz;
+pub mod opl;
 pub mod pic;
 pub mod pit;
+pub mod sblaster;
 pub mod time;
 pub mod trace;
 pub mod vfs;

@@ -29,7 +29,8 @@ options:
   --type TEXT        run: type TEXT on the keyboard (\\r = Enter, \\e = Esc)
   --type-at MS       run: when typing starts, in emulated ms (default 500)
   --replay FILE      run: replay a session recorded by play (program may be omitted)
-  --screenshot FILE  run: save the final mode 13h screen as a BMP
+  --screenshot FILE  run: save the final screen as a BMP
+  --wav FILE         run: save the sound (OPL and Sound Blaster) as a WAV file
   --json             run: print the summary as JSON
   --hotspots N       run: sample CS:IP while running and show the N hottest addresses
   --trace FILE       run: write every BIOS/DOS/EMS service call to FILE
@@ -43,6 +44,8 @@ options:
   --drive LETTER     the current drive when the program starts (default C)
   --env NAME=VALUE   set an environment variable (repeatable)
   --ems KB           expanded memory size (default 4096; 0 disables EMS)
+  --sb SPEC          sound card: none, sb1, sb2, sbpro1, sbpro2 or sb16 (default), optionally
+                     followed by BLASTER-style resources, e.g. \"sbpro2 A220 I5 D1\"
   --scale N          play: window scale (default 2)";
 
 #[derive(Default)]
@@ -56,6 +59,8 @@ struct Options {
     type_at_ms: u64,
     replay: Option<PathBuf>,
     screenshot: Option<PathBuf>,
+    wav: Option<PathBuf>,
+    sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
     record: Option<PathBuf>,
     scale: usize,
@@ -105,6 +110,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--type-at" => options.type_at_ms = value(arg)?.parse().map_err(|_| "--type-at needs milliseconds")?,
             "--replay" => options.replay = Some(value(arg)?.into()),
             "--screenshot" => options.screenshot = Some(value(arg)?.into()),
+            "--wav" => options.wav = Some(value(arg)?.into()),
+            "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
             "--trace" => options.trace = Some(value(arg)?.into()),
             "--midi" => options.midi = Some(value(arg)?.into()),
@@ -189,6 +196,7 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         start_drive: o.start_drive.unwrap_or('C'),
         environment: o.environment.clone(),
         ems_kb: o.ems_kb.unwrap_or(Config::default().ems_kb),
+        sound_blaster: o.sound_blaster.unwrap_or(Config::default().sound_blaster),
         ..Config::default()
     };
     Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())
@@ -224,6 +232,10 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     if let Some(path) = &o.screenshot {
         let (w, h, rgb) = m.screen_rgb();
         std::fs::write(path, bmp(w, h, &rgb)).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if let Some(path) = &o.wav {
+        let samples = m.audio_log().render(m.elapsed_ns());
+        std::fs::write(path, dos::audio::wav(&samples)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let summary = Summary::new(&m, &stop);
     if let Some(profile) = &profile {
@@ -273,6 +285,9 @@ struct Summary {
     distinct_frames: usize,
     midi_bytes: usize,
     speaker_events: usize,
+    opl_writes: usize,
+    pcm_frames: usize,
+    audio_hash: u64,
     timer: String,
     last_frame: Option<dos::Frame>,
     state_hash: u64,
@@ -304,6 +319,9 @@ impl Summary {
             distinct_frames: m.frames.iter().map(|f| f.hash).collect::<BTreeSet<_>>().len(),
             midi_bytes: m.devices.mpu.midi_log.len(),
             speaker_events: m.devices.pit.speaker_log.len(),
+            opl_writes: m.audio_log().opl.len(),
+            pcm_frames: m.audio_log().pcm.iter().map(|s| s.samples.len() / if s.stereo { 2 } else { 1 }).sum(),
+            audio_hash: m.audio_log().hash(),
             timer: timer_summary(m),
             last_frame: m.frames.last().copied(),
             state_hash: m.state_hash(),
@@ -323,8 +341,11 @@ impl Summary {
             ),
             None => println!("frames    0"),
         }
-        if self.midi_bytes > 0 || self.speaker_events > 0 {
-            println!("audio     {} MIDI bytes, {} PC speaker changes", self.midi_bytes, self.speaker_events);
+        if self.midi_bytes + self.speaker_events + self.opl_writes + self.pcm_frames > 0 {
+            println!(
+                "audio     {} OPL writes, {} Sound Blaster frames, {} MIDI bytes, {} PC speaker changes, hash {:016x}",
+                self.opl_writes, self.pcm_frames, self.midi_bytes, self.speaker_events, self.audio_hash
+            );
         }
         println!("timer     {}", self.timer);
         println!("state     {:016x}", self.state_hash);
@@ -352,7 +373,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{}}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{}}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -361,6 +382,9 @@ impl Summary {
             self.distinct_frames,
             self.midi_bytes,
             self.speaker_events,
+            self.opl_writes,
+            self.pcm_frames,
+            self.audio_hash,
             last_frame,
             self.state_hash,
             self.console_hash,
@@ -439,4 +463,32 @@ fn bmp(width: usize, height: usize, rgb: &[u8]) -> Vec<u8> {
         out.extend(std::iter::repeat_n(0, row - width * 3));
     }
     out
+}
+
+/// `--sb`: a card type, optionally followed by BLASTER-style resources (A220 I7 D1 H5).
+fn sound_blaster(spec: &str) -> Result<Option<dos::sblaster::SbConfig>, String> {
+    use dos::sblaster::{SbConfig, SbType};
+    let mut words = spec.split_whitespace();
+    let kind = match words.next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "none" => return Ok(None),
+        "sb1" => SbType::Sb1,
+        "sb2" => SbType::Sb2,
+        "sbpro1" => SbType::SbPro1,
+        "sbpro2" => SbType::SbPro2,
+        "sb16" => SbType::Sb16,
+        other => return Err(format!("--sb: unknown card {other:?} (none, sb1, sb2, sbpro1, sbpro2, sb16)")),
+    };
+    let mut config = SbConfig { kind, ..SbConfig::default() };
+    for word in words {
+        let (key, number) = word.split_at(1);
+        let bad = || format!("--sb: bad resource {word:?}");
+        match key.to_ascii_uppercase().as_str() {
+            "A" => config.base = u16::from_str_radix(number, 16).map_err(|_| bad())?,
+            "I" => config.irq = number.parse().map_err(|_| bad())?,
+            "D" => config.dma8 = number.parse().map_err(|_| bad())?,
+            "H" => config.dma16 = number.parse().map_err(|_| bad())?,
+            _ => return Err(bad()),
+        }
+    }
+    Ok(Some(config))
 }
