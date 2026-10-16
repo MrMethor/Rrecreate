@@ -34,6 +34,7 @@ options:
   --hotspots N       run: sample CS:IP while running and show the N hottest addresses
   --trace FILE       run: write every BIOS/DOS/EMS service call to FILE
   --midi FILE        run: write the MIDI bytes sent to the MPU-401, one line per PIT tick
+  --dump SEG:OFF[:LEN]  run: afterwards, hex-dump LEN bytes (default 64) of memory there
   --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
                      (or: here, for the current CS:IP)
   --record FILE      play: record keyboard input as a session
@@ -65,6 +66,7 @@ struct Options {
     ems_kb: Option<u32>,
     hotspots: usize,
     disasm: Option<String>,
+    dump: Option<String>,
     trace: Option<PathBuf>,
     midi: Option<PathBuf>,
 }
@@ -107,6 +109,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--trace" => options.trace = Some(value(arg)?.into()),
             "--midi" => options.midi = Some(value(arg)?.into()),
             "--disasm" => options.disasm = Some(value(arg)?),
+            "--dump" => options.dump = Some(value(arg)?),
             "--hotspots" => options.hotspots = value(arg)?.parse().map_err(|_| "--hotspots needs a count")?,
             "--record" => options.record = Some(value(arg)?.into()),
             "--scale" => options.scale = value(arg)?.parse().map_err(|_| "--scale needs a whole number")?,
@@ -144,6 +147,16 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         return Err("--seconds and --scale must be positive".into());
     }
     Ok(options)
+}
+
+fn print_dump(m: &Machine, segment: u16, offset: u16, length: usize) {
+    println!("dump      {segment:04X}:{offset:04X}, {length:#x} bytes");
+    let base = (u32::from(segment) << 4) + u32::from(offset);
+    for (row, chunk) in m.mem.read_bytes(base, length).chunks(16).enumerate() {
+        let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02X}")).collect();
+        let text: String = chunk.iter().map(|&b| dos::cp437_to_char(b)).collect();
+        println!("  {segment:04X}:{:04X}  {:<48} {text}", offset.wrapping_add(row as u16 * 16), hex.join(" "));
+    }
 }
 
 fn parse_address(text: &str) -> Result<(u16, u16), String> {
@@ -233,6 +246,16 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         println!("trace     {} service calls written to {}", calls.len(), path.display());
     }
+    if let Some(at) = &o.dump {
+        let (address, length) = match at.rsplit_once(':') {
+            Some((address, length)) if address.contains(':') => {
+                (address, usize::from_str_radix(length, 16).map_err(|_| format!("bad length {length:?}"))?)
+            }
+            _ => (at.as_str(), 64),
+        };
+        let (segment, offset) = parse_address(address)?;
+        print_dump(&m, segment, offset, length);
+    }
     if let Some(at) = &o.disasm {
         let (cs, ip) = if at == "here" { (m.cpu.regs.cs(), m.cpu.regs.ip) } else { parse_address(at)? };
         hotspots::print_listing(&m, cs, ip, 40);
@@ -254,6 +277,7 @@ struct Summary {
     distinct_frames: usize,
     midi_bytes: usize,
     speaker_events: usize,
+    timer: String,
     last_frame: Option<dos::Frame>,
     state_hash: u64,
     console_hash: u64,
@@ -284,6 +308,7 @@ impl Summary {
             distinct_frames: m.frames.iter().map(|f| f.hash).collect::<BTreeSet<_>>().len(),
             midi_bytes: m.devices.mpu.midi_log.len(),
             speaker_events: m.devices.pit.speaker_log.len(),
+            timer: timer_summary(m),
             last_frame: m.frames.last().copied(),
             state_hash: m.state_hash(),
             console_hash: fnv64(&m.console),
@@ -305,6 +330,7 @@ impl Summary {
         if self.midi_bytes > 0 || self.speaker_events > 0 {
             println!("audio     {} MIDI bytes, {} PC speaker changes", self.midi_bytes, self.speaker_events);
         }
+        println!("timer     {}", self.timer);
         println!("state     {:016x}", self.state_hash);
         if !self.files_changed.is_empty() {
             println!("files     changed: {}", self.files_changed.join(", "));
@@ -346,6 +372,18 @@ impl Summary {
             strings(&self.files_changed),
         )
     }
+}
+
+/// PIT channel 0 rate and the owners of the timer vectors (INT 08h, INT 1Ch).
+fn timer_summary(m: &Machine) -> String {
+    let channel = &m.devices.pit.channels[0];
+    let hz = dos::clock::PIT_HZ as f64 / channel.period() as f64;
+    let vector = |n: u32| (m.mem.read_u16(n * 4 + 2), m.mem.read_u16(n * 4));
+    let ((s8, o8), (s1c, o1c)) = (vector(8), vector(0x1C));
+    format!(
+        "channel 0 mode {} at {hz:.1} Hz; INT 08h -> {s8:04X}:{o8:04X}, INT 1Ch -> {s1c:04X}:{o1c:04X}",
+        channel.mode
+    )
 }
 
 fn json_string(s: &str) -> String {
