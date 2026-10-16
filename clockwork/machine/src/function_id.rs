@@ -37,11 +37,7 @@ impl std::error::Error for ParseFunctionIdError {}
 
 impl FunctionId {
     /// Builds an ID from parts. `module` must be an uppercase DOS-style file name.
-    pub fn new(
-        module: impl Into<String>,
-        overlay: Option<u16>,
-        offset: u32,
-    ) -> Result<Self, ParseFunctionIdError> {
+    pub fn new(module: impl Into<String>, overlay: Option<u16>, offset: u32) -> Result<Self, ParseFunctionIdError> {
         let module = module.into();
         if let Err(reason) = validate_module(&module) {
             return Err(ParseFunctionIdError { input: module, reason });
@@ -70,9 +66,7 @@ fn validate_module(module: &str) -> Result<(), &'static str> {
     if module.len() > MODULE_MAX_LEN {
         return Err("module name longer than 64 characters");
     }
-    let valid = module
-        .chars()
-        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || MODULE_PUNCTUATION.contains(c));
+    let valid = module.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || MODULE_PUNCTUATION.contains(c));
     if !valid {
         return Err("module name must be an uppercase DOS file name");
     }

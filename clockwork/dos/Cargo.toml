@@ -1,13 +1,17 @@
 [package]
 name = "dos"
-description = "DOS, BIOS and PC device services (high-level emulation) for the Recreate host"
+description = "PC machine for the Recreate host: devices, BIOS and DOS services (high-level emulation), program loading"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+cpu.workspace = true
 machine.workspace = true
+
+[dev-dependencies]
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "code_asm"] }
 
 [lints]
 workspace = true

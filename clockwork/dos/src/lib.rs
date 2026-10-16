@@ -1,4 +1,22 @@
-//! DOS, BIOS and PC device services as high-level emulation (PROJECT.md §5.2, "HLE services").
+//! The emulated PC for the Recreate host (PROJECT.md §5.2): devices, BIOS and DOS services as
+//! high-level emulation, program loading and the deterministic run loop.
 //!
-//! Phase 1 scope: INT 21h file subset, PSP/environment, INT 10h text + mode 13h, PIT/PIC/IRQ0,
-//! keyboard and VGA palette. These services become the native port's runtime later (§7.3).
+//! These services become the native port's runtime later (§7.3).
+
+pub mod bios;
+pub mod clock;
+pub mod dos;
+pub mod keyboard;
+mod machine;
+mod mz;
+pub mod pic;
+pub mod pit;
+pub mod time;
+pub mod vfs;
+pub mod vga;
+
+pub use cpu::Model as CpuModel;
+pub use dos::LoadError;
+pub use machine::{Config, Devices, Frame, Machine, Stop, cp437_to_char};
+pub use time::DateTime;
+pub use vfs::Vfs;

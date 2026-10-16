@@ -11,7 +11,9 @@ name = "rec-host"
 path = "src/main.rs"
 
 [dependencies]
+dos.workspace = true
 machine.workspace = true
+minifb = "0.29"
 
 [lints]
 workspace = true
