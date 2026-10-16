@@ -11,7 +11,8 @@
 //!   virtual-8086 mode and paging (see `protected.rs` and `paging.rs`, ported from DOSBox
 //!   Staging). Segment limits aren't enforced, as in DOSBox.
 //!
-//! There is no FPU: escape opcodes decode their operands and do nothing, which is how a machine
+//! An x87 coprocessor (`fpu.rs`, ported from DOSBox Staging) is present unless [`Cpu::fpu`] is
+//! `None`; then escape opcodes decode their operands and do nothing, which is how a machine
 //! without a coprocessor behaves.
 //!
 //! The interpreter is deterministic. Its state is plain data, so `Clone` is a snapshot, and
@@ -26,12 +27,14 @@
 
 mod exec;
 pub mod flags;
+pub mod fpu;
 mod paging;
 mod protected;
 mod regs;
 
 use std::fmt;
 
+pub use fpu::Fpu;
 pub use regs::{Regs, reg, seg};
 
 /// First two bytes of the host callback instruction; a little-endian `u16` id follows.
@@ -112,6 +115,8 @@ pub mod vector {
     pub const OVERFLOW: u8 = 4;
     pub const BOUND: u8 = 5;
     pub const INVALID_OPCODE: u8 = 6;
+    /// #NM: an FPU instruction with CR0.EM or CR0.TS set.
+    pub const DEVICE_NOT_AVAILABLE: u8 = 7;
     pub const DOUBLE_FAULT: u8 = 8;
     pub const INVALID_TSS: u8 = 10;
     pub const NOT_PRESENT: u8 = 11;
@@ -220,6 +225,8 @@ pub struct Cpu {
     pub cpl: u8,
     /// Hidden parts of ES, CS, SS, DS, FS, GS.
     pub segs: [SegmentCache; 6],
+    /// The x87 coprocessor, or `None` for a PC without one.
+    pub fpu: Option<Fpu>,
     pub(crate) tlb: paging::Tlb,
     /// Executed instructions, plus one per repetition of a REP-prefixed string instruction and
     /// one per interrupt taken. The machine derives virtual time from this.
@@ -262,6 +269,12 @@ impl Default for Cpu {
 /// CR0 bits.
 pub mod cr0 {
     pub const PE: u32 = 1 << 0;
+    /// Monitor coprocessor: WAIT honors TS.
+    pub const MP: u32 = 1 << 1;
+    /// Emulate coprocessor: escape opcodes raise #NM.
+    pub const EM: u32 = 1 << 2;
+    /// Task switched: the next escape opcode raises #NM.
+    pub const TS: u32 = 1 << 3;
     pub const ET: u32 = 1 << 4;
     pub const WP: u32 = 1 << 16;
     pub const PG: u32 = 1 << 31;
@@ -287,6 +300,7 @@ impl Cpu {
             tr: SystemSegment::default(),
             cpl: 0,
             segs: [SegmentCache { selector: 0, base: 0, limit: 0xFFFF, big: false }; 6],
+            fpu: Some(Fpu::new()),
             tlb: paging::Tlb::default(),
             cycles: 0,
             irq_inhibit: false,

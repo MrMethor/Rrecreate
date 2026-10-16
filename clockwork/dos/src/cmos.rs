@@ -16,14 +16,15 @@ fn bcd(value: u8) -> u8 {
 }
 
 impl Cmos {
-    /// CMOS contents for a PC with `extended_kb` of memory above 1 MB.
-    pub fn new(start: DateTime, extended_kb: u32) -> Self {
+    /// CMOS contents for a PC with `extended_kb` of memory above 1 MB, with or without a math
+    /// coprocessor.
+    pub fn new(start: DateTime, extended_kb: u32, fpu: bool) -> Self {
         let mut ram = [0u8; 128];
         ram[0x0A] = 0x26; // 32.768 kHz time base, 1024 Hz periodic rate; no update in progress
         ram[0x0B] = 0x02; // 24-hour mode, BCD
         ram[0x0D] = 0x80; // battery good
         ram[0x10] = 0x40; // one 1.44 MB floppy drive
-        ram[0x14] = 0x21; // equipment: floppy, 80-column color
+        ram[0x14] = 0x21 | (u8::from(fpu) << 1); // equipment: floppy, 80-column color, coprocessor
         ram[0x15..0x17].copy_from_slice(&640u16.to_le_bytes()); // base memory in KB
         let extended = (extended_kb.min(0xFFFF) as u16).to_le_bytes();
         ram[0x17..0x19].copy_from_slice(&extended); // extended memory in KB
@@ -64,7 +65,7 @@ mod tests {
 
     #[test]
     fn clock_registers_in_bcd() {
-        let mut cmos = Cmos::new(DateTime::new(1994, 1, 1, 8, 0, 0), 15 * 1024);
+        let mut cmos = Cmos::new(DateTime::new(1994, 1, 1, 8, 0, 0), 15 * 1024, true);
         let read = |cmos: &mut Cmos, index: u8, seconds: u64| {
             cmos.write_index(index);
             cmos.read_data(seconds)
@@ -76,6 +77,7 @@ mod tests {
         assert_eq!(read(&mut cmos, 0x32, 0), 0x19);
         assert_eq!(read(&mut cmos, 0x15, 0), 0x80, "640 KB, low byte");
         assert_eq!((read(&mut cmos, 0x17, 0), read(&mut cmos, 0x18, 0)), (0x00, 0x3C), "15 MB extended");
+        assert_eq!(read(&mut cmos, 0x14, 0), 0x23, "equipment with a coprocessor");
         cmos.write_index(0x40);
         cmos.write_data(0x5A);
         assert_eq!(cmos.read_data(0), 0x5A);

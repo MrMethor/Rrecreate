@@ -198,7 +198,8 @@ pub(crate) fn install(m: &mut Machine) {
     m.mem.load(Machine::lin(ROM_SEGMENT, 0xFFFE), &[0xFC]); // model byte: AT
 
     // BIOS data area.
-    m.mem.write_u16(BDA_EQUIPMENT, 0x0021); // one floppy, 80×25 color
+    // One floppy, 80×25 color, and bit 1 for a math coprocessor.
+    m.mem.write_u16(BDA_EQUIPMENT, 0x0021 | (u16::from(m.cpu.fpu.is_some()) << 1));
     m.mem.write_u16(BDA_MEMORY_KB, 640);
     m.mem.write_u16(BDA_KBD_HEAD, KBD_BUFFER_START);
     m.mem.write_u16(BDA_KBD_TAIL, KBD_BUFFER_START);

@@ -7,6 +7,10 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[dependencies]
+# Transcendental functions that give the same bits on every host (x87 FSIN, FYL2X, ...).
+libm = "0.2"
+
 [dev-dependencies]
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "code_asm"] }
 

@@ -40,6 +40,7 @@ options:
                      (or: here, for the current CS:IP)
   --record FILE      play: record keyboard input as a session
   --cpu 286|386      processor the program sees (default 386)
+  --no-fpu           no x87 coprocessor (escape opcodes do nothing)
   --cd LETTER        add a CD-ROM drive (with MSCDEX) showing the same files as C:
   --drive LETTER     the current drive when the program starts (default C)
   --env NAME=VALUE   set an environment variable (repeatable)
@@ -73,6 +74,7 @@ struct Options {
     ems_kb: Option<u32>,
     memory_mb: Option<u32>,
     no_xms: bool,
+    no_fpu: bool,
     hotspots: usize,
     disasm: Option<String>,
     dump: Option<String>,
@@ -133,6 +135,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 options.memory_mb = Some(mb);
             }
             "--no-xms" => options.no_xms = true,
+            "--no-fpu" => options.no_fpu = true,
             "--cd" => options.cd_drive = Some(drive_letter(&value(arg)?)?),
             "--drive" => options.start_drive = Some(drive_letter(&value(arg)?)?),
             "--env" => {
@@ -211,6 +214,7 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         sound_blaster: o.sound_blaster.unwrap_or(Config::default().sound_blaster),
         extended_kb: o.memory_mb.map_or(Config::default().extended_kb, |mb| (mb - 1) * 1024),
         xms: !o.no_xms,
+        fpu: !o.no_fpu,
         ..Config::default()
     };
     Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())

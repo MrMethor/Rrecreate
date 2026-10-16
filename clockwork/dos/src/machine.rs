@@ -35,6 +35,8 @@ pub struct Config {
     pub start_time: DateTime,
     /// Which processor programs see.
     pub cpu_model: cpu::Model,
+    /// Whether an x87 coprocessor is installed (BIOS and CMOS report it).
+    pub fpu: bool,
     /// Letter of an emulated CD-ROM drive (with MSCDEX) that shows the same files as C:, read-only.
     pub cd_drive: Option<char>,
     /// The drive that is current when the program starts.
@@ -59,6 +61,7 @@ impl Default for Config {
             instructions_per_second: 8_000_000,
             start_time: DateTime::new(1994, 1, 1, 8, 0, 0),
             cpu_model: cpu::Model::I386,
+            fpu: true,
             cd_drive: None,
             start_drive: 'C',
             environment: Vec::new(),
@@ -130,7 +133,7 @@ pub struct Devices {
 }
 
 impl Devices {
-    fn new(clock: Clock, start_time: DateTime, sound_blaster: Option<SbConfig>, extended_kb: u32) -> Self {
+    fn new(clock: Clock, start_time: DateTime, sound_blaster: Option<SbConfig>, extended_kb: u32, fpu: bool) -> Self {
         Self {
             // BIOS defaults: IRQ0, 1, 2 and 6 unmasked on the master; vectors 08h and 70h.
             pic: Pic::new(0x08, 0xB8),
@@ -139,7 +142,7 @@ impl Devices {
             keyboard: Keyboard::default(),
             vga: Vga::new(),
             mpu: Mpu401::default(),
-            cmos: Cmos::new(start_time, extended_kb),
+            cmos: Cmos::new(start_time, extended_kb, fpu),
             dma: Dma::new(),
             opl: sound_blaster.map(|sb| Opl::new(sb.opl_mode())),
             sb: sound_blaster.map(SoundBlaster::new),
@@ -396,7 +399,7 @@ impl Machine {
         let mut machine = Self {
             cpu: Cpu::with_model(config.cpu_model),
             mem: Memory::with_size(0x10_0000 + config.extended_kb.min(MAX_EXTENDED_KB) * 1024),
-            devices: Devices::new(clock, config.start_time, config.sound_blaster, config.extended_kb),
+            devices: Devices::new(clock, config.start_time, config.sound_blaster, config.extended_kb, config.fpu),
             dos: DosState::default(),
             ems: Ems::new(config.ems_kb),
             xms: Xms::new(config.xms, 0x10_0000 + config.extended_kb.min(MAX_EXTENDED_KB) * 1024),
@@ -417,6 +420,9 @@ impl Machine {
             keyboard_e0: false,
             returned_flags: false,
         };
+        if !machine.config.fpu {
+            machine.cpu.fpu = None;
+        }
         bios::install(&mut machine);
         ems::install(&mut machine);
         xms::install(&mut machine);
@@ -554,6 +560,7 @@ impl Machine {
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::default();
         self.cpu.regs.hash(&mut h);
+        self.cpu.fpu.hash(&mut h);
         self.cpu.cycles.hash(&mut h);
         self.mem.hash(&mut h);
         self.devices.hash(&mut h);

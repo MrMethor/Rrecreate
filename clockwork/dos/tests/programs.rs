@@ -656,6 +656,43 @@ fn programs_see_the_configured_cpu() {
     assert_eq!(m.run(SECOND), Stop::Exited(2));
 }
 
+/// Coprocessor detection: exit code bit 1 from the BIOS equipment word (INT 11h), bit 0 if
+/// FNSTSW stored a clear status word after FNINIT.
+fn fpu_detection_program() -> Vec<u8> {
+    com(|a| {
+        a.int(0x11)?;
+        a.and(ax, 2)?;
+        a.mov(bx, ax)?;
+        a.fninit()?;
+        let status = word_at(a, "status");
+        a.fnstsw(status)?;
+        let status = word_at(a, "status");
+        a.cmp(status, 0)?;
+        let done = a.l("done");
+        a.jne(done)?;
+        a.or(bx, 1)?;
+        a.here("done")?;
+        a.mov(al, bl)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("status")?;
+        a.dw(&[0x5A5A])
+    })
+}
+
+#[test]
+fn programs_detect_the_coprocessor() {
+    let program = fpu_detection_program();
+    let mut m = boot(&[("FPU.COM", &program)], "FPU.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(3));
+
+    let mut drive = Vfs::new();
+    drive.insert_file("FPU.COM", program);
+    let config = Config { fpu: false, ..Config::default() };
+    let mut m = Machine::with_program(config, drive, "FPU.COM", "").unwrap();
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+}
+
 #[test]
 fn thirty_two_bit_code_runs() {
     // Sum 1..=100000 in EAX (doesn't fit 16 bits), store it, print it as 8 hex digits.

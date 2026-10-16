@@ -59,7 +59,7 @@ impl Width {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Rm {
+pub(crate) enum Rm {
     Reg(u8),
     /// `mask` is 0xFFFF for 16-bit addressing (offsets wrap within the segment) and all ones
     /// for 32-bit addressing.
@@ -71,9 +71,9 @@ enum Rm {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ModRm {
-    reg: u8,
-    rm: Rm,
+pub(crate) struct ModRm {
+    pub(crate) reg: u8,
+    pub(crate) rm: Rm,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -85,11 +85,11 @@ enum Rep {
     Repne,
 }
 
-struct Prefixes {
+pub(crate) struct Prefixes {
     seg: Option<usize>,
     rep: Rep,
     /// 32-bit operands: the code segment's default, toggled by 66h.
-    op32: bool,
+    pub(crate) op32: bool,
     /// 32-bit addressing: the code segment's default, toggled by 67h.
     addr32: bool,
 }
@@ -372,7 +372,7 @@ impl Cpu {
                 let segment = self.fetch16(bus)?;
                 self.far_call(bus, v, segment, offset)?;
             }
-            0x9B => {} // WAIT: no coprocessor to wait for
+            0x9B => self.fwait()?,
             0x9C => self.pushf(bus, v)?,
             0x9D => self.popf(bus, v)?,
             0x9E => {
@@ -489,10 +489,7 @@ impl Cpu {
                 let value = self.read_rm(bus, rm, Width::Byte)?;
                 self.regs.set_al(value as u8);
             }
-            0xD8..=0xDF => {
-                // Coprocessor escape with no coprocessor: decode the operand, do nothing.
-                self.modrm(bus, &p)?;
-            }
+            0xD8..=0xDF => self.escape(bus, &p, op, start_ip)?,
             0xE0..=0xE2 => {
                 let rel = self.fetch8(bus)? as i8 as u32;
                 let count = self.counter(&p).wrapping_sub(1) & p.addr_mask();
@@ -1360,7 +1357,7 @@ impl Cpu {
         self.decode_modrm(bus, p, byte)
     }
 
-    fn decode_modrm<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, byte: u8) -> Res<ModRm> {
+    pub(crate) fn decode_modrm<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, byte: u8) -> Res<ModRm> {
         let (md, reg, rm) = (byte >> 6, (byte >> 3) & 7, byte & 7);
         if md == 3 {
             return Ok(ModRm { reg, rm: Rm::Reg(rm) });
@@ -1542,7 +1539,7 @@ impl Cpu {
     }
 
     #[inline]
-    fn fetch8<B: Bus>(&mut self, bus: &mut B) -> Res<u8> {
+    pub(crate) fn fetch8<B: Bus>(&mut self, bus: &mut B) -> Res<u8> {
         let linear = self.fetch.base.wrapping_add(self.regs.ip);
         let physical = if self.fetch.paged {
             let user = self.cpl == 3;
@@ -1578,7 +1575,7 @@ impl Cpu {
         }
     }
 
-    fn unimplemented<B: Bus>(&mut self, bus: &mut B, start_ip: u32) -> Abort {
+    pub(crate) fn unimplemented<B: Bus>(&mut self, bus: &mut B, start_ip: u32) -> Abort {
         self.regs.ip = start_ip;
         let base = self.segment_base(CS);
         let mut bytes = [0; 6];
