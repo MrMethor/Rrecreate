@@ -232,7 +232,7 @@ pub(crate) fn input(m: &mut Machine, x: i32, y: i32, buttons: u8) {
 pub(crate) fn irq(m: &mut Machine) {
     let pending = std::mem::take(&mut m.mouse.pending);
     let Some(handler) = m.mouse.handler.clone().filter(|_| pending != 0) else {
-        m.cpu.regs.ip = m.cpu.regs.ip.wrapping_add(CALL_LENGTH);
+        m.cpu.regs.ip = m.cpu.regs.ip.wrapping_add(u32::from(CALL_LENGTH));
         return;
     };
     m.mem.load(Machine::lin(ROM_SEGMENT, HANDLER_SLOT), &handler.offset.to_le_bytes());

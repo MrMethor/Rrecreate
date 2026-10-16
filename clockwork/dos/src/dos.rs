@@ -1402,7 +1402,7 @@ fn load_image(m: &mut Machine, data: &[u8], image: Option<&mz::MzImage<'_>>, loa
 fn start_program(m: &mut Machine, entry: &Entry, ax: u16) {
     let regs = &mut m.cpu.regs;
     regs.set_cs(entry.cs);
-    regs.ip = entry.ip;
+    regs.ip = u32::from(entry.ip);
     regs.set_ss(entry.ss);
     regs.set_sp(entry.sp);
     regs.set_ds(entry.psp);
@@ -1414,7 +1414,7 @@ fn start_program(m: &mut Machine, entry: &Entry, ax: u16) {
     regs.set_si(entry.ip);
     regs.set_di(entry.sp);
     regs.set_bp(0x091C);
-    regs.flags = cpu::flags::normalize(cpu::flags::IF);
+    regs.flags = u32::from(cpu::flags::normalize(cpu::flags::IF));
 }
 
 impl Machine {

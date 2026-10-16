@@ -447,7 +447,9 @@ impl Machine {
             {
                 self.halted = false;
                 let (cpu, mut bus) = self.split();
-                cpu.interrupt(&mut bus, vector);
+                if let Err(exit) = cpu.interrupt(&mut bus, vector) {
+                    return Stop::Fault(exit);
+                }
                 continue;
             }
             if self.halted {

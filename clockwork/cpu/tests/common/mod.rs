@@ -90,9 +90,9 @@ pub fn run_model(code: &[u8], model: Model) -> (Cpu, TestBus) {
 }
 
 pub fn flags_set(cpu: &Cpu, mask: u16) -> bool {
-    cpu.regs.flags & mask == mask
+    cpu.regs.flags & u32::from(mask) == u32::from(mask)
 }
 
 pub fn flags_clear(cpu: &Cpu, mask: u16) -> bool {
-    cpu.regs.flags & mask == 0
+    cpu.regs.flags & u32::from(mask) == 0
 }

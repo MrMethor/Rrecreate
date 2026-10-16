@@ -1,9 +1,14 @@
 //! Instruction decoding and execution.
+//!
+//! Every memory access can fault (a page fault or protection error in protected mode), so the
+//! helpers return [`Res`] and instructions propagate faults with `?`; [`Cpu::step`] then undoes
+//! the instruction and enters the exception handler.
 
 use crate::flags::{AF, CF, DF, IF, OF, PF, SF, ZF};
+use crate::protected::IntKind;
 use crate::regs::reg::{AX, BP, BX, CX, DI, DX, SI, SP};
 use crate::regs::seg::{CS, DS, ES, FS, GS, SS};
-use crate::{Bus, Cpu, Exit, Model, TableRegister};
+use crate::{Abort, Bus, Cpu, Exit, Fault, Model, Res, TableRegister, vector};
 
 /// Longest run of prefixes accepted before the instruction is treated as invalid.
 const MAX_PREFIXES: usize = 14;
@@ -40,7 +45,7 @@ impl Width {
         }
     }
 
-    fn bytes(self) -> u32 {
+    pub(crate) fn bytes(self) -> u32 {
         self.bits() / 8
     }
 
@@ -83,9 +88,9 @@ enum Rep {
 struct Prefixes {
     seg: Option<usize>,
     rep: Rep,
-    /// 66h: 32-bit operands.
+    /// 32-bit operands: the code segment's default, toggled by 66h.
     op32: bool,
-    /// 67h: 32-bit addressing.
+    /// 32-bit addressing: the code segment's default, toggled by 67h.
     addr32: bool,
 }
 
@@ -106,12 +111,17 @@ impl Prefixes {
 }
 
 impl Cpu {
-    pub(crate) fn exec<B: Bus>(&mut self, bus: &mut B, start_ip: u16) -> Result<(), Exit> {
+    #[inline(always)]
+    pub(crate) fn exec<B: Bus>(&mut self, bus: &mut B, start_ip: u32) -> Res<()> {
         let i386 = self.model == Model::I386;
-        let mut p = Prefixes { seg: None, rep: Rep::None, op32: false, addr32: false };
+        let default32 = self.code32();
+        self.fetch.base = self.segment_base(CS);
+        self.fetch.ip_mask = if default32 { u32::MAX } else { 0xFFFF };
+        self.fetch.paged = self.paging();
+        let mut p = Prefixes { seg: None, rep: Rep::None, op32: default32, addr32: default32 };
         let mut prefixes = 0;
         let op = loop {
-            let byte = self.fetch8(bus);
+            let byte = self.fetch8(bus)?;
             match byte {
                 0x26 => p.seg = Some(ES),
                 0x2E => p.seg = Some(CS),
@@ -119,8 +129,8 @@ impl Cpu {
                 0x3E => p.seg = Some(DS),
                 0x64 if i386 => p.seg = Some(FS),
                 0x65 if i386 => p.seg = Some(GS),
-                0x66 if i386 => p.op32 = true,
-                0x67 if i386 => p.addr32 = true,
+                0x66 if i386 => p.op32 = !default32,
+                0x67 if i386 => p.addr32 = !default32,
                 0xF0 => {} // LOCK: no effect on a single CPU
                 0xF2 => p.rep = Rep::Repne,
                 0xF3 => p.rep = Rep::Repe,
@@ -140,18 +150,18 @@ impl Cpu {
                 let w = p.width(op);
                 match op & 7 {
                     0 | 1 => {
-                        let m = self.modrm(bus, &p);
-                        let a = self.read_rm(bus, m.rm, w);
+                        let m = self.modrm(bus, &p)?;
+                        let a = self.read_rm(bus, m.rm, w)?;
                         let b = self.read_reg(m.reg, w);
                         let r = self.alu(alu_op, w, a, b);
                         if alu_op != 7 {
-                            self.write_rm(bus, m.rm, w, r);
+                            self.write_rm(bus, m.rm, w, r)?;
                         }
                     }
                     2 | 3 => {
-                        let m = self.modrm(bus, &p);
+                        let m = self.modrm(bus, &p)?;
                         let a = self.read_reg(m.reg, w);
-                        let b = self.read_rm(bus, m.rm, w);
+                        let b = self.read_rm(bus, m.rm, w)?;
                         let r = self.alu(alu_op, w, a, b);
                         if alu_op != 7 {
                             self.write_reg(m.reg, w, r);
@@ -159,7 +169,7 @@ impl Cpu {
                     }
                     _ => {
                         let a = self.read_reg(0, w);
-                        let b = self.fetch(bus, w);
+                        let b = self.fetch(bus, w)?;
                         let r = self.alu(alu_op, w, a, b);
                         if alu_op != 7 {
                             self.write_reg(0, w, r);
@@ -169,11 +179,11 @@ impl Cpu {
             }
             0x06 | 0x0E | 0x16 | 0x1E => {
                 let value = u32::from(self.regs.seg[usize::from(op >> 3)]);
-                self.push(bus, v, value);
+                self.push(bus, v, value)?;
             }
             0x07 | 0x17 | 0x1F => {
-                let value = self.pop(bus, v) as u16;
-                self.regs.seg[usize::from(op >> 3)] = value;
+                let value = self.pop(bus, v)? as u16;
+                self.load_segment(bus, usize::from(op >> 3), value)?;
                 if op == 0x17 {
                     self.irq_inhibit = true;
                 }
@@ -194,141 +204,154 @@ impl Cpu {
             0x50..=0x57 => {
                 // PUSH SP pushes the value before the push (80286 and later).
                 let value = self.read_reg(op & 7, v);
-                self.push(bus, v, value);
+                self.push(bus, v, value)?;
             }
             0x58..=0x5F => {
-                let value = self.pop(bus, v);
+                let value = self.pop(bus, v)?;
                 self.write_reg(op & 7, v, value);
             }
             0x60 => {
                 let sp = self.read_reg(SP as u8, v);
                 for r in [AX, CX, DX, BX] {
                     let value = self.read_reg(r as u8, v);
-                    self.push(bus, v, value);
+                    self.push(bus, v, value)?;
                 }
-                self.push(bus, v, sp);
+                self.push(bus, v, sp)?;
                 for r in [BP, SI, DI] {
                     let value = self.read_reg(r as u8, v);
-                    self.push(bus, v, value);
+                    self.push(bus, v, value)?;
                 }
             }
             0x61 => {
                 for r in [DI, SI, BP] {
-                    let value = self.pop(bus, v);
+                    let value = self.pop(bus, v)?;
                     self.write_reg(r as u8, v, value);
                 }
-                self.pop(bus, v); // the saved SP is discarded
+                self.pop(bus, v)?; // the saved SP is discarded
                 for r in [BX, DX, CX, AX] {
-                    let value = self.pop(bus, v);
+                    let value = self.pop(bus, v)?;
                     self.write_reg(r as u8, v, value);
                 }
             }
             0x62 => {
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 let Rm::Mem { seg, off, mask } = m.rm else {
                     return Err(self.unimplemented(bus, start_ip));
                 };
                 let index = v.sign_extend(self.read_reg(m.reg, v));
-                let lower = v.sign_extend(self.read_mem(bus, seg, off, mask, v));
-                let upper = v.sign_extend(self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, v));
+                let lower = v.sign_extend(self.read_mem(bus, seg, off, mask, v)?);
+                let upper = v.sign_extend(self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, v)?);
                 if index < lower || index > upper {
-                    self.regs.ip = start_ip;
-                    self.interrupt(bus, 5);
+                    return Err(Abort::Fault(Fault::new(vector::BOUND)));
+                }
+            }
+            0x63 if i386 && self.protected_mode() && !self.v86() => {
+                // ARPL: raise the destination selector's RPL to the source's.
+                let m = self.modrm(bus, &p)?;
+                let dest = self.read_rm(bus, m.rm, Width::Word)?;
+                let src = self.read_reg(m.reg, Width::Word);
+                if dest & 3 < src & 3 {
+                    self.write_rm(bus, m.rm, Width::Word, (dest & !3) | (src & 3))?;
+                    self.regs.set_flag(ZF, true);
+                } else {
+                    self.regs.set_flag(ZF, false);
                 }
             }
             0x68 => {
-                let value = self.fetch(bus, v);
-                self.push(bus, v, value);
+                let value = self.fetch(bus, v)?;
+                self.push(bus, v, value)?;
             }
             0x6A => {
-                let value = self.fetch8(bus) as i8 as i32 as u32 & v.mask();
-                self.push(bus, v, value);
+                let value = self.fetch8(bus)? as i8 as i32 as u32 & v.mask();
+                self.push(bus, v, value)?;
             }
             0x69 | 0x6B => {
-                let m = self.modrm(bus, &p);
-                let a = v.sign_extend(self.read_rm(bus, m.rm, v));
-                let b = if op == 0x69 { v.sign_extend(self.fetch(bus, v)) } else { i64::from(self.fetch8(bus) as i8) };
+                let m = self.modrm(bus, &p)?;
+                let a = v.sign_extend(self.read_rm(bus, m.rm, v)?);
+                let b =
+                    if op == 0x69 { v.sign_extend(self.fetch(bus, v)?) } else { i64::from(self.fetch8(bus)? as i8) };
                 self.imul_into(m.reg, v, a, b);
             }
-            0x6C..=0x6F | 0xA4..=0xA7 | 0xAA..=0xAF => self.string_op(bus, op, &p),
+            0x6C..=0x6F | 0xA4..=0xA7 | 0xAA..=0xAF => self.string_op(bus, op, &p)?,
             0x70..=0x7F => {
-                let rel = self.fetch8(bus) as i8 as u16;
+                let rel = self.fetch8(bus)? as i8 as u32;
                 if self.condition(op & 0x0F) {
-                    self.regs.ip = self.regs.ip.wrapping_add(rel);
+                    self.jump_relative(rel, p.op32);
                 }
             }
             0x80..=0x83 => {
                 let w = p.width(op);
-                let m = self.modrm(bus, &p);
-                let a = self.read_rm(bus, m.rm, w);
-                let b = if op == 0x83 { self.fetch8(bus) as i8 as i32 as u32 & w.mask() } else { self.fetch(bus, w) };
+                let m = self.modrm(bus, &p)?;
+                let a = self.read_rm(bus, m.rm, w)?;
+                let b = if op == 0x83 { self.fetch8(bus)? as i8 as i32 as u32 & w.mask() } else { self.fetch(bus, w)? };
                 let r = self.alu(m.reg, w, a, b);
                 if m.reg != 7 {
-                    self.write_rm(bus, m.rm, w, r);
+                    self.write_rm(bus, m.rm, w, r)?;
                 }
             }
             0x84 | 0x85 => {
                 let w = p.width(op);
-                let m = self.modrm(bus, &p);
-                let a = self.read_rm(bus, m.rm, w);
+                let m = self.modrm(bus, &p)?;
+                let a = self.read_rm(bus, m.rm, w)?;
                 let b = self.read_reg(m.reg, w);
                 self.logic(w, a & b);
             }
             0x86 | 0x87 => {
                 let w = p.width(op);
-                let m = self.modrm(bus, &p);
-                let a = self.read_rm(bus, m.rm, w);
+                let m = self.modrm(bus, &p)?;
+                let a = self.read_rm(bus, m.rm, w)?;
                 let b = self.read_reg(m.reg, w);
-                self.write_rm(bus, m.rm, w, b);
+                self.write_rm(bus, m.rm, w, b)?;
                 self.write_reg(m.reg, w, a);
             }
             0x88 | 0x89 => {
                 let w = p.width(op);
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 let value = self.read_reg(m.reg, w);
-                self.write_rm(bus, m.rm, w, value);
+                self.write_rm(bus, m.rm, w, value)?;
             }
             0x8A | 0x8B => {
                 let w = p.width(op);
-                let m = self.modrm(bus, &p);
-                let value = self.read_rm(bus, m.rm, w);
+                let m = self.modrm(bus, &p)?;
+                let value = self.read_rm(bus, m.rm, w)?;
                 self.write_reg(m.reg, w, value);
             }
             0x8C => {
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 if usize::from(m.reg) >= self.segment_count() {
                     return Err(self.unimplemented(bus, start_ip));
                 }
                 let value = u32::from(self.regs.seg[usize::from(m.reg)]);
                 // A register destination takes the operand size; memory is always 16 bits.
                 let w = if matches!(m.rm, Rm::Reg(_)) { v } else { Width::Word };
-                self.write_rm(bus, m.rm, w, value);
+                self.write_rm(bus, m.rm, w, value)?;
             }
             0x8D => {
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 let Rm::Mem { off, .. } = m.rm else {
                     return Err(self.unimplemented(bus, start_ip));
                 };
                 self.write_reg(m.reg, v, off & v.mask());
             }
             0x8E => {
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 let target = usize::from(m.reg);
                 if target == CS || target >= self.segment_count() {
                     return Err(self.unimplemented(bus, start_ip));
                 }
-                self.regs.seg[target] = self.read_rm(bus, m.rm, Width::Word) as u16;
+                let value = self.read_rm(bus, m.rm, Width::Word)? as u16;
+                self.load_segment(bus, target, value)?;
                 if target == SS {
                     self.irq_inhibit = true;
                 }
             }
             0x8F => {
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 if m.reg != 0 {
                     return Err(self.unimplemented(bus, start_ip));
                 }
-                let value = self.pop(bus, v);
-                self.write_rm(bus, m.rm, v, value);
+                let value = self.pop(bus, v)?;
+                self.write_rm(bus, m.rm, v, value)?;
             }
             0x90..=0x97 => {
                 let r = op & 7;
@@ -345,138 +368,115 @@ impl Cpu {
                 _ => self.regs.set_dx(if self.regs.ax() & 0x8000 != 0 { 0xFFFF } else { 0 }),
             },
             0x9A => {
-                let offset = self.fetch(bus, v);
-                let segment = self.fetch16(bus);
-                self.far_call(bus, v, segment, offset);
+                let offset = self.fetch(bus, v)?;
+                let segment = self.fetch16(bus)?;
+                self.far_call(bus, v, segment, offset)?;
             }
             0x9B => {} // WAIT: no coprocessor to wait for
-            0x9C => {
-                let value = u32::from(self.regs.flags);
-                self.push(bus, v, value);
-            }
-            0x9D => {
-                let value = self.pop(bus, v);
-                self.load_flags(value as u16);
-            }
+            0x9C => self.pushf(bus, v)?,
+            0x9D => self.popf(bus, v)?,
             0x9E => {
                 let low = u16::from(self.regs.ah()) & (SF | ZF | AF | PF | CF);
-                self.load_flags((self.regs.flags & 0xFF00) | low);
+                self.regs.flags = (self.regs.flags & !0xFF) | u32::from(low) | 2;
             }
             0x9F => self.regs.set_ah(self.regs.flags as u8),
             0xA0..=0xA3 => {
                 let w = p.width(op);
-                let off = if p.addr32 { self.fetch32(bus) } else { u32::from(self.fetch16(bus)) };
+                let off = if p.addr32 { self.fetch32(bus)? } else { u32::from(self.fetch16(bus)?) };
                 let rm = Rm::Mem { seg: p.seg.unwrap_or(DS), off, mask: p.addr_mask() };
                 if op < 0xA2 {
-                    let value = self.read_rm(bus, rm, w);
+                    let value = self.read_rm(bus, rm, w)?;
                     self.write_reg(0, w, value);
                 } else {
                     let value = self.read_reg(0, w);
-                    self.write_rm(bus, rm, w, value);
+                    self.write_rm(bus, rm, w, value)?;
                 }
             }
             0xA8 | 0xA9 => {
                 let w = p.width(op);
                 let a = self.read_reg(0, w);
-                let b = self.fetch(bus, w);
+                let b = self.fetch(bus, w)?;
                 self.logic(w, a & b);
             }
             0xB0..=0xB7 => {
-                let value = self.fetch8(bus);
+                let value = self.fetch8(bus)?;
                 self.regs.set_reg8(op & 7, value);
             }
             0xB8..=0xBF => {
-                let value = self.fetch(bus, v);
+                let value = self.fetch(bus, v)?;
                 self.write_reg(op & 7, v, value);
             }
             0xC0 | 0xC1 | 0xD0..=0xD3 => {
                 let w = p.width(op);
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 let count = match op {
                     0xD0 | 0xD1 => 1,
                     0xD2 | 0xD3 => self.regs.cl(),
-                    _ => self.fetch8(bus),
+                    _ => self.fetch8(bus)?,
                 };
                 if count & 0x1F != 0 {
-                    let value = self.read_rm(bus, m.rm, w);
+                    let value = self.read_rm(bus, m.rm, w)?;
                     let result = self.shift(m.reg, w, value, count);
-                    self.write_rm(bus, m.rm, w, result);
+                    self.write_rm(bus, m.rm, w, result)?;
                 }
             }
             0xC2 | 0xC3 => {
-                let release = if op == 0xC2 { self.fetch16(bus) } else { 0 };
-                self.regs.ip = self.pop(bus, v) as u16;
-                self.regs.set_sp(self.regs.sp().wrapping_add(release));
+                let release = if op == 0xC2 { self.fetch16(bus)? } else { 0 };
+                let ip = self.pop(bus, v)?;
+                self.regs.ip = if p.op32 { ip } else { ip & 0xFFFF };
+                self.release_stack(u32::from(release));
             }
             0xC4 | 0xC5 => self.load_far_pointer(bus, &p, start_ip, if op == 0xC4 { ES } else { DS })?,
             0xC6 | 0xC7 => {
                 let w = p.width(op);
-                let m = self.modrm(bus, &p);
+                let m = self.modrm(bus, &p)?;
                 if m.reg != 0 {
                     return Err(self.unimplemented(bus, start_ip));
                 }
-                let value = self.fetch(bus, w);
-                self.write_rm(bus, m.rm, w, value);
+                let value = self.fetch(bus, w)?;
+                self.write_rm(bus, m.rm, w, value)?;
             }
             0xC8 => {
-                let size = self.fetch16(bus);
-                let level = self.fetch8(bus) & 0x1F;
-                let bp = self.read_reg(BP as u8, v);
-                self.push(bus, v, bp);
-                let frame = self.regs.sp();
-                if level > 0 {
-                    for _ in 1..level {
-                        let bp = self.regs.bp().wrapping_sub(v.bytes() as u16);
-                        self.regs.set_bp(bp);
-                        let value = self.read_mem(bus, SS, u32::from(bp), 0xFFFF, v);
-                        self.push(bus, v, value);
-                    }
-                    self.push(bus, v, u32::from(frame));
-                }
-                self.write_reg(BP as u8, v, u32::from(frame));
-                self.regs.set_sp(self.regs.sp().wrapping_sub(size));
+                let size = self.fetch16(bus)?;
+                let level = self.fetch8(bus)?;
+                self.enter(bus, v, size, level)?;
             }
             0xC9 => {
-                self.regs.set_sp(self.regs.bp());
-                let value = self.pop(bus, v);
+                if self.stack32() {
+                    self.regs.gpr[SP] = self.regs.gpr[BP];
+                } else {
+                    self.regs.set_sp(self.regs.bp());
+                }
+                let value = self.pop(bus, v)?;
                 self.write_reg(BP as u8, v, value);
             }
             0xCA | 0xCB => {
-                let release = if op == 0xCA { self.fetch16(bus) } else { 0 };
-                self.regs.ip = self.pop(bus, v) as u16;
-                self.regs.seg[CS] = self.pop(bus, v) as u16;
-                self.regs.set_sp(self.regs.sp().wrapping_add(release));
+                let release = if op == 0xCA { self.fetch16(bus)? } else { 0 };
+                self.far_return(bus, v, u32::from(release))?;
             }
-            0xCC => self.interrupt(bus, 3),
+            0xCC => self.deliver(bus, 3, IntKind::Breakpoint, None)?,
             0xCD => {
-                let vector = self.fetch8(bus);
-                self.interrupt(bus, vector);
+                let vector = self.fetch8(bus)?;
+                self.deliver(bus, vector, IntKind::Software, None)?;
             }
             0xCE => {
                 if self.regs.flag(OF) {
-                    self.interrupt(bus, 4);
+                    self.deliver(bus, vector::OVERFLOW, IntKind::Breakpoint, None)?;
                 }
             }
-            0xCF => {
-                self.regs.ip = self.pop(bus, v) as u16;
-                self.regs.seg[CS] = self.pop(bus, v) as u16;
-                let value = self.pop(bus, v);
-                self.load_flags(value as u16);
-            }
+            0xCF => self.iret(bus, v)?,
             0xD4 => {
-                let base = self.fetch8(bus);
+                let base = self.fetch8(bus)?;
                 let al = self.regs.al();
-                if let Some(quotient) = al.checked_div(base) {
-                    self.regs.set_ah(quotient);
-                    self.regs.set_al(al % base);
-                    self.set_szp(Width::Byte, u32::from(al % base));
-                } else {
-                    self.regs.ip = start_ip;
-                    self.interrupt(bus, 0);
-                }
+                let Some(quotient) = al.checked_div(base) else {
+                    return Err(Abort::Fault(Fault::new(vector::DIVIDE)));
+                };
+                self.regs.set_ah(quotient);
+                self.regs.set_al(al % base);
+                self.set_szp(Width::Byte, u32::from(al % base));
             }
             0xD5 => {
-                let base = self.fetch8(bus);
+                let base = self.fetch8(bus)?;
                 let al = self.regs.al().wrapping_add(self.regs.ah().wrapping_mul(base));
                 self.regs.set_ax(u16::from(al));
                 self.set_szp(Width::Byte, u32::from(al));
@@ -486,15 +486,15 @@ impl Cpu {
                 let mask = p.addr_mask();
                 let off = (self.regs.gpr[BX] & mask).wrapping_add(u32::from(self.regs.al()));
                 let rm = Rm::Mem { seg: p.seg.unwrap_or(DS), off, mask };
-                let value = self.read_rm(bus, rm, Width::Byte);
+                let value = self.read_rm(bus, rm, Width::Byte)?;
                 self.regs.set_al(value as u8);
             }
             0xD8..=0xDF => {
                 // Coprocessor escape with no coprocessor: decode the operand, do nothing.
-                self.modrm(bus, &p);
+                self.modrm(bus, &p)?;
             }
             0xE0..=0xE2 => {
-                let rel = self.fetch8(bus) as i8 as u16;
+                let rel = self.fetch8(bus)? as i8 as u32;
                 let count = self.counter(&p).wrapping_sub(1) & p.addr_mask();
                 self.set_counter(&p, count);
                 let taken = count != 0
@@ -504,18 +504,19 @@ impl Cpu {
                         _ => true,
                     };
                 if taken {
-                    self.regs.ip = self.regs.ip.wrapping_add(rel);
+                    self.jump_relative(rel, p.op32);
                 }
             }
             0xE3 => {
-                let rel = self.fetch8(bus) as i8 as u16;
+                let rel = self.fetch8(bus)? as i8 as u32;
                 if self.counter(&p) == 0 {
-                    self.regs.ip = self.regs.ip.wrapping_add(rel);
+                    self.jump_relative(rel, p.op32);
                 }
             }
             0xE4..=0xE7 | 0xEC..=0xEF => {
                 let w = p.width(op);
-                let port = if op < 0xE8 { u16::from(self.fetch8(bus)) } else { self.regs.dx() };
+                let port = if op < 0xE8 { u16::from(self.fetch8(bus)?) } else { self.regs.dx() };
+                self.check_io(bus, port, w)?;
                 if op & 2 == 0 {
                     let value = port_in(bus, port, w);
                     self.write_reg(0, w, value);
@@ -525,52 +526,59 @@ impl Cpu {
                 }
             }
             0xE8 => {
-                let rel = self.fetch(bus, v);
+                let rel = if p.op32 { self.fetch32(bus)? } else { self.fetch16(bus)? as i16 as u32 };
                 let ip = self.regs.ip;
-                self.push(bus, v, u32::from(ip));
-                self.regs.ip = ip.wrapping_add(rel as u16);
+                self.push(bus, v, ip)?;
+                self.jump_relative(rel, p.op32);
             }
             0xE9 => {
-                let rel = self.fetch(bus, v);
-                self.regs.ip = self.regs.ip.wrapping_add(rel as u16);
+                let rel = if p.op32 { self.fetch32(bus)? } else { self.fetch16(bus)? as i16 as u32 };
+                self.jump_relative(rel, p.op32);
             }
             0xEA => {
-                let offset = self.fetch(bus, v);
-                let segment = self.fetch16(bus);
-                self.regs.ip = offset as u16;
-                self.regs.seg[CS] = segment;
+                let offset = self.fetch(bus, v)?;
+                let segment = self.fetch16(bus)?;
+                self.far_jump(bus, v, segment, offset)?;
             }
             0xEB => {
-                let rel = self.fetch8(bus) as i8 as u16;
-                self.regs.ip = self.regs.ip.wrapping_add(rel);
+                let rel = self.fetch8(bus)? as i8 as u32;
+                self.jump_relative(rel, p.op32);
             }
-            0xF4 => return Err(Exit::Halt),
-            0xF5 => self.regs.flags ^= CF,
-            0xF6 | 0xF7 => self.group3(bus, op, &p, start_ip),
+            0xF4 => {
+                self.check_privileged()?;
+                return Err(Exit::Halt.into());
+            }
+            0xF5 => self.regs.flags ^= u32::from(CF),
+            0xF6 | 0xF7 => self.group3(bus, op, &p)?,
             0xF8 => self.regs.set_flag(CF, false),
             0xF9 => self.regs.set_flag(CF, true),
-            0xFA => self.regs.set_flag(IF, false),
+            0xFA => {
+                self.check_interrupt_flag_access()?;
+                self.regs.set_flag(IF, false);
+            }
             0xFB => {
+                self.check_interrupt_flag_access()?;
                 self.regs.set_flag(IF, true);
                 self.irq_inhibit = true;
             }
             0xFC => self.regs.set_flag(DF, false),
             0xFD => self.regs.set_flag(DF, true),
             0xFE => {
-                let byte = self.fetch8(bus);
+                let byte = self.fetch8(bus)?;
                 if byte == crate::CALLBACK_OPCODE[1] {
-                    return Err(Exit::Callback(self.fetch16(bus)));
+                    let id = self.fetch16(bus)?;
+                    return Err(Exit::Callback(id).into());
                 }
-                let m = self.decode_modrm(bus, &p, byte);
+                let m = self.decode_modrm(bus, &p, byte)?;
                 if m.reg > 1 {
                     return Err(self.unimplemented(bus, start_ip));
                 }
-                let value = self.read_rm(bus, m.rm, Width::Byte);
+                let value = self.read_rm(bus, m.rm, Width::Byte)?;
                 let cf = self.regs.flag(CF);
                 let result =
                     if m.reg == 0 { self.add(Width::Byte, value, 1, 0) } else { self.sub(Width::Byte, value, 1, 0) };
                 self.regs.set_flag(CF, cf);
-                self.write_rm(bus, m.rm, Width::Byte, result);
+                self.write_rm(bus, m.rm, Width::Byte, result)?;
             }
             0xFF => self.group5(bus, &p, start_ip)?,
             _ => return Err(self.unimplemented(bus, start_ip)),
@@ -578,80 +586,105 @@ impl Cpu {
         Ok(())
     }
 
-    /// Two-byte opcodes. The 80286 only has the system instructions in `0F 01` and CLTS.
-    fn exec_0f<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u16) -> Result<(), Exit> {
-        let op = self.fetch8(bus);
+    /// Two-byte opcodes. The 80286 only has the system instructions in `0F 00`, `0F 01` and CLTS.
+    fn exec_0f<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32) -> Res<()> {
+        let op = self.fetch8(bus)?;
         let v = p.v();
         let i386 = self.model == Model::I386;
+        let protected = self.protected_mode() && !self.v86();
         match op {
-            0x01 => self.system_group(bus, p, start_ip)?,
-            0x06 => self.cr0 &= !0x08, // CLTS
-            0x20 if i386 => {
-                let byte = self.fetch8(bus);
-                let value = match (byte >> 3) & 7 {
-                    0 => self.cr0,
-                    2 | 3 => 0,
-                    _ => return Err(self.unimplemented(bus, start_ip)),
-                };
-                self.regs.gpr[usize::from(byte & 7)] = value;
+            0x00 if protected => self.system_group6(bus, p, start_ip)?,
+            0x01 => self.system_group7(bus, p, start_ip)?,
+            0x02 | 0x03 if protected => {
+                let m = self.modrm(bus, p)?;
+                let selector = self.read_rm(bus, m.rm, Width::Word)? as u16;
+                match self.lar_lsl(bus, selector, op == 0x03)? {
+                    Some(value) => {
+                        self.write_reg(m.reg, v, value & v.mask());
+                        self.regs.set_flag(ZF, true);
+                    }
+                    None => self.regs.set_flag(ZF, false),
+                }
             }
-            0x22 if i386 => {
-                let byte = self.fetch8(bus);
-                let value = self.regs.gpr[usize::from(byte & 7)];
-                match (byte >> 3) & 7 {
-                    0 if value & 1 != 0 => return Err(self.unsupported(start_ip, "protected mode (MOV CR0)")),
-                    0 => self.cr0 = value,
-                    2 | 3 => {} // no paging: nothing uses them
-                    _ => return Err(self.unimplemented(bus, start_ip)),
+            0x06 => {
+                self.check_privileged()?;
+                self.cr0 &= !0x08; // CLTS
+            }
+            0x20 | 0x22 if i386 => {
+                let byte = self.fetch8(bus)?;
+                let (index, r) = ((byte >> 3) & 7, usize::from(byte & 7));
+                if op == 0x20 {
+                    self.regs.gpr[r] = self.read_control(index)?;
+                } else {
+                    let value = self.regs.gpr[r];
+                    self.write_control(bus, index, value)?;
+                }
+            }
+            0x21 | 0x23 if i386 => {
+                let byte = self.fetch8(bus)?;
+                self.check_privileged()?;
+                let (index, r) = (usize::from((byte >> 3) & 7), usize::from(byte & 7));
+                if op == 0x21 {
+                    self.regs.gpr[r] = self.dr[index];
+                } else {
+                    self.dr[index] = self.regs.gpr[r];
+                }
+            }
+            0x24 | 0x26 if i386 => {
+                // Test registers TR6/TR7: accepted, reads give 0.
+                let byte = self.fetch8(bus)?;
+                self.check_privileged()?;
+                if op == 0x24 {
+                    self.regs.gpr[usize::from(byte & 7)] = 0;
                 }
             }
             0x80..=0x8F if i386 => {
-                let rel = self.fetch(bus, v);
+                let rel = if p.op32 { self.fetch32(bus)? } else { self.fetch16(bus)? as i16 as u32 };
                 if self.condition(op & 0x0F) {
-                    self.regs.ip = self.regs.ip.wrapping_add(rel as u16);
+                    self.jump_relative(rel, p.op32);
                 }
             }
             0x90..=0x9F if i386 => {
-                let m = self.modrm(bus, p);
+                let m = self.modrm(bus, p)?;
                 let value = u32::from(self.condition(op & 0x0F));
-                self.write_rm(bus, m.rm, Width::Byte, value);
+                self.write_rm(bus, m.rm, Width::Byte, value)?;
             }
             0xA0 | 0xA8 if i386 => {
                 let value = u32::from(self.regs.seg[if op == 0xA0 { FS } else { GS }]);
-                self.push(bus, v, value);
+                self.push(bus, v, value)?;
             }
             0xA1 | 0xA9 if i386 => {
-                let value = self.pop(bus, v) as u16;
-                self.regs.seg[if op == 0xA1 { FS } else { GS }] = value;
+                let value = self.pop(bus, v)? as u16;
+                self.load_segment(bus, if op == 0xA1 { FS } else { GS }, value)?;
             }
             0xA3 | 0xAB | 0xB3 | 0xBB if i386 => {
-                let m = self.modrm(bus, p);
+                let m = self.modrm(bus, p)?;
                 let offset = self.read_reg(m.reg, v);
-                self.bit_test(bus, (op >> 3) & 3, m.rm, v, offset, true);
+                self.bit_test(bus, (op >> 3) & 3, m.rm, v, offset, true)?;
             }
             0xBA if i386 => {
-                let m = self.modrm(bus, p);
-                let offset = u32::from(self.fetch8(bus));
+                let m = self.modrm(bus, p)?;
+                let offset = u32::from(self.fetch8(bus)?);
                 if m.reg < 4 {
                     return Err(self.unimplemented(bus, start_ip));
                 }
-                self.bit_test(bus, m.reg & 3, m.rm, v, offset, false);
+                self.bit_test(bus, m.reg & 3, m.rm, v, offset, false)?;
             }
             0xA4 | 0xA5 | 0xAC | 0xAD if i386 => {
-                let m = self.modrm(bus, p);
-                let count = if op & 1 == 0 { self.fetch8(bus) } else { self.regs.cl() };
+                let m = self.modrm(bus, p)?;
+                let count = if op & 1 == 0 { self.fetch8(bus)? } else { self.regs.cl() };
                 let count = u32::from(count & 0x1F);
                 if count != 0 {
-                    let dest = self.read_rm(bus, m.rm, v);
+                    let dest = self.read_rm(bus, m.rm, v)?;
                     let src = self.read_reg(m.reg, v);
                     let result = self.double_shift(v, dest, src, count, op < 0xA8);
-                    self.write_rm(bus, m.rm, v, result);
+                    self.write_rm(bus, m.rm, v, result)?;
                 }
             }
             0xAF if i386 => {
-                let m = self.modrm(bus, p);
+                let m = self.modrm(bus, p)?;
                 let a = v.sign_extend(self.read_reg(m.reg, v));
-                let b = v.sign_extend(self.read_rm(bus, m.rm, v));
+                let b = v.sign_extend(self.read_rm(bus, m.rm, v)?);
                 self.imul_into(m.reg, v, a, b);
             }
             0xB2 | 0xB4 | 0xB5 if i386 => {
@@ -664,14 +697,14 @@ impl Cpu {
             }
             0xB6 | 0xB7 | 0xBE | 0xBF if i386 => {
                 let source = if op & 1 == 0 { Width::Byte } else { Width::Word };
-                let m = self.modrm(bus, p);
-                let value = self.read_rm(bus, m.rm, source);
+                let m = self.modrm(bus, p)?;
+                let value = self.read_rm(bus, m.rm, source)?;
                 let value = if op < 0xB8 { value } else { source.sign_extend(value) as u32 & v.mask() };
                 self.write_reg(m.reg, v, value);
             }
             0xBC | 0xBD if i386 => {
-                let m = self.modrm(bus, p);
-                let value = self.read_rm(bus, m.rm, v);
+                let m = self.modrm(bus, p)?;
+                let value = self.read_rm(bus, m.rm, v)?;
                 if value == 0 {
                     self.regs.set_flag(ZF, true);
                 } else {
@@ -685,19 +718,53 @@ impl Cpu {
         Ok(())
     }
 
+    /// `0F 00`: SLDT, STR, LLDT, LTR, VERR, VERW (protected mode only).
+    fn system_group6<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32) -> Res<()> {
+        let m = self.modrm(bus, p)?;
+        let store_width = if matches!(m.rm, Rm::Reg(_)) { p.v() } else { Width::Word };
+        match m.reg {
+            0 => {
+                let value = u32::from(self.ldtr.selector);
+                self.write_rm(bus, m.rm, store_width, value)?;
+            }
+            1 => {
+                let value = u32::from(self.tr.selector);
+                self.write_rm(bus, m.rm, store_width, value)?;
+            }
+            2 | 3 => {
+                let selector = self.read_rm(bus, m.rm, Width::Word)? as u16;
+                if m.reg == 2 {
+                    self.lldt(bus, selector)?;
+                } else {
+                    self.ltr(bus, selector)?;
+                }
+            }
+            4 | 5 => {
+                let selector = self.read_rm(bus, m.rm, Width::Word)? as u16;
+                let ok = self.verify(bus, selector, m.reg == 5)?;
+                self.regs.set_flag(ZF, ok);
+            }
+            _ => return Err(self.unimplemented(bus, start_ip)),
+        }
+        Ok(())
+    }
+
     /// `0F 01`: SGDT, SIDT, LGDT, LIDT, SMSW, LMSW.
-    fn system_group<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u16) -> Result<(), Exit> {
-        let m = self.modrm(bus, p);
+    fn system_group7<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32) -> Res<()> {
+        let m = self.modrm(bus, p)?;
         match (m.reg, m.rm) {
             (0..=3, Rm::Mem { seg, off, mask }) => {
-                let table = if m.reg & 1 == 0 { &mut self.gdtr } else { &mut self.idtr };
                 if m.reg < 2 {
-                    let TableRegister { limit, base } = *table;
-                    self.write_mem(bus, seg, off, mask, Width::Word, u32::from(limit));
-                    self.write_mem(bus, seg, off.wrapping_add(2), mask, Width::Dword, base);
+                    let TableRegister { limit, base } = if m.reg == 0 { self.gdtr } else { self.idtr };
+                    // A 16-bit SGDT/SIDT stores the base's top byte as 0 on a 386... except it
+                    // stores FFh on a 286; real software doesn't rely on either.
+                    let base = if p.op32 || self.model == Model::I386 { base } else { base | 0xFF00_0000 };
+                    self.write_mem(bus, seg, off, mask, Width::Word, u32::from(limit))?;
+                    self.write_mem(bus, seg, off.wrapping_add(2), mask, Width::Dword, base)?;
                 } else {
-                    let limit = self.read_mem(bus, seg, off, mask, Width::Word) as u16;
-                    let base = self.read_mem(bus, seg, off.wrapping_add(2), mask, Width::Dword);
+                    self.check_privileged()?;
+                    let limit = self.read_mem(bus, seg, off, mask, Width::Word)? as u16;
+                    let base = self.read_mem(bus, seg, off.wrapping_add(2), mask, Width::Dword)?;
                     let base = if p.op32 { base } else { base & 0x00FF_FFFF };
                     let table = if m.reg == 2 { &mut self.gdtr } else { &mut self.idtr };
                     *table = TableRegister { limit, base };
@@ -709,40 +776,37 @@ impl Cpu {
                     Model::I386 => self.cr0 & 0xFFFF,
                 };
                 let w = if matches!(rm, Rm::Reg(_)) { p.v() } else { Width::Word };
-                self.write_rm(bus, rm, w, msw);
+                self.write_rm(bus, rm, w, msw)?;
             }
             (6, rm) => {
-                let value = self.read_rm(bus, rm, Width::Word);
-                if value & 1 != 0 {
-                    return Err(self.unsupported(start_ip, "protected mode (LMSW)"));
-                }
-                self.cr0 = (self.cr0 & !0x0F) | (value & 0x0F);
+                let value = self.read_rm(bus, rm, Width::Word)? as u16;
+                self.lmsw(bus, value)?;
             }
             _ => return Err(self.unimplemented(bus, start_ip)),
         }
         Ok(())
     }
 
-    fn group3<B: Bus>(&mut self, bus: &mut B, op: u8, p: &Prefixes, start_ip: u16) {
+    fn group3<B: Bus>(&mut self, bus: &mut B, op: u8, p: &Prefixes) -> Res<()> {
         let w = p.width(op);
-        let m = self.modrm(bus, p);
+        let m = self.modrm(bus, p)?;
         match m.reg {
             0 | 1 => {
-                let a = self.read_rm(bus, m.rm, w);
-                let b = self.fetch(bus, w);
+                let a = self.read_rm(bus, m.rm, w)?;
+                let b = self.fetch(bus, w)?;
                 self.logic(w, a & b);
             }
             2 => {
-                let value = self.read_rm(bus, m.rm, w);
-                self.write_rm(bus, m.rm, w, !value & w.mask());
+                let value = self.read_rm(bus, m.rm, w)?;
+                self.write_rm(bus, m.rm, w, !value & w.mask())?;
             }
             3 => {
-                let value = self.read_rm(bus, m.rm, w);
+                let value = self.read_rm(bus, m.rm, w)?;
                 let result = self.sub(w, 0, value, 0);
-                self.write_rm(bus, m.rm, w, result);
+                self.write_rm(bus, m.rm, w, result)?;
             }
             4 | 5 => {
-                let src = self.read_rm(bus, m.rm, w);
+                let src = self.read_rm(bus, m.rm, w)?;
                 let acc = self.read_reg(0, w);
                 // The double-width product, as (low, high) halves.
                 let (low, high, overflow) = if m.reg == 4 {
@@ -765,13 +829,13 @@ impl Cpu {
                 self.regs.set_flag(OF, overflow);
             }
             _ => {
-                let src = self.read_rm(bus, m.rm, w);
+                let src = self.read_rm(bus, m.rm, w)?;
                 if !self.divide(w, m.reg == 7, src) {
-                    self.regs.ip = start_ip;
-                    self.interrupt(bus, 0);
+                    return Err(Abort::Fault(Fault::new(vector::DIVIDE)));
                 }
             }
         }
+        Ok(())
     }
 
     /// DIV (signed = false) or IDIV. Returns false on a divide error, leaving registers untouched.
@@ -828,71 +892,89 @@ impl Cpu {
         self.regs.set_flag(OF, overflow);
     }
 
-    fn group5<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u16) -> Result<(), Exit> {
+    fn group5<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32) -> Res<()> {
         let v = p.v();
-        let m = self.modrm(bus, p);
+        let m = self.modrm(bus, p)?;
         match m.reg {
             0 | 1 => {
-                let value = self.read_rm(bus, m.rm, v);
+                let value = self.read_rm(bus, m.rm, v)?;
                 let cf = self.regs.flag(CF);
                 let result = if m.reg == 0 { self.add(v, value, 1, 0) } else { self.sub(v, value, 1, 0) };
                 self.regs.set_flag(CF, cf);
-                self.write_rm(bus, m.rm, v, result);
+                self.write_rm(bus, m.rm, v, result)?;
             }
             2 => {
-                let target = self.read_rm(bus, m.rm, v);
+                let target = self.read_rm(bus, m.rm, v)?;
                 let ip = self.regs.ip;
-                self.push(bus, v, u32::from(ip));
-                self.regs.ip = target as u16;
+                self.push(bus, v, ip)?;
+                self.regs.ip = target;
             }
-            4 => self.regs.ip = self.read_rm(bus, m.rm, v) as u16,
+            4 => self.regs.ip = self.read_rm(bus, m.rm, v)?,
             3 | 5 => {
                 let Rm::Mem { seg, off, mask } = m.rm else {
                     return Err(self.unimplemented(bus, start_ip));
                 };
-                let offset = self.read_mem(bus, seg, off, mask, v);
-                let segment = self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, Width::Word) as u16;
+                let offset = self.read_mem(bus, seg, off, mask, v)?;
+                let segment = self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, Width::Word)? as u16;
                 if m.reg == 3 {
-                    self.far_call(bus, v, segment, offset);
+                    self.far_call(bus, v, segment, offset)?;
                 } else {
-                    self.regs.ip = offset as u16;
-                    self.regs.seg[CS] = segment;
+                    self.far_jump(bus, v, segment, offset)?;
                 }
             }
             6 => {
-                let value = self.read_rm(bus, m.rm, v);
-                self.push(bus, v, value);
+                let value = self.read_rm(bus, m.rm, v)?;
+                self.push(bus, v, value)?;
             }
             _ => return Err(self.unimplemented(bus, start_ip)),
         }
         Ok(())
     }
 
-    fn far_call<B: Bus>(&mut self, bus: &mut B, w: Width, segment: u16, offset: u32) {
-        let (cs, ip) = (self.regs.seg[CS], self.regs.ip);
-        self.push(bus, w, u32::from(cs));
-        self.push(bus, w, u32::from(ip));
-        self.regs.seg[CS] = segment;
-        self.regs.ip = offset as u16;
+    /// EIP += `rel`, kept within 64 KB for 16-bit operand size.
+    fn jump_relative(&mut self, rel: u32, op32: bool) {
+        let ip = self.regs.ip.wrapping_add(rel);
+        self.regs.ip = if op32 { ip } else { ip & 0xFFFF };
+    }
+
+    /// ENTER (DOSBox `CPU_ENTER`).
+    fn enter<B: Bus>(&mut self, bus: &mut B, w: Width, bytes: u16, level: u8) -> Res<()> {
+        let level = u32::from(level & 0x1F);
+        let mask = if self.stack32() { u32::MAX } else { 0xFFFF };
+        let size = w.bytes();
+        let mut sp = self.regs.gpr[SP] & mask;
+        let mut bp = self.regs.gpr[BP] & mask;
+        sp = sp.wrapping_sub(size);
+        let old_bp = self.read_reg(BP as u8, w);
+        self.write_mem(bus, SS, sp & mask, mask, w, old_bp)?;
+        let frame = self.regs.gpr[SP].wrapping_sub(size);
+        if level > 0 {
+            for _ in 1..level {
+                sp = sp.wrapping_sub(size);
+                bp = bp.wrapping_sub(size);
+                let value = self.read_mem(bus, SS, bp & mask, mask, w)?;
+                self.write_mem(bus, SS, sp & mask, mask, w, value)?;
+            }
+            sp = sp.wrapping_sub(size);
+            self.write_mem(bus, SS, sp & mask, mask, w, frame & w.mask())?;
+        }
+        self.write_reg(BP as u8, w, frame & w.mask());
+        sp = sp.wrapping_sub(u32::from(bytes));
+        self.regs.gpr[SP] = (self.regs.gpr[SP] & !mask) | (sp & mask);
+        Ok(())
     }
 
     /// LES, LDS, LSS, LFS, LGS: a far pointer from memory into a register and `target`.
-    fn load_far_pointer<B: Bus>(
-        &mut self,
-        bus: &mut B,
-        p: &Prefixes,
-        start_ip: u16,
-        target: usize,
-    ) -> Result<(), Exit> {
+    fn load_far_pointer<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32, target: usize) -> Res<()> {
         let v = p.v();
-        let m = self.modrm(bus, p);
+        let m = self.modrm(bus, p)?;
         let Rm::Mem { seg, off, mask } = m.rm else {
             return Err(self.unimplemented(bus, start_ip));
         };
-        let offset = self.read_mem(bus, seg, off, mask, v);
-        let segment = self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, Width::Word) as u16;
+        let offset = self.read_mem(bus, seg, off, mask, v)?;
+        let segment = self.read_mem(bus, seg, off.wrapping_add(v.bytes()), mask, Width::Word)? as u16;
+        self.load_segment(bus, target, segment)?;
         self.write_reg(m.reg, v, offset);
-        self.regs.seg[target] = segment;
         if target == SS {
             self.irq_inhibit = true;
         }
@@ -901,7 +983,15 @@ impl Cpu {
 
     /// BT, BTS, BTR, BTC (`kind` 0–3). A register-supplied bit offset can reach outside the
     /// addressed memory operand; an immediate one is taken modulo the operand size.
-    fn bit_test<B: Bus>(&mut self, bus: &mut B, kind: u8, rm: Rm, w: Width, offset: u32, from_register: bool) {
+    fn bit_test<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        kind: u8,
+        rm: Rm,
+        w: Width,
+        offset: u32,
+        from_register: bool,
+    ) -> Res<()> {
         let bits = w.bits();
         let (rm, bit) = match rm {
             Rm::Mem { seg, off, mask } if from_register => {
@@ -912,16 +1002,16 @@ impl Cpu {
             }
             _ => (rm, offset % bits),
         };
-        let value = self.read_rm(bus, rm, w);
+        let value = self.read_rm(bus, rm, w)?;
         let mask = 1u32 << bit;
         self.regs.set_flag(CF, value & mask != 0);
         let result = match kind {
             1 => value | mask,
             2 => value & !mask,
             3 => value ^ mask,
-            _ => return,
+            _ => return Ok(()),
         };
-        self.write_rm(bus, rm, w, result);
+        self.write_rm(bus, rm, w, result)
     }
 
     /// SHLD (`left`) or SHRD with a nonzero count already masked to 5 bits.
@@ -942,18 +1032,25 @@ impl Cpu {
         result
     }
 
-    fn string_op<B: Bus>(&mut self, bus: &mut B, op: u8, p: &Prefixes) {
+    fn string_op<B: Bus>(&mut self, bus: &mut B, op: u8, p: &Prefixes) -> Res<()> {
         let w = p.width(op);
         let kind = op & 0xFE;
+        if kind == 0x6C || kind == 0x6E {
+            let port = self.regs.dx();
+            self.check_io(bus, port, w)?;
+        }
         let src_seg = p.seg.unwrap_or(DS);
         let step = if self.regs.flag(DF) { w.bytes().wrapping_neg() } else { w.bytes() };
         if p.rep == Rep::None {
-            self.string_once(bus, kind, w, src_seg, step, p.addr32);
-            return;
+            return self.string_once(bus, kind, w, src_seg, step, p.addr32);
         }
         let compares = kind == 0xA6 || kind == 0xAE;
         while self.counter(p) != 0 {
-            self.string_once(bus, kind, w, src_seg, step, p.addr32);
+            if let Err(fault) = self.string_once(bus, kind, w, src_seg, step, p.addr32) {
+                // Keep the progress made so far: the instruction restarts where it faulted.
+                self.string_restart = Some((self.regs.gpr[SI], self.regs.gpr[DI], self.regs.gpr[CX]));
+                return Err(fault);
+            }
             let count = self.counter(p) - 1;
             self.set_counter(p, count);
             self.cycles += 1;
@@ -961,47 +1058,56 @@ impl Cpu {
                 break;
             }
         }
+        Ok(())
     }
 
-    fn string_once<B: Bus>(&mut self, bus: &mut B, kind: u8, w: Width, src_seg: usize, step: u32, addr32: bool) {
+    fn string_once<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        kind: u8,
+        w: Width,
+        src_seg: usize,
+        step: u32,
+        addr32: bool,
+    ) -> Res<()> {
         let mask = if addr32 { u32::MAX } else { 0xFFFF };
         let (si, di) = (self.regs.gpr[SI] & mask, self.regs.gpr[DI] & mask);
         let (mut advance_si, mut advance_di) = (false, false);
         match kind {
             0xA4 => {
-                let value = self.read_mem(bus, src_seg, si, mask, w);
-                self.write_mem(bus, ES, di, mask, w, value);
+                let value = self.read_mem(bus, src_seg, si, mask, w)?;
+                self.write_mem(bus, ES, di, mask, w, value)?;
                 (advance_si, advance_di) = (true, true);
             }
             0xA6 => {
-                let a = self.read_mem(bus, src_seg, si, mask, w);
-                let b = self.read_mem(bus, ES, di, mask, w);
+                let a = self.read_mem(bus, src_seg, si, mask, w)?;
+                let b = self.read_mem(bus, ES, di, mask, w)?;
                 self.sub(w, a, b, 0);
                 (advance_si, advance_di) = (true, true);
             }
             0xAA => {
                 let value = self.read_reg(0, w);
-                self.write_mem(bus, ES, di, mask, w, value);
+                self.write_mem(bus, ES, di, mask, w, value)?;
                 advance_di = true;
             }
             0xAC => {
-                let value = self.read_mem(bus, src_seg, si, mask, w);
+                let value = self.read_mem(bus, src_seg, si, mask, w)?;
                 self.write_reg(0, w, value);
                 advance_si = true;
             }
             0xAE => {
                 let a = self.read_reg(0, w);
-                let b = self.read_mem(bus, ES, di, mask, w);
+                let b = self.read_mem(bus, ES, di, mask, w)?;
                 self.sub(w, a, b, 0);
                 advance_di = true;
             }
             0x6C => {
                 let value = port_in(bus, self.regs.dx(), w);
-                self.write_mem(bus, ES, di, mask, w, value);
+                self.write_mem(bus, ES, di, mask, w, value)?;
                 advance_di = true;
             }
             _ => {
-                let value = self.read_mem(bus, src_seg, si, mask, w);
+                let value = self.read_mem(bus, src_seg, si, mask, w)?;
                 port_out(bus, self.regs.dx(), w, value);
                 advance_si = true;
             }
@@ -1013,6 +1119,7 @@ impl Cpu {
         if advance_di {
             advance(&mut self.regs.gpr[DI]);
         }
+        Ok(())
     }
 
     /// CX or ECX, by address size (REP, LOOP, JCXZ).
@@ -1070,6 +1177,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     fn add(&mut self, w: Width, a: u32, b: u32, carry: u32) -> u32 {
         let full = u64::from(a) + u64::from(b) + u64::from(carry);
         let r = full as u32 & w.mask();
@@ -1080,6 +1188,7 @@ impl Cpu {
         r
     }
 
+    #[inline]
     fn sub(&mut self, w: Width, a: u32, b: u32, borrow: u32) -> u32 {
         let r = a.wrapping_sub(b).wrapping_sub(borrow) & w.mask();
         self.regs.set_flag(CF, u64::from(b) + u64::from(borrow) > u64::from(a));
@@ -1089,6 +1198,7 @@ impl Cpu {
         r
     }
 
+    #[inline]
     fn logic(&mut self, w: Width, r: u32) -> u32 {
         self.regs.set_flag(CF, false);
         self.regs.set_flag(OF, false);
@@ -1097,6 +1207,7 @@ impl Cpu {
         r
     }
 
+    #[inline]
     fn set_szp(&mut self, w: Width, r: u32) {
         self.regs.set_flag(SF, r & w.sign() != 0);
         self.regs.set_flag(ZF, r & w.mask() == 0);
@@ -1243,15 +1354,16 @@ impl Cpu {
 
     // ---- operands ----
 
-    fn modrm<B: Bus>(&mut self, bus: &mut B, p: &Prefixes) -> ModRm {
-        let byte = self.fetch8(bus);
+    #[inline]
+    fn modrm<B: Bus>(&mut self, bus: &mut B, p: &Prefixes) -> Res<ModRm> {
+        let byte = self.fetch8(bus)?;
         self.decode_modrm(bus, p, byte)
     }
 
-    fn decode_modrm<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, byte: u8) -> ModRm {
+    fn decode_modrm<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, byte: u8) -> Res<ModRm> {
         let (md, reg, rm) = (byte >> 6, (byte >> 3) & 7, byte & 7);
         if md == 3 {
-            return ModRm { reg, rm: Rm::Reg(rm) };
+            return Ok(ModRm { reg, rm: Rm::Reg(rm) });
         }
         let g = self.regs.gpr;
         if !p.addr32 {
@@ -1268,13 +1380,13 @@ impl Cpu {
                 _ => (w(BX), DS),
             };
             let disp = match md {
-                0 if rm == 6 => self.fetch16(bus),
+                0 if rm == 6 => self.fetch16(bus)?,
                 0 => 0,
-                1 => self.fetch8(bus) as i8 as u16,
-                _ => self.fetch16(bus),
+                1 => self.fetch8(bus)? as i8 as u16,
+                _ => self.fetch16(bus)?,
             };
             let off = u32::from(base.wrapping_add(disp));
-            return ModRm { reg, rm: Rm::Mem { seg: p.seg.unwrap_or(default_seg), off, mask: 0xFFFF } };
+            return Ok(ModRm { reg, rm: Rm::Mem { seg: p.seg.unwrap_or(default_seg), off, mask: 0xFFFF } });
         }
 
         // 32-bit addressing: optional SIB byte, EBP/ESP bases default to SS.
@@ -1282,7 +1394,7 @@ impl Cpu {
         let mut ea = 0u32;
         let mut disp32_only = false;
         if rm == 4 {
-            let sib = self.fetch8(bus);
+            let sib = self.fetch8(bus)?;
             let (scale, index, base) = (sib >> 6, usize::from((sib >> 3) & 7), usize::from(sib & 7));
             if index != 4 {
                 ea = g[index] << scale;
@@ -1304,15 +1416,16 @@ impl Cpu {
             }
         }
         let disp = if disp32_only || md == 2 {
-            self.fetch32(bus)
+            self.fetch32(bus)?
         } else if md == 1 {
-            self.fetch8(bus) as i8 as i32 as u32
+            self.fetch8(bus)? as i8 as i32 as u32
         } else {
             0
         };
-        ModRm { reg, rm: Rm::Mem { seg: p.seg.unwrap_or(default_seg), off: ea.wrapping_add(disp), mask: u32::MAX } }
+        Ok(ModRm { reg, rm: Rm::Mem { seg: p.seg.unwrap_or(default_seg), off: ea.wrapping_add(disp), mask: u32::MAX } })
     }
 
+    #[inline]
     fn read_reg(&self, r: u8, w: Width) -> u32 {
         match w {
             Width::Byte => u32::from(self.regs.reg8(r)),
@@ -1321,6 +1434,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     fn write_reg(&mut self, r: u8, w: Width, value: u32) {
         match w {
             Width::Byte => self.regs.set_reg8(r, value as u8),
@@ -1329,97 +1443,152 @@ impl Cpu {
         }
     }
 
-    fn read_rm<B: Bus>(&mut self, bus: &mut B, rm: Rm, w: Width) -> u32 {
+    #[inline]
+    fn read_rm<B: Bus>(&mut self, bus: &mut B, rm: Rm, w: Width) -> Res<u32> {
         match rm {
-            Rm::Reg(r) => self.read_reg(r, w),
+            Rm::Reg(r) => Ok(self.read_reg(r, w)),
             Rm::Mem { seg, off, mask } => self.read_mem(bus, seg, off, mask, w),
         }
     }
 
-    fn write_rm<B: Bus>(&mut self, bus: &mut B, rm: Rm, w: Width, value: u32) {
+    #[inline]
+    fn write_rm<B: Bus>(&mut self, bus: &mut B, rm: Rm, w: Width, value: u32) -> Res<()> {
         match rm {
-            Rm::Reg(r) => self.write_reg(r, w, value),
+            Rm::Reg(r) => {
+                self.write_reg(r, w, value);
+                Ok(())
+            }
             Rm::Mem { seg, off, mask } => self.write_mem(bus, seg, off, mask, w, value),
         }
     }
 
     /// Little-endian access; each byte's offset is wrapped with `mask` (so 16-bit word accesses
-    /// wrap within the segment, as on the 8086).
-    fn read_mem<B: Bus>(&mut self, bus: &mut B, seg: usize, off: u32, mask: u32, w: Width) -> u32 {
-        let base = u32::from(self.regs.seg[seg]) << 4;
-        (0..w.bytes()).fold(0, |value, i| {
-            let byte = bus.read_u8(base.wrapping_add(off.wrapping_add(i) & mask));
-            value | (u32::from(byte) << (8 * i))
-        })
+    /// wrap within the segment, as on the 8086). With paging, each byte's page is translated.
+    #[inline]
+    pub(crate) fn read_mem<B: Bus>(&mut self, bus: &mut B, seg: usize, off: u32, mask: u32, w: Width) -> Res<u32> {
+        let base = self.segment_base(seg);
+        if !self.paging() {
+            return Ok((0..w.bytes()).fold(0, |value, i| {
+                let byte = bus.read_u8(base.wrapping_add(off.wrapping_add(i) & mask));
+                value | (u32::from(byte) << (8 * i))
+            }));
+        }
+        let user = self.cpl == 3;
+        let mut value = 0;
+        for i in 0..w.bytes() {
+            let physical = self.translate(bus, base.wrapping_add(off.wrapping_add(i) & mask), false, user)?;
+            value |= u32::from(bus.read_u8(physical)) << (8 * i);
+        }
+        Ok(value)
     }
 
-    fn write_mem<B: Bus>(&mut self, bus: &mut B, seg: usize, off: u32, mask: u32, w: Width, value: u32) {
-        let base = u32::from(self.regs.seg[seg]) << 4;
+    #[inline]
+    pub(crate) fn write_mem<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        seg: usize,
+        off: u32,
+        mask: u32,
+        w: Width,
+        value: u32,
+    ) -> Res<()> {
+        let base = self.segment_base(seg);
+        if !self.paging() {
+            for i in 0..w.bytes() {
+                bus.write_u8(base.wrapping_add(off.wrapping_add(i) & mask), (value >> (8 * i)) as u8);
+            }
+            return Ok(());
+        }
+        // Translate every byte first, so a fault on the second page writes nothing.
+        let user = self.cpl == 3;
+        let mut physical = [0u32; 4];
         for i in 0..w.bytes() {
-            bus.write_u8(base.wrapping_add(off.wrapping_add(i) & mask), (value >> (8 * i)) as u8);
+            physical[i as usize] = self.translate(bus, base.wrapping_add(off.wrapping_add(i) & mask), true, user)?;
+        }
+        for i in 0..w.bytes() {
+            bus.write_u8(physical[i as usize], (value >> (8 * i)) as u8);
+        }
+        Ok(())
+    }
+
+    /// Push on the stack (SP or ESP by the stack segment's size).
+    #[inline]
+    pub(crate) fn push<B: Bus>(&mut self, bus: &mut B, w: Width, value: u32) -> Res<()> {
+        if self.stack32() {
+            let esp = self.regs.gpr[SP].wrapping_sub(w.bytes());
+            self.write_mem(bus, SS, esp, u32::MAX, w, value)?;
+            self.regs.gpr[SP] = esp;
+        } else {
+            let sp = self.regs.sp().wrapping_sub(w.bytes() as u16);
+            self.write_mem(bus, SS, u32::from(sp), 0xFFFF, w, value)?;
+            self.regs.set_sp(sp);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn pop<B: Bus>(&mut self, bus: &mut B, w: Width) -> Res<u32> {
+        if self.stack32() {
+            let esp = self.regs.gpr[SP];
+            let value = self.read_mem(bus, SS, esp, u32::MAX, w)?;
+            self.regs.gpr[SP] = esp.wrapping_add(w.bytes());
+            Ok(value)
+        } else {
+            let sp = self.regs.sp();
+            let value = self.read_mem(bus, SS, u32::from(sp), 0xFFFF, w)?;
+            self.regs.set_sp(sp.wrapping_add(w.bytes() as u16));
+            Ok(value)
         }
     }
 
-    pub(crate) fn read_mem16<B: Bus>(&mut self, bus: &mut B, seg: usize, off: u16) -> u16 {
-        self.read_mem(bus, seg, u32::from(off), 0xFFFF, Width::Word) as u16
+    #[inline]
+    fn fetch8<B: Bus>(&mut self, bus: &mut B) -> Res<u8> {
+        let linear = self.fetch.base.wrapping_add(self.regs.ip);
+        let physical = if self.fetch.paged {
+            let user = self.cpl == 3;
+            self.translate(bus, linear, false, user)?
+        } else {
+            linear
+        };
+        let value = bus.read_u8(physical);
+        self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
+        Ok(value)
     }
 
-    pub(crate) fn write_mem16<B: Bus>(&mut self, bus: &mut B, seg: usize, off: u16, value: u16) {
-        self.write_mem(bus, seg, u32::from(off), 0xFFFF, Width::Word, u32::from(value));
+    #[inline]
+    fn fetch16<B: Bus>(&mut self, bus: &mut B) -> Res<u16> {
+        let lo = self.fetch8(bus)?;
+        let hi = self.fetch8(bus)?;
+        Ok(u16::from_le_bytes([lo, hi]))
     }
 
-    /// Push on the (16-bit) real-mode stack.
-    fn push<B: Bus>(&mut self, bus: &mut B, w: Width, value: u32) {
-        let sp = self.regs.sp().wrapping_sub(w.bytes() as u16);
-        self.regs.set_sp(sp);
-        self.write_mem(bus, SS, u32::from(sp), 0xFFFF, w, value);
+    #[inline]
+    fn fetch32<B: Bus>(&mut self, bus: &mut B) -> Res<u32> {
+        let lo = self.fetch16(bus)?;
+        let hi = self.fetch16(bus)?;
+        Ok(u32::from(lo) | (u32::from(hi) << 16))
     }
 
-    fn pop<B: Bus>(&mut self, bus: &mut B, w: Width) -> u32 {
-        let sp = self.regs.sp();
-        let value = self.read_mem(bus, SS, u32::from(sp), 0xFFFF, w);
-        self.regs.set_sp(sp.wrapping_add(w.bytes() as u16));
-        value
-    }
-
-    fn fetch8<B: Bus>(&mut self, bus: &mut B) -> u8 {
-        let value = bus.read_u8(self.linear(CS, self.regs.ip));
-        self.regs.ip = self.regs.ip.wrapping_add(1);
-        value
-    }
-
-    fn fetch16<B: Bus>(&mut self, bus: &mut B) -> u16 {
-        let lo = self.fetch8(bus);
-        let hi = self.fetch8(bus);
-        u16::from_le_bytes([lo, hi])
-    }
-
-    fn fetch32<B: Bus>(&mut self, bus: &mut B) -> u32 {
-        let lo = self.fetch16(bus);
-        let hi = self.fetch16(bus);
-        u32::from(lo) | (u32::from(hi) << 16)
-    }
-
-    fn fetch<B: Bus>(&mut self, bus: &mut B, w: Width) -> u32 {
+    #[inline]
+    fn fetch<B: Bus>(&mut self, bus: &mut B, w: Width) -> Res<u32> {
         match w {
-            Width::Byte => u32::from(self.fetch8(bus)),
-            Width::Word => u32::from(self.fetch16(bus)),
+            Width::Byte => Ok(u32::from(self.fetch8(bus)?)),
+            Width::Word => Ok(u32::from(self.fetch16(bus)?)),
             Width::Dword => self.fetch32(bus),
         }
     }
 
-    fn unimplemented<B: Bus>(&mut self, bus: &mut B, start_ip: u16) -> Exit {
+    fn unimplemented<B: Bus>(&mut self, bus: &mut B, start_ip: u32) -> Abort {
         self.regs.ip = start_ip;
+        let base = self.segment_base(CS);
         let mut bytes = [0; 6];
         for (i, b) in bytes.iter_mut().enumerate() {
-            *b = bus.read_u8(self.linear(CS, start_ip.wrapping_add(i as u16)));
+            let linear = base.wrapping_add(start_ip.wrapping_add(i as u32));
+            let physical =
+                if self.paging() { self.translate(bus, linear, false, false).unwrap_or(linear) } else { linear };
+            *b = bus.read_u8(physical);
         }
-        Exit::Unimplemented { cs: self.regs.seg[CS], ip: start_ip, bytes }
-    }
-
-    fn unsupported(&mut self, start_ip: u16, feature: &'static str) -> Exit {
-        self.regs.ip = start_ip;
-        Exit::Unsupported { cs: self.regs.seg[CS], ip: start_ip, feature }
+        Exit::Unimplemented { cs: self.regs.seg[CS], ip: start_ip, bytes }.into()
     }
 }
 

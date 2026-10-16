@@ -11,7 +11,7 @@ use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter};
 const INTERVAL: u64 = 997;
 
 pub struct Profile {
-    samples: HashMap<(u16, u16), u64>,
+    samples: HashMap<(u16, u32), u64>,
     total: u64,
 }
 
@@ -42,11 +42,21 @@ impl Profile {
     }
 }
 
+/// Where code at `cs:ip` is and how to decode it: the current code segment uses its descriptor
+/// (protected mode, 32-bit code); other segments are taken as real-mode segments.
+fn code_location(m: &Machine, cs: u16, ip: u32) -> (u32, u32) {
+    if cs == m.cpu.regs.cs() {
+        (m.cpu.segment_base(1 /* CS */).wrapping_add(ip), if m.cpu.code32() { 32 } else { 16 })
+    } else {
+        ((u32::from(cs) << 4).wrapping_add(ip), 16)
+    }
+}
+
 /// Disassembles `count` instructions starting at `cs:ip` in the machine's current memory.
-pub fn print_listing(m: &Machine, cs: u16, ip: u16, count: usize) {
-    let linear = (u32::from(cs) << 4) + u32::from(ip);
-    let bytes = m.mem.read_bytes(linear, count * 15);
-    let mut decoder = Decoder::with_ip(16, &bytes, u64::from(ip), DecoderOptions::NONE);
+pub fn print_listing(m: &Machine, cs: u16, ip: u32, count: usize) {
+    let (linear, bitness) = code_location(m, cs, ip);
+    let bytes = m.peek_bytes(linear, count * 15);
+    let mut decoder = Decoder::with_ip(bitness, &bytes, u64::from(ip), DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
     let mut instruction = Instruction::default();
     let regs = &m.cpu.regs;
@@ -62,7 +72,7 @@ pub fn print_listing(m: &Machine, cs: u16, ip: u16, count: usize) {
         regs.esp()
     );
     println!(
-        "          CS={:04X} IP={:04X} DS={:04X} ES={:04X} SS={:04X} FS={:04X} GS={:04X} FLAGS={:04X}",
+        "          CS={:04X} EIP={:08X} DS={:04X} ES={:04X} SS={:04X} FS={:04X} GS={:04X} EFLAGS={:08X} CPL={}",
         regs.cs(),
         regs.ip,
         regs.ds(),
@@ -70,7 +80,8 @@ pub fn print_listing(m: &Machine, cs: u16, ip: u16, count: usize) {
         regs.ss(),
         regs.fs(),
         regs.gs(),
-        regs.flags
+        regs.flags,
+        m.cpu.cpl
     );
     println!("listing   {cs:04X}:{ip:04X}");
     for _ in 0..count {
@@ -83,14 +94,14 @@ pub fn print_listing(m: &Machine, cs: u16, ip: u16, count: usize) {
         formatter.format(&instruction, &mut text);
         let encoded: Vec<String> =
             bytes[offset..offset + instruction.len()].iter().map(|b| format!("{b:02X}")).collect();
-        println!("  {cs:04X}:{:04X}  {:<20} {text}", instruction.ip() as u16, encoded.join(" "));
+        println!("  {cs:04X}:{:04X}  {:<20} {text}", instruction.ip(), encoded.join(" "));
     }
 }
 
-fn disassemble(m: &Machine, cs: u16, ip: u16) -> String {
-    let linear = (u32::from(cs) << 4) + u32::from(ip);
-    let bytes = m.mem.read_bytes(linear, 16);
-    let mut decoder = Decoder::with_ip(16, &bytes, u64::from(ip), DecoderOptions::NONE);
+fn disassemble(m: &Machine, cs: u16, ip: u32) -> String {
+    let (linear, bitness) = code_location(m, cs, ip);
+    let bytes = m.peek_bytes(linear, 16);
+    let mut decoder = Decoder::with_ip(bitness, &bytes, u64::from(ip), DecoderOptions::NONE);
     let mut instruction = Instruction::default();
     decoder.decode_out(&mut instruction);
     let mut text = String::new();

@@ -696,18 +696,66 @@ fn thirty_two_bit_code_runs() {
 }
 
 #[test]
-fn entering_protected_mode_stops_the_run() {
+fn raw_switch_to_protected_mode_and_back() {
+    // What a DOS extender does without a DPMI host: build a GDT, enter protected mode, write
+    // above 1 MB through a flat segment, return to real mode and exit through DOS.
     let program = com(|a| {
+        a.xor(ebx, ebx)?;
+        a.mov(bx, cs)?;
+        let saved_cs = word_at(a, "saved_cs");
+        a.mov(saved_cs, bx)?;
+        a.shl(ebx, 4)?; // linear base of our segment
+        // Code descriptor (selector 8): base = our segment, so offsets stay the same.
+        let gdt = a.addr("gdt") as u32;
+        a.mov(word_ptr(gdt + 8 + 2), bx)?;
+        a.mov(eax, ebx)?;
+        a.shr(eax, 16)?;
+        a.mov(byte_ptr(gdt + 8 + 4), al)?;
+        let gdtr = a.addr("gdtr") as u32;
+        a.mov(eax, ebx)?;
+        a.mov(ecx, gdt)?; // fixed-size encoding for the two-pass assembly
+        a.add(eax, ecx)?;
+        a.mov(dword_ptr(gdtr + 2), eax)?;
+        a.lgdt(word_ptr(gdtr))?;
+        a.cli()?;
         a.mov(eax, cr0)?;
-        a.or(eax, 1)?;
+        a.or(al, 1)?;
         a.mov(cr0, eax)?;
-        exit(a, 0)
+        let pm = a.addr("pm") as u16;
+        a.db(&[0xEA])?; // jmp far 0008:pm
+        a.dw(&[pm, 0x08])?;
+        a.here("pm")?;
+        a.mov(ax, 0x10)?; // flat 4 GB data
+        a.mov(es, ax)?;
+        a.mov(edi, 0x20_0000)?;
+        a.mov(dword_ptr(edi).es(), 0x2121_4D50)?;
+        let saved_cs = word_at(a, "saved_cs");
+        a.push(saved_cs)?;
+        let back = a.addr("back");
+        a.mov(ax, back)?;
+        a.push(ax)?;
+        a.mov(eax, cr0)?;
+        a.and(al, 0xFE)?;
+        a.mov(cr0, eax)?;
+        a.retf()?;
+        a.here("back")?;
+        a.mov(ax, cs)?;
+        a.mov(ds, ax)?;
+        a.mov(es, ax)?;
+        a.sti()?;
+        exit(a, 0)?;
+        a.here("saved_cs")?;
+        a.dw(&[0])?;
+        a.here("gdtr")?;
+        a.dw(&[23, 0, 0])?;
+        a.here("gdt")?;
+        a.dq(&[0, 0x0000_9A00_0000_FFFF, 0x00CF_9200_0000_FFFF])
     });
     let mut m = boot(&[("PM.COM", &program)], "PM.COM");
-    match m.run(SECOND) {
-        Stop::Fault(cpu::Exit::Unsupported { feature, .. }) => assert_eq!(feature, "protected mode (MOV CR0)"),
-        other => panic!("expected an unsupported-feature fault, got {other:?}"),
-    }
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let written: Vec<u8> = (0..4).map(|i| m.mem.read_phys(0x20_0000 + i)).collect();
+    assert_eq!(written, b"PM!!");
+    assert!(!m.cpu.protected_mode());
 }
 
 fn boot_with(config: Config, files: &[(&str, &[u8])], program: &str) -> Machine {

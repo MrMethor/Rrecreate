@@ -184,26 +184,17 @@ fn cpu_detection_sees_a_386() {
 }
 
 #[test]
-fn entering_protected_mode_is_reported_not_emulated() {
-    // mov ax,1; lmsw ax
-    let (mut cpu, mut bus) = setup(&[0xB8, 0x01, 0x00, 0x0F, 0x01, 0xF0]);
-    cpu.step(&mut bus).unwrap();
-    let before = cpu.clone();
-    let exit = cpu.step(&mut bus).unwrap_err();
-    assert_eq!(exit, Exit::Unsupported { cs: CODE_SEG, ip: 3, feature: "protected mode (LMSW)" });
-    assert_eq!(cpu, before);
-    assert!(exit.to_string().contains("not supported"));
-
-    // mov eax,1; mov cr0,eax
-    let (mut cpu, mut bus) = setup(&[0x66, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x22, 0xC0]);
-    cpu.step(&mut bus).unwrap();
-    assert!(matches!(cpu.step(&mut bus), Err(Exit::Unsupported { ip: 6, .. })));
-
+fn control_register_reads_and_the_286_msw() {
     // mov eax,-1; mov eax,cr0 → 0; smsw bx → 0
     let (cpu, _) = run(&[0x66, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x20, 0xC0, 0x0F, 0x01, 0xE3, 0xF4]);
     assert_eq!((cpu.regs.eax(), cpu.regs.bx()), (0, 0));
     let (cpu, _) = run_model(&[0x0F, 0x01, 0xE3, 0xF4], Model::I286);
     assert_eq!(cpu.regs.bx(), 0xFFF0, "the 286 machine status word reads with its top bits set");
+    // An 80286 entering protected mode (mov ax,1; lmsw ax) stops the run.
+    let (mut cpu, mut bus) = setup_model(&[0xB8, 0x01, 0x00, 0x0F, 0x01, 0xF0], Model::I286);
+    cpu.step(&mut bus).unwrap();
+    let exit = cpu.step(&mut bus).unwrap_err();
+    assert!(matches!(exit, Exit::Unsupported { ip: 3, .. }), "{exit}");
 }
 
 #[test]

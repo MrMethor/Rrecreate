@@ -455,7 +455,7 @@ fn hardware_interrupt_entry() {
     cpu.step(&mut bus).unwrap();
     cpu.step(&mut bus).unwrap();
     assert!(cpu.interrupts_enabled());
-    cpu.interrupt(&mut bus, 8);
+    cpu.interrupt(&mut bus, 8).unwrap();
     assert_eq!((cpu.regs.cs(), cpu.regs.ip), (0x700, 0));
     run_to_hlt(&mut cpu, &mut bus);
     assert_eq!(cpu.regs.ax(), 8);

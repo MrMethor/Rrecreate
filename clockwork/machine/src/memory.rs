@@ -105,24 +105,52 @@ impl Memory {
         self.a20 = enabled;
     }
 
+    /// The address after the A20 gate: with A20 disabled, bit 20 is forced to 0.
     #[inline]
-    fn index(&self, addr: u32) -> usize {
-        let addr = addr as usize;
-        if self.a20 && addr < REAL_MODE_SPACE { addr } else { addr % CONVENTIONAL_SPACE }
+    fn gate(&self, addr: u32) -> u32 {
+        if self.a20 { addr } else { addr & !0x10_0000 }
     }
 
+    /// Index into the real-mode image (for host accesses, which stay within it).
+    #[inline]
+    fn index(&self, addr: u32) -> usize {
+        (self.gate(addr) as usize) % self.bytes.len()
+    }
+
+    /// A CPU read: through the A20 gate, from any physical address.
     #[inline]
     pub fn read_u8(&self, addr: u32) -> u8 {
-        self.bytes[self.index(addr)]
+        let addr = self.gate(addr);
+        match self.bytes.get(addr as usize) {
+            Some(&byte) => byte,
+            None => self.read_extended(addr),
+        }
     }
 
     /// A CPU write. Writes into the BIOS ROM are ignored.
     #[inline]
     pub fn write_u8(&mut self, addr: u32, value: u8) {
-        let i = self.index(addr);
-        if !(ROM_START as usize..CONVENTIONAL_SPACE).contains(&i) {
-            self.bytes[i] = value;
+        let addr = self.gate(addr);
+        if (addr as usize) < self.bytes.len() {
+            if !(ROM_START as usize..CONVENTIONAL_SPACE).contains(&(addr as usize)) {
+                self.bytes[addr as usize] = value;
+            }
+        } else {
+            self.write_extended(addr, value);
         }
+    }
+
+    // Extended memory is kept out of line so the real-mode path stays small enough to inline.
+    #[cold]
+    #[inline(never)]
+    fn read_extended(&self, addr: u32) -> u8 {
+        self.read_phys(addr)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write_extended(&mut self, addr: u32, value: u8) {
+        self.write_phys(addr, value);
     }
 
     #[inline]

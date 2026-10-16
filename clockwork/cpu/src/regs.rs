@@ -28,15 +28,15 @@ pub struct Regs {
     pub gpr: [u32; 8],
     /// ES, CS, SS, DS, FS, GS.
     pub seg: [u16; 6],
-    /// Real mode keeps the instruction pointer within 64 KB.
-    pub ip: u16,
-    /// The low 16 bits of EFLAGS; the high bits are always 0 in real mode on a 386.
-    pub flags: u16,
+    /// EIP. 16-bit code segments (and real mode) keep it within 64 KB.
+    pub ip: u32,
+    /// EFLAGS.
+    pub flags: u32,
 }
 
 impl Default for Regs {
     fn default() -> Self {
-        Self { gpr: [0; 8], seg: [0; 6], ip: 0, flags: flags::FIXED }
+        Self { gpr: [0; 8], seg: [0; 6], ip: 0, flags: u32::from(flags::FIXED) }
     }
 }
 
@@ -112,14 +112,24 @@ impl Regs {
     }
 
     pub fn flag(&self, mask: u16) -> bool {
-        self.flags & mask != 0
+        self.flags & u32::from(mask) != 0
     }
 
     pub fn set_flag(&mut self, mask: u16, on: bool) {
         if on {
-            self.flags |= mask;
+            self.flags |= u32::from(mask);
         } else {
-            self.flags &= !mask;
+            self.flags &= !u32::from(mask);
         }
+    }
+
+    /// The low 16 bits of EFLAGS.
+    pub fn flags16(&self) -> u16 {
+        self.flags as u16
+    }
+
+    /// The I/O privilege level (EFLAGS bits 12-13).
+    pub fn iopl(&self) -> u8 {
+        ((self.flags >> 12) & 3) as u8
     }
 }

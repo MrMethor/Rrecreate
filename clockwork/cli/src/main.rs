@@ -279,7 +279,12 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         print_dump(&m, segment, offset, length);
     }
     if let Some(at) = &o.disasm {
-        let (cs, ip) = if at == "here" { (m.cpu.regs.cs(), m.cpu.regs.ip) } else { parse_address(at)? };
+        let (cs, ip) = if at == "here" {
+            (m.cpu.regs.cs(), m.cpu.regs.ip)
+        } else {
+            let (cs, ip) = parse_address(at)?;
+            (cs, u32::from(ip))
+        };
         hotspots::print_listing(&m, cs, ip, 40);
     }
     if o.json {
