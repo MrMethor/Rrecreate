@@ -10,6 +10,7 @@ pub mod dos;
 pub mod ems;
 pub mod keyboard;
 mod machine;
+pub mod mouse;
 pub mod mpu401;
 mod mz;
 pub mod pic;
@@ -21,6 +22,6 @@ pub mod vga;
 
 pub use cpu::Model as CpuModel;
 pub use dos::LoadError;
-pub use machine::{Config, Devices, Frame, Machine, Stop, cp437_to_char};
+pub use machine::{Config, Devices, Frame, Input, Machine, Stop, cp437_to_char};
 pub use time::DateTime;
 pub use vfs::Vfs;

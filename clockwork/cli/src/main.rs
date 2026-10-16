@@ -189,8 +189,8 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     };
     let mut m = boot(o, &program, &args, ips)?;
     if let Some(session) = &session {
-        for &(cycle, code) in &session.inputs {
-            m.queue_scancodes(cycle, &[code]);
+        for &(cycle, input) in &session.inputs {
+            m.queue_input(cycle, input);
         }
     }
     if let Some(text) = &o.type_text {

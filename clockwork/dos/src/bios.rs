@@ -58,6 +58,8 @@ pub(crate) mod callback {
     pub const FAST_CONSOLE: u16 = 0x29;
     pub const MULTIPLEX: u16 = 0x2F;
     pub const EMS: u16 = 0x67;
+    pub const MOUSE: u16 = 0x33;
+    pub const MOUSE_IRQ: u16 = 0x74;
 }
 
 /// A device driver header for the emulated CD-ROM (MSCDEX AX=1501h points at it).
@@ -126,6 +128,20 @@ pub(crate) fn install(m: &mut Machine) {
         set_vector(m, vector, ROM_SEGMENT, eoi_both);
     }
 
+    if m.mouse.enabled {
+        let service = rom.service(m, callback::MOUSE, false);
+        set_vector(m, 0x33, ROM_SEGMENT, service);
+        // IRQ 12: save registers, let the driver set up the handler call (or skip it), call the
+        // handler through the far pointer slot, restore, acknowledge both PICs.
+        let mut stub = vec![0x60, 0x1E, 0x06];
+        stub.extend(callback_instruction(callback::MOUSE_IRQ));
+        let [lo, hi] = crate::mouse::HANDLER_SLOT.to_le_bytes();
+        stub.extend([0x2E, 0xFF, 0x1E, lo, hi]);
+        stub.extend([0x07, 0x1F, 0x61, 0x50, 0xB0, 0x20, 0xE6, 0xA0, 0xE6, 0x20, 0x58, 0xCF]);
+        let irq = rom.emit(m, &stub);
+        set_vector(m, crate::mouse::IRQ_VECTOR, ROM_SEGMENT, irq);
+    }
+
     for (vector, id, sti) in [
         (0x10, callback::VIDEO, false),
         (0x11, callback::EQUIPMENT, false),
@@ -189,6 +205,8 @@ pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
         callback::SYSTEM => system(m),
         callback::KEYBOARD => keyboard(m),
         callback::TIME => time(m),
+        callback::MOUSE => crate::mouse::service(m),
+        callback::MOUSE_IRQ => crate::mouse::irq(m),
         _ => return false,
     }
     true
@@ -369,6 +387,7 @@ pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
             }
         }
     }
+    crate::mouse::video_mode_changed(m);
 }
 
 fn cursor(m: &Machine, page: u8) -> (u16, u16) {

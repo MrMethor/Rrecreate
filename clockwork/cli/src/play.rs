@@ -6,8 +6,8 @@
 
 use std::process::ExitCode;
 
-use dos::{Machine, Stop};
-use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
+use dos::{Input, Machine, Stop};
+use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, Window, WindowOptions};
 
 use crate::Options;
 use crate::session::Session;
@@ -30,10 +30,12 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     let mut window = Window::new(&title, WIDTH, HEIGHT, WindowOptions { scale, ..WindowOptions::default() })
         .map_err(|e| format!("can't open a window: {e}"))?;
     window.set_target_fps(70);
+    window.set_cursor_visibility(false); // the program draws its own cursor
 
     let cycles_per_frame = (ips / 70).max(1);
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
-    let mut recorded = Vec::new();
+    let mut recorded: Vec<(u64, Input)> = Vec::new();
+    let mut last_mouse = None;
     let mut last_text: Option<Vec<String>> = None;
     let mut stop = None;
 
@@ -43,7 +45,14 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
         let released = window.get_keys_released().into_iter().filter_map(|k| scancodes(k, false));
         for codes in pressed.chain(released) {
             m.queue_scancodes(now, &codes);
-            recorded.extend(codes.iter().map(|&c| (now, c)));
+            recorded.extend(codes.iter().map(|&c| (now, Input::Key(c))));
+        }
+        if let Some(mouse) = mouse_input(&window, &m)
+            && Some(mouse) != last_mouse
+        {
+            m.queue_input(now, mouse);
+            recorded.push((now, mouse));
+            last_mouse = Some(mouse);
         }
         match m.run(cycles_per_frame) {
             Stop::CycleLimit | Stop::WaitingForInput => {}
@@ -72,9 +81,27 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     if let Some(path) = &o.record {
         let session = Session { program, args: o.args.clone(), instructions_per_second: ips, inputs: recorded };
         session.save(path)?;
-        eprintln!("rec-host: recorded {} scancodes to {}", session.inputs.len(), path.display());
+        eprintln!("rec-host: recorded {} input events to {}", session.inputs.len(), path.display());
     }
     Ok(if matches!(stop, Some(Stop::Fault(_))) { ExitCode::from(2) } else { ExitCode::SUCCESS })
+}
+
+/// The window's mouse, mapped onto the driver's coordinate range.
+fn mouse_input(window: &Window, m: &Machine) -> Option<Input> {
+    let (px, py) = window.get_mouse_pos(MouseMode::Clamp)?;
+    let mouse = &m.mouse;
+    let scale = |pixel: f32, size: usize, min: i32, max: i32| {
+        let span = (max - min + 1) as f32;
+        (min + (pixel / size as f32 * span) as i32).clamp(min, max) as i16
+    };
+    let buttons = u8::from(window.get_mouse_down(MouseButton::Left))
+        | (u8::from(window.get_mouse_down(MouseButton::Right)) << 1)
+        | (u8::from(window.get_mouse_down(MouseButton::Middle)) << 2);
+    Some(Input::Mouse {
+        x: scale(px, WIDTH, mouse.min_x, mouse.max_x),
+        y: scale(py, HEIGHT, mouse.min_y, mouse.max_y),
+        buttons,
+    })
 }
 
 fn print_text(lines: &[String]) {

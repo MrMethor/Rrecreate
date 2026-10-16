@@ -1,4 +1,4 @@
-//! Recorded input sessions (PROJECT.md §5.2, "Sessions"): timed scancodes that replay
+//! Recorded input sessions (PROJECT.md §5.2, "Sessions"): timed input events that replay
 //! bit-identically because time is virtual.
 //!
 //! Text format:
@@ -7,20 +7,24 @@
 //! program GAME.EXE
 //! args -level 3
 //! ips 8000000
-//! 1234567 1E
-//! 1250000 9E
+//! 1234567 K 1E
+//! 1250000 M 320 100 1
 //! ```
-//! Each data line is `<cycle> <scancode in hex>`.
+//! Data lines are `<cycle> K <scancode in hex>` or `<cycle> M <x> <y> <buttons>` (mouse position
+//! in the driver's coordinates; buttons: bit 0 left, 1 right, 2 middle). The older form
+//! `<cycle> <scancode>` is still read as a key.
 
 use std::fmt::Write as _;
 use std::path::Path;
+
+use dos::Input;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Session {
     pub program: String,
     pub args: String,
     pub instructions_per_second: u64,
-    pub inputs: Vec<(u64, u8)>,
+    pub inputs: Vec<(u64, Input)>,
 }
 
 const MAGIC: &str = "# rec-host session v1";
@@ -29,8 +33,12 @@ impl Session {
     pub fn to_text(&self) -> String {
         let mut out =
             format!("{MAGIC}\nprogram {}\nargs {}\nips {}\n", self.program, self.args, self.instructions_per_second);
-        for (cycle, code) in &self.inputs {
-            writeln!(out, "{cycle} {code:02X}").expect("writing to a String");
+        for (cycle, input) in &self.inputs {
+            match input {
+                Input::Key(code) => writeln!(out, "{cycle} K {code:02X}"),
+                Input::Mouse { x, y, buttons } => writeln!(out, "{cycle} M {x} {y} {buttons}"),
+            }
+            .expect("writing to a String");
         }
         out
     }
@@ -53,10 +61,9 @@ impl Session {
                     session.instructions_per_second = value.parse().map_err(|_| format!("line {number}: bad ips"))?
                 }
                 cycle => {
-                    let cycle = cycle.parse().map_err(|_| format!("line {number}: expected '<cycle> <scancode>'"))?;
-                    let code =
-                        u8::from_str_radix(value, 16).map_err(|_| format!("line {number}: bad scancode {value:?}"))?;
-                    session.inputs.push((cycle, code));
+                    let cycle = cycle.parse().map_err(|_| format!("line {number}: expected '<cycle> K|M ...'"))?;
+                    let input = parse_input(value).ok_or_else(|| format!("line {number}: bad input {value:?}"))?;
+                    session.inputs.push((cycle, input));
                 }
             }
         }
@@ -76,6 +83,17 @@ impl Session {
     }
 }
 
+fn parse_input(text: &str) -> Option<Input> {
+    let fields: Vec<&str> = text.split_whitespace().collect();
+    match fields.as_slice() {
+        ["K", code] | [code] => u8::from_str_radix(code, 16).ok().map(Input::Key),
+        ["M", x, y, buttons] => {
+            Some(Input::Mouse { x: x.parse().ok()?, y: y.parse().ok()?, buttons: buttons.parse().ok()? })
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,9 +104,19 @@ mod tests {
             program: "GAME.EXE".into(),
             args: "-nosound".into(),
             instructions_per_second: 8_000_000,
-            inputs: vec![(100, 0x1E), (250, 0x9E)],
+            inputs: vec![
+                (100, Input::Key(0x1E)),
+                (180, Input::Mouse { x: 320, y: -1, buttons: 1 }),
+                (250, Input::Key(0x9E)),
+            ],
         };
         assert_eq!(Session::parse(&session.to_text()), Ok(session));
         assert!(Session::parse("hello").is_err());
+    }
+
+    #[test]
+    fn reads_the_old_key_format() {
+        let session = Session::parse("# rec-host session v1\nprogram A.EXE\nips 8000000\n100 1E\n").unwrap();
+        assert_eq!(session.inputs, vec![(100, Input::Key(0x1E))]);
     }
 }

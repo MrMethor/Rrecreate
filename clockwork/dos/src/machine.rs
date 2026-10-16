@@ -13,6 +13,7 @@ use crate::cmos::Cmos;
 use crate::dos::DosState;
 use crate::ems::{self, Ems};
 use crate::keyboard::{ControllerEffect, Keyboard, LEFT_SHIFT, ascii_to_scancode};
+use crate::mouse::{self, Mouse};
 use crate::mpu401::Mpu401;
 use crate::pic::Pic;
 use crate::pit::Pit;
@@ -37,6 +38,8 @@ pub struct Config {
     pub environment: Vec<(String, String)>,
     /// Expanded memory (LIM EMS 4.0) in KB; 0 means no EMS driver.
     pub ems_kb: u32,
+    /// Whether a mouse and its driver (INT 33h) are installed.
+    pub mouse: bool,
 }
 
 impl Default for Config {
@@ -49,8 +52,19 @@ impl Default for Config {
             start_drive: 'C',
             environment: Vec::new(),
             ems_kb: 4096,
+            mouse: true,
         }
     }
+}
+
+/// One scheduled input event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Input {
+    /// A scancode delivered through the keyboard controller.
+    Key(u8),
+    /// The mouse is at (x, y) in the driver's coordinates with these buttons held (bit 0 left,
+    /// bit 1 right, bit 2 middle).
+    Mouse { x: i16, y: i16, buttons: u8 },
 }
 
 /// Why [`Machine::run`] returned.
@@ -111,6 +125,20 @@ impl Devices {
             unknown_ports: BTreeSet::new(),
             dirty: false,
         }
+    }
+
+    /// Delivers the highest-priority pending interrupt, following the master/slave cascade on
+    /// IRQ 2. Returns its vector.
+    fn acknowledge(&mut self) -> Option<u8> {
+        if self.pic2.pending_line().is_some() {
+            self.pic.raise(2);
+        }
+        let vector = self.pic.acknowledge()?;
+        if vector == self.pic.vector_base().wrapping_add(2) {
+            // The slave supplies the vector; a request that went away reads as spurious IRQ 15.
+            return Some(self.pic2.acknowledge().unwrap_or(self.pic2.vector_base().wrapping_add(7)));
+        }
+        Some(vector)
     }
 
     fn port_in(&mut self, port: u16, cycles: u64) -> u8 {
@@ -209,6 +237,7 @@ pub struct Machine {
     pub devices: Devices,
     pub dos: DosState,
     pub ems: Ems,
+    pub mouse: Mouse,
     pub drive: Vfs,
     pub config: Config,
     /// Text the program wrote through DOS or the BIOS (teletype output).
@@ -223,7 +252,7 @@ pub struct Machine {
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
     /// Scheduled keyboard input: (cycle, scancode), sorted by cycle.
-    inputs: VecDeque<(u64, u8)>,
+    inputs: VecDeque<(u64, Input)>,
     halted: bool,
     waiting_for_input: bool,
     exit_code: Option<u8>,
@@ -244,6 +273,7 @@ impl Machine {
             devices: Devices::new(clock, config.start_time),
             dos: DosState::default(),
             ems: Ems::new(config.ems_kb),
+            mouse: Mouse::new(config.mouse),
             drive,
             config,
             console: Vec::new(),
@@ -262,6 +292,7 @@ impl Machine {
         };
         bios::install(&mut machine);
         ems::install(&mut machine);
+        mouse::install(&mut machine);
         dos::install(&mut machine);
         machine
     }
@@ -284,7 +315,7 @@ impl Machine {
                 self.service_events();
             }
             if self.cpu.interrupts_enabled()
-                && let Some(vector) = self.devices.pic.acknowledge()
+                && let Some(vector) = self.devices.acknowledge()
             {
                 self.halted = false;
                 let (cpu, mut bus) = self.split();
@@ -330,9 +361,19 @@ impl Machine {
     /// the program one at a time, each with its own IRQ1.
     pub fn queue_scancodes(&mut self, cycle: u64, codes: &[u8]) {
         for &code in codes {
-            let at = self.inputs.partition_point(|&(t, _)| t <= cycle);
-            self.inputs.insert(at, (cycle, code));
+            self.queue_input(cycle, Input::Key(code));
         }
+    }
+
+    /// Schedules the mouse to be at (x, y), in the driver's coordinates, with `buttons` held.
+    pub fn queue_mouse(&mut self, cycle: u64, x: i16, y: i16, buttons: u8) {
+        self.queue_input(cycle, Input::Mouse { x, y, buttons });
+    }
+
+    /// Schedules any input event; events at the same cycle keep their order.
+    pub fn queue_input(&mut self, cycle: u64, input: Input) {
+        let at = self.inputs.partition_point(|&(t, _)| t <= cycle);
+        self.inputs.insert(at, (cycle, input));
         self.next_event = self.next_event.min(cycle);
     }
 
@@ -366,6 +407,7 @@ impl Machine {
         self.devices.hash(&mut h);
         self.dos.hash(&mut h);
         self.ems.hash(&mut h);
+        self.mouse.hash(&mut h);
         self.drive.hash(&mut h);
         h.finish()
     }
@@ -479,12 +521,15 @@ impl Machine {
         let cycles = self.cpu.cycles;
         let clock = self.devices.clock;
         let now = clock.pit_ticks(cycles);
-        while let Some(&(at, code)) = self.inputs.front() {
+        while let Some(&(at, input)) = self.inputs.front() {
             if at > cycles {
                 break;
             }
             self.inputs.pop_front();
-            self.devices.keyboard.push(code);
+            match input {
+                Input::Key(code) => self.devices.keyboard.push(code),
+                Input::Mouse { x, y, buttons } => mouse::input(self, i32::from(x), i32::from(y), buttons),
+            }
         }
         if self.devices.keyboard.pump() {
             self.devices.pic.raise(1);

@@ -940,3 +940,97 @@ fn service_trace_records_calls() {
     assert!(open.returned_flags);
     assert!(open.to_string().contains("\"MISSING.DAT\" -> AX=0002"), "{open}");
 }
+
+#[test]
+fn mouse_polling_reports_positions_with_text_mode_granularity() {
+    // Reset the driver (exit 1 if absent), poll until the left button is down, exit with CL.
+    let program = com(|a| {
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.cmp(ax, 0xFFFF)?;
+        let poll = a.l("poll");
+        a.je(poll)?;
+        exit(a, 1)?;
+        a.here("poll")?;
+        a.mov(ax, 3)?;
+        a.int(0x33)?;
+        a.test(bl, 1)?;
+        let poll = a.l("poll");
+        a.jz(poll)?;
+        a.mov(al, cl)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)
+    });
+    let mut m = boot(&[("M.COM", &program)], "M.COM");
+    m.queue_mouse(SECOND / 5, 107, 53, 1);
+    assert_eq!(m.run(SECOND), Stop::Exited(104), "x 107 reported as 104 (text cells are 8 wide)");
+    assert_eq!(m.cpu.regs.dx(), 48, "y 53 reported as 48");
+
+    let mut no_mouse = boot_with(Config { mouse: false, ..Config::default() }, &[("M.COM", &program)], "M.COM");
+    assert_eq!(no_mouse.run(SECOND), Stop::Exited(1), "without a driver, reset leaves AX = 0");
+}
+
+#[test]
+fn mouse_event_handler_runs_from_irq_12() {
+    // Install a handler for left-button presses that stores CX and sets a flag; HLT until set.
+    let program = com(|a| {
+        let (x_slot, flag) = (a.addr("x") as u32, a.addr("flag") as u32);
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.push(cs)?;
+        a.pop(es)?;
+        load_dx(a, "handler")?;
+        a.mov(cx, 0x02)?;
+        a.mov(ax, 0x0C)?;
+        a.int(0x33)?;
+        a.here("wait")?;
+        a.hlt()?;
+        a.cmp(byte_ptr(flag), 0)?;
+        let wait = a.l("wait");
+        a.je(wait)?;
+        a.mov(al, byte_ptr(x_slot))?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("handler")?;
+        a.mov(word_ptr(x_slot), cx)?;
+        a.mov(byte_ptr(flag), 1)?;
+        a.retf()?;
+        a.here("x")?;
+        a.dw(&[0])?;
+        a.here("flag")?;
+        a.db(&[0])
+    });
+    let mut m = boot(&[("H.COM", &program)], "H.COM");
+    m.queue_mouse(SECOND / 10, 150, 20, 0); // a move alone: not in the handler's mask
+    m.queue_mouse(SECOND / 5, 200, 60, 1);
+    assert_eq!(m.run(SECOND), Stop::Exited(200));
+}
+
+#[test]
+fn mouse_cursor_is_drawn_and_erased_in_mode_13h() {
+    let program = com(|a| {
+        a.mov(ax, 0x0013)?;
+        a.int(0x10)?;
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.mov(ax, 4)?;
+        a.mov(cx, 320)?;
+        a.mov(dx, 100)?;
+        a.int(0x33)?;
+        a.mov(ax, 1)?;
+        a.int(0x33)?;
+        a.here("idle")?;
+        a.hlt()?;
+        let idle = a.l("idle");
+        a.jmp(idle)
+    });
+    let pixel = |m: &Machine, x: u32, y: u32| m.mem.read_u8(0xA_0000 + y * 320 + x);
+    let mut m = boot(&[("C.COM", &program)], "C.COM");
+    m.queue_mouse(SECOND / 2, 2, 1, 0);
+    assert_eq!(m.run(SECOND / 4), Stop::CycleLimit);
+    assert_eq!(pixel(&m, 161, 101), 0x0F, "arrow drawn at x 320/2, y 100");
+    assert_eq!(pixel(&m, 160, 100), 0x00, "the arrow's tip row is transparent");
+    assert_eq!(m.run(SECOND / 2), Stop::CycleLimit);
+    assert_eq!(pixel(&m, 161, 101), 0x00, "old position restored");
+    assert_eq!(pixel(&m, 2, 2), 0x0F, "arrow moved to x 2/2, y 1");
+}
