@@ -85,6 +85,20 @@ impl Default for Config {
     }
 }
 
+/// Most instructions `exec_watch` records before it stops recording.
+pub const MAX_EXEC_HITS: usize = 1_000_000;
+
+/// An instruction that ran in the watched range: when, where, the registers, and the top of the
+/// stack (a near or far return address right after a call).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecHit {
+    pub cycle: u64,
+    pub cs: u16,
+    pub ip: u32,
+    pub regs: cpu::Regs,
+    pub stack: [u16; 4],
+}
+
 /// One scheduled input event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Input {
@@ -246,7 +260,10 @@ impl Devices {
             0x64 => self.keyboard.read_status(),
             0x92 => self.port92,
             0x3B0..=0x3BB | 0x3C0..=0x3DF => self.vga.read(port, now),
-            0x71 => self.cmos.read_data(cycles / self.clock.instructions_per_second),
+            0x71 => {
+                self.dirty = true;
+                self.cmos.read_data(self.clock.ticks(cycles, crate::cmos::RTC_HZ))
+            }
             0x330 => self.mpu.read_data(),
             0x331 => self.mpu.read_status(),
             // Not emulated yet: no joystick. Absent cards read FFh.
@@ -305,7 +322,10 @@ impl Devices {
             }
             0x3B0..=0x3BB | 0x3C0..=0x3DF => self.vga.write(port, value),
             0x70 => self.cmos.write_index(value),
-            0x71 => self.cmos.write_data(value),
+            0x71 => {
+                self.cmos.write_data(value, self.clock.ticks(cycles, crate::cmos::RTC_HZ));
+                self.dirty = true;
+            }
             0x330 => self.mpu.write_data(value, now),
             0x331 => self.mpu.write_command(value),
             0x80 => {} // POST code port, written for short I/O delays
@@ -391,6 +411,10 @@ pub struct Machine {
     /// Hardware interrupts delivered to the CPU, per IRQ line (0-15). Not part of the machine
     /// state; for debugging.
     pub irq_counts: [u64; 16],
+    /// When set, every instruction that starts inside this linear range is recorded in
+    /// `exec_hits` (for debugging; not part of the machine state).
+    pub exec_watch: Option<std::ops::Range<u32>>,
+    pub exec_hits: Vec<ExecHit>,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -425,6 +449,8 @@ impl Machine {
             diagnostics: BTreeSet::new(),
             service_trace: None,
             irq_counts: [0; 16],
+            exec_watch: None,
+            exec_hits: Vec::new(),
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -480,6 +506,9 @@ impl Machine {
                 }
                 continue;
             }
+            if self.exec_watch.is_some() {
+                self.watch_exec();
+            }
             let (cpu, mut bus) = self.split();
             let result = cpu.step(&mut bus);
             if self.devices.dirty {
@@ -493,6 +522,24 @@ impl Machine {
                 Err(fault) => return Stop::Fault(fault),
             }
         }
+    }
+
+    /// Records the instruction about to run if it starts in the watched range.
+    fn watch_exec(&mut self) {
+        let Some(range) = &self.exec_watch else { return };
+        let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+        if !range.contains(&linear) || self.exec_hits.len() >= MAX_EXEC_HITS {
+            return;
+        }
+        let sp = self.cpu.segment_base(seg::SS).wrapping_add(self.cpu.regs.sp().into());
+        let stack = std::array::from_fn(|i| self.mem.read_u16(sp + 2 * i as u32));
+        self.exec_hits.push(ExecHit {
+            cycle: self.cpu.cycles,
+            cs: self.cpu.regs.cs(),
+            ip: self.cpu.regs.ip,
+            regs: self.cpu.regs,
+            stack,
+        });
     }
 
     fn count_irq(&mut self, vector: u8) {
@@ -755,6 +802,10 @@ impl Machine {
         if self.devices.pit.take_irq0(now) {
             self.devices.pic.raise(0);
         }
+        // The real-time clock's periodic interrupt is IRQ 8: line 0 of the slave PIC.
+        if self.devices.cmos.update(clock.ticks(cycles, crate::cmos::RTC_HZ)) {
+            self.devices.pic2.raise(0);
+        }
         self.devices.update_sound(cycles, &mut self.mem);
         if let Some(sb) = &mut self.devices.sb {
             self.diagnostics.append(&mut sb.unsupported);
@@ -772,6 +823,9 @@ impl Machine {
         }
         if let Some(at) = self.devices.next_sound_event() {
             next = next.min(at);
+        }
+        if let Some(tick) = self.devices.cmos.next_periodic() {
+            next = next.min(clock.cycle_at_ticks(tick, crate::cmos::RTC_HZ));
         }
         self.next_event = next.max(cycles + 1);
     }

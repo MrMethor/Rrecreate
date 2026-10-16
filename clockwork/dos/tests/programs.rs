@@ -234,6 +234,59 @@ fn missing_file_sets_carry_and_error_code() {
 }
 
 #[test]
+fn rtc_periodic_interrupt_runs_on_irq_8() {
+    // Hook INT 70h, enable the RTC's periodic interrupt (1024 Hz by default), unmask IRQ 8 and
+    // the cascade, then halt until the handler (which reads register C) has run 100 times.
+    let program = com(|a| {
+        load_dx(a, "handler")?;
+        a.mov(ax, 0x2570)?;
+        a.int(0x21)?;
+        a.mov(al, 0x0B)?;
+        a.out(0x70, al)?;
+        a.in_(al, 0x71)?;
+        a.or(al, 0x40)?;
+        a.mov(ah, al)?;
+        a.mov(al, 0x0B)?;
+        a.out(0x70, al)?;
+        a.mov(al, ah)?;
+        a.out(0x71, al)?;
+        a.in_(al, 0xA1)?;
+        a.and(al, 0xFE)?;
+        a.out(0xA1, al)?;
+        a.in_(al, 0x21)?;
+        a.and(al, 0xFB)?;
+        a.out(0x21, al)?;
+        a.sti()?;
+        a.here("wait")?;
+        a.hlt()?;
+        let count = word_at(a, "count");
+        a.cmp(count, 100)?;
+        let wait = a.l("wait");
+        a.jb(wait)?;
+        exit(a, 1)?;
+        a.here("handler")?;
+        a.push(ax)?;
+        a.mov(al, 0x0C)?;
+        a.out(0x70, al)?;
+        a.in_(al, 0x71)?;
+        let count = word_at(a, "count");
+        a.inc(count)?;
+        a.mov(al, 0x20)?;
+        a.out(0xA0, al)?;
+        a.out(0x20, al)?;
+        a.pop(ax)?;
+        a.iret()?;
+        a.here("count")?;
+        a.dw(&[0])
+    });
+    let mut m = boot(&[("RTC.COM", &program)], "RTC.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(1));
+    let ms = m.elapsed_ms();
+    assert!((95..=110).contains(&ms), "100 interrupts at 1024 Hz took {ms} ms");
+    assert!((100..=101).contains(&m.irq_counts[8]), "{:?}", m.irq_counts);
+}
+
+#[test]
 fn timer_interrupt_hook_counts_ticks() {
     // Hook INT 1Ch, HLT until the hook has run 5 times, exit with the count.
     let program = com(|a| {

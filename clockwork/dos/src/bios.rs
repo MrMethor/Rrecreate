@@ -138,9 +138,13 @@ pub(crate) fn install(m: &mut Machine) {
     for vector in 0x0A..=0x0F {
         set_vector(m, vector, ROM_SEGMENT, eoi_master);
     }
-    for vector in 0x70..=0x77 {
+    for vector in 0x71..=0x77 {
         set_vector(m, vector, ROM_SEGMENT, eoi_both);
     }
+    // IRQ 8, the real-time clock: read register C (which acknowledges the periodic interrupt),
+    // then acknowledge both PICs.
+    let rtc = rom.emit(m, &[0x50, 0xB0, 0x0C, 0xE6, 0x70, 0xE4, 0x71, 0xB0, 0x20, 0xE6, 0xA0, 0xE6, 0x20, 0x58, 0xCF]);
+    set_vector(m, 0x70, ROM_SEGMENT, rtc);
 
     if m.mouse.enabled {
         let service = rom.service(m, callback::MOUSE, false);

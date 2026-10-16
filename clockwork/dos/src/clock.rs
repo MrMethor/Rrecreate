@@ -36,6 +36,17 @@ impl Clock {
         u128::from(ticks).saturating_mul(ips).div_ceil(u128::from(PIT_HZ)).min(u128::from(u64::MAX)) as u64
     }
 
+    /// Ticks of a `hz` time base elapsed at `cycles`.
+    pub fn ticks(&self, cycles: u64, hz: u64) -> u64 {
+        (u128::from(cycles) * u128::from(hz) / u128::from(self.instructions_per_second)) as u64
+    }
+
+    /// The first cycle at which `ticks(cycle, hz) >= ticks`.
+    pub fn cycle_at_ticks(&self, ticks: u64, hz: u64) -> u64 {
+        let ips = u128::from(self.instructions_per_second);
+        u128::from(ticks).saturating_mul(ips).div_ceil(u128::from(hz)).min(u128::from(u64::MAX)) as u64
+    }
+
     /// Whole milliseconds elapsed at `cycles`.
     pub fn millis(&self, cycles: u64) -> u64 {
         (u128::from(cycles) * 1000 / u128::from(self.instructions_per_second)) as u64

@@ -36,6 +36,9 @@ options:
   --trace FILE       run: write every BIOS/DOS/EMS service call to FILE
   --midi FILE        run: write the MIDI bytes sent to the MPU-401, one line per PIT tick
   --opl FILE         run: write the OPL register writes, one line each (ms, register, value)
+  --watch-exec SEG:OFF[:LEN]  run: record each instruction run in that range (real-mode address,
+                     LEN hex, default 1) and list the entry points with their callers
+  --watch-log FILE   run: with --watch-exec, write every recorded instruction and its registers
   --dump SEG:OFF[:LEN]  run: afterwards, hex-dump LEN bytes (default 64) of memory there
   --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
                      (or: here, for the current CS:IP)
@@ -89,6 +92,8 @@ struct Options {
     trace: Option<PathBuf>,
     midi: Option<PathBuf>,
     opl: Option<PathBuf>,
+    watch_exec: Option<String>,
+    watch_log: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -131,6 +136,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--trace" => options.trace = Some(value(arg)?.into()),
             "--midi" => options.midi = Some(value(arg)?.into()),
             "--opl" => options.opl = Some(value(arg)?.into()),
+            "--watch-exec" => options.watch_exec = Some(value(arg)?),
+            "--watch-log" => options.watch_log = Some(value(arg)?.into()),
             "--disasm" => options.disasm = Some(value(arg)?),
             "--dump" => options.dump = Some(value(arg)?),
             "--hotspots" => options.hotspots = value(arg)?.parse().map_err(|_| "--hotspots needs a count")?,
@@ -264,6 +271,17 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     if o.trace.is_some() {
         m.service_trace = Some(Vec::new());
     }
+    if let Some(spec) = &o.watch_exec {
+        let (address, length) = match spec.rsplit_once(':') {
+            Some((address, length)) if address.contains(':') => {
+                (address, u32::from_str_radix(length, 16).map_err(|_| format!("bad length {length:?}"))?)
+            }
+            _ => (spec.as_str(), 1),
+        };
+        let (segment, offset) = parse_address(address)?;
+        let start = (u32::from(segment) << 4).wrapping_add(offset);
+        m.exec_watch = Some(start..start.wrapping_add(length));
+    }
     let limit = (o.seconds * ips as f64) as u64;
     let (stop, profile) = if o.hotspots > 0 {
         let (stop, profile) = hotspots::run_sampled(&mut m, limit);
@@ -290,6 +308,24 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
             let bytes: Vec<String> = chunk.iter().map(|b| format!("{:02X}", b.value)).collect();
             text.push_str(&format!("{:>12} {}\n", chunk[0].pit_tick, bytes.join(" ")));
         }
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if o.watch_exec.is_some() {
+        print_exec_hits(&m);
+    }
+    if let Some(path) = &o.watch_log {
+        let text: String = m
+            .exec_hits
+            .iter()
+            .map(|h| {
+                let r = &h.regs;
+                format!(
+                    "{:>11} {:04X}:{:04X} AX={:04X} BX={:04X} CX={:04X} DX={:04X} SI={:04X} DI={:04X} BP={:04X} SP={:04X} DS={:04X} ES={:04X}
+",
+                    h.cycle, h.cs, h.ip, r.ax(), r.bx(), r.cx(), r.dx(), r.si(), r.di(), r.bp(), r.sp(), r.ds(), r.es()
+                )
+            })
+            .collect();
         std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if let Some(path) = &o.opl {
@@ -473,6 +509,41 @@ fn timer_summary(m: &Machine) -> String {
         "channel 0 mode {} at {hz:.1} Hz; INT 08h -> {s8:04X}:{o8:04X}, INT 1Ch -> {s1c:04X}:{o1c:04X}",
         channel.mode
     )
+}
+
+/// A watched entry point: CS, IP and the return address on the stack (segment, offset).
+type EntryKey = (u16, u32, u16, u16);
+/// How often it was entered, the first cycle, and AX and BX that first time.
+type EntryStats = (usize, u64, u16, u16);
+
+/// The watched range's entry points (instructions reached from outside the range, or first),
+/// grouped with the far or near return address on the stack, most frequent first.
+fn print_exec_hits(m: &Machine) {
+    let hits = &m.exec_hits;
+    println!(
+        "watch     {} instructions recorded{}",
+        hits.len(),
+        if hits.len() >= dos::MAX_EXEC_HITS { " (limit reached)" } else { "" }
+    );
+    let mut entries: std::collections::BTreeMap<EntryKey, EntryStats> = Default::default();
+    let mut previous_cycle = None;
+    for hit in hits {
+        // An entry: the first hit, or one that isn't the next instruction after the last hit.
+        let entered = previous_cycle.is_none_or(|c: u64| hit.cycle > c + 1);
+        previous_cycle = Some(hit.cycle);
+        if entered {
+            let key = (hit.cs, hit.ip, hit.stack[1], hit.stack[0]);
+            let entry = entries.entry(key).or_insert((0, hit.cycle, hit.regs.ax(), hit.regs.bx()));
+            entry.0 += 1;
+        }
+    }
+    let mut sorted: Vec<_> = entries.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.0.cmp(&a.1.0).then(a.1.1.cmp(&b.1.1)));
+    for ((cs, ip, ret_seg, ret_off), (count, first, ax, bx)) in sorted.into_iter().take(30) {
+        println!(
+            "  {cs:04X}:{ip:04X}  {count:>6}x  first at cycle {first:>11}  stack {ret_seg:04X}:{ret_off:04X}  AX={ax:04X} BX={bx:04X}"
+        );
+    }
 }
 
 /// How often each IRQ line was delivered, and which lines the PICs mask now.
