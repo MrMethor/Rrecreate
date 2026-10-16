@@ -413,15 +413,41 @@ impl Machine {
     }
 
     /// The mode 13h screen as 320×200 RGB bytes, or `None` in other modes.
+    /// The screen as RGB bytes: 320×200 in mode 13h; text modes rendered with the 8×16 ROM font
+    /// (640×400, or 320×400 with 40 columns). `None` in modes that aren't displayed yet.
     pub fn screen_rgb(&self) -> Option<(usize, usize, Vec<u8>)> {
         let vga = &self.devices.vga;
-        if !vga.is_chained_256() {
+        let expand = |c: u8| (c << 2) | (c >> 4);
+        if vga.is_chained_256() {
+            let pixels = self.mem.slice(vga::GRAPHICS_BASE, 320 * 200);
+            let rgb = pixels.iter().flat_map(|&p| vga.dac[usize::from(p & vga.pel_mask)].map(expand)).collect();
+            return Some((320, 200, rgb));
+        }
+        if vga.mode > 3 && vga.mode != 7 {
             return None;
         }
-        let pixels = self.mem.slice(vga::GRAPHICS_BASE, 320 * 200);
-        let expand = |c: u8| (c << 2) | (c >> 4);
-        let rgb = pixels.iter().flat_map(|&p| vga.dac[usize::from(p & vga.pel_mask)].map(expand)).collect();
-        Some((320, 200, rgb))
+        let columns = if vga.mode < 2 { 40 } else { 80 };
+        let (width, height) = (columns * 8, 25 * 16);
+        let page_offset = u32::from(self.mem.read_u16(bios::BDA_PAGE_OFFSET));
+        // Text colors go through the attribute controller's palette into the DAC.
+        let color = |index: u8| vga.dac[usize::from(vga.attr[usize::from(index & 0x0F)] & 0x3F)].map(expand);
+        let mut rgb = vec![0u8; width * height * 3];
+        for row in 0..25 {
+            for column in 0..columns {
+                let cell = vga::TEXT_BASE + page_offset + ((row * columns + column) * 2) as u32;
+                let (ch, attribute) = (self.mem.read_u8(cell), self.mem.read_u8(cell + 1));
+                let (foreground, background) = (color(attribute & 0x0F), color((attribute >> 4) & 0x07));
+                for y in 0..16 {
+                    let bits = crate::fonts::FONT_8X16[usize::from(ch) * 16 + y];
+                    for x in 0..8 {
+                        let pixel = if bits & (0x80 >> x) != 0 { foreground } else { background };
+                        let at = ((row * 16 + y) * width + column * 8 + x) * 3;
+                        rgb[at..at + 3].copy_from_slice(&pixel);
+                    }
+                }
+            }
+        }
+        Some((width, height, rgb))
     }
 
     /// The text screen as lines, or `None` in graphics modes.

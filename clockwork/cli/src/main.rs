@@ -226,7 +226,7 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
             Some((w, h, rgb)) => {
                 std::fs::write(path, bmp(w, h, &rgb)).map_err(|e| format!("{}: {e}", path.display()))?
             }
-            None => eprintln!("rec-host: warning: no screenshot: not in mode 13h"),
+            None => eprintln!("rec-host: warning: no screenshot: this video mode isn't displayed yet"),
         }
     }
     let summary = Summary::new(&m, &stop);

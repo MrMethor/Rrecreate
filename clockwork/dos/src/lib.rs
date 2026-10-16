@@ -8,6 +8,7 @@ pub mod clock;
 pub mod cmos;
 pub mod dos;
 pub mod ems;
+pub mod fonts;
 pub mod keyboard;
 mod machine;
 pub mod mouse;

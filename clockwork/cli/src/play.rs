@@ -36,7 +36,6 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
     let mut recorded: Vec<(u64, Input)> = Vec::new();
     let mut last_mouse = None;
-    let mut last_text: Option<Vec<String>> = None;
     let mut stop = None;
 
     while window.is_open() {
@@ -63,12 +62,6 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
         }
         render(&m, &mut buffer);
         window.update_with_buffer(&buffer, WIDTH, HEIGHT).map_err(|e| e.to_string())?;
-        // Text modes are drawn without a font, so mirror the text to the terminal.
-        let text = m.screen_text();
-        if text.is_some() && text != last_text {
-            print_text(text.as_deref().unwrap_or_default());
-        }
-        last_text = text;
     }
 
     match &stop {
@@ -104,50 +97,17 @@ fn mouse_input(window: &Window, m: &Machine) -> Option<Input> {
     })
 }
 
-fn print_text(lines: &[String]) {
-    let last = lines.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1);
-    println!("{}", "-".repeat(80));
-    for line in &lines[..last] {
-        println!("{line}");
-    }
-}
-
-fn rgb(color: [u8; 3]) -> u32 {
-    let expand = |c: u8| u32::from((c << 2) | (c >> 4));
-    (expand(color[0]) << 16) | (expand(color[1]) << 8) | expand(color[2])
-}
-
+/// Scales the emulated screen to the window; modes that aren't displayed yet show black.
 fn render(m: &Machine, buffer: &mut [u32]) {
-    if let Some((w, h, pixels)) = m.screen_rgb() {
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                let i = ((y * h / HEIGHT) * w + x * w / WIDTH) * 3;
-                buffer[y * WIDTH + x] =
-                    (u32::from(pixels[i]) << 16) | (u32::from(pixels[i + 1]) << 8) | u32::from(pixels[i + 2]);
-            }
-        }
-        return;
-    }
-    let Some(lines) = m.screen_text() else {
+    let Some((w, h, pixels)) = m.screen_rgb() else {
         buffer.fill(0);
         return;
     };
-    // Text mode without a font: each cell shows its background, and non-blank characters a
-    // foreground-colored bar, which is enough to see layout and colors.
-    let vga = &m.devices.vga;
-    let columns = lines.first().map_or(80, |_| if vga.mode < 2 { 40 } else { 80 });
-    let cell_w = WIDTH / columns;
-    let cells = m.mem.slice(dos::vga::TEXT_BASE, columns * 25 * 2);
-    for (index, cell) in cells.chunks(2).enumerate() {
-        let (ch, attr) = (cell[0], cell[1]);
-        let color = |i: u8| rgb(vga.dac[usize::from(vga.attr[usize::from(i & 0x0F)])]);
-        let (fg, bg) = (color(attr & 0x0F), color((attr >> 4) & 0x07));
-        let (cx, cy) = (index % columns * cell_w, index / columns * 16);
-        for y in 0..16 {
-            for x in 0..cell_w {
-                let glyph = ch != b' ' && ch != 0 && (4..12).contains(&y) && (1..cell_w - 1).contains(&x);
-                buffer[(cy + y) * WIDTH + cx + x] = if glyph { fg } else { bg };
-            }
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let i = ((y * h / HEIGHT) * w + x * w / WIDTH) * 3;
+            buffer[y * WIDTH + x] =
+                (u32::from(pixels[i]) << 16) | (u32::from(pixels[i + 1]) << 8) | u32::from(pixels[i + 2]);
         }
     }
 }

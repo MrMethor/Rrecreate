@@ -1034,3 +1034,138 @@ fn mouse_cursor_is_drawn_and_erased_in_mode_13h() {
     assert_eq!(pixel(&m, 161, 101), 0x00, "old position restored");
     assert_eq!(pixel(&m, 2, 2), 0x0F, "arrow moved to x 2/2, y 1");
 }
+
+fn pixel_13h(m: &Machine, x: u32, y: u32) -> u8 {
+    m.mem.read_u8(0xA_0000 + y * 320 + x)
+}
+
+/// The 8×8 glyph of `ch` as drawn at character cell (column, row) in mode 13h: true = foreground.
+fn assert_glyph_13h(m: &Machine, character: u8, column: u32, row: u32, foreground: u8, background: u8) {
+    for y in 0..8 {
+        let bits = dos::fonts::FONT_8X8[usize::from(character) * 8 + y as usize];
+        for x in 0..8 {
+            let expected = if bits & (0x80 >> x) != 0 { foreground } else { background };
+            let actual = pixel_13h(m, column * 8 + x, row * 8 + y);
+            assert_eq!(actual, expected, "glyph {:?} pixel ({x},{y})", char::from(character));
+        }
+    }
+}
+
+#[test]
+fn bios_text_is_drawn_in_mode_13h() {
+    // Mode 13h; teletype 'A' in color 4; DOS prints "B" (color 7); AH=09h writes 'C' in color 2 on
+    // background 1 (BH) at row 2; then hold.
+    let program = com(|a| {
+        a.mov(ax, 0x0013)?;
+        a.int(0x10)?;
+        a.mov(ax, 0x0E41)?;
+        a.mov(bx, 0x0004)?;
+        a.int(0x10)?;
+        a.mov(dl, b'B' as i32)?;
+        a.mov(ah, 2)?;
+        a.int(0x21)?;
+        a.mov(ah, 2)?;
+        a.mov(bh, 0)?;
+        a.mov(dx, 0x0200)?; // row 2, column 0
+        a.int(0x10)?;
+        a.mov(ax, 0x0943)?;
+        a.mov(bx, 0x0102)?;
+        a.mov(cx, 1)?;
+        a.int(0x10)?;
+        a.here("hold")?;
+        a.hlt()?;
+        let hold = a.l("hold");
+        a.jmp(hold)
+    });
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    assert_eq!(m.run(SECOND / 4), Stop::CycleLimit);
+    assert_glyph_13h(&m, b'A', 0, 0, 4, 0);
+    assert_glyph_13h(&m, b'B', 1, 0, 7, 0);
+    assert_glyph_13h(&m, b'C', 0, 2, 2, 1);
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn rom_font_pointers() {
+    // AX=1130h BH=06h → ES:BP = 8×16 font, CX = character height, DL = rows - 1 (text mode 3).
+    let program = com(|a| {
+        a.mov(ax, 0x1130)?;
+        a.mov(bh, 6)?;
+        a.int(0x10)?;
+        a.hlt()?;
+        exit(a, 0)
+    });
+    let mut m = boot(&[("F.COM", &program)], "F.COM");
+    m.run(SECOND / 10);
+    let r = m.cpu.regs;
+    assert_eq!((r.cx(), r.dl()), (16, 24));
+    let font = m.mem.read_bytes((u32::from(r.es()) << 4) + u32::from(r.bp()), 4096);
+    assert_eq!(font, dos::fonts::FONT_8X16);
+    assert_eq!(m.mem.read_bytes(0xF_FA6E, 1024), &dos::fonts::FONT_8X8[..1024], "IBM 8×8 font location");
+    let int43 = (u32::from(m.mem.read_u16(0x43 * 4 + 2)) << 4) + u32::from(m.mem.read_u16(0x43 * 4));
+    assert_eq!(m.mem.read_bytes(int43, 8), &dos::fonts::FONT_8X8[..8], "INT 43h: 8×8 font in text mode");
+}
+
+#[test]
+fn graphics_mode_scrolls_text_rows() {
+    // Mode 13h: print 'X' at row 1, scroll the window up one row (AH=06h), 'X' is now on row 0.
+    let program = com(|a| {
+        a.mov(ax, 0x0013)?;
+        a.int(0x10)?;
+        a.mov(ah, 2)?;
+        a.mov(bh, 0)?;
+        a.mov(dx, 0x0100)?;
+        a.int(0x10)?;
+        a.mov(ax, 0x0E58)?;
+        a.mov(bl, 0x0F)?;
+        a.int(0x10)?;
+        a.mov(ax, 0x0601)?;
+        a.mov(bh, 0)?;
+        a.mov(cx, 0x0000)?;
+        a.mov(dx, 0x1827)?; // rows 0-24, columns 0-39
+        a.int(0x10)?;
+        a.here("hold")?;
+        a.hlt()?;
+        let hold = a.l("hold");
+        a.jmp(hold)
+    });
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    m.run(SECOND / 4);
+    assert_glyph_13h(&m, b'X', 0, 0, 0x0F, 0);
+    assert!((0..8).all(|y| (0..8).all(|x| pixel_13h(&m, x, 8 + y) == 0)), "row 1 blanked");
+}
+
+#[test]
+fn write_string_with_attributes_and_text_rendering() {
+    // AH=13h AL=03h: string of (char, attribute) pairs at row 0, column 0, cursor moved after it.
+    let program = com(|a| {
+        a.push(cs)?;
+        a.pop(es)?;
+        let text = a.addr("text");
+        a.mov(bp, text)?;
+        a.mov(ax, 0x1303)?;
+        a.mov(bx, 0x0000)?;
+        a.mov(cx, 2)?;
+        a.mov(dx, 0x0000)?;
+        a.int(0x10)?;
+        a.hlt()?;
+        exit(a, 0)?;
+        a.here("text")?;
+        a.db(&[b'H', 0x1F, b'i', 0x4E])
+    });
+    let mut m = boot(&[("W.COM", &program)], "W.COM");
+    m.run(SECOND / 10);
+    assert_eq!(m.mem.read_bytes(0xB_8000, 4), &[b'H', 0x1F, b'i', 0x4E]);
+    assert_eq!(m.mem.read_u16(0x450), 0x0002, "cursor after the string");
+    let (width, height, rgb) = m.screen_rgb().expect("text mode is rendered");
+    assert_eq!((width, height), (640, 400));
+    let pixel =
+        |x: usize, y: usize| [rgb[(y * width + x) * 3], rgb[(y * width + x) * 3 + 1], rgb[(y * width + x) * 3 + 2]];
+    assert_eq!(pixel(0, 0), [0, 0, 170], "blue background of attribute 1Fh");
+    // Find a lit pixel of 'H' in its cell: white foreground.
+    let lit = (0..16)
+        .flat_map(|y| (0..8).map(move |x| (x, y)))
+        .find(|&(x, y)| dos::fonts::FONT_8X16[usize::from(b'H') * 16 + y] & (0x80 >> x) != 0);
+    let (x, y) = lit.expect("H has pixels");
+    assert_eq!(pixel(x, y), [255, 255, 255]);
+}

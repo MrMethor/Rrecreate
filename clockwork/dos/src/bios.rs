@@ -8,12 +8,20 @@
 use cpu::flags::{CF, ZF};
 
 use crate::clock::PIT_HZ;
+use crate::fonts;
 use crate::keyboard::scancode_ascii;
 use crate::machine::Machine;
 use crate::vga::TEXT_BASE;
 
 pub const ROM_SEGMENT: u16 = 0xF000;
-const ROM_FONT_OFFSET: u16 = 0xA000;
+/// ROM fonts (offsets in the BIOS segment). The first half of the 8×8 font is also at FA6Eh,
+/// where the IBM BIOS keeps it and some programs expect it.
+pub const ROM_FONT_8X8: u16 = 0xA000;
+pub const ROM_FONT_8X14: u16 = 0xA800;
+pub const ROM_FONT_9X14: u16 = 0xB600;
+pub const ROM_FONT_8X16: u16 = 0xB800;
+pub const ROM_FONT_9X16: u16 = 0xC800;
+const ROM_FONT_8X8_IBM: u16 = 0xFA6E;
 /// Where `DOS` callback stubs and similar code start in the ROM.
 const ROM_CODE_OFFSET: u16 = 0x0000;
 
@@ -163,9 +171,18 @@ pub(crate) fn install(m: &mut Machine) {
     let critical = rom.emit(m, &[0xB0, 0x03, 0xCF]);
     set_vector(m, 0x24, ROM_SEGMENT, critical);
 
-    // Font pointers (8×8 glyphs for INT 1Fh/43h): an empty font until one is added.
-    set_vector(m, 0x1F, ROM_SEGMENT, ROM_FONT_OFFSET + 0x400);
-    set_vector(m, 0x43, ROM_SEGMENT, ROM_FONT_OFFSET);
+    // ROM fonts. INT 1Fh points at the upper half of the 8×8 font; INT 43h is set per video mode.
+    for (offset, font) in [
+        (ROM_FONT_8X8, &fonts::FONT_8X8[..]),
+        (ROM_FONT_8X14, &fonts::FONT_8X14[..]),
+        (ROM_FONT_9X14, &fonts::FONT_9X14_ALTERNATE[..]),
+        (ROM_FONT_8X16, &fonts::FONT_8X16[..]),
+        (ROM_FONT_9X16, &fonts::FONT_9X16_ALTERNATE[..]),
+        (ROM_FONT_8X8_IBM, &fonts::FONT_8X8[..0x400]),
+    ] {
+        m.mem.load(Machine::lin(ROM_SEGMENT, offset), font);
+    }
+    set_vector(m, 0x1F, ROM_SEGMENT, ROM_FONT_8X8 + 0x400);
 
     let mut cd_device = vec![0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xC8, 0, 0, 0, 0];
     cd_device.extend(b"MSCD001 \0\0");
@@ -342,9 +359,32 @@ pub(crate) fn pop_key(m: &mut Machine) -> Option<u16> {
 }
 
 // ---- video ----
+//
+// Character output in graphics modes, graphics scrolling, the ROM font pointers and the INT 10h
+// font functions follow DOSBox Staging `src/ints/int10_char.cpp`, `int10.cpp` and
+// `int10_modes.cpp` (GPL-2.0-or-later).
 
 fn is_text_mode(mode: u8) -> bool {
     mode <= 3 || mode == 7
+}
+
+/// Character height of a mode's ROM font, and its number of text rows.
+fn font_metrics(mode: u8) -> (u8, u8) {
+    match mode {
+        0..=3 | 7 => (16, 25),
+        0x0F | 0x10 => (14, 25),
+        0x11 | 0x12 => (16, 30),
+        _ => (8, 25),
+    }
+}
+
+/// ROM offset of the font a mode's INT 43h vector points at.
+fn font_for_height(height: u8) -> u16 {
+    match height {
+        14 => ROM_FONT_8X14,
+        16 => ROM_FONT_8X16,
+        _ => ROM_FONT_8X8,
+    }
 }
 
 pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
@@ -356,15 +396,11 @@ pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
         m.diagnostic(format!("video mode {mode:02X}h is not emulated; its frames are raw memory hashes"));
     }
     let text = is_text_mode(mode);
-    let columns: u16 = if mode < 2 {
-        40
-    } else if text {
-        80
-    } else if mode == 0x13 {
-        40
-    } else {
-        80
+    let columns: u16 = match mode {
+        0 | 1 | 4 | 5 | 0x0D | 0x13 => 40,
+        _ => 80,
     };
+    let (height, rows) = font_metrics(mode);
     m.mem.write_u8(BDA_VIDEO_MODE, mode);
     m.mem.write_u16(BDA_COLUMNS, columns);
     m.mem.write_u16(BDA_PAGE_SIZE, if text { columns * 25 * 2 } else { 0 });
@@ -372,10 +408,13 @@ pub(crate) fn set_video_mode(m: &mut Machine, mode: u8, clear: bool) {
     for page in 0..8 {
         m.mem.write_u16(BDA_CURSOR + page * 2, 0);
     }
-    m.mem.write_u16(BDA_CURSOR_SHAPE, 0x0607);
+    // Graphics modes leave the cursor shape word 0; some programs test it to detect them.
+    m.mem.write_u16(BDA_CURSOR_SHAPE, if text { 0x0607 } else { 0 });
     m.mem.write_u8(BDA_ACTIVE_PAGE, 0);
-    m.mem.write_u8(BDA_ROWS, 24);
-    m.mem.write_u8(BDA_CHAR_HEIGHT, if text { 16 } else { 8 });
+    m.mem.write_u8(BDA_ROWS, rows - 1);
+    m.mem.write_u16(BDA_CHAR_HEIGHT, u16::from(height));
+    let font = if text { ROM_FONT_8X8 } else { font_for_height(height) };
+    set_vector(m, 0x43, ROM_SEGMENT, font);
     if clear {
         if text {
             for i in 0..0x4000u32 {
@@ -407,7 +446,94 @@ fn text_cell(m: &Machine, page: u8, column: u16, row: u16) -> u32 {
     TEXT_BASE + u32::from(page & 7) * page_size + (u32::from(row) * columns + u32::from(column)) * 2
 }
 
-/// A text-mode rectangle, inclusive, in character cells.
+/// Columns and rows of the current mode's character grid.
+fn grid(m: &Machine) -> (u16, u16) {
+    (m.mem.read_u16(BDA_COLUMNS).max(1), u16::from(m.mem.read_u8(BDA_ROWS)) + 1)
+}
+
+fn char_height(m: &Machine) -> u32 {
+    u32::from(m.mem.read_u16(BDA_CHAR_HEIGHT).clamp(1, 32))
+}
+
+fn put_pixel_256(m: &mut Machine, x: u32, y: u32, color: u8) {
+    if x < 320 && y < 200 {
+        m.mem.write_u8(0xA_0000 + y * 320 + x, color);
+    }
+}
+
+/// Writes one character at a cell. In text modes `attribute` is stored only if `use_attribute`;
+/// in graphics modes it is the foreground color, and in 256-color modes `page` is the
+/// background color (as on a real VGA BIOS).
+fn write_char(m: &mut Machine, column: u16, row: u16, page: u8, ch: u8, attribute: u8, use_attribute: bool) {
+    if is_text_mode(m.devices.vga.mode) {
+        let cell = text_cell(m, page, column, row);
+        m.mem.write_u8(cell, ch);
+        if use_attribute {
+            m.mem.write_u8(cell + 1, attribute);
+        }
+        return;
+    }
+    if !m.devices.vga.is_chained_256() {
+        let mode = m.devices.vga.mode;
+        m.diagnostic(format!("BIOS text output in video mode {mode:02X}h isn't drawn yet"));
+        return;
+    }
+    let height = char_height(m);
+    let (font_offset, font_segment) = (m.mem.read_u16(0x43 * 4), m.mem.read_u16(0x43 * 4 + 2));
+    let glyph = Machine::lin(font_segment, font_offset) + u32::from(ch) * height;
+    let (x0, y0) = (u32::from(column) * 8, u32::from(row) * height);
+    for line in 0..height {
+        let bits = m.mem.read_u8(glyph + line);
+        for bit in 0..8 {
+            let color = if bits & (0x80 >> bit) != 0 { attribute } else { page };
+            put_pixel_256(m, x0 + bit, y0 + line, color);
+        }
+    }
+}
+
+/// Copies character row `from` to `to`, columns `left..=right`.
+fn copy_row(m: &mut Machine, left: u16, right: u16, from: u16, to: u16, page: u8) {
+    if is_text_mode(m.devices.vga.mode) {
+        for column in left..=right {
+            let value = m.mem.read_u16(text_cell(m, page, column, from));
+            m.mem.write_u16(text_cell(m, page, column, to), value);
+        }
+    } else if m.devices.vga.is_chained_256() {
+        let height = char_height(m);
+        let pitch = 8 * u32::from(grid(m).0);
+        for line in 0..height {
+            let source = 0xA_0000 + (u32::from(from) * height + line) * pitch + 8 * u32::from(left);
+            let dest = 0xA_0000 + (u32::from(to) * height + line) * pitch + 8 * u32::from(left);
+            for x in 0..8 * u32::from(right - left + 1) {
+                let value = m.mem.read_u8(source + x);
+                m.mem.write_u8(dest + x, value);
+            }
+        }
+    }
+}
+
+/// Blanks character row `row`, columns `left..=right`, with `attribute` (a color in graphics).
+fn fill_row(m: &mut Machine, left: u16, right: u16, row: u16, attribute: u8, page: u8) {
+    if is_text_mode(m.devices.vga.mode) {
+        for column in left..=right {
+            m.mem.write_u16(text_cell(m, page, column, row), (u16::from(attribute) << 8) | 0x20);
+        }
+    } else if m.devices.vga.is_chained_256() {
+        let height = char_height(m);
+        let pitch = 8 * u32::from(grid(m).0);
+        for line in 0..height {
+            let dest = 0xA_0000 + (u32::from(row) * height + line) * pitch + 8 * u32::from(left);
+            for x in 0..8 * u32::from(right - left + 1) {
+                m.mem.write_u8(dest + x, attribute);
+            }
+        }
+    } else {
+        let mode = m.devices.vga.mode;
+        m.diagnostic(format!("BIOS scrolling in video mode {mode:02X}h isn't emulated yet"));
+    }
+}
+
+/// A rectangle of character cells, inclusive.
 #[derive(Clone, Copy)]
 struct Window {
     top: u16,
@@ -416,62 +542,67 @@ struct Window {
     right: u16,
 }
 
-/// Scrolls a text window up (or down) by `lines`; 0 clears it. Blank lines get `attribute`.
+/// Scrolls a window up (or down) by `lines`; 0 clears it. Blank rows get `attribute`.
 fn scroll(m: &mut Machine, window: Window, lines: u8, attribute: u8, up: bool) {
+    let (columns, rows) = grid(m);
     let Window { top, left, bottom, right } = window;
-    let columns = m.mem.read_u16(BDA_COLUMNS);
-    let right = right.min(columns.saturating_sub(1));
-    let bottom = bottom.min(24);
+    let (bottom, right) = (bottom.min(rows - 1), right.min(columns - 1));
     if top > bottom || left > right {
         return;
     }
+    let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
     let height = bottom - top + 1;
     let lines = if lines == 0 || u16::from(lines) > height { height } else { u16::from(lines) };
-    let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
-    let blank = (u16::from(attribute) << 8) | 0x20;
-    for i in 0..height {
-        let row = if up { top + i } else { bottom - i };
-        let source = if up { row + lines } else { row.wrapping_sub(lines) };
-        let source_valid = if up { source <= bottom } else { i + lines < height };
-        for column in left..=right {
-            let value = if source_valid { m.mem.read_u16(text_cell(m, page, column, source)) } else { blank };
-            m.mem.write_u16(text_cell(m, page, column, row), value);
+    if up {
+        for row in top..=bottom - lines {
+            copy_row(m, left, right, row + lines, row, page);
+        }
+        for row in bottom + 1 - lines..=bottom {
+            fill_row(m, left, right, row, attribute, page);
+        }
+    } else {
+        for row in (top + lines..=bottom).rev() {
+            copy_row(m, left, right, row - lines, row, page);
+        }
+        for row in top..top + lines {
+            fill_row(m, left, right, row, attribute, page);
         }
     }
 }
 
-/// BIOS teletype output: the path DOS console output takes too.
+/// Console output as DOS does it: teletype on the active page in light gray.
 pub(crate) fn teletype(m: &mut Machine, ch: u8) {
-    m.console.push(ch);
-    let mode = m.devices.vga.mode;
-    let text = is_text_mode(mode);
+    let text = is_text_mode(m.devices.vga.mode);
     let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
-    let columns = m.mem.read_u16(BDA_COLUMNS).max(1);
+    teletype_output(m, ch, 0x07, !text, page);
+}
+
+/// BIOS teletype: control characters move the cursor, others are written and advance it,
+/// scrolling at the bottom. In graphics modes the attribute is the color.
+fn teletype_output(m: &mut Machine, ch: u8, attribute: u8, use_attribute: bool, page: u8) {
+    m.console.push(ch);
+    let text = is_text_mode(m.devices.vga.mode);
+    let (columns, rows) = grid(m);
     let (mut column, mut row) = cursor(m, page);
     match ch {
+        0x07 => return, // bell: no position change
+        0x08 => column = column.saturating_sub(1),
         b'\r' => column = 0,
         b'\n' => row += 1,
-        0x08 => column = column.saturating_sub(1),
-        0x07 => {}
         _ => {
-            if text {
-                let cell = text_cell(m, page, column, row);
-                m.mem.write_u8(cell, ch);
-            } else {
-                m.diagnostic("BIOS text output in graphics modes isn't drawn (no font yet)".into());
-            }
+            write_char(m, column, row, page, ch, attribute, use_attribute);
             column += 1;
-            if column >= columns {
-                column = 0;
-                row += 1;
-            }
         }
     }
-    if row > 24 {
-        if text {
-            scroll(m, Window { top: 0, left: 0, bottom: 24, right: columns - 1 }, 1, 0x07, true);
-        }
-        row = 24;
+    if column >= columns {
+        column = 0;
+        row += 1;
+    }
+    if row == rows {
+        // Text modes fill with the attribute under the cursor, graphics modes with black.
+        let fill = if text { (m.mem.read_u16(text_cell(m, page, column, row - 1)) >> 8) as u8 } else { 0 };
+        scroll(m, Window { top: 0, left: 0, bottom: rows - 1, right: columns - 1 }, 1, fill, true);
+        row -= 1;
     }
     set_cursor(m, page, column, row);
 }
@@ -479,6 +610,7 @@ pub(crate) fn teletype(m: &mut Machine, ch: u8) {
 fn video(m: &mut Machine) {
     let r = m.cpu.regs;
     let mode = m.devices.vga.mode;
+    let text = is_text_mode(mode);
     match r.ah() {
         0x00 => set_video_mode(m, r.al() & 0x7F, r.al() & 0x80 == 0),
         0x01 => m.mem.write_u16(BDA_CURSOR_SHAPE, r.cx()),
@@ -494,7 +626,7 @@ fn video(m: &mut Machine) {
             let page_size = m.mem.read_u16(BDA_PAGE_SIZE);
             m.mem.write_u16(BDA_PAGE_OFFSET, u16::from(r.al() & 7).wrapping_mul(page_size));
         }
-        0x06 | 0x07 if is_text_mode(mode) => {
+        0x06 | 0x07 => {
             let window = Window {
                 top: u16::from(r.ch()),
                 left: u16::from(r.cl()),
@@ -503,27 +635,28 @@ fn video(m: &mut Machine) {
             };
             scroll(m, window, r.al(), r.bh(), r.ah() == 0x06);
         }
-        0x08 if is_text_mode(mode) => {
+        0x08 if text => {
             let (column, row) = cursor(m, r.bh());
             let cell = m.mem.read_u16(text_cell(m, r.bh(), column, row));
             m.cpu.regs.set_ax(cell);
         }
-        0x09 | 0x0A if is_text_mode(mode) => {
-            let (column, row) = cursor(m, r.bh());
-            let mut at = text_cell(m, r.bh(), column, row);
+        0x09 | 0x0A => {
+            // Graphics modes always use the attribute as color; 256-color modes take the cursor of
+            // page 0 and use BH as the background.
+            let cursor_page = if text { r.bh() } else { 0 };
+            let (mut column, mut row) = cursor(m, cursor_page);
+            let (columns, _) = grid(m);
+            let use_attribute = r.ah() == 0x09 || !text;
             for _ in 0..r.cx() {
-                m.mem.write_u8(at, r.al());
-                if r.ah() == 0x09 {
-                    m.mem.write_u8(at + 1, r.bl());
+                write_char(m, column, row, r.bh(), r.al(), r.bl(), use_attribute);
+                column += 1;
+                if column == columns {
+                    column = 0;
+                    row += 1;
                 }
-                at += 2;
             }
         }
-        0x0C if mode == 0x13 => {
-            if r.cx() < 320 && r.dx() < 200 {
-                m.mem.write_u8(0xA_0000 + u32::from(r.dx()) * 320 + u32::from(r.cx()), r.al());
-            }
-        }
+        0x0C if mode == 0x13 => put_pixel_256(m, u32::from(r.cx()), u32::from(r.dx()), r.al()),
         0x0D if mode == 0x13 => {
             let pixel = if r.cx() < 320 && r.dx() < 200 {
                 m.mem.read_u8(0xA_0000 + u32::from(r.dx()) * 320 + u32::from(r.cx()))
@@ -532,7 +665,10 @@ fn video(m: &mut Machine) {
             };
             m.cpu.regs.set_al(pixel);
         }
-        0x0E => teletype(m, r.al()),
+        0x0E => {
+            let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
+            teletype_output(m, r.al(), r.bl(), !text, page);
+        }
         0x0F => {
             let columns = m.mem.read_u16(BDA_COLUMNS) as u8;
             let page = m.mem.read_u8(BDA_ACTIVE_PAGE);
@@ -540,25 +676,37 @@ fn video(m: &mut Machine) {
             m.cpu.regs.set_bh(page);
         }
         0x10 => palette(m),
-        0x11 if r.al() == 0x30 => {
-            m.cpu.regs.set_es(ROM_SEGMENT);
-            m.cpu.regs.set_bp(ROM_FONT_OFFSET);
-            m.cpu.regs.set_cx(u16::from(m.mem.read_u8(BDA_CHAR_HEIGHT)));
-            m.cpu.regs.set_dl(24);
-        }
+        0x11 => fonts(m),
         0x12 if r.bl() == 0x10 => {
             m.cpu.regs.set_bx(0x0003); // color, 256 KB
             m.cpu.regs.set_cx(0x0009);
         }
         0x13 => {
-            let (column, row) = (u16::from(r.dl()), u16::from(r.dh()));
-            set_cursor(m, r.bh(), column, row);
-            for i in 0..r.cx() {
-                let ch = m.mem.read_u8(Machine::lin(r.es(), r.bp().wrapping_add(i)));
-                teletype(m, ch);
+            // Write string at DH,DL (FFh: at the cursor) on page BH. AL bit 0 keeps the cursor
+            // after the string; bit 1 means the string is (character, attribute) pairs.
+            let page = r.bh();
+            let saved = cursor(m, page);
+            if r.dh() == 0xFF {
+                set_cursor(m, page, saved.0, saved.1);
+            } else {
+                set_cursor(m, page, u16::from(r.dl()), u16::from(r.dh()));
+            }
+            let pairs = r.al() & 2 != 0;
+            let mut at = r.bp();
+            for _ in 0..r.cx() {
+                let ch = m.mem.read_u8(Machine::lin(r.es(), at));
+                at = at.wrapping_add(1);
+                let attribute = if pairs {
+                    let attribute = m.mem.read_u8(Machine::lin(r.es(), at));
+                    at = at.wrapping_add(1);
+                    attribute
+                } else {
+                    r.bl()
+                };
+                teletype_output(m, ch, attribute, true, page);
             }
             if r.al() & 1 == 0 {
-                set_cursor(m, r.bh(), column, row);
+                set_cursor(m, page, saved.0, saved.1);
             }
         }
         0x1A if r.al() == 0x00 => {
@@ -566,6 +714,48 @@ fn video(m: &mut Machine) {
             m.cpu.regs.set_bx(0x0008); // VGA with analog color display
         }
         ah => m.diagnostic(format!("INT 10h AH={ah:02X}h AL={:02X}h in mode {mode:02X}h is not implemented", r.al())),
+    }
+}
+
+/// INT 10h AH=11h: font information and graphics font selection. Loading fonts into the text
+/// mode character generator isn't emulated.
+fn fonts(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let set_graphics_font = |m: &mut Machine, segment: u16, offset: u16, height: u16| {
+        set_vector(m, 0x43, segment, offset);
+        m.mem.write_u16(BDA_CHAR_HEIGHT, height);
+        let rows = match r.bl() {
+            0x00 => r.dl(),
+            0x01 => 14,
+            0x03 => 43,
+            _ => 25,
+        };
+        m.mem.write_u8(BDA_ROWS, rows.saturating_sub(1));
+    };
+    match r.al() {
+        0x30 => {
+            let (segment, offset) = match r.bh() {
+                0x00 => (m.mem.read_u16(0x1F * 4 + 2), m.mem.read_u16(0x1F * 4)),
+                0x01 => (m.mem.read_u16(0x43 * 4 + 2), m.mem.read_u16(0x43 * 4)),
+                0x02 => (ROM_SEGMENT, ROM_FONT_8X14),
+                0x03 => (ROM_SEGMENT, ROM_FONT_8X8),
+                0x04 => (ROM_SEGMENT, ROM_FONT_8X8 + 0x400),
+                0x05 => (ROM_SEGMENT, ROM_FONT_9X14),
+                0x06 => (ROM_SEGMENT, ROM_FONT_8X16),
+                0x07 => (ROM_SEGMENT, ROM_FONT_9X16),
+                _ => (r.es(), r.bp()),
+            };
+            m.cpu.regs.set_es(segment);
+            m.cpu.regs.set_bp(offset);
+            m.cpu.regs.set_cx(m.mem.read_u16(BDA_CHAR_HEIGHT));
+            m.cpu.regs.set_dl(m.mem.read_u8(BDA_ROWS));
+        }
+        0x20 => set_vector(m, 0x1F, r.es(), r.bp()),
+        0x21 => set_graphics_font(m, r.es(), r.bp(), r.cx()),
+        0x22 => set_graphics_font(m, ROM_SEGMENT, ROM_FONT_8X14, 14),
+        0x23 => set_graphics_font(m, ROM_SEGMENT, ROM_FONT_8X8, 8),
+        0x24 => set_graphics_font(m, ROM_SEGMENT, ROM_FONT_8X16, 16),
+        al => m.diagnostic(format!("INT 10h AX=11{al:02X}h (text-mode font loading) is not emulated")),
     }
 }
 
