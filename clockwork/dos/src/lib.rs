@@ -8,6 +8,7 @@ pub mod bios;
 pub mod capture;
 pub mod clock;
 pub mod cmos;
+pub mod contracts;
 pub mod coverage;
 pub mod dma;
 pub mod dos;

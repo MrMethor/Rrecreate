@@ -93,6 +93,21 @@ pub fn cmd_replay(args: &[String]) -> Result<std::process::ExitCode, String> {
     Ok(if failed > 0 { std::process::ExitCode::from(3) } else { std::process::ExitCode::SUCCESS })
 }
 
+/// What contract inference saw.
+pub fn contract_lines(contracts: &dos::contracts::Contracts) -> Vec<String> {
+    let calls: u64 = contracts.functions.values().map(|c| c.calls + c.abnormal).sum();
+    vec![format!("contracts {} functions called, {calls} calls", contracts.functions.len())]
+}
+
+/// Where the contracts inferred in this run disagree with the overrides' conventions.
+pub fn contract_notes(hybrid: &Hybrid, contracts: &dos::contracts::Contracts) -> Vec<(String, String)> {
+    hybrid
+        .overrides()
+        .filter_map(|(o, _)| contracts.functions.get(&o.offset).map(|c| (o, c)))
+        .flat_map(|(o, c)| dos::contracts::check(c, &o.conv).into_iter().map(|note| (o.name.to_string(), note)))
+        .collect()
+}
+
 /// One line of counts, and each finding on a line of its own.
 pub fn summary_lines(hybrid: &Hybrid) -> Vec<String> {
     let (rust, dual, mismatches) =

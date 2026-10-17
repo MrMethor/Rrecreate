@@ -2688,3 +2688,93 @@ fn reading_no_bytes_from_the_console_does_not_wait() {
     let mut m = boot(&[("R.COM", &program)], "R.COM");
     assert_eq!(m.run(SECOND), Stop::Exited(0));
 }
+
+#[test]
+fn contracts_from_a_run() {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["add_arg", "get_flag", "keeps", "pascal_one", "read_global", "result"] {
+            offsets.borrow_mut().insert(name, (a.addr(name) as u32).wrapping_sub(0x100));
+        }
+        // The stack starts at the top of the segment: the first push wraps SP to FFFEh.
+        a.xor(sp, sp)?;
+        a.mov(ax, 5)?;
+        a.mov(bx, 7)?;
+        a.push(bx)?;
+        let target = a.l("add_arg");
+        a.call(target)?;
+        a.add(sp, 2)?;
+        let result = word_at(a, "result");
+        a.mov(result, ax)?;
+        a.clc()?; // (ADD SP,2 wrapped and set it)
+        let target = a.l("get_flag");
+        a.call(target)?;
+        let target = a.l("after_flag");
+        a.jc(target)?;
+        a.here("after_flag")?;
+        let target = a.l("keeps");
+        a.call(target)?;
+        a.xor(ax, ax)?; // (a result is seen when it changes)
+        let target = a.l("read_global");
+        a.call(target)?;
+        a.push(ax)?; // a result pushed as an argument is used
+        let target = a.l("pascal_one");
+        a.call(target)?;
+        exit(a, 0)?;
+        // add_arg(AX, word): AX + the argument
+        a.here("add_arg")?;
+        a.push(bp)?;
+        a.mov(bp, sp)?;
+        a.add(ax, word_ptr(bp + 4))?;
+        a.leave()?;
+        a.ret()?;
+        // get_flag: CF set
+        a.here("get_flag")?;
+        a.stc()?;
+        a.ret()?;
+        // keeps: uses SI, but saves it
+        a.here("keeps")?;
+        a.push(si)?;
+        a.mov(si, 1)?;
+        a.pop(si)?;
+        a.ret()?;
+        // read_global: AX = result
+        a.here("read_global")?;
+        let result = word_at(a, "result");
+        a.mov(ax, result)?;
+        a.ret()?;
+        // pascal_one(word): pops its argument
+        a.here("pascal_one")?;
+        a.push(bp)?;
+        a.mov(bp, sp)?;
+        a.mov(dx, word_ptr(bp + 4))?;
+        a.pop(bp)?;
+        a.ret_1(2)?;
+        a.here("result")?;
+        a.dw(&[0])
+    });
+    let mut m = boot(&[("C.COM", &program)], "C.COM");
+    m.start_contracts();
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let contracts = m.contracts.take().unwrap();
+    let offsets = offsets.into_inner();
+    let contract = |name: &str| contracts.functions[&offsets[name]].clone();
+    use dos::contracts::{NEAR, flag_names, register_names};
+    let add = contract("add_arg");
+    assert_eq!((add.calls, add.abnormal, add.returns), (1, 0, NEAR), "the frame closed despite the wrap");
+    assert_eq!(register_names(add.inputs), ["AX"]);
+    assert_eq!(register_names(add.outputs), ["AL"], "AH didn't change (5 + 7)");
+    assert_eq!((add.arg_bytes, add.pops.iter().copied().collect::<Vec<_>>()), (2, vec![0]));
+    let flag = contract("get_flag");
+    assert_eq!((register_names(flag.inputs).len(), flag_names(flag.outputs)), (0, vec!["CF"]));
+    let keeps = contract("keeps");
+    let si_units = dos::contracts::units::word(6);
+    assert!(keeps.inputs == 0 && keeps.preserved & si_units == si_units, "{keeps:?}");
+    let global = contract("read_global");
+    assert_eq!(global.reads.iter().copied().collect::<Vec<_>>(), [offsets["result"], offsets["result"] + 1]);
+    assert_eq!(register_names(global.inputs), ["DS"]);
+    assert_eq!(register_names(global.outputs), ["AL"], "pushed as pascal_one's argument, and read there");
+    let pascal = contract("pascal_one");
+    assert_eq!((pascal.arg_bytes, pascal.pops.iter().copied().collect::<Vec<_>>()), (2, vec![2]));
+    assert_eq!(pascal.inputs, 0);
+}

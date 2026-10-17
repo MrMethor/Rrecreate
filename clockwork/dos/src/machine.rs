@@ -534,6 +534,8 @@ pub struct Machine {
     /// What the started program's code executed, once [`Machine::start_coverage`] was called
     /// (for the analysis pipeline; not part of the machine state).
     pub coverage: Option<crate::coverage::Coverage>,
+    /// Contract inference ([`Machine::start_contracts`]).
+    pub contracts: Option<Box<crate::contracts::Contracts>>,
     /// Rust overrides of the started program's functions, once [`Machine::start_hybrid`] was
     /// called (not part of the machine state).
     pub hybrid: Option<Box<crate::hybrid::Hybrid>>,
@@ -580,6 +582,7 @@ impl Machine {
             exec_watch: None,
             exec_hits: Vec::new(),
             coverage: None,
+            contracts: None,
             hybrid: None,
             return_trap: None,
             isr_watch: None,
@@ -651,6 +654,11 @@ impl Machine {
                 if let Err(exit) = cpu.interrupt(&mut bus, vector) {
                     return Stop::Fault(exit);
                 }
+                if let Some(contracts) = self.contracts.as_deref_mut()
+                    && !self.cpu.protected_mode()
+                {
+                    contracts.hardware_interrupt(&self.cpu.regs);
+                }
                 continue;
             }
             if self.halted {
@@ -672,6 +680,12 @@ impl Machine {
             if self.coverage.is_some() {
                 self.coverage_before();
             }
+            if let Some(contracts) = self.contracts.as_deref_mut()
+                && !self.cpu.protected_mode()
+            {
+                let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+                contracts.before(&self.cpu.regs, &self.mem, linear);
+            }
             let result = if let Some(tracer) = self.tracer.as_deref_mut()
                 && tracer.active(&self.cpu.regs)
             {
@@ -679,10 +693,20 @@ impl Machine {
                 let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
                 let mut bus = crate::capture::TracingBus { inner, log: &mut tracer.log };
                 self.cpu.step(&mut bus)
+            } else if let Some(contracts) = self.contracts.as_deref_mut()
+                && contracts.tracing()
+            {
+                let now = self.cpu.cycles;
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let mut bus = crate::capture::TracingBus { inner, log: &mut contracts.log };
+                self.cpu.step(&mut bus)
             } else {
                 let (cpu, mut bus) = self.split();
                 cpu.step(&mut bus)
             };
+            if let Some(contracts) = self.contracts.as_deref_mut() {
+                contracts.after(&self.cpu.regs);
+            }
             if let Some(coverage) = &mut self.coverage {
                 match result {
                     Ok(()) => coverage.after(self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip)),
@@ -762,6 +786,14 @@ impl Machine {
         let base = (psp + 0x10) << 4;
         let end = (psp + u32::from(self.mem.read_u16(((psp - 1) << 4) + 3))) << 4;
         self.coverage = Some(crate::coverage::Coverage::new(base, end.saturating_sub(base)));
+    }
+
+    /// Starts contract inference ([`crate::contracts`]) for the program the machine started with.
+    pub fn start_contracts(&mut self) {
+        let psp = u32::from(self.dos.psp);
+        let base = (psp + 0x10) << 4;
+        let end = (psp + u32::from(self.mem.read_u16(((psp - 1) << 4) + 3))) << 4;
+        self.contracts = Some(Box::new(crate::contracts::Contracts::new(base, end.saturating_sub(base))));
     }
 
     fn coverage_before(&mut self) {

@@ -56,6 +56,9 @@ options:
   --captures-out FILE  run: write the captured calls there, one per line
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
                      made (JSON, for rec)
+  --contracts FILE   run: infer each called function's contract (registers read and returned,
+                     registers preserved, stack arguments and pops, memory use; JSON, for rec);
+                     with --game, report where an override's convention disagrees
   --save-changes DIR run: afterwards, write the files the program created or changed to DIR
                      (same paths as on C:; the game folder itself is never touched), e.g. what
                      an installer unpacked
@@ -107,6 +110,7 @@ struct Options {
     wav: Option<PathBuf>,
     save_changes: Option<PathBuf>,
     coverage: Option<PathBuf>,
+    contracts: Option<PathBuf>,
     game: Option<String>,
     rust: Vec<String>,
     dual: Vec<String>,
@@ -254,6 +258,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--wav" => options.wav = Some(value(arg)?.into()),
             "--save-changes" => options.save_changes = Some(value(arg)?.into()),
             "--coverage" => options.coverage = Some(value(arg)?.into()),
+            "--contracts" => options.contracts = Some(value(arg)?.into()),
             "--game" => options.game = Some(value(arg)?),
             "--rust" => options.rust.push(value(arg)?),
             "--dual" => options.dual.push(value(arg)?),
@@ -397,6 +402,12 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     if o.coverage.is_some() {
         m.start_coverage();
     }
+    if o.contracts.is_some() {
+        if !o.rust.is_empty() || !o.dual.is_empty() || !o.capture.is_empty() {
+            return Err("--contracts watches the originals: not with --rust, --dual or --capture".into());
+        }
+        m.start_contracts();
+    }
     if let Some(game) = &o.game {
         let overrides = games::overrides(game, &program)?;
         let module = program.rsplit(['\\', '/']).next().unwrap_or(&program).to_ascii_uppercase();
@@ -458,6 +469,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     }
     if let (Some(path), Some(coverage)) = (&o.coverage, &m.coverage) {
         std::fs::write(path, coverage.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if let (Some(path), Some(contracts)) = (&o.contracts, &m.contracts) {
+        std::fs::write(path, contracts.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let summary = Summary::new(&m, &stop);
     if let Some(profile) = &profile {
@@ -561,6 +575,8 @@ struct Summary {
     hybrid_lines: Vec<String>,
     stats_json: String,
     findings_json: String,
+    contract_lines: Vec<String>,
+    contract_notes: Vec<(String, String)>,
 }
 
 impl Summary {
@@ -601,6 +617,11 @@ impl Summary {
             hybrid_lines: m.hybrid.as_deref().map(games::summary_lines).unwrap_or_default(),
             stats_json: m.hybrid.as_deref().map_or("[]".into(), games::stats_json),
             findings_json: m.hybrid.as_deref().map_or("[]".into(), games::findings_json),
+            contract_lines: m.contracts.as_deref().map(games::contract_lines).unwrap_or_default(),
+            contract_notes: match (m.hybrid.as_deref(), m.contracts.as_deref()) {
+                (Some(hybrid), Some(contracts)) => games::contract_notes(hybrid, contracts),
+                _ => Vec::new(),
+            },
         }
     }
 
@@ -632,6 +653,12 @@ impl Summary {
         for line in &self.hybrid_lines {
             println!("{line}");
         }
+        for line in &self.contract_lines {
+            println!("{line}");
+        }
+        for (name, note) in &self.contract_notes {
+            println!("contract  {name}: {note}");
+        }
         if let Some(lines) = m.screen_text() {
             let last = lines.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1);
             if last > 0 {
@@ -650,7 +677,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{}}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}]}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -670,6 +697,11 @@ impl Summary {
             strings(&self.hybrid_lines[..self.hybrid_lines.len().min(1)]),
             self.stats_json,
             self.findings_json,
+            self.contract_notes
+                .iter()
+                .map(|(name, note)| format!(r#"{{"name":{},"note":{}}}"#, json_string(name), json_string(note)))
+                .collect::<Vec<_>>()
+                .join(","),
         )
     }
 }
