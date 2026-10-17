@@ -443,7 +443,8 @@ impl Cpu {
         if changed & cr0::PE != 0 && value & cr0::PE == 0 {
             self.cpl = 0;
         }
-        if changed & (cr0::PG | cr0::PE) != 0 {
+        // WP too: the TLB entries' write permissions depend on it.
+        if changed & (cr0::PG | cr0::PE | cr0::WP) != 0 {
             self.flush_tlb();
         }
         self.cr0 = value;

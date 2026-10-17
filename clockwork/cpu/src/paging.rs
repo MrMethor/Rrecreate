@@ -15,10 +15,11 @@ struct Entry {
     /// Linear page number + 1; 0 marks an empty entry.
     tag: u32,
     frame: u32,
-    writable: bool,
-    user: bool,
-    /// The page's dirty bit is already set in its page table entry.
-    dirty: bool,
+    /// The accesses that may use the entry without a page walk, bit `2 × write + user`: reads
+    /// by the supervisor and (if the page allows it) by user code; writes once the page's dirty
+    /// bit is set, by the supervisor (also to read-only pages unless CR0.WP, whose changes flush
+    /// the TLB) and by user code to writable user pages.
+    allow: u8,
 }
 
 /// Translation cache, direct-mapped by linear page number. Flushed when CR3 is written or
@@ -83,14 +84,10 @@ impl Cpu {
         let page = linear >> 12;
         let slot = page as usize % TLB_ENTRIES;
         let entry = self.tlb.entries[slot];
-        let supervisor_write_ok = self.cr0 & cr0::WP == 0;
-        if entry.tag == page + 1
-            && (!write || entry.dirty)
-            && (!user || entry.user)
-            && (!write || entry.writable || (!user && supervisor_write_ok))
-        {
+        if entry.tag == page + 1 && entry.allow & (1 << (u8::from(write) * 2 + u8::from(user))) != 0 {
             return Ok((entry.frame << 12) | (linear & 0xFFF));
         }
+        let supervisor_write_ok = self.cr0 & cr0::WP == 0;
         let fault = |cpu: &mut Cpu, present: bool| -> Abort {
             cpu.cr2 = linear;
             let code = u32::from(present) | (u32::from(write) << 1) | (u32::from(user) << 2);
@@ -122,8 +119,12 @@ impl Cpu {
             self.wrote(pte_addr);
             write_u32(bus, pte_addr, pte);
         }
-        self.tlb.entries[slot] =
-            Entry { tag: page + 1, frame: pte >> 12, writable, user: user_ok, dirty: pte & 0x40 != 0 };
+        let dirty = pte & 0x40 != 0;
+        let allow = 1
+            | (u8::from(user_ok) << 1)
+            | (u8::from(dirty && (writable || supervisor_write_ok)) << 2)
+            | (u8::from(dirty && writable && user_ok) << 3);
+        self.tlb.entries[slot] = Entry { tag: page + 1, frame: pte >> 12, allow };
         Ok((pte & !0xFFF) | (linear & 0xFFF))
     }
 }
