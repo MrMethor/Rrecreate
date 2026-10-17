@@ -30,6 +30,7 @@ Reference checkout: DOSBox Staging, commit `0fdf977d9c4e41908700d7eb2255142044f8
 | `host/dos/src/cmos.rs` (periodic interrupt) | DOSBox Staging `src/hardware/cmos.cpp` | GPL-2.0-or-later | RTC periodic interrupt: rate decoding, register C acknowledgement, polled flags |
 | `host/dos/src/joystick.rs` | DOSBox Staging `src/hardware/input/joystick.cpp` (timed mode), `src/ints/bios.cpp` (INT 15h AH=84h) | GPL-2.0-or-later | Game port bits, axis timing rates, BIOS joystick results |
 | Dependency `iced-x86` (crates.io, used by `host/dos/src/contracts.rs` and the `rec-host` disassembler) | x86 decoder, encoder and instruction info by the iced project | MIT | Which registers and flags each instruction reads and writes, for contract inference; disassembly |
+| Dependency `pyo3` (crates.io, used by `host/pyhost`) | Rust bindings for Python by the PyO3 project | MIT OR Apache-2.0 | Embedding CPython in `rec-host-py`, the `recreate` module Python overrides use |
 | Dependency `gilrs` (crates.io, used by `host/frontend/src/gamepads.rs`) | Game input library by the gilrs authors | MIT OR Apache-2.0 | Host gamepads as the joysticks in `rec-host play` |
 | `host/dos/src/xms.rs` | DOSBox Staging `src/ints/xms.cpp` | GPL-2.0-or-later | XMS functions, error codes, A20 counting, move rules, hookable entry stub |
 | `host/dos/src/bios.rs` (INT 15h 87h, 88h, E801h) | DOSBox Staging `src/ints/bios.cpp` | GPL-2.0-or-later | Extended memory block move and size queries |

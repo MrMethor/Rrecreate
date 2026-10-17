@@ -419,9 +419,17 @@ pub struct Call<'a> {
     /// SS:SP at entry: the return address is there, the stack arguments above it.
     sp: u16,
     far: bool,
+    /// Image offset of the function this call stands in for.
+    offset: u32,
 }
 
 impl Call<'_> {
+    /// Image offset of the function this call stands in for (one runner can serve several, as
+    /// the Python bridge does).
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+
     /// The `i`th word of stack arguments, counting up from the return address (for cdecl the
     /// first argument; for pascal the last).
     pub fn arg16(&mut self, i: u16) -> u16 {
@@ -705,7 +713,7 @@ impl Machine {
 
     fn run_override(&mut self, o: Override) -> Result<(), String> {
         let (ss, sp) = (self.cpu.regs.ss(), self.cpu.regs.sp());
-        let mut call = Call { m: self, sp, far: o.conv.far };
+        let mut call = Call { m: self, sp, far: o.conv.far, offset: o.offset };
         (o.run)(&mut call).map_err(|e| format!("{} ({:05X}): {e}", o.name, o.offset))?;
         // Code it wrote must not be fetched stale.
         self.cpu.flush_code_cache();

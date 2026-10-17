@@ -27,7 +27,7 @@ pub fn implementation(game: &str) -> String {
 }
 
 /// The module name of `program` (a path): its file name, upper case.
-fn module_of(program: &str) -> String {
+pub fn module_of(program: &str) -> String {
     program.rsplit(['\\', '/']).next().unwrap_or(program).to_ascii_uppercase()
 }
 
@@ -76,22 +76,24 @@ pub fn set_modes(hybrid: &mut Hybrid, list: &[String], mode: Mode) -> Result<(),
 
 /// `rec-host replay --game NAME --program MODULE FILE [--json]`: captured calls against the
 /// overrides, a result per call.
-pub fn cmd_replay(args: &[String]) -> Result<std::process::ExitCode, String> {
-    let (mut game, mut program, mut file, mut json) = (None, None, None, false);
+pub fn cmd_replay(args: &[String], extension: Option<&dyn crate::Extension>) -> Result<std::process::ExitCode, String> {
+    let (mut game, mut python, mut program, mut file, mut json) = (None, None, None, None, false);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--game" => game = Some(args.next().ok_or("--game needs a name")?.clone()),
+            "--python" => python = Some(std::path::PathBuf::from(args.next().ok_or("--python needs a file")?)),
             "--program" => program = Some(args.next().ok_or("--program needs a module")?.clone()),
             "--json" => json = true,
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
             path => file = Some(std::path::PathBuf::from(path)),
         }
     }
-    let game = game.ok_or("replay needs --game")?;
     let program = program.ok_or("replay needs --program")?;
     let file = file.ok_or("replay needs a file of captured calls")?;
-    let overrides = overrides(&game, &program)?;
+    let source = crate::load_source(game.as_deref(), python.as_deref(), &program, extension)?
+        .ok_or("replay needs --game or --python")?;
+    let overrides = source.overrides;
     let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let (mut passed, mut failed, mut skipped) = (0, 0, 0);
     let mut results = Vec::new();
@@ -126,8 +128,8 @@ pub fn cmd_replay(args: &[String]) -> Result<std::process::ExitCode, String> {
             .collect();
         println!(
             r#"{{"passed":{passed},"failed":{failed},"skipped":{skipped},"crate":"{}","implementation":"{}","results":[{}]}}"#,
-            crate_of(&game),
-            implementation(&game),
+            source.crate_name,
+            source.implementation,
             items.join(",")
         );
     } else {
