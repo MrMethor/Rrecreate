@@ -313,6 +313,7 @@ fn int21(m: &mut Machine) {
             }
             m.cpu.regs.set_al(LAST_DRIVE);
         }
+        0x0F..=0x17 | 0x21..=0x24 | 0x27 | 0x28 => fcb_function(m),
         0x19 => m.cpu.regs.set_al(m.dos.drive),
         0x1A => m.dos.dta = (r.ds(), r.dx()),
         0x25 => {
@@ -1190,14 +1191,27 @@ fn fcb_matches(pattern: &[u8; 11], name: &[u8; 11]) -> bool {
 fn find_first(m: &mut Machine) {
     let r = m.cpu.regs;
     let raw = read_asciiz(m, r.ds(), r.dx());
-    let path = match resolve(m, &raw, true) {
-        Ok(Target::Path(path)) => path,
-        Ok(Target::Device(_)) => return fail(m, error::NO_MORE_FILES),
-        Err(code) => return fail(m, code),
+    let result = search_first(m, &raw, r.cl());
+    report(m, result);
+}
+
+fn report(m: &mut Machine, result: Result<(), u16>) {
+    match result {
+        Ok(()) => ok(m),
+        Err(code) => fail(m, code),
+    }
+}
+
+/// FindFirst for `raw` with attribute mask `attr`: the search state and the first match go
+/// into the DTA.
+fn search_first(m: &mut Machine, raw: &[u8], attr: u8) -> Result<(), u16> {
+    let path = match resolve(m, raw, true)? {
+        Target::Path(path) => path,
+        Target::Device(_) => return Err(error::NO_MORE_FILES),
     };
     let dir = vfs::parent_of(&path).to_owned();
     if !m.drive.is_dir(&dir) {
-        return fail(m, error::PATH_NOT_FOUND);
+        return Err(error::PATH_NOT_FOUND);
     }
     let dir_id = match m.dos.search_dirs.iter().position(|d| *d == dir) {
         Some(i) => i,
@@ -1210,23 +1224,24 @@ fn find_first(m: &mut Machine) {
     let pattern = pattern_fcb(vfs::name_of(&path));
     let mut state = vec![3u8];
     state.extend(pattern);
-    state.push(r.cl());
+    state.push(attr);
     state.extend(0u16.to_le_bytes());
     state.extend((dir_id as u16).to_le_bytes());
     write_bytes(m, segment, offset, &state);
     // The volume label (DOSBox `localDrive::FindFirst`): a search for the label alone gets it on
     // any drive (a CD's even when empty), and a hard disk's root search that includes labels
     // gets it first when it matches the pattern.
-    let drive = path_drive(m, &raw);
+    let drive = path_drive(m, raw);
     let cd = Some(drive) == m.dos.cd_drive;
     let root = guest_path(m, drive, vfs::parent_of(&path)).is_empty();
     let label = volume_label(m, drive);
-    if r.cl() == 0x08 && (cd || !label.is_empty())
-        || r.cl() & 0x08 != 0 && !cd && root && fcb_matches(&pattern, &to_fcb(&label))
+    if attr == 0x08 && (cd || !label.is_empty())
+        || attr & 0x08 != 0 && !cd && root && fcb_matches(&pattern, &to_fcb(&label))
     {
-        return found(m, &label, 0x08, 0);
+        found(m, &label, 0x08, 0);
+        return Ok(());
     }
-    find_next(m);
+    search_next(m)
 }
 
 /// Fills the DTA's result fields for a found entry.
@@ -1240,10 +1255,15 @@ fn found(m: &mut Machine, name: &str, attr: u8, size: u32) {
     let mut bytes = name.as_bytes().to_vec();
     bytes.resize(13, 0);
     write_bytes(m, segment, offset.wrapping_add(0x1E), &bytes);
-    ok(m);
 }
 
 fn find_next(m: &mut Machine) {
+    let result = search_next(m);
+    report(m, result);
+}
+
+/// FindNext from the search state in the DTA.
+fn search_next(m: &mut Machine) -> Result<(), u16> {
     let (segment, offset) = m.dos.dta;
     let at = Machine::lin(segment, offset);
     let reserved = m.mem.read_bytes(at, 0x15);
@@ -1252,10 +1272,10 @@ fn find_next(m: &mut Machine) {
     let mut index = u16::from_le_bytes([reserved[13], reserved[14]]);
     let dir_id = usize::from(u16::from_le_bytes([reserved[15], reserved[16]]));
     let Some(dir) = m.dos.search_dirs.get(dir_id).cloned() else {
-        return fail(m, error::NO_MORE_FILES);
+        return Err(error::NO_MORE_FILES);
     };
     if attr == 0x08 {
-        return fail(m, error::NO_MORE_FILES); // only the label matched
+        return Err(error::NO_MORE_FILES); // only the label matched
     }
     let mut entries = m.drive.list(&dir).unwrap_or_default();
     if !dir.is_empty() {
@@ -1277,10 +1297,471 @@ fn find_next(m: &mut Machine) {
         }
         m.mem.write_u16(at + 13, index);
         let (name, size) = (entry.name.clone(), entry.size);
-        return found(m, &name, if entry.is_dir { 0x10 } else { 0x20 }, size);
+        found(m, &name, if entry.is_dir { 0x10 } else { 0x20 }, size);
+        return Ok(());
     }
     m.mem.write_u16(at + 13, index);
-    fail(m, error::NO_MORE_FILES);
+    Err(error::NO_MORE_FILES)
+}
+
+// ---- FCB file functions ----
+//
+// Ported from DOSBox Staging `src/dos/dos_files.cpp` (`DOS_FCBOpen` to `DOS_FCBSetRandomRecord`)
+// and `src/dos/dos_classes.cpp` (`DOS_FCB`) (GPL-2.0-or-later). An open FCB keeps the index of
+// its system file table entry at 1Bh, with no handle in the process's table; reads and writes go
+// to the record its current block and record (or random record) and record size point at, with
+// the DTA as the buffer. Searches keep their state in a hidden DTA, as DOSBox's do. Departures:
+// renames read the new name at 11h of the FCB proper also for extended FCBs (as DOS documents
+// it), take `?` in the new name from the old one and rename every match; deletes collect their
+// matches before deleting.
+
+/// A hidden DTA for FCB searches (DOSBox `dos.tables.tempdta`), in the free DOS memory below
+/// the XMS entry.
+const FCB_SEARCH_DTA: (u16, u16) = (0x00B0, 0);
+
+/// Offsets in an FCB (after an extended FCB's 7-byte header).
+mod fcb {
+    pub const CURRENT_BLOCK: u32 = 0x0C;
+    pub const RECORD_SIZE: u32 = 0x0E;
+    pub const FILE_SIZE: u32 = 0x10;
+    pub const DATE: u32 = 0x14;
+    pub const TIME: u32 = 0x16;
+    pub const FILE: u32 = 0x1B;
+    pub const CURRENT_RECORD: u32 = 0x20;
+    pub const RANDOM_RECORD: u32 = 0x21;
+    /// AL results of the read and write functions.
+    pub const NO_DATA: u8 = 1;
+    pub const PARTIAL: u8 = 3;
+}
+
+/// The FCB at `segment:offset`: where its normal part starts, and an extended FCB's attribute.
+fn fcb_at(m: &Machine, segment: u16, offset: u16) -> (u32, Option<u8>) {
+    let at = Machine::lin(segment, offset);
+    if m.mem.read_u8(at) == 0xFF { (at + 7, Some(m.mem.read_u8(at + 6))) } else { (at, None) }
+}
+
+/// The FCB's drive (0 = A:); drive byte 0 means the current drive.
+fn fcb_drive(m: &Machine, at: u32) -> u8 {
+    match m.mem.read_u8(at) {
+        0 => m.dos.drive,
+        drive => drive - 1,
+    }
+}
+
+/// The FCB's name as a path, `D:NAME.EXT` without the padding.
+fn fcb_name(m: &Machine, at: u32) -> Vec<u8> {
+    let field = m.mem.read_bytes(at + 1, 11);
+    let trimmed = |part: &[u8]| part[..part.iter().rposition(|&b| b != b' ').map_or(0, |i| i + 1)].to_vec();
+    let mut name = vec![b'A' + fcb_drive(m, at), b':'];
+    name.extend(trimmed(&field[..8]));
+    let ext = trimmed(&field[8..]);
+    if !ext.is_empty() {
+        name.push(b'.');
+        name.extend(ext);
+    }
+    name
+}
+
+/// The 11-byte padded name of a directory entry name (DOSBox `DTAExtendName`).
+fn padded_name(name: &str) -> [u8; 11] {
+    let mut field = [b' '; 11];
+    let (base, ext) = name.split_once('.').unwrap_or((name, ""));
+    for (slot, b) in field[..8].iter_mut().zip(base.bytes()) {
+        *slot = b;
+    }
+    for (slot, b) in field[8..].iter_mut().zip(ext.bytes()) {
+        *slot = b;
+    }
+    field
+}
+
+/// A system file table entry for `handle`, with no process handle (an FCB's).
+fn open_fcb_file(m: &mut Machine, handle: Handle) -> Option<usize> {
+    let index = m.dos.files.iter().position(Option::is_none)?;
+    m.dos.files[index] = Some(OpenFile { handle, refs: 1, inherit: false });
+    Some(index)
+}
+
+/// DOSBox `DOS_FCB::FileOpen`: the FCB now refers to file `index` (the drive byte made
+/// explicit, block 0, 128-byte records, the file's size and time).
+fn fill_open_fcb(m: &mut Machine, at: u32, index: usize) {
+    let drive = fcb_drive(m, at);
+    let size = match &m.dos.files[index] {
+        Some(OpenFile { handle: Handle::File { path, .. }, .. }) => m.drive.file(path).map_or(0, <[u8]>::len),
+        _ => 0,
+    };
+    m.mem.write_u8(at, drive + 1);
+    m.mem.write_u8(at + fcb::FILE, index as u8);
+    m.mem.write_u16(at + fcb::CURRENT_BLOCK, 0);
+    m.mem.write_u16(at + fcb::RECORD_SIZE, 128);
+    m.mem.write_u32(at + fcb::FILE_SIZE, size as u32);
+    m.mem.write_u16(at + fcb::TIME, FILE_TIME);
+    m.mem.write_u16(at + fcb::DATE, FILE_DATE);
+}
+
+/// AH=0Fh. A name with wildcards opens the first match.
+fn fcb_open(m: &mut Machine, segment: u16, offset: u16) -> bool {
+    let (at, _) = fcb_at(m, segment, offset);
+    let mut name = fcb_name(m, at);
+    if name.iter().any(|&b| b == b'?' || b == b'*') {
+        if !fcb_find(m, segment, offset, true, false) {
+            return false;
+        }
+        let found = read_asciiz(m, FCB_SEARCH_DTA.0, FCB_SEARCH_DTA.1 + 0x1E);
+        name.truncate(2);
+        name.extend(found);
+    }
+    let drive = fcb_drive(m, at);
+    let handle = match resolve(m, &name, false) {
+        Ok(Target::Device(device)) => device_handle(device),
+        Ok(Target::Path(path)) if m.drive.is_file(&path) => {
+            Handle::File { path, pos: 0, write: Some(drive) != m.dos.cd_drive, drive }
+        }
+        _ => return false,
+    };
+    match open_fcb_file(m, handle) {
+        Some(index) => {
+            fill_open_fcb(m, at, index);
+            true
+        }
+        None => false,
+    }
+}
+
+/// AH=16h: creates or truncates the file.
+fn fcb_create(m: &mut Machine, segment: u16, offset: u16) -> bool {
+    let (at, _) = fcb_at(m, segment, offset);
+    let name = fcb_name(m, at);
+    let drive = fcb_drive(m, at);
+    let handle = match resolve(m, &name, false) {
+        Ok(Target::Device(device)) => device_handle(device),
+        Ok(Target::Path(path)) => {
+            if Some(drive) == m.dos.cd_drive || !m.drive.parent_exists(&path) || m.drive.is_dir(&path) {
+                return false;
+            }
+            if !m.dos.files.iter().any(Option::is_none) {
+                return false;
+            }
+            m.drive.create(&path);
+            Handle::File { path, pos: 0, write: true, drive }
+        }
+        Err(_) => return false,
+    };
+    match open_fcb_file(m, handle) {
+        Some(index) => {
+            fill_open_fcb(m, at, index);
+            true
+        }
+        None => false,
+    }
+}
+
+/// AH=10h.
+fn fcb_close(m: &mut Machine, segment: u16, offset: u16) -> bool {
+    let (at, _) = fcb_at(m, segment, offset);
+    let index = m.mem.read_u8(at + fcb::FILE);
+    // DOSBox's validity check (for Oubliette): a name or a file.
+    if m.mem.read_u8(at + 1) == 0 && index == 0 {
+        return false;
+    }
+    m.mem.write_u8(at + fcb::FILE, 0xFF);
+    if m.dos.files.get(usize::from(index)).is_some_and(Option::is_some) {
+        release_file(m, usize::from(index));
+    }
+    true
+}
+
+/// AH=11h and 12h: the next match of the FCB's name (wildcards allowed) goes into the DTA as an
+/// FCB: the drive and the 32-byte directory entry, extended if the search FCB is. `report` also
+/// writes it there (open and delete only want the hidden DTA's result).
+fn fcb_find(m: &mut Machine, segment: u16, offset: u16, first: bool, report: bool) -> bool {
+    let (at, attr) = fcb_at(m, segment, offset);
+    let dta = m.dos.dta;
+    m.dos.dta = FCB_SEARCH_DTA;
+    let result = if first {
+        let name = fcb_name(m, at);
+        search_first(m, &name, attr.unwrap_or(0x20))
+    } else {
+        search_next(m)
+    };
+    m.dos.dta = dta;
+    if result.is_err() {
+        return false;
+    }
+    if report {
+        let search = Machine::lin(FCB_SEARCH_DTA.0, FCB_SEARCH_DTA.1);
+        let name = String::from_utf8_lossy(&read_asciiz(m, FCB_SEARCH_DTA.0, FCB_SEARCH_DTA.1 + 0x1E)).into_owned();
+        let (found_attr, time, date, size) = (
+            m.mem.read_u8(search + 0x15),
+            m.mem.read_u16(search + 0x16),
+            m.mem.read_u16(search + 0x18),
+            m.mem.read_u32(search + 0x1A),
+        );
+        let out = Machine::lin(dta.0, dta.1);
+        let header = if attr.is_some() { 7 } else { 0 };
+        for i in 0..33 + header {
+            m.mem.write_u8(out + i, 0);
+        }
+        if let Some(attr) = attr {
+            m.mem.write_u8(out, 0xFF);
+            m.mem.write_u8(out + 6, attr);
+        }
+        let entry = out + header;
+        m.mem.write_u8(entry, fcb_drive(m, at) + 1);
+        m.mem.load(entry + 1, &padded_name(&name));
+        m.mem.write_u8(entry + 0x0C, found_attr);
+        m.mem.write_u16(entry + 0x17, time);
+        m.mem.write_u16(entry + 0x19, date);
+        m.mem.write_u32(entry + 0x1D, size);
+    }
+    true
+}
+
+/// The paths of every file matching the FCB's name.
+fn fcb_matches_all(m: &mut Machine, segment: u16, offset: u16) -> Vec<String> {
+    let (at, _) = fcb_at(m, segment, offset);
+    let mut names = Vec::new();
+    let mut more = fcb_find(m, segment, offset, true, false);
+    while more {
+        let name = read_asciiz(m, FCB_SEARCH_DTA.0, FCB_SEARCH_DTA.1 + 0x1E);
+        let mut path = vec![b'A' + fcb_drive(m, at), b':'];
+        path.extend(name);
+        if let Ok(Target::Path(path)) = resolve(m, &path, false)
+            && m.drive.is_file(&path)
+        {
+            names.push(path);
+        }
+        more = fcb_find(m, segment, offset, false, false);
+    }
+    names
+}
+
+/// AH=13h: deletes every match; true if any was deleted.
+fn fcb_delete(m: &mut Machine, segment: u16, offset: u16) -> bool {
+    let (at, _) = fcb_at(m, segment, offset);
+    if Some(fcb_drive(m, at)) == m.dos.cd_drive {
+        return false;
+    }
+    let mut deleted = false;
+    for path in fcb_matches_all(m, segment, offset) {
+        deleted |= m.drive.remove_file(&path);
+    }
+    deleted
+}
+
+/// AH=17h: renames every match of the name at 01h to the name at 11h, where `?` keeps the old
+/// name's character. Files open under the old name are closed first, as DOSBox does.
+fn fcb_rename(m: &mut Machine, segment: u16, offset: u16) -> bool {
+    let (at, _) = fcb_at(m, segment, offset);
+    let drive = fcb_drive(m, at);
+    if Some(drive) == m.dos.cd_drive {
+        return false;
+    }
+    let template = m.mem.read_bytes(at + 0x11, 11);
+    let mut renamed = false;
+    for from in fcb_matches_all(m, segment, offset) {
+        let old = padded_name(vfs::name_of(&from));
+        let new: Vec<u8> = template.iter().zip(old).map(|(&t, o)| if t == b'?' { o } else { t }).collect();
+        let trimmed = |part: &[u8]| String::from_utf8_lossy(part).trim_end().to_owned();
+        let (base, ext) = (trimmed(&new[..8]), trimmed(&new[8..]));
+        let name = if ext.is_empty() { base } else { format!("{base}.{ext}") };
+        let to = vfs::join(vfs::parent_of(&from), &name);
+        for file in m.dos.files.iter_mut() {
+            if matches!(file, Some(OpenFile { handle: Handle::File { path, .. }, .. }) if *path == from) {
+                *file = None;
+            }
+        }
+        renamed |= !m.drive.is_file(&to) && m.drive.rename_file(&from, &to);
+    }
+    renamed
+}
+
+/// The FCB's record size (0 means 128, which is stored) and its file, reopened by name if it was
+/// closed (DOSBox's "Reopened closed FCB").
+fn fcb_file(m: &mut Machine, segment: u16, offset: u16, at: u32) -> Option<(Handle, u32)> {
+    let mut index = m.mem.read_u8(at + fcb::FILE);
+    let mut size = m.mem.read_u16(at + fcb::RECORD_SIZE);
+    if index == 0xFF && size != 0 {
+        if !fcb_open(m, segment, offset) {
+            return None;
+        }
+        index = m.mem.read_u8(at + fcb::FILE);
+        size = m.mem.read_u16(at + fcb::RECORD_SIZE);
+    }
+    if size == 0 {
+        size = 128;
+        m.mem.write_u16(at + fcb::RECORD_SIZE, size);
+    }
+    let handle = m.dos.files.get(usize::from(index))?.as_ref()?.handle.clone();
+    Some((handle, u32::from(size)))
+}
+
+/// The byte position of the FCB's current record.
+fn fcb_position(m: &Machine, at: u32, record_size: u32) -> u32 {
+    let block = u32::from(m.mem.read_u16(at + fcb::CURRENT_BLOCK));
+    let record = u32::from(m.mem.read_u8(at + fcb::CURRENT_RECORD));
+    (block * 128 + record).wrapping_mul(record_size)
+}
+
+fn fcb_next_record(m: &mut Machine, at: u32) {
+    let mut block = m.mem.read_u16(at + fcb::CURRENT_BLOCK);
+    let mut record = m.mem.read_u8(at + fcb::CURRENT_RECORD) + 1;
+    if record > 127 {
+        block = block.wrapping_add(1);
+        record = 0;
+    }
+    m.mem.write_u16(at + fcb::CURRENT_BLOCK, block);
+    m.mem.write_u8(at + fcb::CURRENT_RECORD, record);
+}
+
+/// Reads the current record into DTA record `slot` (DOSBox `DOS_FCBRead`): 0 read, 1 nothing
+/// left, 3 a partial record (zero-padded).
+fn fcb_read(m: &mut Machine, segment: u16, offset: u16, slot: u32) -> u8 {
+    let (at, _) = fcb_at(m, segment, offset);
+    let Some((handle, record_size)) = fcb_file(m, segment, offset, at) else { return fcb::NO_DATA };
+    let Handle::File { path, .. } = handle else { return fcb::NO_DATA };
+    let position = fcb_position(m, at, record_size) as usize;
+    let data = m.drive.file(&path).unwrap_or(&[]);
+    let chunk = data.get(position..).unwrap_or(&[]);
+    let read = chunk.len().min(record_size as usize);
+    if read == 0 {
+        return fcb::NO_DATA;
+    }
+    let mut record = chunk[..read].to_vec();
+    record.resize(record_size as usize, 0);
+    let dta = Machine::lin(m.dos.dta.0, m.dos.dta.1) + slot * record_size;
+    for (i, &b) in record.iter().enumerate() {
+        m.mem.write_u8(dta + i as u32, b);
+    }
+    fcb_next_record(m, at);
+    if read == record_size as usize { 0 } else { fcb::PARTIAL }
+}
+
+/// Writes DTA record `slot` to the current record (DOSBox `DOS_FCBWrite`): 0 written, 1 failed.
+fn fcb_write(m: &mut Machine, segment: u16, offset: u16, slot: u32) -> u8 {
+    let (at, _) = fcb_at(m, segment, offset);
+    let Some((handle, record_size)) = fcb_file(m, segment, offset, at) else { return fcb::NO_DATA };
+    let dta = Machine::lin(m.dos.dta.0, m.dos.dta.1) + slot * record_size;
+    let data = m.mem.read_bytes(dta, record_size as usize);
+    let position = fcb_position(m, at, record_size);
+    match handle {
+        Handle::File { write: false, .. } => return fcb::NO_DATA,
+        Handle::File { path, .. } => {
+            m.drive.write_at(&path, position as usize, &data);
+        }
+        Handle::Console => data.iter().for_each(|&b| bios::teletype(m, b)),
+        Handle::Null => {}
+    }
+    let size = m.mem.read_u32(at + fcb::FILE_SIZE).max(position + record_size);
+    m.mem.write_u32(at + fcb::FILE_SIZE, size);
+    m.mem.write_u16(at + fcb::DATE, FILE_DATE);
+    m.mem.write_u16(at + fcb::TIME, FILE_TIME);
+    fcb_next_record(m, at);
+    0
+}
+
+/// A block write of no records sets the file's size to the current record's position (DOSBox
+/// `DOS_FCBIncreaseSize`).
+fn fcb_set_size(m: &mut Machine, segment: u16, offset: u16) -> u8 {
+    let (at, _) = fcb_at(m, segment, offset);
+    let Some((handle, record_size)) = fcb_file(m, segment, offset, at) else { return fcb::NO_DATA };
+    let position = fcb_position(m, at, record_size);
+    match handle {
+        Handle::File { write: false, .. } => return fcb::NO_DATA,
+        Handle::File { path, .. } => {
+            m.drive.set_len(&path, position as usize);
+        }
+        _ => {}
+    }
+    let size = m.mem.read_u32(at + fcb::FILE_SIZE).max(position);
+    m.mem.write_u32(at + fcb::FILE_SIZE, size);
+    0
+}
+
+/// AH=21h, 22h (`single`: one record; the current record ends up at the random record) and 27h,
+/// 28h (CX records; the random record ends up after them) (DOSBox `DOS_FCBRandomRead`,
+/// `DOS_FCBRandomWrite`). Returns AL and the records done.
+fn fcb_random(m: &mut Machine, segment: u16, offset: u16, count: u16, single: bool, write: bool) -> (u8, u16) {
+    let (at, _) = fcb_at(m, segment, offset);
+    let random = m.mem.read_u32(at + fcb::RANDOM_RECORD);
+    m.mem.write_u16(at + fcb::CURRENT_BLOCK, (random / 128) as u16);
+    m.mem.write_u8(at + fcb::CURRENT_RECORD, (random & 127) as u8);
+    let saved = (m.mem.read_u16(at + fcb::CURRENT_BLOCK), m.mem.read_u8(at + fcb::CURRENT_RECORD));
+    let (mut error, mut done) = (0, 0);
+    if write && count == 0 {
+        error = fcb_set_size(m, segment, offset);
+    } else {
+        while done < count {
+            error = if write {
+                fcb_write(m, segment, offset, u32::from(done))
+            } else {
+                fcb_read(m, segment, offset, u32::from(done))
+            };
+            if error != 0 {
+                break;
+            }
+            done += 1;
+        }
+        if !write && error == fcb::PARTIAL {
+            done += 1; // a partial record counts
+        }
+    }
+    let (block, record) = (m.mem.read_u16(at + fcb::CURRENT_BLOCK), m.mem.read_u8(at + fcb::CURRENT_RECORD));
+    if single {
+        m.mem.write_u16(at + fcb::CURRENT_BLOCK, saved.0);
+        m.mem.write_u8(at + fcb::CURRENT_RECORD, saved.1);
+    } else {
+        m.mem.write_u32(at + fcb::RANDOM_RECORD, u32::from(block) * 128 + u32::from(record));
+    }
+    (error, done)
+}
+
+/// AH=23h: the file's size in records (rounded up) into the random record.
+fn fcb_file_size(m: &mut Machine, segment: u16, offset: u16) -> bool {
+    let (at, _) = fcb_at(m, segment, offset);
+    let name = fcb_name(m, at);
+    let Ok(Target::Path(path)) = resolve(m, &name, false) else { return false };
+    let Some(size) = m.drive.file(&path).map(<[u8]>::len) else { return false };
+    let record_size = match m.mem.read_u16(at + fcb::RECORD_SIZE) {
+        0 => 128,
+        size => usize::from(size),
+    };
+    m.mem.write_u32(at + fcb::RANDOM_RECORD, size.div_ceil(record_size) as u32);
+    true
+}
+
+/// INT 21h AH=0Fh-17h, 21h-24h, 27h, 28h: the FCB at DS:DX. Results are in AL (and CX for the
+/// block functions); flags are left alone.
+fn fcb_function(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let (segment, offset) = (r.ds(), r.dx());
+    let flag = |success: bool| if success { 0x00 } else { 0xFF };
+    let al = match r.ah() {
+        0x0F => flag(fcb_open(m, segment, offset)),
+        0x10 => flag(fcb_close(m, segment, offset)),
+        0x11 => flag(fcb_find(m, segment, offset, true, true)),
+        0x12 => flag(fcb_find(m, segment, offset, false, true)),
+        0x13 => flag(fcb_delete(m, segment, offset)),
+        0x14 => fcb_read(m, segment, offset, 0),
+        0x15 => fcb_write(m, segment, offset, 0),
+        0x16 => flag(fcb_create(m, segment, offset)),
+        0x17 => flag(fcb_rename(m, segment, offset)),
+        0x21 | 0x22 => fcb_random(m, segment, offset, 1, true, r.ah() == 0x22).0,
+        0x23 => flag(fcb_file_size(m, segment, offset)),
+        0x24 => {
+            let (at, _) = fcb_at(m, segment, offset);
+            let block = u32::from(m.mem.read_u16(at + fcb::CURRENT_BLOCK));
+            let record = u32::from(m.mem.read_u8(at + fcb::CURRENT_RECORD));
+            m.mem.write_u32(at + fcb::RANDOM_RECORD, block * 128 + record);
+            return;
+        }
+        _ => {
+            let (al, done) = fcb_random(m, segment, offset, r.cx(), false, r.ah() == 0x28);
+            m.cpu.regs.set_cx(done);
+            al
+        }
+    };
+    m.cpu.regs.set_al(al);
 }
 
 // ---- memory control blocks ----

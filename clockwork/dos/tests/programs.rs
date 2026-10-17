@@ -592,14 +592,14 @@ fn unimplemented_instruction_stops_with_a_fault() {
 fn unsupported_services_are_reported_once() {
     let program = com(|a| {
         for _ in 0..3 {
-            a.mov(ah, 0x0F)?; // FCB open: not implemented
+            a.mov(ah, 0x5F)?; // network redirection: not implemented
             a.int(0x21)?;
         }
         exit(a, 0)
     });
     let mut m = boot(&[("U.COM", &program)], "U.COM");
     assert_eq!(m.run(SECOND), Stop::Exited(0));
-    assert_eq!(m.diagnostics.iter().collect::<Vec<_>>(), ["INT 21h AH=0Fh is not implemented"]);
+    assert_eq!(m.diagnostics.iter().collect::<Vec<_>>(), ["INT 21h AH=5Fh is not implemented"]);
 }
 
 #[test]
@@ -2518,4 +2518,115 @@ fn no_joystick_reads_ff_and_the_bios_says_so() {
     assert_eq!(none[0], 0, "the axis bit never clears: the loop ends when CX wraps");
     assert_eq!(none[3] & 1, 1, "CF set: no joystick");
     assert_eq!(none[4], 0x00F0);
+}
+
+// --- FCB file functions -----------------------------------------------------------------------
+
+/// `mov ah, function; int 21h` with DX = the FCB at `info`, storing AX in result `slot`.
+fn fcb_call(a: &mut Asm, function: u8, slot: Option<u32>) -> Result<(), IcedError> {
+    let fcb = a.addr("info");
+    a.mov(dx, fcb)?;
+    a.mov(ah, u32::from(function))?;
+    a.int(0x21)?;
+    match slot {
+        Some(slot) => store(a, slot, ax),
+        None => Ok(()),
+    }
+}
+
+/// Parses the ASCIIZ name at `name` into the FCB at `info` + `at` (INT 21h AH=29h).
+fn fcb_parse(a: &mut Asm, name: &'static str, at: u32) -> Result<(), IcedError> {
+    a.push(cs)?;
+    a.pop(es)?;
+    let (source, fcb) = (a.addr(name), a.addr("info"));
+    a.mov(si, source)?;
+    a.mov(di, fcb + at as i32)?;
+    a.mov(ax, 0x2900)?;
+    a.int(0x21)
+}
+
+#[test]
+fn fcb_create_write_read_and_rename() {
+    let program = com(|a| {
+        fcb_parse(a, "name", 0)?;
+        let (buf, info) = (a.addr("buf") as u32, a.addr("info") as u32);
+        a.mov(dx, buf as i32)?;
+        a.mov(ah, 0x1A)?; // the DTA is the record buffer
+        a.int(0x21)?;
+        fcb_call(a, 0x16, Some(0))?; // create
+        a.mov(word_ptr(info + 0x0E), 4)?; // 4-byte records
+        a.mov(dword_ptr(buf), u32::from_le_bytes(*b"ABCD"))?;
+        fcb_call(a, 0x15, Some(1))?; // sequential write
+        a.mov(dword_ptr(buf), u32::from_le_bytes(*b"EFGH"))?;
+        fcb_call(a, 0x15, None)?;
+        fcb_call(a, 0x10, Some(2))?; // close
+        fcb_call(a, 0x0F, Some(3))?; // open (128-byte records again)
+        a.mov(word_ptr(info + 0x0E), 4)?;
+        fcb_call(a, 0x23, None)?; // file size: 2 records into the random record
+        a.mov(eax, dword_ptr(info + 0x21))?;
+        a.mov(dword_ptr(buf + 0x100), eax)?;
+        a.mov(dword_ptr(info + 0x21), 1)?;
+        fcb_call(a, 0x21, Some(4))?; // random read of record 1
+        a.mov(eax, dword_ptr(buf))?;
+        a.mov(dword_ptr(buf + 0x104), eax)?;
+        a.mov(dword_ptr(info + 0x21), 0)?;
+        a.mov(cx, 3)?;
+        fcb_call(a, 0x27, Some(5))?; // block read of 3 records: 2 there
+        store(a, 6, cx)?;
+        fcb_call(a, 0x10, None)?;
+        fcb_parse(a, "renamed", 0x10)?; // the new name at 11h
+        fcb_call(a, 0x17, Some(7))?;
+        hold(a)?;
+        a.here("name")?;
+        a.db(b"TEST.DAT\0")?;
+        a.here("renamed")?;
+        a.db(b"RENAMED.DAT\0")?;
+        vbe_data_area(a)
+    });
+    let mut m = boot(&[("F.COM", &program)], "F.COM");
+    m.run(SECOND / 10);
+    let VbeData { results, info, buf } = vbe_data(&m, &program);
+    let result = |i: u32| m.mem.read_u8(results + 2 * i);
+    assert_eq!([result(0), result(1), result(2), result(3)], [0, 0, 0, 0], "create, write, close, open");
+    assert_eq!(m.mem.read_u32(buf + 0x100), 2, "file size in 4-byte records");
+    assert_eq!((result(4), m.mem.read_bytes(buf + 0x104, 4)), (0, b"EFGH".to_vec()), "random read");
+    assert_eq!((result(5), m.mem.read_u16(results + 12)), (1, 2), "block read: 2 records, then no data");
+    assert_eq!(m.mem.read_bytes(buf, 8), b"ABCDEFGH");
+    assert_eq!(m.mem.read_u32(info + 0x21), 2, "the random record follows the block read");
+    assert_eq!(result(7), 0, "rename");
+    assert_eq!(m.drive.file("RENAMED.DAT"), Some(&b"ABCDEFGH"[..]));
+    assert!(!m.drive.is_file("TEST.DAT"));
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn fcb_search_and_delete_with_wildcards() {
+    let program = com(|a| {
+        fcb_parse(a, "pattern", 0)?;
+        let buf = a.addr("buf");
+        a.mov(dx, buf)?;
+        a.mov(ah, 0x1A)?;
+        a.int(0x21)?;
+        fcb_call(a, 0x11, Some(0))?; // find first: A.TXT
+        a.mov(eax, dword_ptr(buf as u32 + 1))?;
+        a.mov(dword_ptr(buf as u32 + 0x100), eax)?;
+        fcb_call(a, 0x12, Some(1))?; // B.TXT
+        a.mov(eax, dword_ptr(buf as u32 + 1))?;
+        a.mov(dword_ptr(buf as u32 + 0x104), eax)?;
+        fcb_call(a, 0x12, Some(2))?; // no more
+        fcb_call(a, 0x13, Some(3))?; // delete both
+        hold(a)?;
+        a.here("pattern")?;
+        a.db(b"*.TXT\0")?;
+        vbe_data_area(a)
+    });
+    let mut m = boot(&[("S.COM", &program), ("A.TXT", b"1"), ("B.TXT", b"22"), ("C.DAT", b"333")], "S.COM");
+    m.run(SECOND / 10);
+    let VbeData { results, buf, .. } = vbe_data(&m, &program);
+    let result = |i: u32| m.mem.read_u8(results + 2 * i);
+    assert_eq!([result(0), result(1), result(2), result(3)], [0, 0, 0xFF, 0]);
+    assert_eq!(m.mem.read_bytes(buf + 0x100, 4), b"A   ", "the DTA holds an FCB with the name padded");
+    assert_eq!(m.mem.read_bytes(buf + 0x104, 4), b"B   ");
+    assert_eq!(m.mem.read_u32(buf + 0x1D), 2, "B.TXT's size in the directory entry");
+    assert!(!m.drive.is_file("A.TXT") && !m.drive.is_file("B.TXT") && m.drive.is_file("C.DAT"));
 }
