@@ -6,6 +6,7 @@
 
 mod gamepads;
 mod hotspots;
+mod input_script;
 mod live_audio;
 mod play;
 mod session;
@@ -30,6 +31,11 @@ options:
   --seconds N        emulated seconds to run (run: default 10; play: until the window closes)
   --type TEXT        run: type TEXT on the keyboard (\\r = Enter, \\e = Esc)
   --type-at MS       run: when typing starts, in emulated ms (default 500)
+  --input MS:KEYS    run: keys and clicks from emulated time MS (repeatable): text, {enter} {esc}
+                     {tab} {bksp} {space} {up} {down} {left} {right} {home} {end} {pgup} {pgdn}
+                     {ins} {del} {f1}..{f12}, {click X Y} {rclick X Y} {move X Y} (mouse driver
+                     coordinates), {wait MS}; keys 120 ms apart
+  --input-file FILE  run: --input lines from FILE (# starts a comment)
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final screen as a BMP
   --wav FILE         run: save the sound (OPL and Sound Blaster) as a WAV file
@@ -74,6 +80,7 @@ struct Options {
     ips: Option<u64>,
     seconds: Option<f64>,
     type_text: Option<String>,
+    inputs: Vec<input_script::Script>,
     type_at_ms: u64,
     replay: Option<PathBuf>,
     screenshot: Option<PathBuf>,
@@ -138,6 +145,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--seconds" => options.seconds = Some(value(arg)?.parse().map_err(|_| "--seconds needs a number")?),
             "--type" => options.type_text = Some(value(arg)?.replace("\\r", "\r").replace("\\e", "\x1b")),
             "--type-at" => options.type_at_ms = value(arg)?.parse().map_err(|_| "--type-at needs milliseconds")?,
+            "--input" => options.inputs.push(input_script::Script::parse(&value(arg)?)?),
+            "--input-file" => {
+                let path = value(arg)?;
+                let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+                for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+                    options.inputs.push(input_script::Script::parse(line)?);
+                }
+            }
             "--replay" => options.replay = Some(value(arg)?.into()),
             "--screenshot" => options.screenshot = Some(value(arg)?.into()),
             "--wav" => options.wav = Some(value(arg)?.into()),
@@ -284,6 +299,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     if let Some(text) = &o.type_text {
         let start = m.cycle_at_ms(o.type_at_ms);
         m.type_text(start, text, m.cycle_at_ms(60));
+    }
+    for script in &o.inputs {
+        script.schedule(&mut m);
     }
     if o.trace.is_some() {
         m.service_trace = Some(Vec::new());

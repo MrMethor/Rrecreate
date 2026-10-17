@@ -1,0 +1,47 @@
+# TES Daggerfall: new character (Nord mage, fast start) to Privateer's Hold (screen coordinates)
+41000:s
+56000:{click 145 45}
+63000:{click 128 130}
+71000:{click 128 104}
+79000:{click 160 85}
+87000:{click 100 66}
+95000:{enter}
+103000:{click 128 126}
+111000:{click 160 85}
+127000:{click 160 100}
+133000:tester{enter}
+143000:{click 283 183}
+151000:{click 50 25}
+152000:{click 50 25}
+153000:{click 50 25}
+154000:{click 50 25}
+155000:{click 50 25}
+156000:{click 50 25}
+158000:{click 283 183}
+167000:{click 235 36}
+167900:{click 235 36}
+168800:{click 235 36}
+169700:{click 235 36}
+170600:{click 235 36}
+171500:{click 235 36}
+172400:{click 235 85}
+173300:{click 235 85}
+174200:{click 235 85}
+175100:{click 235 85}
+176000:{click 235 85}
+176900:{click 235 85}
+177800:{click 235 134}
+178700:{click 235 134}
+179600:{click 235 134}
+180500:{click 235 134}
+181400:{click 235 134}
+182300:{click 235 134}
+184200:{click 283 183}
+197000:{click 283 183}
+205000:{click 283 183}
+276000:{esc}
+282000:{esc}
+288000:{esc}
+294000:{esc}
+321000:{click 160 100}
+341000:{click 196 118}
