@@ -5,6 +5,7 @@
 //! --replay` reproduces bit for bit.
 
 mod gamepads;
+mod games;
 mod hotspots;
 mod input_script;
 mod live_audio;
@@ -42,6 +43,11 @@ options:
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final screen as a BMP
   --wav FILE         run: save the sound (OPL and Sound Blaster) as a WAV file
+  --game NAME        run: load the Rust overrides game crate NAME has for the program (testbins)
+  --rust LIST        run: these overrides (names or image offsets, comma-separated, or all) run
+                     in Rust instead of the original
+  --dual LIST        run: these overrides are checked against the original at every call (up
+                     to 100 each): differences are reported as findings
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
                      made (JSON, for rec)
   --save-changes DIR run: afterwards, write the files the program created or changed to DIR
@@ -95,6 +101,9 @@ struct Options {
     wav: Option<PathBuf>,
     save_changes: Option<PathBuf>,
     coverage: Option<PathBuf>,
+    game: Option<String>,
+    rust: Vec<String>,
+    dual: Vec<String>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
     record: Option<PathBuf>,
@@ -236,6 +245,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--wav" => options.wav = Some(value(arg)?.into()),
             "--save-changes" => options.save_changes = Some(value(arg)?.into()),
             "--coverage" => options.coverage = Some(value(arg)?.into()),
+            "--game" => options.game = Some(value(arg)?),
+            "--rust" => options.rust.push(value(arg)?),
+            "--dual" => options.dual.push(value(arg)?),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
             "--trace" => options.trace = Some(value(arg)?.into()),
@@ -373,6 +385,15 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     let mut m = boot(o, &program, &args, ips)?;
     if o.coverage.is_some() {
         m.start_coverage();
+    }
+    if let Some(game) = &o.game {
+        let overrides = games::overrides(game, &program)?;
+        let module = program.rsplit(['\\', '/']).next().unwrap_or(&program).to_ascii_uppercase();
+        let hybrid = m.start_hybrid(&module, overrides);
+        games::set_modes(hybrid, &o.rust, dos::hybrid::Mode::Rust)?;
+        games::set_modes(hybrid, &o.dual, dos::hybrid::Mode::Dual)?;
+    } else if !o.rust.is_empty() || !o.dual.is_empty() {
+        return Err("--rust and --dual need --game".into());
     }
     if let Some(session) = &session {
         for &(cycle, input) in &session.inputs {
@@ -521,6 +542,8 @@ struct Summary {
     console_hash: u64,
     issues: Vec<String>,
     files_changed: Vec<String>,
+    hybrid_lines: Vec<String>,
+    findings_json: String,
 }
 
 impl Summary {
@@ -531,6 +554,8 @@ impl Summary {
             Stop::WaitingForInput => "waiting for keyboard input".into(),
             Stop::Halted => "halted with interrupts disabled".into(),
             Stop::Fault(exit) => format!("fault: {exit}"),
+            Stop::Override(message) => format!("override failed: {message}"),
+            Stop::Returned => "returned".into(),
         };
         let mut issues: Vec<String> = m.diagnostics.iter().cloned().collect();
         if !m.devices.unknown_ports.is_empty() {
@@ -556,6 +581,8 @@ impl Summary {
             console_hash: fnv64(&m.console),
             issues,
             files_changed: m.drive.changed().map(String::from).collect(),
+            hybrid_lines: m.hybrid.as_deref().map(games::summary_lines).unwrap_or_default(),
+            findings_json: m.hybrid.as_deref().map_or("[]".into(), games::findings_json),
         }
     }
 
@@ -584,6 +611,9 @@ impl Summary {
         for issue in &self.issues {
             println!("issue     {issue}");
         }
+        for line in &self.hybrid_lines {
+            println!("{line}");
+        }
         if let Some(lines) = m.screen_text() {
             let last = lines.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1);
             if last > 0 {
@@ -602,7 +632,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{}}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"findings":{}}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -619,6 +649,8 @@ impl Summary {
             self.console_hash,
             strings(&self.issues),
             strings(&self.files_changed),
+            strings(&self.hybrid_lines[..self.hybrid_lines.len().min(1)]),
+            self.findings_json,
         )
     }
 }

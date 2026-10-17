@@ -62,6 +62,36 @@ impl Memory {
         self.size
     }
 
+    /// Physical addresses where two snapshots differ, ascending, at most `max` of them (dual-run
+    /// compares the original's memory with an override's this way).
+    pub fn differences(&self, other: &Memory, max: usize) -> Vec<u32> {
+        let mut found = Vec::new();
+        let compare = |base: u32, a: &[u8], b: &[u8], found: &mut Vec<u32>| {
+            for (chunk, (x, y)) in a.chunks(64).zip(b.chunks(64)).enumerate() {
+                if x != y {
+                    let start = base + chunk as u32 * 64;
+                    found.extend((0..x.len() as u32).filter(|&i| x[i as usize] != y[i as usize]).map(|i| start + i));
+                }
+                if found.len() >= max {
+                    return;
+                }
+            }
+        };
+        compare(0, &self.bytes, &other.bytes, &mut found);
+        let zero = [0u8; PAGE_SIZE];
+        for (page, (a, b)) in self.extended.iter().zip(&other.extended).enumerate() {
+            if found.len() >= max {
+                break;
+            }
+            let (a, b) = (a.as_deref().unwrap_or(&zero), b.as_deref().unwrap_or(&zero));
+            if a != b {
+                compare((page * PAGE_SIZE) as u32, a, b, &mut found);
+            }
+        }
+        found.truncate(max);
+        found
+    }
+
     /// A physical read, as DMA or an XMS move does it: no A20 wrapping, and the whole memory
     /// size is reachable. Beyond the end of memory reads FFh.
     pub fn read_phys(&self, addr: u32) -> u8 {

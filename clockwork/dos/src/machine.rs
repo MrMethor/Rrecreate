@@ -130,6 +130,10 @@ pub enum Stop {
     /// The CPU met an instruction it doesn't implement, or one asking for something the host
     /// doesn't emulate (such as protected mode).
     Fault(cpu::Exit),
+    /// A Rust override failed (see [`crate::hybrid`]).
+    Override(String),
+    /// A nested run reached the return it was waiting for (internal to [`crate::hybrid`]).
+    Returned,
 }
 
 /// Extended memory is limited to what a 24-bit (286/386SX) address bus reaches: 16 MB in all.
@@ -530,6 +534,13 @@ pub struct Machine {
     /// What the started program's code executed, once [`Machine::start_coverage`] was called
     /// (for the analysis pipeline; not part of the machine state).
     pub coverage: Option<crate::coverage::Coverage>,
+    /// Rust overrides of the started program's functions, once [`Machine::start_hybrid`] was
+    /// called (not part of the machine state).
+    pub hybrid: Option<Box<crate::hybrid::Hybrid>>,
+    /// Where a nested run (an override calling the program, a dual-run) stops.
+    pub(crate) return_trap: Option<crate::hybrid::ReturnTrap>,
+    /// While a dual-run's original runs: what interrupt handlers write.
+    pub(crate) isr_watch: Option<crate::hybrid::IsrWatch>,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -567,6 +578,9 @@ impl Machine {
             exec_watch: None,
             exec_hits: Vec::new(),
             coverage: None,
+            hybrid: None,
+            return_trap: None,
+            isr_watch: None,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -605,6 +619,14 @@ impl Machine {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
             }
+            if let Some(watch) = &mut self.isr_watch {
+                watch.step(&self.cpu.regs, &self.mem);
+            }
+            if let Some(trap) = &mut self.return_trap
+                && trap.reached(&self.cpu.regs)
+            {
+                return Stop::Returned;
+            }
             if self.cpu.cycles >= limit {
                 return Stop::CycleLimit;
             }
@@ -616,6 +638,9 @@ impl Machine {
             {
                 self.halted = false;
                 self.count_irq(vector);
+                if let Some(watch) = &mut self.isr_watch {
+                    watch.enter(&self.cpu.regs, &self.mem);
+                }
                 let (cpu, mut bus) = self.split();
                 if let Err(exit) = cpu.interrupt(&mut bus, vector) {
                     return Stop::Fault(exit);
@@ -627,6 +652,13 @@ impl Machine {
                     return stop;
                 }
                 continue;
+            }
+            if self.hybrid.is_some() {
+                match self.hybrid_entry() {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(stop) => return stop,
+                }
             }
             if self.exec_watch.is_some() {
                 self.watch_exec();
@@ -653,6 +685,17 @@ impl Machine {
                 Err(fault) => return Stop::Fault(fault),
             }
         }
+    }
+
+    /// Hooks Rust overrides into the program just loaded (all in [`crate::hybrid::Mode::Original`]
+    /// until set otherwise); its load image starts at its PSP's paragraph 10h.
+    pub fn start_hybrid(
+        &mut self,
+        module: &str,
+        overrides: Vec<crate::hybrid::Override>,
+    ) -> &mut crate::hybrid::Hybrid {
+        let base = (u32::from(self.dos.psp) + 0x10) << 4;
+        self.hybrid.insert(Box::new(crate::hybrid::Hybrid::new(module, base, overrides)))
     }
 
     /// Starts recording coverage of the program just loaded: its load image runs from its PSP's

@@ -15,6 +15,7 @@ path = "src/main.rs"
 cpu.workspace = true
 dos.workspace = true
 machine.workspace = true
+testbins.workspace = true
 minifb = "0.29"
 tinyaudio = "2"
 midir = "0.11"

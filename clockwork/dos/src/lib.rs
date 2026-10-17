@@ -12,6 +12,7 @@ pub mod dma;
 pub mod dos;
 pub mod ems;
 pub mod fonts;
+pub mod hybrid;
 pub mod joystick;
 pub mod keyboard;
 mod machine;
