@@ -2535,7 +2535,7 @@ fn run_game_port(joysticks: u8, stick: Option<dos::Input>) -> [u16; 5] {
     if let Some(input) = stick {
         m.queue_input(0, input);
     }
-    m.run(SECOND / 10);
+    m.run(SECOND / 4);
     let results = vbe_data(&m, &program).results;
     std::array::from_fn(|i| m.mem.read_u16(results + 2 * i as u32))
 }
@@ -2544,9 +2544,10 @@ fn run_game_port(joysticks: u8, stick: Option<dos::Input>) -> [u16; 5] {
 fn joystick_axes_time_out_by_position() {
     let right = run_game_port(1, Some(dos::Input::Joystick { stick: 0, x: 32767, y: 0, buttons: 1 }));
     let left = run_game_port(1, Some(dos::Input::Joystick { stick: 0, x: -32767, y: 0, buttons: 0 }));
-    // Five instructions a loop at 8 M instructions/s: 1.13 ms is about 1800 loops, 20 µs about 30.
-    assert!((1700..1900).contains(&right[0]), "full right: {} loops", right[0]);
-    assert!(left[0] < 40, "full left: {} loops", left[0]);
+    // Five instructions and a 1 µs port read a loop at 8 M instructions/s (13 cycles): 1.13 ms is
+    // about 700 loops, 20 µs about 12.
+    assert!((650..750).contains(&right[0]), "full right: {} loops", right[0]);
+    assert!(left[0] < 20, "full left: {} loops", left[0]);
     assert_eq!((right[1], right[2]), (255, 128), "BIOS positions");
     assert_eq!(right[3] & 1, 0, "CF clear");
     assert_eq!(right[4] & 0xFF, 0xE0, "button 1 of stick A pressed (bit 4 clear)");

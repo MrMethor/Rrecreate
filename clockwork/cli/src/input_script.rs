@@ -9,6 +9,7 @@
 //! moves the mouse to X, Y in the mouse driver's coordinates, presses the button 100 ms later and
 //! releases it 250 ms after that (moving before pressing matters: some games, like Arena,
 //! put the cursor back where they last read it every frame); `{move X Y}` only moves;
+//! `{hold KEY MS}` holds a key (a named one or a character) down for MS ms, to walk in a game;
 //! `{wait MS}` waits.
 
 use dos::Machine;
@@ -24,6 +25,8 @@ const CLICK_HOLD_MS: u64 = 250;
 enum Step {
     /// Scancodes to press (with the E0 prefix for extended keys) and release.
     Key(Vec<u8>),
+    /// The same, held down for a number of milliseconds.
+    Hold(Vec<u8>, u64),
     Click {
         x: i16,
         y: i16,
@@ -87,6 +90,15 @@ impl Script {
                     ["rclick", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 2 },
                     ["move", x, y] => Step::Move { x: number(x)?, y: number(y)? },
                     ["wait", ms] => Step::Wait(ms.parse().map_err(|_| format!("--input {spec:?}: bad wait {ms:?}"))?),
+                    ["hold", key, ms] => {
+                        let codes = named_key(key)
+                            .or_else(|| match key.as_bytes() {
+                                &[c] => ascii_to_scancode(c).map(|(make, _)| vec![make]),
+                                _ => None,
+                            })
+                            .ok_or_else(|| format!("--input {spec:?}: unknown key {key:?}"))?;
+                        Step::Hold(codes, ms.parse().map_err(|_| format!("--input {spec:?}: bad time {ms:?}"))?)
+                    }
                     [name] => {
                         Step::Key(named_key(name).ok_or_else(|| format!("--input {spec:?}: unknown key {{{name}}}"))?)
                     }
@@ -109,17 +121,18 @@ impl Script {
         let ms = |m: &Machine, ms: u64| m.cycle_at_ms(ms);
         for step in &self.steps {
             match step {
-                Step::Key(codes) => {
+                Step::Key(codes) | Step::Hold(codes, _) => {
+                    let held_ms = if let Step::Hold(_, held) = step { *held } else { KEY_HOLD_MS };
                     m.queue_scancodes(at, codes);
                     // Release in reverse: the key, then its prefix or the shift.
-                    let release = at + ms(m, KEY_HOLD_MS);
+                    let release = at + ms(m, held_ms);
                     let (last, held) = codes.split_last().expect("a key has a scancode");
                     match held {
                         [0xE0] => m.queue_scancodes(release, &[0xE0, last | 0x80]),
                         [shift] => m.queue_scancodes(release, &[last | 0x80, shift | 0x80]),
                         _ => m.queue_scancodes(release, &[last | 0x80]),
                     }
-                    at += ms(m, KEY_SPACING_MS);
+                    at += ms(m, held_ms + KEY_SPACING_MS - KEY_HOLD_MS);
                 }
                 &Step::Click { x, y, button } => {
                     m.queue_mouse(at, x, y, 0);
@@ -144,7 +157,7 @@ mod tests {
 
     #[test]
     fn parses_text_named_keys_and_mouse() {
-        let script = Script::parse("1500:aB{enter}{f12}{up}{click 320 -5}{wait 50}").unwrap();
+        let script = Script::parse("1500:aB{enter}{f12}{up}{click 320 -5}{wait 50}{hold up 900}{hold x 20}").unwrap();
         assert_eq!(script.start_ms, 1500);
         assert_eq!(
             script.steps,
@@ -156,6 +169,8 @@ mod tests {
                 Step::Key(vec![0xE0, 0x48]),
                 Step::Click { x: 320, y: -5, button: 1 },
                 Step::Wait(50),
+                Step::Hold(vec![0xE0, 0x48], 900),
+                Step::Hold(vec![0x2D], 20),
             ]
         );
         assert!(Script::parse("12:{nope}").is_err());

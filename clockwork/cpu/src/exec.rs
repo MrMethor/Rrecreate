@@ -534,11 +534,13 @@ impl Cpu {
                 self.check_io(bus, port, w)?;
                 if op & 2 == 0 {
                     let value = port_in(bus, port, w);
+                    self.cycles += self.io_read_cycles;
                     self.flush_code_cache();
                     self.write_reg(0, w, value);
                 } else {
                     let value = self.read_reg(0, w);
                     port_out(bus, port, w, value);
+                    self.cycles += self.io_write_cycles;
                     self.flush_code_cache();
                 }
             }
@@ -1155,6 +1157,7 @@ impl Cpu {
             }
             0x6C => {
                 let value = port_in(bus, self.regs.dx(), w);
+                self.cycles += self.io_read_cycles;
                 self.flush_code_cache();
                 self.write_mem(bus, ES, di, mask, w, value)?;
                 advance_di = true;
@@ -1162,6 +1165,7 @@ impl Cpu {
             _ => {
                 let value = self.read_mem(bus, src_seg, si, mask, w)?;
                 port_out(bus, self.regs.dx(), w, value);
+                self.cycles += self.io_write_cycles;
                 self.flush_code_cache();
                 advance_si = true;
             }

@@ -576,6 +576,10 @@ impl Machine {
         if !machine.config.fpu {
             machine.cpu.fpu = None;
         }
+        // Port accesses take ISA bus time: 1 µs per read, 0.75 µs per write (DOSBox `port.cpp`).
+        let ips = machine.config.instructions_per_second;
+        machine.cpu.io_read_cycles = ips / 1_000_000;
+        machine.cpu.io_write_cycles = ips * 3 / 4_000_000;
         bios::install(&mut machine);
         ems::install(&mut machine);
         xms::install(&mut machine);

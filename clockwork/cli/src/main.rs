@@ -12,7 +12,7 @@ mod play;
 mod session;
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dos::{Config, Machine, Stop, Vfs};
@@ -39,6 +39,9 @@ options:
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final screen as a BMP
   --wav FILE         run: save the sound (OPL and Sound Blaster) as a WAV file
+  --save-changes DIR run: afterwards, write the files the program created or changed to DIR
+                     (same paths as on C:; the game folder itself is never touched), e.g. what
+                     an installer unpacked
   --json             run: print the summary as JSON
   --hotspots N       run: sample CS:IP while running and show the N hottest addresses
   --trace FILE       run: write every BIOS/DOS/EMS service call to FILE
@@ -85,6 +88,7 @@ struct Options {
     replay: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     wav: Option<PathBuf>,
+    save_changes: Option<PathBuf>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
     record: Option<PathBuf>,
@@ -111,6 +115,20 @@ struct Options {
     opl: Option<PathBuf>,
     watch_exec: Option<String>,
     watch_log: Option<PathBuf>,
+}
+
+/// Writes the files the run created or changed (and that still exist) under `dir`, keeping their
+/// paths on the virtual drive.
+fn save_changes(m: &Machine, dir: &Path) -> Result<(), String> {
+    for path in m.drive.changed() {
+        let Some(data) = m.drive.file(path) else { continue };
+        let target = path.split('\\').fold(dir.to_path_buf(), |target, part| target.join(part));
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        std::fs::write(&target, data).map_err(|e| format!("{}: {e}", target.display()))?;
+    }
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -156,6 +174,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--replay" => options.replay = Some(value(arg)?.into()),
             "--screenshot" => options.screenshot = Some(value(arg)?.into()),
             "--wav" => options.wav = Some(value(arg)?.into()),
+            "--save-changes" => options.save_changes = Some(value(arg)?.into()),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
             "--trace" => options.trace = Some(value(arg)?.into()),
@@ -332,6 +351,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     if let Some(path) = &o.wav {
         let samples = m.audio_log().render(m.elapsed_ns());
         std::fs::write(path, dos::audio::wav(&samples)).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if let Some(dir) = &o.save_changes {
+        save_changes(&m, dir)?;
     }
     let summary = Summary::new(&m, &stop);
     if let Some(profile) = &profile {

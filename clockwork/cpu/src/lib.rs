@@ -335,9 +335,14 @@ pub struct Cpu {
     /// The x87 coprocessor, or `None` for a PC without one.
     pub fpu: Option<Fpu>,
     pub(crate) tlb: paging::Tlb,
-    /// Executed instructions, plus one per repetition of a REP-prefixed string instruction and
-    /// one per interrupt taken. The machine derives virtual time from this.
+    /// Executed instructions, plus one per repetition of a REP-prefixed string instruction, one
+    /// per interrupt taken, and the I/O delays below. The machine derives virtual time from this.
     pub cycles: u64,
+    /// Extra cycles each port read and write takes: the ISA bus is slow, and programs time short
+    /// delays with port accesses (DOSBox charges 1 µs per read and 0.75 µs per write). Zero
+    /// unless the machine sets them.
+    pub io_read_cycles: u64,
+    pub io_write_cycles: u64,
     /// Set by `STI`, `MOV SS` and `POP SS`: no interrupt is taken before the next instruction.
     irq_inhibit: bool,
     /// ESI, EDI and ECX of a REP string instruction that faulted part-way: it restarts there.
@@ -423,6 +428,8 @@ impl Cpu {
             fpu: Some(Fpu::new()),
             tlb: paging::Tlb::default(),
             cycles: 0,
+            io_read_cycles: 0,
+            io_write_cycles: 0,
             irq_inhibit: false,
             string_restart: None,
             fetch: FetchState::default(),

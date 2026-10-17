@@ -503,6 +503,15 @@ fn int21(m: &mut Machine) {
         0x50 => m.dos.psp = r.bx(),
         0x55 => new_psp(m, r.dx(), true),
         0x51 | 0x62 => m.cpu.regs.set_bx(m.dos.psp),
+        // Switch character and AVAILDEV (DOSBox): '/' always, setting is accepted and ignored.
+        0x37 => match r.al() {
+            0 | 2 => {
+                m.cpu.regs.set_al(0);
+                m.cpu.regs.set_dl(b'/');
+            }
+            1 | 3 => m.cpu.regs.set_al(0),
+            _ => m.cpu.regs.set_al(0xFF),
+        },
         // DBCS lead-byte table (DOSBox: AL=0 only, clearing CF; other subfunctions return AL=FFh).
         0x63 if r.al() == 0 => {
             let (segment, offset) = crate::tables::DBCS_TABLE;
