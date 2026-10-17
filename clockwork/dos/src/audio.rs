@@ -2,13 +2,16 @@
 //!
 //! The devices only record what the program did, with timestamps: OPL register writes
 //! ([`crate::opl::Opl::writes`]), Sound Blaster DMA samples and DAC writes
-//! ([`crate::sblaster::SoundBlaster::pcm`], `dac`) and PC speaker tones
+//! ([`crate::sblaster::SoundBlaster::pcm`], `dac`) and the PC speaker's waveform
 //! ([`crate::pit::Pit::speaker_log`]). Rendering is separate so it can't change
 //! the machine's behavior, and two runs can be compared by their logs alone. [`Renderer`]
 //! renders a log in pieces as a run goes on, for live output. FM synthesis uses
 //! the `nuked-opl3` crate (a pure-Rust port of Nuked OPL3, LGPL-2.1-or-later), at the chip's
 //! native 49 716 Hz, which is also the output rate. Mixer volumes and filters aren't applied,
-//! and the speaker plays plain square waves (no band limiting, no direct port 61h sample output).
+//! except to the speaker: its on/off waveform is averaged exactly over each output sample
+//! (which plays tones, and samples sent by pulse-width modulation or by toggling port 61h),
+//! then filtered like DOSBox Staging's speaker (`pcspeaker_impulse.cpp`: third-order
+//! Butterworth high-pass at 120 Hz and low-pass at 4.3 kHz, standing in for the cone).
 
 use machine::hash::Fnv64;
 use nuked_opl3::Opl3Chip;
@@ -16,7 +19,7 @@ use std::hash::Hasher;
 
 use crate::clock::PIT_HZ;
 use crate::opl::OplWrite;
-use crate::pit::SpeakerEvent;
+use crate::pit::{SpeakerEvent, Wave};
 use crate::sblaster::{DacWrite, PcmSegment};
 
 /// The OPL3's own sample rate (14.318 MHz / 288), used for all rendered audio.
@@ -60,8 +63,16 @@ impl AudioLog<'_> {
         }
         for e in self.speaker {
             h.write(&e.pit_tick.to_le_bytes());
-            h.write(&[u8::from(e.on)]);
-            h.write(&e.divisor.to_le_bytes());
+            let (kind, a, b, c) = match e.wave {
+                Wave::Steady(level) => (0, u64::from(level), 0, 0),
+                Wave::LowUntil(t) => (1, t, 0, 0),
+                Wave::PulseAt(t) => (2, t, 0, 0),
+                Wave::Periodic { origin, period, high } => (3, origin, period, high),
+            };
+            h.write(&[kind]);
+            h.write(&a.to_le_bytes());
+            h.write(&b.to_le_bytes());
+            h.write(&c.to_le_bytes());
         }
         h.finish()
     }
@@ -102,6 +113,7 @@ pub struct Renderer {
     dac: usize,
     /// The speaker event in effect at `frame`.
     speaker: usize,
+    speaker_filter: SpeakerFilter,
 }
 
 impl Renderer {
@@ -206,32 +218,103 @@ impl Renderer {
     }
 
     fn render_speaker(&mut self, events: &[SpeakerEvent], mix: &mut [i32]) {
-        const LEVEL: i32 = 8000;
-        let (first_frame, end) = (self.frame, self.frame + mix.len() / 2);
-        let to_frame =
-            |tick: u64| (u128::from(tick) * u128::from(SAMPLE_RATE_HZ)).div_ceil(u128::from(PIT_HZ)) as usize;
-        for (i, event) in events.iter().enumerate().skip(self.speaker) {
-            let from = to_frame(event.pit_tick);
-            if from >= end {
-                break;
-            }
-            if !event.on {
-                continue;
-            }
-            let period = if event.divisor == 0 { 65536 } else { u64::from(event.divisor) };
-            let until = events.get(i + 1).map_or(end, |next| to_frame(next.pit_tick).min(end));
-            for frame in from.max(first_frame)..until {
-                // Channel 2 in mode 3: a square wave, high for the first half of each period.
-                let tick = (frame as u128 * u128::from(PIT_HZ) / u128::from(SAMPLE_RATE_HZ)) as u64;
-                let value = if (tick % period) * 2 < period { LEVEL } else { -LEVEL };
-                let at = (frame - first_frame) * 2;
-                mix[at] += value;
-                mix[at + 1] += value;
-            }
+        // Time in sub-ticks: a PIT tick is SAMPLE_RATE_HZ of them, an output frame PIT_HZ.
+        let frame_length = PIT_HZ;
+        for (i, out) in mix.chunks_exact_mut(2).enumerate() {
+            let start = (self.frame + i) as u64 * frame_length;
+            let high = speaker_high(events, &mut self.speaker, start, start + frame_length);
+            let value = self.speaker_filter.run(SPEAKER_LEVEL * high as f64 / frame_length as f64) as i32;
+            out[0] += value;
+            out[1] += value;
         }
-        while events.get(self.speaker + 1).is_some_and(|next| to_frame(next.pit_tick) <= end) {
-            self.speaker += 1;
+    }
+}
+
+/// The speaker pushed out, before filtering (a square wave comes out at about half of it).
+const SPEAKER_LEVEL: f64 = 16_000.0;
+
+/// How long the speaker is high (pushed out) in sub-ticks `from..to` (see `render_speaker`),
+/// starting the search at `index`, which it moves to the event in effect at `from`.
+fn speaker_high(events: &[SpeakerEvent], index: &mut usize, from: u64, to: u64) -> u64 {
+    let scale = u64::from(SAMPLE_RATE_HZ);
+    let begins = |i: usize| events[i].pit_tick * scale;
+    if events.is_empty() {
+        return 0;
+    }
+    while *index + 1 < events.len() && begins(*index + 1) <= from {
+        *index += 1;
+    }
+    // Before the first event the speaker is at rest.
+    let (mut i, mut at) = (*index, from.max(begins(*index)));
+    let mut high = 0;
+    while at < to {
+        let until = if i + 1 < events.len() { begins(i + 1).min(to) } else { to };
+        // High sub-ticks before `x`: whole ticks, then the part of the tick `x` is in.
+        let wave = events[i].wave;
+        let before = |x: u64| wave.high_ticks(x / scale) * scale + (x % scale) * u64::from(wave.level_at(x / scale));
+        high += before(until) - before(at);
+        (i, at) = (i + 1, until);
+    }
+    high
+}
+
+/// One section of an IIR filter: y = b0·x + b1·x1 + b2·x2 − a1·y1 − a2·y2.
+#[derive(Debug, Clone, Copy, Default)]
+struct Section {
+    b: [f64; 3],
+    a: [f64; 2],
+    x: [f64; 2],
+    y: [f64; 2],
+}
+
+impl Section {
+    fn run(&mut self, x: f64) -> f64 {
+        let mut y = self.b[0] * x + self.b[1] * self.x[0] + self.b[2] * self.x[1]
+            - self.a[0] * self.y[0]
+            - self.a[1] * self.y[1];
+        // Flush what has died away, so silence doesn't run on subnormal numbers.
+        if y.abs() < 1e-9 {
+            y = 0.0;
         }
+        self.x = [x, self.x[0]];
+        self.y = [y, self.y[0]];
+        y
+    }
+}
+
+/// Third-order Butterworth filters (a first-order and a second-order section with Q = 1),
+/// made by the bilinear transform with prewarping.
+fn butterworth3(cutoff_hz: f64, high_pass: bool) -> [Section; 2] {
+    let k = libm::tan(std::f64::consts::PI * cutoff_hz / f64::from(SAMPLE_RATE_HZ));
+    let a1 = (k - 1.0) / (k + 1.0);
+    let first = if high_pass {
+        Section { b: [1.0 / (k + 1.0), -1.0 / (k + 1.0), 0.0], a: [a1, 0.0], ..Section::default() }
+    } else {
+        Section { b: [k / (k + 1.0), k / (k + 1.0), 0.0], a: [a1, 0.0], ..Section::default() }
+    };
+    let norm = 1.0 / (1.0 + k + k * k);
+    let a = [2.0 * (k * k - 1.0) * norm, (1.0 - k + k * k) * norm];
+    let b = if high_pass { [norm, -2.0 * norm, norm] } else { [k * k * norm, 2.0 * k * k * norm, k * k * norm] };
+    [first, Section { b, a, ..Section::default() }]
+}
+
+/// What stands for the speaker's cone (DOSBox Staging's `pcspeaker_filter = on`).
+#[derive(Debug, Clone)]
+struct SpeakerFilter {
+    sections: [Section; 4],
+}
+
+impl Default for SpeakerFilter {
+    fn default() -> Self {
+        let [h1, h2] = butterworth3(120.0, true);
+        let [l1, l2] = butterworth3(4300.0, false);
+        Self { sections: [h1, h2, l1, l2] }
+    }
+}
+
+impl SpeakerFilter {
+    fn run(&mut self, x: f64) -> f64 {
+        self.sections.iter_mut().fold(x, |x, section| section.run(x))
     }
 }
 
@@ -294,19 +377,65 @@ mod tests {
         assert_eq!(frame(25), 0, "2.5 ms: 10 samples at 10 kHz are over");
     }
 
+    fn square(origin: u64, period: u32) -> Wave {
+        Wave::Periodic { origin, period, high: period.div_ceil(2) }
+    }
+
     #[test]
     fn speaker_square_wave() {
-        // 1 kHz tone (divisor 1193) from tick 0, off after 10 ms.
+        // 1 kHz tone (divisor 1193) from tick 0, off after 20 ms.
         let events = [
-            SpeakerEvent { pit_tick: 0, on: true, divisor: 1193 },
-            SpeakerEvent { pit_tick: PIT_HZ / 100, on: false, divisor: 1193 },
+            SpeakerEvent { pit_tick: 0, wave: square(0, 1193) },
+            SpeakerEvent { pit_tick: PIT_HZ / 50, wave: Wave::Steady(false) },
         ];
         let log = AudioLog { speaker: &events, ..AudioLog::default() };
-        let samples = log.render(20_000_000);
+        let samples = log.render(100_000_000);
         let left: Vec<i16> = samples.iter().step_by(2).copied().collect();
-        let edges = left[..497].windows(2).filter(|w| w[0] < 0 && w[1] > 0).count();
-        assert!((9..=10).contains(&edges), "about 10 periods in 10 ms: {edges}");
-        assert!(left[600..].iter().all(|&s| s == 0), "silent after it's turned off");
+        let tone = &left[497..994]; // 10-20 ms
+        let edges = tone.windows(2).filter(|w| w[0] < 0 && w[1] >= 0).count();
+        assert_eq!(edges, 10, "10 periods in 10 ms");
+        let peak = tone.iter().map(|s| s.unsigned_abs()).max().unwrap();
+        assert!((6000..12000).contains(&peak), "about half the level each way: {peak}");
+        assert!(left[left.len() - 500..].iter().all(|&s| s == 0), "silent after it's turned off");
+    }
+
+    #[test]
+    fn speaker_pulse_width_modulation_plays_the_duty_cycle() {
+        // A 16 kHz carrier (75 ticks) whose duty cycle follows a 500 Hz sine: what a program
+        // writing a mode 0 count per sample gives. What comes out is the sine, not the carrier.
+        let period = 75u64;
+        let events: Vec<SpeakerEvent> = (0..1600u64)
+            .map(|i| {
+                let phase = 2.0 * std::f64::consts::PI * 500.0 * (i * period) as f64 / PIT_HZ as f64;
+                let low = (period as f64 * (0.5 + 0.4 * libm::sin(phase))) as u64;
+                SpeakerEvent { pit_tick: i * period, wave: Wave::LowUntil(i * period + low) }
+            })
+            .collect();
+        let log = AudioLog { speaker: &events, ..AudioLog::default() };
+        let left: Vec<f64> = log.render(90_000_000).into_iter().step_by(2).map(f64::from).collect();
+        let window = &left[SAMPLE_RATE_HZ as usize / 50..SAMPLE_RATE_HZ as usize / 50 * 4]; // 20-80 ms
+        let (mut re, mut im) = (0.0, 0.0);
+        for (n, x) in window.iter().enumerate() {
+            let phase = 2.0 * std::f64::consts::PI * 500.0 * n as f64 / f64::from(SAMPLE_RATE_HZ);
+            (re, im) = (re + x * libm::cos(phase), im + x * libm::sin(phase));
+        }
+        let length = window.len() as f64;
+        let tone_power = 2.0 * (re * re + im * im) / (length * length);
+        let power = window.iter().map(|x| x * x).sum::<f64>() / length;
+        assert!(tone_power > 0.95 * power, "500 Hz: {tone_power:.0} of {power:.0}");
+        assert!(tone_power.sqrt() > 3000.0, "loud enough: {tone_power:.0}");
+    }
+
+    #[test]
+    fn speaker_toggled_through_port_61h() {
+        // Bit 1 toggled every 300 ticks (about 2 kHz) gives a tone like channel 2's.
+        let events: Vec<SpeakerEvent> =
+            (0..100u64).map(|i| SpeakerEvent { pit_tick: 300 * i, wave: Wave::Steady(i % 2 == 0) }).collect();
+        let log = AudioLog { speaker: &events, ..AudioLog::default() };
+        let left: Vec<i16> = log.render(25_000_000).into_iter().step_by(2).collect();
+        let tone = &left[SAMPLE_RATE_HZ as usize / 200..SAMPLE_RATE_HZ as usize / 50]; // 5-20 ms
+        let crossings = tone.windows(2).filter(|w| w[0] < 0 && w[1] >= 0).count();
+        assert!((29..=31).contains(&crossings), "1989 Hz for 15 ms: {crossings}");
     }
 
     #[test]
@@ -325,9 +454,10 @@ mod tests {
         let dac: Vec<DacWrite> =
             (0..40).map(|i| DacWrite { nanos: 5_000_000 + i * 90_000, value: (i * 6) as u8 }).collect();
         let speaker = [
-            SpeakerEvent { pit_tick: PIT_HZ / 200, on: true, divisor: 600 },
-            SpeakerEvent { pit_tick: PIT_HZ / 50, on: false, divisor: 600 },
-            SpeakerEvent { pit_tick: PIT_HZ / 40, on: true, divisor: 2000 },
+            SpeakerEvent { pit_tick: PIT_HZ / 200, wave: square(PIT_HZ / 200, 600) },
+            SpeakerEvent { pit_tick: PIT_HZ / 50, wave: Wave::Steady(false) },
+            SpeakerEvent { pit_tick: PIT_HZ / 40, wave: Wave::LowUntil(PIT_HZ / 40 + 30) },
+            SpeakerEvent { pit_tick: PIT_HZ / 40 + 50, wave: square(PIT_HZ / 40 + 50, 2000) },
         ];
         let log = AudioLog { opl: &opl, pcm: &pcm, dac: &dac, speaker: &speaker };
         let whole = log.render(40_000_000);

@@ -1857,6 +1857,46 @@ fn audio_rendered_while_running_matches_the_final_log() {
 }
 
 #[test]
+fn pc_speaker_plays_samples_by_pulse_width_modulation() {
+    // Channel 2 in mode 0 with the speaker on, a new count for every sample (a sawtooth), as
+    // speaker sample players do.
+    let program = com(|a| {
+        a.mov(al, 0x90)?; // channel 2, low byte only, mode 0
+        a.out(0x43, al)?;
+        a.in_(al, 0x61)?;
+        a.or(al, 0x03)?;
+        a.out(0x61, al)?;
+        a.mov(cx, 3000)?;
+        a.here("sample")?;
+        a.mov(al, cl)?;
+        a.and(al, 0x3F)?;
+        a.add(al, 4)?;
+        a.out(0x42, al)?;
+        a.mov(bx, 20)?;
+        a.here("wait")?;
+        a.dec(bx)?;
+        let wait = a.l("wait");
+        a.jnz(wait)?;
+        let sample = a.l("sample");
+        a.loop_(sample)?;
+        hold(a)
+    });
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let mut renderer = dos::audio::Renderer::default();
+    let mut live = Vec::new();
+    for _ in 0..20 {
+        m.run(SECOND / 100);
+        renderer.render(&m.audio_log(), m.audio_settled_ns(), &mut live);
+    }
+    let speaker = m.audio_log().speaker;
+    let counts = speaker.iter().filter(|e| matches!(e.wave, dos::pit::Wave::LowUntil(_))).count();
+    assert_eq!(counts, 3000, "one waveform per count");
+    let whole = m.audio_log().render(renderer.rendered_ns());
+    assert!(live == whole, "live rendering differs from rendering the final log");
+    assert!(whole.iter().any(|s| s.unsigned_abs() > 1000), "it makes a sound");
+}
+
+#[test]
 fn blaster_variable_is_in_the_environment() {
     let mut m = boot(&[("E.COM", &com(hold))], "E.COM");
     m.run(SECOND / 100);

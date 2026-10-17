@@ -10,6 +10,7 @@ license.workspace = true
 [dependencies]
 cpu.workspace = true
 machine.workspace = true
+libm = "0.2"
 nuked-opl3 = "0.1"
 
 [dev-dependencies]

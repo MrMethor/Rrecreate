@@ -684,7 +684,9 @@ impl Machine {
     /// Up to when [`Machine::audio_log`] is final: what the devices log later all happens after
     /// this time, so audio rendered up to it never changes. A little behind [`Machine::elapsed_ns`].
     pub fn audio_settled_ns(&self) -> u64 {
-        let now = self.elapsed_ns();
+        // PIT ticks round down, so a speaker event logged later can be up to a tick (0.84 µs)
+        // before the time it happened at: stay a microsecond back.
+        let now = self.elapsed_ns().saturating_sub(1_000);
         self.devices.sb.as_ref().map_or(now, |sb| sb.settled_ns(now))
     }
 
