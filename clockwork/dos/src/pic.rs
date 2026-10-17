@@ -39,6 +39,9 @@ impl Pic {
     /// blocked by an equal or higher-priority interrupt in service.
     pub fn pending_line(&self) -> Option<u8> {
         let requests = self.irr & !self.imr;
+        if requests == 0 {
+            return None; // the common case, checked before every instruction
+        }
         for line in 0..8 {
             let bit = 1 << line;
             if self.isr & bit != 0 {

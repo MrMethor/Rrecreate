@@ -10,12 +10,29 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Vfs {
     files: BTreeMap<String, Arc<Vec<u8>>>,
     dirs: BTreeSet<String>,
     /// Paths created, written, renamed or deleted since loading.
     changed: BTreeSet<String>,
+}
+
+impl std::hash::Hash for Vfs {
+    /// Files as loaded are the run's input, the same in every run of a program, so they count
+    /// by name and size; files changed since loading count with their contents. (Hashing every
+    /// byte of a game's data took a large part of a short run.)
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        for (path, data) in &self.files {
+            path.hash(h);
+            data.len().hash(h);
+            if self.changed.contains(path) {
+                data.hash(h);
+            }
+        }
+        self.dirs.hash(h);
+        self.changed.hash(h);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,16 +155,25 @@ impl Vfs {
         if !self.is_dir(dir) {
             return None;
         }
-        let is_child = |path: &str| parent_of(path) == dir && !path.is_empty();
-        let mut entries: Vec<DirEntry> = self
-            .dirs
-            .iter()
-            .filter(|p| is_child(p))
-            .map(|p| DirEntry { name: name_of(p).to_owned(), is_dir: true, size: 0 })
-            .chain(self.files.iter().filter(|(p, _)| is_child(p)).map(|(p, data)| DirEntry {
-                name: name_of(p).to_owned(),
-                is_dir: false,
-                size: u32::try_from(data.len()).unwrap_or(u32::MAX),
+        // Paths are sorted, so a folder's entries are the run of paths starting with its prefix
+        // (DOS programs list folders often: FindNext lists the folder again on every call).
+        let prefix = if dir.is_empty() { String::new() } else { format!("{dir}\\") };
+        fn child<'a>(prefix: &str, path: &'a str) -> Option<&'a str> {
+            path.strip_prefix(prefix).filter(|name| !name.is_empty() && !name.contains('\\'))
+        }
+        let from = (std::ops::Bound::Included(prefix.as_str()), std::ops::Bound::Unbounded);
+        let dirs = self.dirs.range::<str, _>(from).map_while(|p| p.starts_with(prefix.as_str()).then_some(p));
+        let files =
+            self.files.range::<str, _>(from).map_while(|(p, data)| p.starts_with(prefix.as_str()).then_some((p, data)));
+        let mut entries: Vec<DirEntry> = dirs
+            .filter_map(|p| child(&prefix, p))
+            .map(|name| DirEntry { name: name.to_owned(), is_dir: true, size: 0 })
+            .chain(files.filter_map(|(p, data)| {
+                child(&prefix, p).map(|name| DirEntry {
+                    name: name.to_owned(),
+                    is_dir: false,
+                    size: u32::try_from(data.len()).unwrap_or(u32::MAX),
+                })
             }))
             .collect();
         entries.sort_by(|a, b| a.name.cmp(&b.name));

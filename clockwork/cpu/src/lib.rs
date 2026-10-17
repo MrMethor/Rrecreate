@@ -43,8 +43,41 @@ pub const CALLBACK_OPCODE: [u8; 2] = [0xFE, 0x38];
 /// Memory and I/O as seen by the CPU. Addresses are physical (after segmentation and paging);
 /// the bus applies A20 masking and memory-mapped devices.
 pub trait Bus {
+    /// Set by [`Paged`]: the instruction runs with paging on, so its code fetches go through the
+    /// page cache. (The interpreter is compiled once per value, each copy carrying only its own
+    /// fetch path.)
+    const PAGED: bool = false;
+
     fn read_u8(&mut self, addr: u32) -> u8;
     fn write_u8(&mut self, addr: u32, value: u8);
+
+    /// Little-endian reads and writes of consecutive bytes; they must behave exactly like the
+    /// byte accesses in address order (implementations may take a shortcut for plain RAM).
+    fn read_u16(&mut self, addr: u32) -> u16 {
+        u16::from_le_bytes([self.read_u8(addr), self.read_u8(addr.wrapping_add(1))])
+    }
+
+    fn read_u32(&mut self, addr: u32) -> u32 {
+        u32::from_le_bytes(std::array::from_fn(|i| self.read_u8(addr.wrapping_add(i as u32))))
+    }
+
+    fn write_u16(&mut self, addr: u32, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.write_u8(addr, lo);
+        self.write_u8(addr.wrapping_add(1), hi);
+    }
+
+    fn write_u32(&mut self, addr: u32, value: u32) {
+        for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write_u8(addr.wrapping_add(i as u32), byte);
+        }
+    }
+
+    /// The 16 bytes at `addr` if they are all ordinary memory (reading them has no side
+    /// effects), for instruction fetch; `None` sends fetches through [`Bus::read_u8`].
+    fn code_window(&mut self, _addr: u32) -> Option<[u8; 16]> {
+        None
+    }
     fn port_in_u8(&mut self, port: u16) -> u8;
     fn port_out_u8(&mut self, port: u16, value: u8);
 
@@ -64,6 +97,78 @@ pub trait Bus {
     fn port_out_u32(&mut self, port: u16, value: u32) {
         self.port_out_u16(port, value as u16);
         self.port_out_u16(port.wrapping_add(2), (value >> 16) as u16);
+    }
+}
+
+/// A bus for instructions that run with paging on (see [`Bus::PAGED`]).
+pub struct Paged<'a, B: Bus>(pub &'a mut B);
+
+impl<B: Bus> Bus for Paged<'_, B> {
+    const PAGED: bool = true;
+
+    #[inline(always)]
+    fn read_u8(&mut self, addr: u32) -> u8 {
+        self.0.read_u8(addr)
+    }
+
+    #[inline(always)]
+    fn write_u8(&mut self, addr: u32, value: u8) {
+        self.0.write_u8(addr, value);
+    }
+
+    #[inline(always)]
+    fn read_u16(&mut self, addr: u32) -> u16 {
+        self.0.read_u16(addr)
+    }
+
+    #[inline(always)]
+    fn read_u32(&mut self, addr: u32) -> u32 {
+        self.0.read_u32(addr)
+    }
+
+    #[inline(always)]
+    fn write_u16(&mut self, addr: u32, value: u16) {
+        self.0.write_u16(addr, value);
+    }
+
+    #[inline(always)]
+    fn write_u32(&mut self, addr: u32, value: u32) {
+        self.0.write_u32(addr, value);
+    }
+
+    #[inline(always)]
+    fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
+        self.0.code_window(addr)
+    }
+
+    #[inline(always)]
+    fn port_in_u8(&mut self, port: u16) -> u8 {
+        self.0.port_in_u8(port)
+    }
+
+    #[inline(always)]
+    fn port_out_u8(&mut self, port: u16, value: u8) {
+        self.0.port_out_u8(port, value);
+    }
+
+    #[inline(always)]
+    fn port_in_u16(&mut self, port: u16) -> u16 {
+        self.0.port_in_u16(port)
+    }
+
+    #[inline(always)]
+    fn port_out_u16(&mut self, port: u16, value: u16) {
+        self.0.port_out_u16(port, value);
+    }
+
+    #[inline(always)]
+    fn port_in_u32(&mut self, port: u16) -> u32 {
+        self.0.port_in_u32(port)
+    }
+
+    #[inline(always)]
+    fn port_out_u32(&mut self, port: u16, value: u32) {
+        self.0.port_out_u32(port, value);
     }
 }
 
@@ -240,12 +345,20 @@ pub struct Cpu {
 }
 
 /// What instruction fetches need, computed once per instruction: CS base, EIP wrap mask, and
-/// whether paging is on. Scratch data: equal and hashed alike whatever it holds.
+/// with paging the code page last translated during this instruction and the bytes read ahead.
+/// Scratch data: equal and hashed alike whatever it holds.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct FetchState {
     pub base: u32,
     pub ip_mask: u32,
-    pub paged: bool,
+    /// Linear page number + 1 of `frame` (0: none yet).
+    pub page_tag: u32,
+    /// Physical address of that page.
+    pub frame: u32,
+    /// Code bytes read ahead in one go: `buf_len` bytes from EIP `buf_ip`.
+    pub buf: [u8; 16],
+    pub buf_ip: u32,
+    pub buf_len: u32,
 }
 
 impl PartialEq for FetchState {
@@ -305,7 +418,7 @@ impl Cpu {
             cycles: 0,
             irq_inhibit: false,
             string_restart: None,
-            fetch: FetchState { base: 0, ip_mask: 0xFFFF, paged: false },
+            fetch: FetchState::default(),
         }
     }
 
@@ -360,7 +473,8 @@ impl Cpu {
         } else {
             None
         };
-        match self.exec(bus, start_ip) {
+        let result = if self.paging() { self.exec(&mut Paged(bus), start_ip) } else { self.exec(bus, start_ip) };
+        match result {
             Ok(()) => {
                 self.cycles += 1;
                 if trap {

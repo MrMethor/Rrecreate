@@ -349,6 +349,13 @@ pub(crate) struct PcBus<'a> {
 /// among them.
 const ABOVE_RAM: u32 = 0x0100_0000;
 
+/// `len` bytes at `addr` are all ordinary memory: none in the video window or above RAM.
+#[inline(always)]
+fn plain_ram(addr: u32, len: u32) -> bool {
+    let last = addr.wrapping_add(len - 1);
+    last < vga::GRAPHICS_BASE || (addr >= 0xC_0000 && last >= addr && last < ABOVE_RAM)
+}
+
 impl PcBus<'_> {
     // The video window and the frame buffer are kept out of line so the common RAM path stays
     // small enough to inline.
@@ -408,6 +415,47 @@ impl Bus for PcBus<'_> {
             return self.high_write(addr, value);
         }
         self.mem.write_u8(addr, value);
+    }
+
+    #[inline(always)]
+    fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
+        plain_ram(addr, 16).then(|| self.mem.read_n(addr))
+    }
+
+    #[inline(always)]
+    fn read_u16(&mut self, addr: u32) -> u16 {
+        if plain_ram(addr, 2) {
+            return u16::from_le_bytes(self.mem.read_n(addr));
+        }
+        u16::from_le_bytes([self.read_u8(addr), self.read_u8(addr.wrapping_add(1))])
+    }
+
+    #[inline(always)]
+    fn read_u32(&mut self, addr: u32) -> u32 {
+        if plain_ram(addr, 4) {
+            return u32::from_le_bytes(self.mem.read_n(addr));
+        }
+        u32::from_le_bytes(std::array::from_fn(|i| self.read_u8(addr.wrapping_add(i as u32))))
+    }
+
+    #[inline(always)]
+    fn write_u16(&mut self, addr: u32, value: u16) {
+        if plain_ram(addr, 2) {
+            return self.mem.write_n(addr, value.to_le_bytes());
+        }
+        let [lo, hi] = value.to_le_bytes();
+        self.write_u8(addr, lo);
+        self.write_u8(addr.wrapping_add(1), hi);
+    }
+
+    #[inline(always)]
+    fn write_u32(&mut self, addr: u32, value: u32) {
+        if plain_ram(addr, 4) {
+            return self.mem.write_n(addr, value.to_le_bytes());
+        }
+        for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write_u8(addr.wrapping_add(i as u32), byte);
+        }
     }
 
     fn port_in_u8(&mut self, port: u16) -> u8 {

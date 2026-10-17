@@ -2,8 +2,6 @@
 //! the CPU addresses through the A20 gate, and extended memory above it, which real-mode
 //! programs reach through XMS or INT 15h block moves ([`Memory::read_phys`] and friends).
 
-use std::collections::BTreeMap;
-
 use crate::addr::{CONVENTIONAL_SPACE, REAL_MODE_SPACE};
 
 /// Start of the system BIOS ROM. Writes from the CPU to `ROM_START..CONVENTIONAL_SPACE` are
@@ -20,15 +18,16 @@ pub struct Memory {
     a20: bool,
     /// Physical memory size in bytes (at least the real-mode space).
     size: u32,
-    /// Extended memory pages that have been written, by page number; others read as zero.
-    extended: BTreeMap<u32, Box<[u8]>>,
+    /// Extended memory pages that have been written, indexed by page number (a direct table, as
+    /// every access in protected mode looks here); others read as zero.
+    extended: Vec<Option<Box<[u8]>>>,
 }
 
 impl std::fmt::Debug for Memory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Memory")
             .field("size", &self.size)
-            .field("extended_pages", &self.extended.len())
+            .field("extended_pages", &self.extended.iter().flatten().count())
             .field("a20", &self.a20)
             .finish()
     }
@@ -49,11 +48,12 @@ impl Memory {
 
     /// Like [`Memory::new`], with `size` bytes of physical memory in all (16 MB is typical).
     pub fn with_size(size: u32) -> Self {
+        let size = size.max(REAL_MODE_SPACE as u32);
         Self {
             bytes: vec![0; REAL_MODE_SPACE].into_boxed_slice(),
             a20: false,
-            size: size.max(REAL_MODE_SPACE as u32),
-            extended: BTreeMap::new(),
+            size,
+            extended: vec![None; (size as usize).div_ceil(PAGE_SIZE)],
         }
     }
 
@@ -68,8 +68,8 @@ impl Memory {
         if (addr as usize) < self.bytes.len() {
             self.bytes[addr as usize]
         } else if addr < self.size {
-            let page = addr / PAGE_SIZE as u32;
-            self.extended.get(&page).map_or(0, |data| data[addr as usize % PAGE_SIZE])
+            let page = addr as usize / PAGE_SIZE;
+            self.extended[page].as_ref().map_or(0, |data| data[addr as usize % PAGE_SIZE])
         } else {
             0xFF
         }
@@ -82,8 +82,8 @@ impl Memory {
                 self.bytes[addr as usize] = value;
             }
         } else if addr < self.size {
-            let page = addr / PAGE_SIZE as u32;
-            let data = self.extended.entry(page).or_insert_with(|| vec![0; PAGE_SIZE].into_boxed_slice());
+            let page = addr as usize / PAGE_SIZE;
+            let data = self.extended[page].get_or_insert_with(|| vec![0; PAGE_SIZE].into_boxed_slice());
             data[addr as usize % PAGE_SIZE] = value;
         }
     }
@@ -140,11 +140,16 @@ impl Memory {
         }
     }
 
-    // Extended memory is kept out of line so the real-mode path stays small enough to inline.
+    /// Above the real-mode image: a direct page lookup, kept out of line so that the
+    /// real-mode path stays small enough to inline.
     #[cold]
     #[inline(never)]
     fn read_extended(&self, addr: u32) -> u8 {
-        self.read_phys(addr)
+        if addr >= self.size {
+            return 0xFF;
+        }
+        let at = addr as usize;
+        self.extended[at / PAGE_SIZE].as_ref().map_or(0, |page| page[at % PAGE_SIZE])
     }
 
     #[cold]
@@ -172,6 +177,54 @@ impl Memory {
     pub fn write_u32(&mut self, addr: u32, value: u32) {
         self.write_u16(addr, value as u16);
         self.write_u16(addr + 2, (value >> 16) as u16);
+    }
+
+    /// Where `N` bytes at `addr` lie in one stored block, if they do: in the real-mode image
+    /// (after the A20 gate, without wrapping) or in one extended page. `write` also excludes
+    /// the ROM. The CPU's multi-byte accesses use this to skip the byte-by-byte path.
+    #[inline]
+    fn block<const N: usize>(&self, addr: u32, write: bool) -> Option<(Option<usize>, usize)> {
+        let last = addr.checked_add(N as u32 - 1)?;
+        let start = self.gate(addr) as usize;
+        if (start as u32) + (N as u32 - 1) != self.gate(last) {
+            return None;
+        }
+        if start + N <= self.bytes.len() {
+            let rom = ROM_START as usize..CONVENTIONAL_SPACE;
+            return (!write || start + N <= rom.start || start >= rom.end).then_some((None, start));
+        }
+        let (page, at) = (start / PAGE_SIZE, start % PAGE_SIZE);
+        (start >= self.bytes.len() && last < self.size && at + N <= PAGE_SIZE).then_some((Some(page), at))
+    }
+
+    /// A CPU read of `N` consecutive bytes, the same as `N` calls of [`Memory::read_u8`].
+    #[inline]
+    pub fn read_n<const N: usize>(&self, addr: u32) -> [u8; N] {
+        match self.block::<N>(addr, false) {
+            Some((None, at)) => self.bytes[at..at + N].try_into().unwrap(),
+            Some((Some(page), at)) => match &self.extended[page] {
+                Some(data) => data[at..at + N].try_into().unwrap(),
+                None => [0; N],
+            },
+            None => std::array::from_fn(|i| self.read_u8(addr.wrapping_add(i as u32))),
+        }
+    }
+
+    /// A CPU write of `N` consecutive bytes, the same as `N` calls of [`Memory::write_u8`].
+    #[inline]
+    pub fn write_n<const N: usize>(&mut self, addr: u32, value: [u8; N]) {
+        match self.block::<N>(addr, true) {
+            Some((None, at)) => self.bytes[at..at + N].copy_from_slice(&value),
+            Some((Some(page), at)) => {
+                let data = self.extended[page].get_or_insert_with(|| vec![0; PAGE_SIZE].into_boxed_slice());
+                data[at..at + N].copy_from_slice(&value);
+            }
+            None => {
+                for (i, byte) in value.into_iter().enumerate() {
+                    self.write_u8(addr.wrapping_add(i as u32), byte);
+                }
+            }
+        }
     }
 
     /// Copies `len` bytes starting at `addr` (wrapping like CPU accesses do).
@@ -222,7 +275,7 @@ mod tests {
         assert_eq!(m.read_phys(0x30_0005), 0x11);
         assert_eq!(m.read_phys(0x100_0000), 0xFF, "beyond 16 MB there is nothing");
         m.write_phys(0x100_0000, 1);
-        assert_eq!(m.extended.len(), 2, "only written pages are stored");
+        assert_eq!(m.extended.iter().flatten().count(), 2, "only written pages are stored");
     }
 
     #[test]

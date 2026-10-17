@@ -125,7 +125,8 @@ impl Cpu {
         let default32 = self.code32();
         self.fetch.base = self.segment_base(CS);
         self.fetch.ip_mask = if default32 { u32::MAX } else { 0xFFFF };
-        self.fetch.paged = self.paging();
+        self.fetch.page_tag = 0;
+        self.fetch.buf_len = 0;
         let mut p = Prefixes { seg: None, rep: Rep::None, op32: default32, addr32: default32, lock: false };
         let mut prefixes = 0;
         let op = loop {
@@ -1505,16 +1506,57 @@ impl Cpu {
         }
     }
 
+    /// The linear address of an access of `n` bytes at `off` when its bytes are consecutive (no
+    /// wrap within the segment or around 4 GB) and all on one page.
+    #[inline]
+    fn contiguous(off: u32, base: u32, mask: u32, n: u32) -> Option<u32> {
+        let start = off & mask;
+        if start.checked_add(n - 1)? > mask {
+            return None;
+        }
+        let linear = base.wrapping_add(start);
+        linear.checked_add(n - 1)?;
+        ((linear & 0xFFF) + n <= 0x1000).then_some(linear)
+    }
+
     /// Little-endian access; each byte's offset is wrapped with `mask` (so 16-bit word accesses
-    /// wrap within the segment, as on the 8086). With paging, each byte's page is translated.
+    /// wrap within the segment, as on the 8086). With paging, each byte's page is translated
+    /// (once when they share a page, and then the bus reads them together; without paging the
+    /// byte path is the faster one).
     #[inline]
     pub(crate) fn read_mem<B: Bus>(&mut self, bus: &mut B, seg: usize, off: u32, mask: u32, w: Width) -> Res<u32> {
         let base = self.segment_base(seg);
+        // In the interpreter's paged copy (see `Bus::PAGED`), the common case inline.
+        if B::PAGED
+            && self.paging()
+            && let Some(linear) = Self::contiguous(off, base, mask, w.bytes())
+        {
+            let physical = self.translate(bus, linear, false, self.cpl == 3)?;
+            return Ok(match w {
+                Width::Byte => u32::from(bus.read_u8(physical)),
+                Width::Word => u32::from(bus.read_u16(physical)),
+                Width::Dword => bus.read_u32(physical),
+            });
+        }
         if !self.paging() {
             return Ok((0..w.bytes()).fold(0, |value, i| {
                 let byte = bus.read_u8(base.wrapping_add(off.wrapping_add(i) & mask));
                 value | (u32::from(byte) << (8 * i))
             }));
+        }
+        self.read_paged(bus, base, off, mask, w)
+    }
+
+    // Out of line, so that real-mode code inlines only the byte path.
+    #[inline(never)]
+    fn read_paged<B: Bus>(&mut self, bus: &mut B, base: u32, off: u32, mask: u32, w: Width) -> Res<u32> {
+        if let Some(linear) = Self::contiguous(off, base, mask, w.bytes()) {
+            let physical = self.translate(bus, linear, false, self.cpl == 3)?;
+            return Ok(match w {
+                Width::Byte => u32::from(bus.read_u8(physical)),
+                Width::Word => u32::from(bus.read_u16(physical)),
+                Width::Dword => bus.read_u32(physical),
+            });
         }
         let user = self.cpl == 3;
         let mut value = 0;
@@ -1536,9 +1578,35 @@ impl Cpu {
         value: u32,
     ) -> Res<()> {
         let base = self.segment_base(seg);
+        if B::PAGED
+            && self.paging()
+            && let Some(linear) = Self::contiguous(off, base, mask, w.bytes())
+        {
+            let physical = self.translate(bus, linear, true, self.cpl == 3)?;
+            match w {
+                Width::Byte => bus.write_u8(physical, value as u8),
+                Width::Word => bus.write_u16(physical, value as u16),
+                Width::Dword => bus.write_u32(physical, value),
+            }
+            return Ok(());
+        }
         if !self.paging() {
             for i in 0..w.bytes() {
                 bus.write_u8(base.wrapping_add(off.wrapping_add(i) & mask), (value >> (8 * i)) as u8);
+            }
+            return Ok(());
+        }
+        self.write_paged(bus, base, off, mask, w, value)
+    }
+
+    #[inline(never)]
+    fn write_paged<B: Bus>(&mut self, bus: &mut B, base: u32, off: u32, mask: u32, w: Width, value: u32) -> Res<()> {
+        if let Some(linear) = Self::contiguous(off, base, mask, w.bytes()) {
+            let physical = self.translate(bus, linear, true, self.cpl == 3)?;
+            match w {
+                Width::Byte => bus.write_u8(physical, value as u8),
+                Width::Word => bus.write_u16(physical, value as u16),
+                Width::Dword => bus.write_u32(physical, value),
             }
             return Ok(());
         }
@@ -1586,15 +1654,46 @@ impl Cpu {
 
     #[inline]
     pub(crate) fn fetch8<B: Bus>(&mut self, bus: &mut B) -> Res<u8> {
+        if !B::PAGED {
+            let value = bus.read_u8(self.fetch.base.wrapping_add(self.regs.ip));
+            self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
+            return Ok(value);
+        }
+        let ahead = self.regs.ip.wrapping_sub(self.fetch.buf_ip);
+        if ahead < self.fetch.buf_len {
+            self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
+            return Ok(self.fetch.buf[ahead as usize]);
+        }
+        self.fetch8_fill(bus)
+    }
+
+    /// With paging: fetches a byte through the bus, and reads ahead up to 16 bytes when that is
+    /// plain RAM (within the page, and before IP wraps), which the instruction's next fetches
+    /// then use. (Without paging, byte fetches are faster.)
+    #[inline(never)]
+    fn fetch8_fill<B: Bus>(&mut self, bus: &mut B) -> Res<u8> {
         let linear = self.fetch.base.wrapping_add(self.regs.ip);
-        let physical = if self.fetch.paged {
-            let user = self.cpl == 3;
-            self.translate(bus, linear, false, user)?
+        let physical = if linear >> 12 == self.fetch.page_tag.wrapping_sub(1) {
+            self.fetch.frame | (linear & 0xFFF)
         } else {
-            linear
+            let physical = self.translate(bus, linear, false, self.cpl == 3)?;
+            self.fetch.page_tag = (linear >> 12) + 1;
+            self.fetch.frame = physical & !0xFFF;
+            physical
         };
-        let value = bus.read_u8(physical);
-        self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
+        let ip = self.regs.ip;
+        let value = match bus.code_window(physical) {
+            Some(bytes) => {
+                let mut length = 16.min(0x1000 - (physical & 0xFFF));
+                if self.fetch.ip_mask == 0xFFFF {
+                    length = length.min(0x1_0000 - ip);
+                }
+                (self.fetch.buf, self.fetch.buf_ip, self.fetch.buf_len) = (bytes, ip, length);
+                bytes[0]
+            }
+            None => bus.read_u8(physical),
+        };
+        self.regs.ip = ip.wrapping_add(1) & self.fetch.ip_mask;
         Ok(value)
     }
 
