@@ -30,13 +30,77 @@ pub fn set_modes(hybrid: &mut Hybrid, list: &[String], mode: Mode) -> Result<(),
     Ok(())
 }
 
+/// `rec-host replay --game NAME --program MODULE FILE [--json]`: captured calls against the
+/// overrides, a result per call.
+pub fn cmd_replay(args: &[String]) -> Result<std::process::ExitCode, String> {
+    let (mut game, mut program, mut file, mut json) = (None, None, None, false);
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--game" => game = Some(args.next().ok_or("--game needs a name")?.clone()),
+            "--program" => program = Some(args.next().ok_or("--program needs a module")?.clone()),
+            "--json" => json = true,
+            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            path => file = Some(std::path::PathBuf::from(path)),
+        }
+    }
+    let game = game.ok_or("replay needs --game")?;
+    let program = program.ok_or("replay needs --program")?;
+    let file = file.ok_or("replay needs a file of captured calls")?;
+    let overrides = overrides(&game, &program)?;
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let (mut passed, mut failed, mut skipped) = (0, 0, 0);
+    let mut results = Vec::new();
+    for (number, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+        let capture = dos::capture::Capture::from_line(line)?;
+        let o = overrides.iter().find(|o| o.offset == capture.offset);
+        let (status, differences) = match (o, &capture.unreplayable) {
+            (None, _) => ("no-override", Vec::new()),
+            (_, Some(reason)) => ("unreplayable", vec![reason.clone()]),
+            (Some(o), None) => {
+                let differences = dos::capture::replay(&capture, *o);
+                (if differences.is_empty() { "pass" } else { "fail" }, differences)
+            }
+        };
+        match status {
+            "pass" => passed += 1,
+            "fail" => failed += 1,
+            _ => skipped += 1,
+        }
+        results.push((number + 1, capture.offset, capture.name.clone(), capture.input_hash, status, differences));
+    }
+    if json {
+        let items: Vec<String> = results
+            .iter()
+            .map(|(line, offset, name, hash, status, differences)| {
+                let differences: Vec<String> = differences.iter().map(|d| format!("{d:?}")).collect();
+                format!(
+                    r#"{{"line":{line},"offset":{offset},"name":"{name}","hash":"{hash:016X}","status":"{status}","differences":[{}]}}"#,
+                    differences.join(",")
+                )
+            })
+            .collect();
+        println!(r#"{{"passed":{passed},"failed":{failed},"skipped":{skipped},"results":[{}]}}"#, items.join(","));
+    } else {
+        for (line, _, name, _, status, differences) in &results {
+            if *status == "fail" {
+                println!("fail      line {line} {name}: {}", differences.join("; "));
+            }
+        }
+        println!("replayed  {passed} passed, {failed} failed, {skipped} skipped");
+    }
+    // 3, not 1: a failing call is a result, not an error of the command.
+    Ok(if failed > 0 { std::process::ExitCode::from(3) } else { std::process::ExitCode::SUCCESS })
+}
+
 /// One line of counts, and each finding on a line of its own.
 pub fn summary_lines(hybrid: &Hybrid) -> Vec<String> {
     let (rust, dual, mismatches) =
         hybrid.stats.iter().fold((0, 0, 0), |(r, d, x), s| (r + s.rust, d + s.dual, x + s.mismatches));
+    let captured = hybrid.captures.len();
     let active = hybrid.overrides().filter(|(_, mode)| *mode != Mode::Original).count();
     let mut lines = vec![format!(
-        "overrides {active} of {} active: {rust} Rust calls, {dual} dual-runs, {mismatches} mismatches",
+        "overrides {active} of {} active: {rust} Rust calls, {dual} dual-runs, {mismatches} mismatches, {captured} calls captured",
         hybrid.overrides().count()
     )];
     lines.extend(hybrid.findings.iter().take(20).map(|f| format!("finding   {}", finding_text(hybrid, f))));
@@ -92,13 +156,14 @@ pub fn stats_json(hybrid: &Hybrid) -> String {
         .zip(&hybrid.stats)
         .map(|((o, mode), s)| {
             format!(
-                r#"{{"offset":{},"name":"{}","mode":"{}","rust":{},"dual":{},"mismatches":{}}}"#,
+                r#"{{"offset":{},"name":"{}","mode":"{}","rust":{},"dual":{},"mismatches":{},"captured":{}}}"#,
                 o.offset,
                 o.name,
                 format!("{mode:?}").to_lowercase(),
                 s.rust,
                 s.dual,
-                s.mismatches
+                s.mismatches,
+                s.captured
             )
         })
         .collect();

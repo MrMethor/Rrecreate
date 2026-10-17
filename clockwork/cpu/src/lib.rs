@@ -51,6 +51,14 @@ pub trait Bus {
     fn read_u8(&mut self, addr: u32) -> u8;
     fn write_u8(&mut self, addr: u32, value: u8);
 
+    /// An instruction byte, when it isn't read through [`Bus::code_window`]: a data read
+    /// unless the bus wants to tell them apart (a tracing bus leaves code out of what a function
+    /// read).
+    #[inline(always)]
+    fn fetch_u8(&mut self, addr: u32) -> u8 {
+        self.read_u8(addr)
+    }
+
     /// Little-endian reads and writes of consecutive bytes; they must behave exactly like the
     /// byte accesses in address order (implementations may take a shortcut for plain RAM).
     fn read_u16(&mut self, addr: u32) -> u16 {
@@ -139,6 +147,11 @@ impl<B: Bus> Bus for Paged<'_, B> {
     #[inline(always)]
     fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
         self.0.code_window(addr)
+    }
+
+    #[inline(always)]
+    fn fetch_u8(&mut self, addr: u32) -> u8 {
+        self.0.fetch_u8(addr)
     }
 
     #[inline(always)]

@@ -14,6 +14,8 @@
 //!   timer variables: the Rust function takes no time, so they don't run for it), video memory
 //!   and palette. A difference becomes a [`Finding`]; either way the run goes on with the
 //!   original's result, so a dual session behaves exactly like an original one;
+//! - [`Mode::Capture`]: the original runs, traced, and the call becomes a test vector
+//!   ([`crate::capture`]);
 //! - [`Mode::Original`]: not hooked.
 //!
 //! Real mode only (the protected-mode code of DOS extenders isn't hooked). Rust code takes no
@@ -113,6 +115,7 @@ pub enum Mode {
     Original,
     Rust,
     Dual,
+    Capture,
 }
 
 /// Counts per override.
@@ -121,6 +124,8 @@ pub struct Stats {
     pub rust: u64,
     pub dual: u64,
     pub mismatches: u64,
+    /// Distinct calls captured (kept in `captures`).
+    pub captured: u64,
 }
 
 /// A difference between the original and an override, found by dual-run.
@@ -162,12 +167,15 @@ pub struct Hybrid {
     hooks: Vec<u64>,
     pub stats: Vec<Stats>,
     pub findings: Vec<Finding>,
+    /// Distinct captured calls ([`Mode::Capture`]).
+    pub captures: Vec<crate::capture::Capture>,
+    seen: BTreeSet<(u32, u64)>,
     /// Dual-runs of one function, at most (then it runs as the original).
     pub dual_limit: u64,
-    /// Inside a dual-run: nested dual functions run as the original.
-    in_dual: bool,
+    /// Inside a dual-run or a capture: nested hooked functions run as the original.
+    pub(crate) in_dual: bool,
     /// The hooked entry the original was started at, not to be hooked again right away.
-    skip: Option<u32>,
+    pub(crate) skip: Option<u32>,
 }
 
 impl Hybrid {
@@ -181,6 +189,8 @@ impl Hybrid {
             hooks: vec![0; 0x11_0000 / 64],
             stats: vec![Stats::default(); n],
             findings: Vec::new(),
+            captures: Vec::new(),
+            seen: BTreeSet::new(),
             dual_limit: 100,
             in_dual: false,
             skip: None,
@@ -240,6 +250,10 @@ pub(crate) struct ReturnTrap {
 }
 
 impl ReturnTrap {
+    pub(crate) fn new(cs: u16, ip: u16, ss: u16, sp: u16, lowest_sp: u16) -> Self {
+        ReturnTrap { cs, ip, ss, sp, lowest_sp }
+    }
+
     #[inline]
     pub(crate) fn reached(&mut self, regs: &cpu::Regs) -> bool {
         let sp = regs.sp();
@@ -431,6 +445,11 @@ impl Machine {
         }
     }
 
+    /// Runs nested until `trap` is reached (or for the longest a dual-run allows).
+    pub(crate) fn run_to_return_public(&mut self, trap: ReturnTrap) -> (Stop, u16) {
+        self.run_to_return(trap, MAX_DUAL_CYCLES)
+    }
+
     /// Runs nested until `trap` is reached; returns why it stopped and the lowest SP seen.
     fn run_to_return(&mut self, trap: ReturnTrap, max_cycles: u64) -> (Stop, u16) {
         let outer = self.return_trap.replace(trap);
@@ -459,6 +478,18 @@ impl Machine {
         match mode {
             Mode::Original => Ok(false),
             Mode::Dual if hybrid.in_dual || hybrid.stats[i].dual >= hybrid.dual_limit => Ok(false),
+            Mode::Capture if hybrid.in_dual || hybrid.stats[i].captured >= crate::capture::MAX_CAPTURES => Ok(false),
+            Mode::Capture => {
+                hybrid.skip = Some(linear);
+                if let Some(capture) = self.capture_call(o)? {
+                    let hybrid = self.hybrid.as_mut().expect("hooked");
+                    if hybrid.seen.insert((capture.offset, capture.input_hash)) {
+                        hybrid.stats[i].captured += 1;
+                        hybrid.captures.push(capture);
+                    }
+                }
+                Ok(true)
+            }
             Mode::Rust => {
                 hybrid.stats[i].rust += 1;
                 self.run_override(o).map_err(Stop::Override)?;
@@ -474,6 +505,10 @@ impl Machine {
     }
 
     /// Runs a Rust function at its entry, then returns from it as the original would.
+    pub(crate) fn run_override_public(&mut self, o: Override) -> Result<(), String> {
+        self.run_override(o)
+    }
+
     fn run_override(&mut self, o: Override) -> Result<(), String> {
         let (ss, sp) = (self.cpu.regs.ss(), self.cpu.regs.sp());
         let mut call = Call { m: self, sp, far: o.conv.far };

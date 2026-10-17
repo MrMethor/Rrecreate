@@ -5,6 +5,7 @@
 
 pub mod audio;
 pub mod bios;
+pub mod capture;
 pub mod clock;
 pub mod cmos;
 pub mod coverage;

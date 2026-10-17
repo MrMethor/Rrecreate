@@ -541,6 +541,8 @@ pub struct Machine {
     pub(crate) return_trap: Option<crate::hybrid::ReturnTrap>,
     /// While a dual-run's original runs: what interrupt handlers write.
     pub(crate) isr_watch: Option<crate::hybrid::IsrWatch>,
+    /// While a captured call runs: its accesses.
+    pub(crate) tracer: Option<Box<crate::capture::Tracer>>,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -581,6 +583,7 @@ impl Machine {
             hybrid: None,
             return_trap: None,
             isr_watch: None,
+            tracer: None,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -641,6 +644,9 @@ impl Machine {
                 if let Some(watch) = &mut self.isr_watch {
                     watch.enter(&self.cpu.regs, &self.mem);
                 }
+                if let Some(tracer) = &mut self.tracer {
+                    tracer.interrupt(&self.cpu.regs);
+                }
                 let (cpu, mut bus) = self.split();
                 if let Err(exit) = cpu.interrupt(&mut bus, vector) {
                     return Stop::Fault(exit);
@@ -666,8 +672,17 @@ impl Machine {
             if self.coverage.is_some() {
                 self.coverage_before();
             }
-            let (cpu, mut bus) = self.split();
-            let result = cpu.step(&mut bus);
+            let result = if let Some(tracer) = self.tracer.as_deref_mut()
+                && tracer.active(&self.cpu.regs)
+            {
+                let now = self.cpu.cycles;
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let mut bus = crate::capture::TracingBus { inner, log: &mut tracer.log };
+                self.cpu.step(&mut bus)
+            } else {
+                let (cpu, mut bus) = self.split();
+                cpu.step(&mut bus)
+            };
             if let Some(coverage) = &mut self.coverage {
                 match result {
                     Ok(()) => coverage.after(self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip)),
@@ -680,7 +695,14 @@ impl Machine {
             }
             match result {
                 Ok(()) => {}
-                Err(cpu::Exit::Callback(id)) => self.callback(id),
+                Err(cpu::Exit::Callback(id)) => {
+                    if let Some(tracer) = self.tracer.as_deref_mut()
+                        && tracer.active(&self.cpu.regs)
+                    {
+                        tracer.services += 1;
+                    }
+                    self.callback(id);
+                }
                 Err(cpu::Exit::Halt) => self.halted = true,
                 Err(fault) => return Stop::Fault(fault),
             }

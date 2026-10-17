@@ -1713,7 +1713,7 @@ impl Cpu {
     #[inline]
     pub(crate) fn fetch8<B: Bus>(&mut self, bus: &mut B) -> Res<u8> {
         if !B::PAGED {
-            let value = bus.read_u8(self.fetch.base.wrapping_add(self.regs.ip));
+            let value = bus.fetch_u8(self.fetch.base.wrapping_add(self.regs.ip));
             self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
             return Ok(value);
         }
@@ -1746,7 +1746,7 @@ impl Cpu {
                 (fetch.buf_page, fetch.buf_user) = ((physical >> 12) + 1, self.cpl == 3);
                 bytes[0]
             }
-            None => bus.read_u8(physical),
+            None => bus.fetch_u8(physical),
         };
         self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
         Ok(value)

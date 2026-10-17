@@ -28,6 +28,10 @@ usage:
   rec-host play <game-dir> <program> [options]   run in a window with keyboard input
   rec-host unpack <program> --out FILE [--json]  undo an executable packer (PKLITE, LZEXE, ...) by
                                                  running it to its entry point; writes an MZ file
+  rec-host replay --game NAME --program MODULE FILE [--json]
+                                                 replay captured calls (one per line, from
+                                                 run --captures-out) against the game's overrides;
+                                                 exit code 3 when a call fails
 
 options:
   --args TEXT        command line passed to the program
@@ -48,6 +52,8 @@ options:
                      in Rust instead of the original
   --dual LIST        run: these overrides are checked against the original at every call (up
                      to 100 each): differences are reported as findings
+  --capture LIST     run: the calls to these functions (overrides) are captured as test vectors
+  --captures-out FILE  run: write the captured calls there, one per line
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
                      made (JSON, for rec)
   --save-changes DIR run: afterwards, write the files the program created or changed to DIR
@@ -104,6 +110,8 @@ struct Options {
     game: Option<String>,
     rust: Vec<String>,
     dual: Vec<String>,
+    capture: Vec<String>,
+    captures_out: Option<PathBuf>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
     record: Option<PathBuf>,
@@ -152,6 +160,7 @@ fn main() -> ExitCode {
         Some("run") => parse_options(&args[1..]).and_then(|o| cmd_run(&o)),
         Some("play") => parse_options(&args[1..]).and_then(|o| play::run(&o)),
         Some("unpack") => cmd_unpack(&args[1..]),
+        Some("replay") => games::cmd_replay(&args[1..]),
         Some("--version") => {
             println!("rec-host {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
@@ -248,6 +257,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--game" => options.game = Some(value(arg)?),
             "--rust" => options.rust.push(value(arg)?),
             "--dual" => options.dual.push(value(arg)?),
+            "--capture" => options.capture.push(value(arg)?),
+            "--captures-out" => options.captures_out = Some(value(arg)?.into()),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
             "--trace" => options.trace = Some(value(arg)?.into()),
@@ -392,8 +403,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         let hybrid = m.start_hybrid(&module, overrides);
         games::set_modes(hybrid, &o.rust, dos::hybrid::Mode::Rust)?;
         games::set_modes(hybrid, &o.dual, dos::hybrid::Mode::Dual)?;
-    } else if !o.rust.is_empty() || !o.dual.is_empty() {
-        return Err("--rust and --dual need --game".into());
+        games::set_modes(hybrid, &o.capture, dos::hybrid::Mode::Capture)?;
+    } else if !o.rust.is_empty() || !o.dual.is_empty() || !o.capture.is_empty() {
+        return Err("--rust, --dual and --capture need --game".into());
     }
     if let Some(session) = &session {
         for &(cycle, input) in &session.inputs {
@@ -439,6 +451,10 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     }
     if let Some(dir) = &o.save_changes {
         save_changes(&m, dir)?;
+    }
+    if let (Some(path), Some(hybrid)) = (&o.captures_out, &m.hybrid) {
+        let text: String = hybrid.captures.iter().map(|c| c.to_line() + "\n").collect();
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if let (Some(path), Some(coverage)) = (&o.coverage, &m.coverage) {
         std::fs::write(path, coverage.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
