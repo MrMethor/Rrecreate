@@ -94,6 +94,21 @@ impl Convention {
 
 pub type OverrideFn = fn(&mut Call) -> Result<(), String>;
 
+/// A variable of the program: `size` bytes at a load-image offset (a game crate's generated
+/// `layout.rs`, PROJECT.md §7.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Global {
+    pub offset: u32,
+    pub size: u32,
+}
+
+impl Global {
+    /// The load-image offset of element `i` of `element` bytes.
+    pub const fn at(self, i: u32, element: u32) -> u32 {
+        self.offset + i * element
+    }
+}
+
 /// A Rust function standing in for a function of the program.
 #[derive(Clone, Copy)]
 pub struct Override {
@@ -391,6 +406,31 @@ impl Call<'_> {
         let [lo, hi] = value.to_le_bytes();
         self.write8(segment, offset, lo);
         self.write8(segment, offset.wrapping_add(1), hi);
+    }
+
+    /// The offset in DS of a load-image offset (of the program's data segment, DS at the call):
+    /// for indexing as the original does, wrapping within the segment.
+    pub fn in_ds(&self, offset: u32) -> u16 {
+        let base = self.m.hybrid.as_ref().map_or(0, |h| h.base);
+        base.wrapping_add(offset).wrapping_sub(u32::from(self.ds()) << 4) as u16
+    }
+
+    /// Memory at a load-image offset (where the program's data is, whatever DS holds).
+    pub fn image8(&mut self, offset: u32) -> u8 {
+        let base = self.m.hybrid.as_ref().map_or(0, |h| h.base);
+        self.m.read_u8(base.wrapping_add(offset))
+    }
+    pub fn image16(&mut self, offset: u32) -> u16 {
+        u16::from_le_bytes([self.image8(offset), self.image8(offset.wrapping_add(1))])
+    }
+    pub fn set_image8(&mut self, offset: u32, value: u8) {
+        let base = self.m.hybrid.as_ref().map_or(0, |h| h.base);
+        self.m.write_u8(base.wrapping_add(offset), value);
+    }
+    pub fn set_image16(&mut self, offset: u32, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.set_image8(offset, lo);
+        self.set_image8(offset.wrapping_add(1), hi);
     }
 
     /// Calls the program's function at image offset `offset` (an original or another override)
