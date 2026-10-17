@@ -94,6 +94,39 @@ impl Convention {
 
 pub type OverrideFn = fn(&mut Call) -> Result<(), String>;
 
+/// The first 16 bytes of a function as the knowledge store has them (a game crate's generated
+/// `ids.rs`): an override is written against these. Byte `i` is bits `8i..8i+8` of `bytes`;
+/// bytes whose `mask` bit is clear are not compared (words the loader relocates, the end of the
+/// image).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Signature {
+    pub offset: u32,
+    pub bytes: u128,
+    pub mask: u16,
+}
+
+impl Signature {
+    /// Whether `code` (the 16 bytes at the entry) matches.
+    pub fn matches(&self, code: &[u8; 16]) -> bool {
+        (0..16).all(|i| self.mask & 1 << i == 0 || code[i] == (self.bytes >> (8 * i)) as u8)
+    }
+
+    fn describe(&self) -> String {
+        (0..16)
+            .map(
+                |i| {
+                    if self.mask & 1 << i == 0 { "..".into() } else { format!("{:02X}", (self.bytes >> (8 * i)) as u8) }
+                },
+            )
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn hex(code: &[u8]) -> String {
+    code.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
+}
+
 /// A variable of the program: `size` bytes at a load-image offset (a game crate's generated
 /// `layout.rs`, PROJECT.md §7.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +235,10 @@ pub struct Hybrid {
     pub(crate) in_dual: bool,
     /// The hooked entry the original was started at, not to be hooked again right away.
     pub(crate) skip: Option<u32>,
+    /// What each override was written against ([`Hybrid::expect`]), by offset.
+    signatures: BTreeMap<u32, Signature>,
+    /// The code at each override's entry when it was first called, by offset.
+    code: BTreeMap<u32, [u8; 16]>,
 }
 
 impl Hybrid {
@@ -217,6 +254,8 @@ impl Hybrid {
             findings: Vec::new(),
             captures: Vec::new(),
             seen: BTreeSet::new(),
+            signatures: BTreeMap::new(),
+            code: BTreeMap::new(),
             dual_limit: 100,
             in_dual: false,
             skip: None,
@@ -248,6 +287,47 @@ impl Hybrid {
             }
         }
         true
+    }
+
+    /// The bytes the overrides were written against: at an override's first call its entry must
+    /// hold them (else the program is another version, or the code isn't loaded yet).
+    pub fn expect(&mut self, signatures: &[Signature]) {
+        for s in signatures {
+            if self.overrides.iter().any(|(o, _)| o.offset == s.offset) {
+                self.signatures.insert(s.offset, *s);
+            }
+        }
+    }
+
+    /// Checks the code at an override's entry: at the first call against its signature, later
+    /// against what the first call found (an overlay or self-modifying code changed it). The
+    /// override is only valid for the code it was written for, so a difference stops the run.
+    pub(crate) fn check_code(&mut self, o: &Override, code: [u8; 16]) -> Result<(), String> {
+        if let Some(first) = self.code.get(&o.offset) {
+            if *first != code {
+                return Err(format!(
+                    "{}: the code at +{:05X} changed since its first call ({} became {}): an overlay or                      self-modifying code; the override is for the first",
+                    o.name,
+                    o.offset,
+                    hex(first),
+                    hex(&code)
+                ));
+            }
+            return Ok(());
+        }
+        if let Some(s) = self.signatures.get(&o.offset)
+            && !s.matches(&code)
+        {
+            return Err(format!(
+                "{}: the code at +{:05X} isn't what the override was written for (expected {}, found {}):                  another version of the program?",
+                o.name,
+                o.offset,
+                s.describe(),
+                hex(&code)
+            ));
+        }
+        self.code.insert(o.offset, code);
+        Ok(())
     }
 
     pub fn set_all(&mut self, mode: Mode) {
@@ -526,6 +606,12 @@ impl Machine {
         }
         let i = hybrid.by_linear[&linear];
         let (o, mode) = hybrid.overrides[i];
+        if mode != Mode::Original {
+            let code = std::array::from_fn(|k| self.mem.read_u8(linear.wrapping_add(k as u32)));
+            let hybrid = self.hybrid.as_mut().expect("hooked");
+            hybrid.check_code(&o, code).map_err(Stop::Override)?;
+        }
+        let hybrid = self.hybrid.as_mut().expect("hooked");
         match mode {
             Mode::Original => Ok(false),
             Mode::Dual if hybrid.in_dual || hybrid.stats[i].dual >= hybrid.dual_limit => Ok(false),

@@ -421,6 +421,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         let overrides = games::with_placeholders(overrides, &o.capture)?;
         let module = program.rsplit(['\\', '/']).next().unwrap_or(&program).to_ascii_uppercase();
         let hybrid = m.start_hybrid(&module, overrides);
+        if let Some(game) = &o.game {
+            hybrid.expect(games::signatures(game, &program));
+        }
         games::set_modes(hybrid, &o.rust, dos::hybrid::Mode::Rust)?;
         games::set_modes(hybrid, &o.dual, dos::hybrid::Mode::Dual)?;
         games::set_modes(hybrid, &o.capture, dos::hybrid::Mode::Capture)?;
