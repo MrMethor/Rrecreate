@@ -13,6 +13,7 @@ use crate::cmos::Cmos;
 use crate::dma::Dma;
 use crate::dos::DosState;
 use crate::ems::{self, Ems};
+use crate::joystick::{GamePort, Stick};
 use crate::keyboard::{ControllerEffect, Keyboard, LEFT_SHIFT, ascii_to_scancode};
 use crate::mouse::{self, Mouse};
 use crate::mpu401::Mpu401;
@@ -61,6 +62,8 @@ pub struct Config {
     pub mouse: bool,
     /// The Sound Blaster card (with its OPL chips), or `None` for no sound card.
     pub sound_blaster: Option<SbConfig>,
+    /// Joysticks on the game port (0-2); with none the port reads FFh, as without a card.
+    pub joysticks: u8,
 }
 
 impl Default for Config {
@@ -81,6 +84,7 @@ impl Default for Config {
             xms: true,
             mouse: true,
             sound_blaster: Some(SbConfig::default()),
+            joysticks: 0,
         }
     }
 }
@@ -107,6 +111,9 @@ pub enum Input {
     /// The mouse is at (x, y) in the driver's coordinates with these buttons held (bit 0 left,
     /// bit 1 right, bit 2 middle).
     Mouse { x: i16, y: i16, buttons: u8 },
+    /// Joystick `stick` (0 or 1) is at (x, y), each -32767..=32767, with these buttons held
+    /// (bit 0 button 1, bit 1 button 2).
+    Joystick { stick: u8, x: i16, y: i16, buttons: u8 },
 }
 
 /// Why [`Machine::run`] returned.
@@ -150,6 +157,7 @@ pub struct Devices {
     pub dma: Dma,
     pub opl: Option<Opl>,
     pub sb: Option<SoundBlaster>,
+    pub game_port: GamePort,
     pub clock: Clock,
     port92: u8,
     /// Ports accessed that nothing emulates (reads return FFh, writes are dropped).
@@ -159,7 +167,9 @@ pub struct Devices {
 }
 
 impl Devices {
-    fn new(clock: Clock, start_time: DateTime, sound_blaster: Option<SbConfig>, extended_kb: u32, fpu: bool) -> Self {
+    fn new(config: &Config, clock: Clock) -> Self {
+        let (start_time, sound_blaster, extended_kb, fpu) =
+            (config.start_time, config.sound_blaster, config.extended_kb, config.fpu);
         Self {
             // BIOS defaults: IRQ0, 1, 2 and 6 unmasked on the master; vectors 08h and 70h.
             pic: Pic::new(0x08, 0xB8),
@@ -172,6 +182,7 @@ impl Devices {
             dma: Dma::new(),
             opl: sound_blaster.map(|sb| Opl::new(sb.opl_mode())),
             sb: sound_blaster.map(SoundBlaster::new),
+            game_port: GamePort::new(config.joysticks),
             clock,
             port92: 0,
             unknown_ports: BTreeSet::new(),
@@ -267,8 +278,9 @@ impl Devices {
             }
             0x330 => self.mpu.read_data(),
             0x331 => self.mpu.read_status(),
-            // Not emulated yet: no joystick. Absent cards read FFh.
-            0x201 | 0x220..=0x22F | 0x388..=0x38B => 0xFF,
+            0x201 => self.game_port.read(self.clock.nanos(cycles)),
+            // Absent cards read FFh.
+            0x220..=0x22F | 0x388..=0x38B => 0xFF,
             _ => {
                 self.unknown_ports.insert(port);
                 0xFF
@@ -330,7 +342,8 @@ impl Devices {
             0x330 => self.mpu.write_data(value, now),
             0x331 => self.mpu.write_command(value),
             0x80 => {} // POST code port, written for short I/O delays
-            0x201 | 0x220..=0x22F | 0x388..=0x38B => {}
+            0x201 => self.game_port.write(self.clock.nanos(cycles)),
+            0x220..=0x22F | 0x388..=0x38B => {}
             _ => {
                 self.unknown_ports.insert(port);
             }
@@ -517,7 +530,7 @@ impl Machine {
         let mut machine = Self {
             cpu: Cpu::with_model(config.cpu_model),
             mem: Memory::with_size(0x10_0000 + config.extended_kb.min(MAX_EXTENDED_KB) * 1024),
-            devices: Devices::new(clock, config.start_time, config.sound_blaster, config.extended_kb, config.fpu),
+            devices: Devices::new(&config, clock),
             dos: DosState::default(),
             ems: Ems::new(config.ems_kb),
             xms: Xms::new(config.xms, 0x10_0000 + config.extended_kb.min(MAX_EXTENDED_KB) * 1024),
@@ -882,6 +895,9 @@ impl Machine {
             match input {
                 Input::Key(code) => self.devices.keyboard.push(code),
                 Input::Mouse { x, y, buttons } => mouse::input(self, i32::from(x), i32::from(y), buttons),
+                Input::Joystick { stick, x, y, buttons } => {
+                    self.devices.game_port.set(usize::from(stick), Stick { x, y, buttons });
+                }
             }
         }
         if self.devices.keyboard.pump() {

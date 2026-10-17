@@ -4,6 +4,7 @@
 //! `play` opens a window, takes keyboard input, and can record it as a session that `run
 //! --replay` reproduces bit for bit.
 
+mod gamepads;
 mod hotspots;
 mod live_audio;
 mod play;
@@ -49,6 +50,8 @@ options:
                      the first one, e.g. Microsoft GS Wavetable Synth; none: no MIDI)
   --cpu 286|386      processor the program sees (default 386)
   --no-fpu           no x87 coprocessor (escape opcodes do nothing)
+  --joystick N       joysticks on the game port, 0-2 (default 0); play: the host's gamepads
+                     drive them (left stick, A and B buttons)
   --cd LETTER[=DIR]  add a CD-ROM drive (with MSCDEX) showing the same files as C:, or only its
                      folder DIR (like DOSBox mounting a game's CD folder)
   --cd-label NAME    the CD's volume label (default: its folder's name, or CDROM)
@@ -92,6 +95,7 @@ struct Options {
     memory_mb: Option<u32>,
     no_xms: bool,
     no_fpu: bool,
+    joysticks: u8,
     hotspots: usize,
     disasm: Option<String>,
     dump: Option<String>,
@@ -161,6 +165,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--no-xms" => options.no_xms = true,
             "--no-fpu" => options.no_fpu = true,
+            "--joystick" => {
+                options.joysticks = value(arg)?.parse().ok().filter(|&n| n <= 2).ok_or("--joystick needs 0, 1 or 2")?;
+            }
             "--cd" => {
                 let spec = value(arg)?;
                 let (letter, root) = spec.split_once('=').unwrap_or((&spec, ""));
@@ -255,6 +262,7 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         extended_kb: o.memory_mb.map_or(Config::default().extended_kb, |mb| (mb - 1) * 1024),
         xms: !o.no_xms,
         fpu: !o.no_fpu,
+        joysticks: o.joysticks,
         ..Config::default()
     };
     Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())

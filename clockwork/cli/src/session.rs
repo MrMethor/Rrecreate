@@ -9,10 +9,12 @@
 //! ips 8000000
 //! 1234567 K 1E
 //! 1250000 M 320 100 1
+//! 1300000 J 0 -32767 0 1
 //! ```
-//! Data lines are `<cycle> K <scancode in hex>` or `<cycle> M <x> <y> <buttons>` (mouse position
-//! in the driver's coordinates; buttons: bit 0 left, 1 right, 2 middle). The older form
-//! `<cycle> <scancode>` is still read as a key.
+//! Data lines are `<cycle> K <scancode in hex>`, `<cycle> M <x> <y> <buttons>` (mouse position
+//! in the driver's coordinates; buttons: bit 0 left, 1 right, 2 middle) or `<cycle> J <stick>
+//! <x> <y> <buttons>` (joystick 0 or 1; position -32767..=32767; buttons: bit 0 button 1, bit 1
+//! button 2). The older form `<cycle> <scancode>` is still read as a key.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -37,6 +39,7 @@ impl Session {
             match input {
                 Input::Key(code) => writeln!(out, "{cycle} K {code:02X}"),
                 Input::Mouse { x, y, buttons } => writeln!(out, "{cycle} M {x} {y} {buttons}"),
+                Input::Joystick { stick, x, y, buttons } => writeln!(out, "{cycle} J {stick} {x} {y} {buttons}"),
             }
             .expect("writing to a String");
         }
@@ -90,6 +93,12 @@ fn parse_input(text: &str) -> Option<Input> {
         ["M", x, y, buttons] => {
             Some(Input::Mouse { x: x.parse().ok()?, y: y.parse().ok()?, buttons: buttons.parse().ok()? })
         }
+        ["J", stick, x, y, buttons] => Some(Input::Joystick {
+            stick: stick.parse().ok().filter(|&s: &u8| s < 2)?,
+            x: x.parse().ok()?,
+            y: y.parse().ok()?,
+            buttons: buttons.parse().ok()?,
+        }),
         _ => None,
     }
 }
@@ -107,6 +116,7 @@ mod tests {
             inputs: vec![
                 (100, Input::Key(0x1E)),
                 (180, Input::Mouse { x: 320, y: -1, buttons: 1 }),
+                (200, Input::Joystick { stick: 1, x: -32767, y: 400, buttons: 2 }),
                 (250, Input::Key(0x9E)),
             ],
         };

@@ -10,6 +10,7 @@ use dos::{Input, Machine, Stop};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, Window, WindowOptions};
 
 use crate::Options;
+use crate::gamepads::Gamepads;
 use crate::live_audio::LiveAudio;
 use crate::session::Session;
 
@@ -35,6 +36,7 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
 
     let cycles_per_frame = (ips / 70).max(1);
     let mut audio = (!o.no_audio).then(|| LiveAudio::start(o.midi_out.clone()));
+    let mut gamepads = (o.joysticks > 0).then(|| Gamepads::start(o.joysticks)).flatten();
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
     let mut recorded: Vec<(u64, Input)> = Vec::new();
     let mut last_mouse = None;
@@ -55,6 +57,10 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
             m.queue_input(now, mouse);
             recorded.push((now, mouse));
             last_mouse = Some(mouse);
+        }
+        for input in gamepads.iter_mut().flat_map(Gamepads::changes) {
+            m.queue_input(now, input);
+            recorded.push((now, input));
         }
         let cycles = audio.as_ref().map_or(cycles_per_frame, |a| a.frame_cycles(cycles_per_frame));
         match m.run(cycles) {

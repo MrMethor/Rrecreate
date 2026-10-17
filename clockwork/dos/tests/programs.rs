@@ -2450,3 +2450,72 @@ fn vbe_protected_mode_interface_is_valid_32_bit_code() {
         assert_eq!(pushes, pops, "balanced stack in the function at {from:#x}");
     }
 }
+
+// --- Game port --------------------------------------------------------------------------------
+
+/// Times joystick A's X axis by polling 201h after a write, then asks the BIOS (INT 15h AH=84h)
+/// for the positions and the buttons. Results: loops, AX, BX, flags, buttons AX.
+fn game_port_program() -> Vec<u8> {
+    com(|a| {
+        a.mov(dx, 0x201)?;
+        a.out(dx, al)?;
+        a.xor(cx, cx)?;
+        a.here("poll")?;
+        a.in_(al, dx)?;
+        a.test(al, 1)?;
+        let done = a.l("done");
+        a.jz(done)?;
+        a.inc(cx)?;
+        let poll = a.l("poll");
+        a.jnz(poll)?;
+        a.here("done")?;
+        store(a, 0, cx)?;
+        a.mov(ah, 0x84)?;
+        a.mov(dx, 1)?;
+        a.int(0x15)?;
+        store(a, 1, ax)?;
+        store(a, 2, bx)?;
+        a.pushf()?;
+        a.pop(ax)?;
+        store(a, 3, ax)?;
+        a.mov(ah, 0x84)?;
+        a.xor(dx, dx)?;
+        a.int(0x15)?;
+        store(a, 4, ax)?;
+        hold(a)?;
+        vbe_data_area(a)
+    })
+}
+
+fn run_game_port(joysticks: u8, stick: Option<dos::Input>) -> [u16; 5] {
+    let program = game_port_program();
+    let mut drive = Vfs::new();
+    drive.insert_file("J.COM", program.clone());
+    let mut m = Machine::with_program(Config { joysticks, ..Config::default() }, drive, "J.COM", "").unwrap();
+    if let Some(input) = stick {
+        m.queue_input(0, input);
+    }
+    m.run(SECOND / 10);
+    let results = vbe_data(&m, &program).results;
+    std::array::from_fn(|i| m.mem.read_u16(results + 2 * i as u32))
+}
+
+#[test]
+fn joystick_axes_time_out_by_position() {
+    let right = run_game_port(1, Some(dos::Input::Joystick { stick: 0, x: 32767, y: 0, buttons: 1 }));
+    let left = run_game_port(1, Some(dos::Input::Joystick { stick: 0, x: -32767, y: 0, buttons: 0 }));
+    // Five instructions a loop at 8 M instructions/s: 1.13 ms is about 1800 loops, 20 µs about 30.
+    assert!((1700..1900).contains(&right[0]), "full right: {} loops", right[0]);
+    assert!(left[0] < 40, "full left: {} loops", left[0]);
+    assert_eq!((right[1], right[2]), (255, 128), "BIOS positions");
+    assert_eq!(right[3] & 1, 0, "CF clear");
+    assert_eq!(right[4] & 0xFF, 0xE0, "button 1 of stick A pressed (bit 4 clear)");
+}
+
+#[test]
+fn no_joystick_reads_ff_and_the_bios_says_so() {
+    let none = run_game_port(0, None);
+    assert_eq!(none[0], 0, "the axis bit never clears: the loop ends when CX wraps");
+    assert_eq!(none[3] & 1, 1, "CF set: no joystick");
+    assert_eq!(none[4], 0x00F0);
+}

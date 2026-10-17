@@ -1316,6 +1316,7 @@ fn disk(m: &mut Machine) {
 fn system(m: &mut Machine) {
     match m.cpu.regs.ah() {
         0x4F => m.set_return_flag(CF, true), // keyboard intercept: process the key
+        0x84 => joystick(m),
         0x87 => {
             // Block move through a GDT at ES:SI: source descriptor at 10h, destination at 18h.
             let gdt = Machine::lin(m.cpu.regs.es(), m.cpu.regs.si());
@@ -1365,6 +1366,35 @@ fn system(m: &mut Machine) {
             m.cpu.regs.set_ah(0x86);
             m.set_return_flag(CF, true);
         }
+    }
+}
+
+/// INT 15h AH=84h: joystick buttons (DX=0) or positions (DX=1), as DOSBox answers it.
+fn joystick(m: &mut Machine) {
+    let port = &m.devices.game_port;
+    match m.cpu.regs.dx() {
+        0 if port.connected() => {
+            let now = m.devices.clock.nanos(m.cpu.cycles);
+            let buttons = m.devices.game_port.read(now) & 0xF0;
+            m.cpu.regs.set_al(buttons);
+            m.set_return_flag(CF, false);
+        }
+        0 => {
+            m.cpu.regs.set_ax(0x00F0);
+            m.cpu.regs.set_dx(0x0201);
+            m.set_return_flag(CF, true);
+        }
+        1 => {
+            let positions = port.bios_positions();
+            let [ax, bx, cx, dx] = positions.unwrap_or([0; 4]);
+            let r = &mut m.cpu.regs;
+            r.set_ax(ax);
+            r.set_bx(bx);
+            r.set_cx(cx);
+            r.set_dx(dx);
+            m.set_return_flag(CF, positions.is_none());
+        }
+        dx => m.diagnostic(format!("INT 15h AH=84h DX={dx:04X}h is not implemented")),
     }
 }
 
