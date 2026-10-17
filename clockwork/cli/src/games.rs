@@ -18,6 +18,17 @@ pub fn overrides(game: &str, program: &str) -> Result<Vec<Override>, String> {
 }
 
 /// Applies `--rust`/`--dual` lists: override names or image offsets in hex, or `all`.
+/// `overrides` plus a placeholder (capture only) for each `+OFFSET` in `list` none of them has.
+pub fn with_placeholders(mut overrides: Vec<Override>, list: &[String]) -> Result<Vec<Override>, String> {
+    for which in list.iter().flat_map(|l| l.split(',')).map(str::trim).filter(|w| w.starts_with('+')) {
+        let offset = u32::from_str_radix(&which[1..], 16).map_err(|_| format!("bad offset {which:?}"))?;
+        if !overrides.iter().any(|o| o.offset == offset) {
+            overrides.push(Override::placeholder(offset));
+        }
+    }
+    Ok(overrides)
+}
+
 pub fn set_modes(hybrid: &mut Hybrid, list: &[String], mode: Mode) -> Result<(), String> {
     for which in list.iter().flat_map(|l| l.split(',')).map(str::trim).filter(|w| !w.is_empty()) {
         if which == "all" {

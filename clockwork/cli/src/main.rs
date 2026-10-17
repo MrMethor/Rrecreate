@@ -52,7 +52,8 @@ options:
                      in Rust instead of the original
   --dual LIST        run: these overrides are checked against the original at every call (up
                      to 100 each): differences are reported as findings
-  --capture LIST     run: the calls to these functions (overrides) are captured as test vectors
+  --capture LIST     run: the calls to these functions (overrides, or any function by image
+                     offset, +1C3E0) are captured as test vectors
   --captures-out FILE  run: write the captured calls there, one per line
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
                      made (JSON, for rec)
@@ -408,15 +409,21 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         }
         m.start_contracts();
     }
-    if let Some(game) = &o.game {
-        let overrides = games::overrides(game, &program)?;
+    if o.game.is_none() && (!o.rust.is_empty() || !o.dual.is_empty()) {
+        return Err("--rust and --dual need --game".into());
+    }
+    if o.game.is_some() || !o.capture.is_empty() {
+        let overrides = match &o.game {
+            Some(game) => games::overrides(game, &program)?,
+            None => Vec::new(),
+        };
+        // Functions captured by offset that have no override yet.
+        let overrides = games::with_placeholders(overrides, &o.capture)?;
         let module = program.rsplit(['\\', '/']).next().unwrap_or(&program).to_ascii_uppercase();
         let hybrid = m.start_hybrid(&module, overrides);
         games::set_modes(hybrid, &o.rust, dos::hybrid::Mode::Rust)?;
         games::set_modes(hybrid, &o.dual, dos::hybrid::Mode::Dual)?;
         games::set_modes(hybrid, &o.capture, dos::hybrid::Mode::Capture)?;
-    } else if !o.rust.is_empty() || !o.dual.is_empty() || !o.capture.is_empty() {
-        return Err("--rust, --dual and --capture need --game".into());
     }
     if let Some(session) = &session {
         for &(cycle, input) in &session.inputs {

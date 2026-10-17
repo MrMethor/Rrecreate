@@ -119,6 +119,17 @@ pub struct Override {
     pub run: OverrideFn,
 }
 
+impl Override {
+    /// A function of the program with no Rust version yet: its calls can be captured
+    /// ([`Mode::Capture`]), as test vectors for the version to come; named `-`.
+    pub fn placeholder(offset: u32) -> Self {
+        fn missing(_: &mut Call) -> Result<(), String> {
+            Err("no Rust version of this function yet".into())
+        }
+        Override { offset, name: "-", conv: Convention::custom(false, 0, 0, 0, 0), run: missing }
+    }
+}
+
 impl std::fmt::Debug for Override {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Override({:05X} {})", self.offset, self.name)
