@@ -36,6 +36,8 @@ const DISK_BUFFER: u16 = 0x00A0;
 pub const SDA: u16 = 0x00A2;
 pub const SDA_IN_DOS_SIZE: u16 = 0x80;
 pub const SDA_ALWAYS_SIZE: u16 = 0x1A;
+/// The double-byte character set lead-byte table (INT 21h AH=63h): empty, as on a US DOS.
+pub const DBCS_TABLE: (u16, u16) = (0x00B8, 0);
 
 /// The List of Lists, as INT 21h AH=52h returns it in ES:BX.
 pub fn list_of_lists() -> (u16, u16) {
@@ -59,6 +61,7 @@ pub(crate) fn install(m: &mut Machine, files: u16, last_drive: u8) {
     // As DOSBox: FFh everywhere, then the fields below.
     m.mem.load(base, &[0xFF; 0x90]);
     m.mem.load(base, &[0; 14]);
+    m.mem.load(Machine::lin(DBCS_TABLE.0, DBCS_TABLE.1), &[0; 4]);
     let mem = &mut m.mem;
     mem.write_u16(lol - 0x22, 0x0001); // magic word: DOS 5+
     for at in [0x18, 0x16, 0x14, 0x0C, 0x0A, 0x04] {

@@ -503,6 +503,26 @@ fn int21(m: &mut Machine) {
         0x50 => m.dos.psp = r.bx(),
         0x55 => new_psp(m, r.dx(), true),
         0x51 | 0x62 => m.cpu.regs.set_bx(m.dos.psp),
+        // DBCS lead-byte table (DOSBox: AL=0 only, clearing CF; other subfunctions return AL=FFh).
+        0x63 if r.al() == 0 => {
+            let (segment, offset) = crate::tables::DBCS_TABLE;
+            m.cpu.regs.set_ds(segment);
+            m.cpu.regs.set_si(offset);
+            m.cpu.regs.set_al(0);
+            ok(m);
+        }
+        0x63 => m.cpu.regs.set_al(0xFF),
+        // Global code page: 437 (US), the only one there is.
+        0x66 if r.al() == 1 => {
+            m.cpu.regs.set_bx(437);
+            m.cpu.regs.set_dx(437);
+            ok(m);
+        }
+        0x66 if r.al() == 2 && r.bx() == 437 => ok(m),
+        0x66 => {
+            m.diagnostic(format!("INT 21h AX={:04X}h: code page {} is not supported", r.ax(), r.bx()));
+            fail(m, error::INVALID_FUNCTION);
+        }
         0x56 => {
             let (from_raw, to_raw) = (read_asciiz(m, r.ds(), r.dx()), read_asciiz(m, r.es(), r.di()));
             let read_only = on_cd(m, &from_raw) || on_cd(m, &to_raw);

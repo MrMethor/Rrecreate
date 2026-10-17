@@ -1,0 +1,143 @@
+Open Watcom Linker Version 2.0 beta Oct  1 2026 06:41:58 (64-bit)
+Copyright (c) 2002-2026 The Open Watcom Contributors. All Rights Reserved.
+Portions Copyright (c) 1985-2002 Sybase, Inc. All Rights Reserved.
+Created on:       26/10/17 10:29:36
+Executable Image: bin\MODE13.EXE
+creating a DOS executable
+
+
+                        +------------+
+                        |   Groups   |
+                        +------------+
+
+Group                           Address              Size
+=====                           =======              ====
+
+DGROUP                          0091:0000            00000860
+
+
+
+                        +--------------+
+                        |   Segments   |
+                        +--------------+
+
+Segment                Class          Group          Address         Size
+=======                =====          =====          =======         ====
+
+BEGTEXT                CODE           AUTO           0000:0000       00000007
+_TEXT                  CODE           AUTO           0000:0008       00000905
+FAR_DATA               FAR_DATA       AUTO           0090:000d       00000000
+_NULL                  BEGDATA        DGROUP         0091:0000       00000020
+_AFTERNULL             BEGDATA        DGROUP         0093:0000       00000002
+CONST                  DATA           DGROUP         0093:0002       00000000
+CONST2                 DATA           DGROUP         0093:0002       00000000
+_DATA                  DATA           DGROUP         0093:0002       00000034
+XIB                    DATA           DGROUP         0096:0006       00000000
+XI                     DATA           DGROUP         0096:0006       00000006
+XIE                    DATA           DGROUP         0096:000c       00000000
+YIB                    DATA           DGROUP         0096:000c       00000000
+YI                     DATA           DGROUP         0096:000c       00000000
+YIE                    DATA           DGROUP         0096:000c       00000000
+DATA                   DATA           DGROUP         0096:000c       00000000
+_BSS                   BSS            DGROUP         0096:000c       00000004
+STACK                  STACK          DGROUP         0097:0000       00000800
+
+
+                        +----------------+
+                        |   Memory Map   |
+                        +----------------+
+
+* = unreferenced symbol
++ = symbol only referenced locally
+
+Address        Symbol
+=======        ======
+
+Module: obj\mode13.obj(obj\mode13.obj)
+0000:0008      main_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(stk)
+0000:0095      __STK
+0000:00ac*     __STKOVERFLOW_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(intx086.c)
+0000:00c7+     int86x_
+0000:0167      int86_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(outp.c)
+0000:0185      outp_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(cstart)
+0000:0003*     ___begtext
+0091:0000*     __nullarea
+0000:0190      _cstart_
+0000:033a      __exit_
+0000:0357      __do_exit_with_msg_
+0000:041d      __GETDS
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(cmodel)
+0000:0428      _small_code_
+0000:0428*     CodeModelMismatch
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(xmsg.c)
+0000:0428*     __exit_with_msg_
+0000:042b      __fatal_runtime_error_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(crwdata)
+0091:0024      __curbrk
+0091:002c      __STACKLOW
+0091:002e      __STACKTOP
+0091:0030      __cbyte
+0091:0032      __child
+0091:0034      __no87
+0091:0041      ___FPE_handler
+0091:0026      __psp
+0091:0035      __get_ovl_stack
+0091:0039      __restore_ovl_stack
+0091:003d      __close_ovl_file
+0091:0045      __LpCmdLine
+0091:0049      __LpPgmName
+0091:0028      __osmajor
+0091:0029      __osminor
+0091:002a      __osmode
+0091:002b      __HShift
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(dointr)
+0000:0442      _DoINTR_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(segread.c)
+0000:07b7      segread_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(cmain086.c)
+0000:07cf      __CMain
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(initrtns.c)
+0000:080f      __InitRtns
+0000:0866      __FiniRtns
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(uselfn.c)
+0091:004e      ___uselfn
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(dosseg)
+0000:08c4      __DOSseg__
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(enterdb.c)
+0000:08c5      __EnterWVIDEO_
+0091:0050+     __WD_Present
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(___argc.c)
+0091:005c      ____Argc
+0091:005e      ____Argv
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(exit.c)
+0000:08e1+     __null_int23_exit_
+0000:08e2      exit_
+0000:08fe*     _exit_
+0091:0052+     ___int23_exit
+0091:0054+     ___FPE_handler_exit
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(sgdef086)
+0091:0056      __Start_XI
+0091:005c      __End_XI
+0091:005c      __Start_YI
+0091:005c      __End_YI
+
+
+                        +--------------------+
+                        |   Libraries Used   |
+                        +--------------------+
+
+C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib
+
+
+                        +-----------------------+
+                        |   Linker Statistics   |
+                        +-----------------------+
+
+Stack size:  0800 (2048.)
+Memory size:  1170 (4464.)
+Entry point address: 0000:0190
+Link time: 00:00.08
