@@ -916,6 +916,11 @@ fn read(m: &mut Machine) {
             m.cpu.regs.set_ax(0);
             ok(m);
         }
+        // Reading no bytes returns at once, without waiting for a key (DOSBox's CON device).
+        Handle::Console if r.cx() == 0 => {
+            m.cpu.regs.set_ax(0);
+            ok(m);
+        }
         Handle::Console => match bios::pop_key(m) {
             Some(key) if r.cx() > 0 => {
                 write_bytes(m, r.ds(), r.dx(), &[key as u8]);

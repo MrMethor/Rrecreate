@@ -2630,3 +2630,20 @@ fn fcb_search_and_delete_with_wildcards() {
     assert_eq!(m.mem.read_u32(buf + 0x1D), 2, "B.TXT's size in the directory entry");
     assert!(!m.drive.is_file("A.TXT") && !m.drive.is_file("B.TXT") && m.drive.is_file("C.DAT"));
 }
+
+#[test]
+fn reading_no_bytes_from_the_console_does_not_wait() {
+    // Arena polls the console this way (INT 21h AH=3Fh on handle 2 with CX=0) before its first
+    // dungeon; DOS returns at once.
+    let program = com(|a| {
+        a.mov(ah, 0x3F)?;
+        a.mov(bx, 2)?;
+        a.xor(cx, cx)?;
+        a.mov(dx, 0x200)?;
+        a.int(0x21)?;
+        a.mov(ah, 0x4C)?; // exit code: the bytes read (AL)
+        a.int(0x21)
+    });
+    let mut m = boot(&[("R.COM", &program)], "R.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+}
