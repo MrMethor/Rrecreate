@@ -134,6 +134,8 @@ pub enum Stop {
     Override(String),
     /// A nested run reached the return it was waiting for (internal to [`crate::hybrid`]).
     Returned,
+    /// At the entry of hooked function number `n` (internal to [`crate::lockstep`]).
+    Hooked(usize),
 }
 
 /// Extended memory is limited to what a 24-bit (286/386SX) address bus reaches: 16 MB in all.
@@ -545,6 +547,9 @@ pub struct Machine {
     pub(crate) isr_watch: Option<crate::hybrid::IsrWatch>,
     /// While a captured call runs: its accesses.
     pub(crate) tracer: Option<Box<crate::capture::Tracer>>,
+    /// A hooked call in a session diff ([`crate::lockstep`]): no device events are serviced and no
+    /// interrupt is taken until it returns.
+    pub(crate) atomic: bool,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -587,6 +592,7 @@ impl Machine {
             return_trap: None,
             isr_watch: None,
             tracer: None,
+            atomic: false,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -636,10 +642,11 @@ impl Machine {
             if self.cpu.cycles >= limit {
                 return Stop::CycleLimit;
             }
-            if self.cpu.cycles >= self.next_event {
+            if self.cpu.cycles >= self.next_event && !self.atomic {
                 self.service_events();
             }
             if self.cpu.interrupts_enabled()
+                && !self.atomic
                 && let Some(vector) = self.devices.acknowledge()
             {
                 self.halted = false;
@@ -922,6 +929,13 @@ impl Machine {
 
     /// Fingerprint of the complete machine state (CPU, memory, devices, DOS, drive). Two runs
     /// with the same program and input must produce the same value at the same cycle.
+    /// After an atomic call: device events are due at once (both sides of a session diff service
+    /// them at the same instruction).
+    pub(crate) fn settle(&mut self) {
+        self.devices.dirty = false;
+        self.next_event = self.cpu.cycles;
+    }
+
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::default();
         self.cpu.regs.hash(&mut h);

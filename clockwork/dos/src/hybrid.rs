@@ -278,6 +278,10 @@ pub struct Hybrid {
     /// Captures in progress, nested: calls inside a captured call are captured too, but a Rust
     /// override doesn't run there (its accesses would be missing from the outer capture).
     pub(crate) capturing: usize,
+    /// In a session diff ([`crate::lockstep`]): stop at hooked entries with [`Stop::Hooked`];
+    /// and, on the reference side, run every hooked function as the original.
+    pub(crate) pause: bool,
+    pub(crate) originals_only: bool,
     /// The hooked entry the original was started at, not to be hooked again right away.
     pub(crate) skip: Option<u32>,
     /// What each override was written against ([`Hybrid::expect`]), by offset.
@@ -304,6 +308,8 @@ impl Hybrid {
             dual_limit: 100,
             in_dual: false,
             capturing: 0,
+            pause: false,
+            originals_only: false,
             skip: None,
         };
         for (i, (o, _)) in hybrid.overrides.iter().enumerate() {
@@ -748,6 +754,12 @@ impl Machine {
             hybrid.check_code(&o, code).map_err(Stop::Override)?;
         }
         let hybrid = self.hybrid.as_mut().expect("hooked");
+        if hybrid.pause {
+            return Err(Stop::Hooked(i));
+        }
+        if hybrid.originals_only {
+            return Ok(false);
+        }
         match mode {
             Mode::Original => Ok(false),
             Mode::Dual if hybrid.in_dual || hybrid.capturing > 0 || hybrid.stats[i].dual >= hybrid.dual_limit => {
@@ -899,7 +911,7 @@ impl Machine {
 /// Fills `finding` with what differs between the original's result `a` and the override's `b`,
 /// leaving out the dead stack (SS, from the lowest SP to where the live stack starts) and what
 /// interrupt handlers wrote.
-fn compare(
+pub(crate) fn compare(
     a: &Machine,
     b: &Machine,
     conv: Convention,

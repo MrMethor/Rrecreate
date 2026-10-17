@@ -61,6 +61,11 @@ options:
   --poison LIST      run: after each call to these functions' originals, put junk in the registers
                      and result flags their conventions don't compare; compare the run's
                      frames_hash, audio, console and files with a plain run's
+  --diff             run: with --rust, run in lockstep with the originals (each hooked call
+                     atomic on both sides, the overrides charged the originals' cycles) and
+                     compare the machines at checkpoints; the first divergence is traced to the
+                     call that caused it, reported as a finding (a session diff)
+  --diff-every MS    run: with --diff, emulated milliseconds between checkpoints (default 100)
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
                      made (JSON, for rec)
   --contracts FILE   run: infer each called function's contract (registers read and returned,
@@ -124,6 +129,8 @@ struct Options {
     dual: Vec<String>,
     capture: Vec<String>,
     poison: Vec<String>,
+    diff: bool,
+    diff_every_ms: u64,
     captures_out: Option<PathBuf>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
@@ -307,7 +314,7 @@ fn cmd_unpack(args: &[String]) -> Result<ExitCode, String> {
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
-    let mut options = Options { type_at_ms: 500, scale: 2, ..Options::default() };
+    let mut options = Options { type_at_ms: 500, scale: 2, diff_every_ms: 100, ..Options::default() };
     let mut positional = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -338,6 +345,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--dual" => options.dual.push(value(arg)?),
             "--capture" => options.capture.push(value(arg)?),
             "--poison" => options.poison.push(value(arg)?),
+            "--diff" => options.diff = true,
+            "--diff-every" => {
+                options.diff_every_ms = value(arg)?.parse().map_err(|_| "--diff-every needs milliseconds")?;
+            }
             "--captures-out" => options.captures_out = Some(value(arg)?.into()),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
@@ -527,7 +538,21 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
         m.exec_watch = Some(start..start.wrapping_add(length));
     }
     let limit = (o.seconds.unwrap_or(10.0) * ips as f64) as u64;
-    let (stop, profile) = if o.hotspots > 0 {
+    if o.diff && (o.rust.is_empty() || !o.dual.is_empty() || !o.capture.is_empty() || !o.poison.is_empty()) {
+        return Err(
+            "--diff compares overrides in Rust (--rust) with the originals: not with --dual, --capture or --poison"
+                .into(),
+        );
+    }
+    let mut diff = None;
+    let (stop, profile) = if o.diff {
+        let (until, interval) = (m.cpu.cycles + limit, m.cycle_at_ms(o.diff_every_ms));
+        let (after, found) = dos::lockstep::diff(m, until, interval);
+        m = after;
+        let stop = found.stop.clone();
+        diff = Some(found);
+        (stop, None)
+    } else if o.hotspots > 0 {
         let (stop, profile) = hotspots::run_sampled(&mut m, limit);
         (stop, Some(profile))
     } else {
@@ -556,6 +581,10 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
         std::fs::write(path, contracts.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let mut summary = Summary::new(&m, &stop);
+    if let Some(d) = &diff {
+        summary.diff_json = diff_json(d);
+        summary.diff_line = Some(diff_line(d, &m));
+    }
     summary.crate_name = crate_name;
     summary.implementation = implementation;
     if let Some(profile) = &profile {
@@ -667,6 +696,9 @@ struct Summary {
     /// The game crate whose overrides were loaded (`--game`) and its source digest, empty if none.
     crate_name: String,
     implementation: String,
+    /// With `--diff`: what the session diff found.
+    diff_json: String,
+    diff_line: Option<String>,
 }
 
 impl Summary {
@@ -679,6 +711,7 @@ impl Summary {
             Stop::Fault(exit) => format!("fault: {exit}"),
             Stop::Override(message) => format!("override failed: {message}"),
             Stop::Returned => "returned".into(),
+            Stop::Hooked(_) => "at a hooked entry".into(),
         };
         let mut issues: Vec<String> = m.diagnostics.iter().cloned().collect();
         if !m.devices.unknown_ports.is_empty() {
@@ -717,6 +750,8 @@ impl Summary {
             contract_lines: m.contracts.as_deref().map(games::contract_lines).unwrap_or_default(),
             crate_name: String::new(),
             implementation: String::new(),
+            diff_json: "null".into(),
+            diff_line: None,
             contract_notes: match (m.hybrid.as_deref(), m.contracts.as_deref()) {
                 (Some(hybrid), Some(contracts)) => games::contract_notes(hybrid, contracts),
                 _ => Vec::new(),
@@ -749,6 +784,9 @@ impl Summary {
         for issue in &self.issues {
             println!("issue     {issue}");
         }
+        if let Some(line) = &self.diff_line {
+            println!("diff      {line}");
+        }
         for line in &self.hybrid_lines {
             println!("{line}");
         }
@@ -776,7 +814,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","frames_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}],"crate":{},"implementation":{}}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","frames_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}],"crate":{},"implementation":{},"diff":{}}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -804,7 +842,36 @@ impl Summary {
                 .join(","),
             json_string(&self.crate_name),
             json_string(&self.implementation),
+            self.diff_json,
         )
+    }
+}
+
+/// A session diff as JSON: checkpoints, calls and the divergence (null if none).
+fn diff_json(d: &dos::lockstep::Diff) -> String {
+    let divergence = d.divergence.as_ref().map_or("null".into(), |v| {
+        format!(
+            r#"{{"equal_at":{},"found_at":{},"what":{},"call":{}}}"#,
+            v.equal_at,
+            v.found_at,
+            json_string(&v.what),
+            v.call.map_or("null".into(), |c| c.to_string())
+        )
+    });
+    format!(r#"{{"checkpoints":{},"calls":{},"divergence":{divergence}}}"#, d.checkpoints, d.calls)
+}
+
+fn diff_line(d: &dos::lockstep::Diff, m: &Machine) -> String {
+    let ms = |cycle: u64| cycle * 1000 / m.config.instructions_per_second.max(1);
+    match &d.divergence {
+        None => format!("no divergence: {} checkpoints, {} hooked calls", d.checkpoints, d.calls),
+        Some(v) => format!(
+            "diverged between {} and {} ms ({}){}",
+            ms(v.equal_at),
+            ms(v.found_at),
+            v.what,
+            v.call.map_or(String::new(), |c| format!(", after hooked call {c}: see the last finding"))
+        ),
     }
 }
 

@@ -17,6 +17,7 @@ pub mod fonts;
 pub mod hybrid;
 pub mod joystick;
 pub mod keyboard;
+pub mod lockstep;
 mod machine;
 pub mod mouse;
 pub mod mpu401;
