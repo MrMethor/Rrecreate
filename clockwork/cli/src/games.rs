@@ -137,9 +137,10 @@ pub fn summary_lines(hybrid: &Hybrid) -> Vec<String> {
     let (rust, dual, mismatches) =
         hybrid.stats.iter().fold((0, 0, 0), |(r, d, x), s| (r + s.rust, d + s.dual, x + s.mismatches));
     let captured = hybrid.captures.len();
+    let poisoned: u64 = hybrid.stats.iter().map(|s| s.poisoned).sum();
     let active = hybrid.overrides().filter(|(_, mode)| *mode != Mode::Original).count();
     let mut lines = vec![format!(
-        "overrides {active} of {} active: {rust} Rust calls, {dual} dual-runs, {mismatches} mismatches, {captured} calls captured",
+        "overrides {active} of {} active: {rust} Rust calls, {dual} dual-runs, {mismatches} mismatches, {captured} calls captured, {poisoned} poisoned",
         hybrid.overrides().count()
     )];
     lines.extend(hybrid.findings.iter().take(20).map(|f| format!("finding   {}", finding_text(hybrid, f))));
@@ -188,6 +189,16 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
+/// The registers and result flags a convention leaves out of the comparison (what `--poison`
+/// fills with junk).
+fn left_out(conv: &dos::hybrid::Convention) -> Vec<&'static str> {
+    use dos::hybrid::regs;
+    let compared = conv.outputs | conv.preserved | regs::SP | regs::SS | regs::CS;
+    let registers = regs::NAMES.iter().enumerate().filter(|&(i, _)| compared & 1 << i == 0).map(|(_, n)| *n);
+    let flags = [(0x001, "CF"), (0x004, "PF"), (0x010, "AF"), (0x040, "ZF"), (0x080, "SF"), (0x800, "OF")];
+    registers.chain(flags.into_iter().filter(|&(mask, _)| conv.flags & mask == 0).map(|(_, n)| n)).collect()
+}
+
 /// Each override with its mode and counts, as a JSON array.
 pub fn stats_json(hybrid: &Hybrid) -> String {
     let items: Vec<String> = hybrid
@@ -195,14 +206,16 @@ pub fn stats_json(hybrid: &Hybrid) -> String {
         .zip(&hybrid.stats)
         .map(|((o, mode), s)| {
             format!(
-                r#"{{"offset":{},"name":"{}","mode":"{}","rust":{},"dual":{},"mismatches":{},"captured":{}}}"#,
+                r#"{{"offset":{},"name":"{}","mode":"{}","rust":{},"dual":{},"mismatches":{},"captured":{},"poisoned":{},"left_out":[{}]}}"#,
                 o.offset,
                 o.name,
                 format!("{mode:?}").to_lowercase(),
                 s.rust,
                 s.dual,
                 s.mismatches,
-                s.captured
+                s.captured,
+                s.poisoned,
+                left_out(&o.conv).iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(",")
             )
         })
         .collect();

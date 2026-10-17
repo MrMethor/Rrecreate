@@ -16,6 +16,10 @@
 //!   original's result, so a dual session behaves exactly like an original one;
 //! - [`Mode::Capture`]: the original runs, traced, and the call becomes a test vector
 //!   ([`crate::capture`]);
+//! - [`Mode::Poison`]: the original runs, then the registers and result flags its convention
+//!   leaves out of the comparison get junk values. If the session's output (frames, sound,
+//!   console, files) stays the same, nothing read them: the convention's exclusions hold on that
+//!   session's paths (dos_re's poison test);
 //! - [`Mode::Original`]: not hooked.
 //!
 //! Real mode only (the protected-mode code of DOS extenders isn't hooked). Rust code takes no
@@ -175,6 +179,7 @@ pub enum Mode {
     Rust,
     Dual,
     Capture,
+    Poison,
 }
 
 /// Counts per override.
@@ -185,6 +190,8 @@ pub struct Stats {
     pub mismatches: u64,
     /// Distinct calls captured (kept in `captures`).
     pub captured: u64,
+    /// Calls whose excluded registers were poisoned.
+    pub poisoned: u64,
 }
 
 /// A difference between the original and an override, found by dual-run.
@@ -577,6 +584,48 @@ impl Machine {
     }
 
     /// Runs nested until `trap` is reached (or for the longest a dual-run allows).
+    /// Runs the original of `o` to its return, then poisons what its convention doesn't compare:
+    /// general and segment registers that are neither results nor preserved, and the arithmetic
+    /// flags that aren't results. Values depend on `n`, the call number, deterministically.
+    fn poison_call(&mut self, o: Override, n: u64) -> Result<(), Stop> {
+        let regs = self.cpu.regs;
+        let (ss, sp) = (regs.ss(), regs.sp());
+        let ret_ip = self.mem.read_u16(Machine::lin(ss, sp));
+        let ret_cs = if o.conv.far { self.mem.read_u16(Machine::lin(ss, sp.wrapping_add(2))) } else { regs.cs() };
+        let after_return = sp.wrapping_add(if o.conv.far { 4 } else { 2 }).wrapping_add(o.conv.pops);
+        self.hybrid.as_mut().expect("hooked").in_dual = true;
+        let (stop, _) = self.run_to_return_public(ReturnTrap::new(ret_cs, ret_ip, ss, after_return, sp));
+        let hybrid = self.hybrid.as_mut().expect("hooked");
+        hybrid.in_dual = false;
+        hybrid.skip = None;
+        match stop {
+            Stop::Returned => {}
+            Stop::CycleLimit => return Ok(()),
+            other => return Err(other),
+        }
+        let compared = o.conv.outputs | o.conv.preserved | regs::SP | regs::SS | regs::CS;
+        let junk = |bit: u64| (0xA5C3u64 ^ n.wrapping_mul(0x9E37) ^ bit.wrapping_mul(0x3B1D)) as u16;
+        let r = &mut self.cpu.regs;
+        for bit in 0..12 {
+            if compared & 1 << bit != 0 {
+                continue;
+            }
+            match bit {
+                0..8 => r.set_reg16(bit, junk(bit as u64)),
+                8 => r.seg[seg::ES] = junk(8),
+                11 => r.seg[seg::DS] = junk(11),
+                _ => {}
+            }
+        }
+        // CF, PF, AF, ZF, SF, OF: DF, IF and TF keep their meaning between calls.
+        for (k, mask) in [0x001u16, 0x004, 0x010, 0x040, 0x080, 0x800].into_iter().enumerate() {
+            if o.conv.flags & mask == 0 {
+                r.set_flag(mask, junk(12 + k as u64) & 1 != 0);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn run_to_return_public(&mut self, trap: ReturnTrap) -> (Stop, u16) {
         self.run_to_return(trap, MAX_DUAL_CYCLES)
     }
@@ -625,6 +674,14 @@ impl Machine {
                         hybrid.captures.push(capture);
                     }
                 }
+                Ok(true)
+            }
+            Mode::Poison if hybrid.in_dual => Ok(false),
+            Mode::Poison => {
+                hybrid.stats[i].poisoned += 1;
+                let n = hybrid.stats[i].poisoned;
+                hybrid.skip = Some(linear);
+                self.poison_call(o, n)?;
                 Ok(true)
             }
             Mode::Rust => {

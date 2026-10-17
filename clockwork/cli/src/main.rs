@@ -55,6 +55,9 @@ options:
   --capture LIST     run: the calls to these functions (overrides, or any function by image
                      offset, +1C3E0) are captured as test vectors
   --captures-out FILE  run: write the captured calls there, one per line
+  --poison LIST      run: after each call to these functions' originals, put junk in the registers
+                     and result flags their conventions don't compare; compare the run's
+                     frames_hash, audio, console and files with a plain run's
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
                      made (JSON, for rec)
   --contracts FILE   run: infer each called function's contract (registers read and returned,
@@ -116,6 +119,7 @@ struct Options {
     rust: Vec<String>,
     dual: Vec<String>,
     capture: Vec<String>,
+    poison: Vec<String>,
     captures_out: Option<PathBuf>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
@@ -264,6 +268,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--rust" => options.rust.push(value(arg)?),
             "--dual" => options.dual.push(value(arg)?),
             "--capture" => options.capture.push(value(arg)?),
+            "--poison" => options.poison.push(value(arg)?),
             "--captures-out" => options.captures_out = Some(value(arg)?.into()),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
@@ -409,8 +414,8 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         }
         m.start_contracts();
     }
-    if o.game.is_none() && (!o.rust.is_empty() || !o.dual.is_empty()) {
-        return Err("--rust and --dual need --game".into());
+    if o.game.is_none() && (!o.rust.is_empty() || !o.dual.is_empty() || !o.poison.is_empty()) {
+        return Err("--rust, --dual and --poison need --game".into());
     }
     if o.game.is_some() || !o.capture.is_empty() {
         let overrides = match &o.game {
@@ -427,6 +432,7 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         games::set_modes(hybrid, &o.rust, dos::hybrid::Mode::Rust)?;
         games::set_modes(hybrid, &o.dual, dos::hybrid::Mode::Dual)?;
         games::set_modes(hybrid, &o.capture, dos::hybrid::Mode::Capture)?;
+        games::set_modes(hybrid, &o.poison, dos::hybrid::Mode::Poison)?;
     }
     if let Some(session) = &session {
         for &(cycle, input) in &session.inputs {
@@ -575,6 +581,8 @@ struct Summary {
     opl_writes: usize,
     pcm_frames: usize,
     audio_hash: u64,
+    /// Every frame's hash, in order.
+    frames_hash: u64,
     timer: String,
     irqs: String,
     last_frame: Option<dos::Frame>,
@@ -617,6 +625,13 @@ impl Summary {
             opl_writes: m.audio_log().opl.len(),
             pcm_frames: m.audio_log().pcm.iter().map(|s| s.samples.len() / if s.stereo { 2 } else { 1 }).sum(),
             audio_hash: m.audio_log().hash(),
+            frames_hash: {
+                let mut h = machine::hash::Fnv64::default();
+                for f in &m.frames {
+                    std::hash::Hash::hash(&f.hash, &mut h);
+                }
+                std::hash::Hasher::finish(&h)
+            },
             timer: timer_summary(m),
             irqs: irq_summary(m),
             last_frame: m.frames.last().copied(),
@@ -687,7 +702,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}]}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","frames_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}]}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -699,6 +714,7 @@ impl Summary {
             self.opl_writes,
             self.pcm_frames,
             self.audio_hash,
+            self.frames_hash,
             last_frame,
             self.state_hash,
             self.console_hash,
