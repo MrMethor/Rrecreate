@@ -489,7 +489,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     if let (Some(path), Some(contracts)) = (&o.contracts, &m.contracts) {
         std::fs::write(path, contracts.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    let summary = Summary::new(&m, &stop);
+    let mut summary = Summary::new(&m, &stop);
+    summary.crate_name = o.game.as_deref().map(games::crate_of).unwrap_or_default().to_string();
+    summary.implementation = o.game.as_deref().map(games::implementation).unwrap_or_default();
     if let Some(profile) = &profile {
         profile.print(&m, o.hotspots);
     }
@@ -595,6 +597,9 @@ struct Summary {
     findings_json: String,
     contract_lines: Vec<String>,
     contract_notes: Vec<(String, String)>,
+    /// The game crate whose overrides were loaded (`--game`) and its source digest, empty if none.
+    crate_name: String,
+    implementation: String,
 }
 
 impl Summary {
@@ -643,6 +648,8 @@ impl Summary {
             stats_json: m.hybrid.as_deref().map_or("[]".into(), games::stats_json),
             findings_json: m.hybrid.as_deref().map_or("[]".into(), games::findings_json),
             contract_lines: m.contracts.as_deref().map(games::contract_lines).unwrap_or_default(),
+            crate_name: String::new(),
+            implementation: String::new(),
             contract_notes: match (m.hybrid.as_deref(), m.contracts.as_deref()) {
                 (Some(hybrid), Some(contracts)) => games::contract_notes(hybrid, contracts),
                 _ => Vec::new(),
@@ -702,7 +709,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","frames_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}]}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","frames_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}],"crate":{},"implementation":{}}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -728,6 +735,8 @@ impl Summary {
                 .map(|(name, note)| format!(r#"{{"name":{},"note":{}}}"#, json_string(name), json_string(note)))
                 .collect::<Vec<_>>()
                 .join(","),
+            json_string(&self.crate_name),
+            json_string(&self.implementation),
         )
     }
 }

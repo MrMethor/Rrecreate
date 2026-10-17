@@ -6,6 +6,26 @@ use dos::hybrid::{Finding, Hybrid, Mode, Override};
 /// `wolf3d-planted` is Wolfenstein 3D with a planted bug, for calibration.
 pub const GAMES: [&str; 3] = ["testbins", "wolf3d", "wolf3d-planted"];
 
+/// The crate that holds `game`'s overrides (`games/<crate>`), whose sources a verification
+/// claim is about.
+pub fn crate_of(game: &str) -> &'static str {
+    match game {
+        "testbins" => "testbins",
+        "wolf3d" | "wolf3d-planted" => "wolf3d",
+        _ => "",
+    }
+}
+
+/// `<crate>@<digest of its sources>` for `game`: the implementation that runs (empty if none).
+pub fn implementation(game: &str) -> String {
+    let digest = match crate_of(game) {
+        "testbins" => testbins::SOURCE_DIGEST,
+        "wolf3d" => wolf3d::SOURCE_DIGEST,
+        _ => return String::new(),
+    };
+    format!("{}@{digest}", crate_of(game))
+}
+
 /// The module name of `program` (a path): its file name, upper case.
 fn module_of(program: &str) -> String {
     program.rsplit(['\\', '/']).next().unwrap_or(program).to_ascii_uppercase()
@@ -104,7 +124,12 @@ pub fn cmd_replay(args: &[String]) -> Result<std::process::ExitCode, String> {
                 )
             })
             .collect();
-        println!(r#"{{"passed":{passed},"failed":{failed},"skipped":{skipped},"results":[{}]}}"#, items.join(","));
+        println!(
+            r#"{{"passed":{passed},"failed":{failed},"skipped":{skipped},"crate":"{}","implementation":"{}","results":[{}]}}"#,
+            crate_of(&game),
+            implementation(&game),
+            items.join(",")
+        );
     } else {
         for (line, _, name, _, status, differences) in &results {
             if *status == "fail" {
