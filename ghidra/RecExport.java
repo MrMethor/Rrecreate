@@ -3,6 +3,8 @@
 //   analyzeHeadless ... -postScript RecExport.java <out.jsonl> [decompile]
 // One JSON object per line: a "program" record, then "block", "function" and "call" records,
 // then one "code" record per function with its disassembly (and its decompilation when asked).
+// Function records carry Ghidra's Function ID hashes ("fid"), which library signature packs
+// (`rec sigs`) match.
 // Addresses are linear (segment * 16 + offset) as Ghidra stores them; `rec` turns them into
 // load-image offsets with the program record's entry point.
 //@category Recreate
@@ -15,6 +17,8 @@ import java.util.List;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.script.GhidraScript;
+import ghidra.feature.fid.hash.FidHashQuad;
+import ghidra.feature.fid.service.FidService;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.SegmentedAddress;
@@ -60,6 +64,7 @@ public class RecExport extends GhidraScript {
 				block.isExecute() + ",\"initialized\":" + block.isInitialized() + "}");
 		}
 		List<Function> functions = new ArrayList<>();
+		FidService fid = new FidService();
 		for (Function f : currentProgram.getFunctionManager().getFunctions(true)) {
 			if (monitor.isCancelled()) {
 				return;
@@ -74,7 +79,7 @@ public class RecExport extends GhidraScript {
 				str(f.getName()) + ",\"source\":" + str(f.getSymbol().getSource().toString()) +
 				",\"convention\":" + str(f.getCallingConventionName()) + ",\"signature\":" +
 				str(f.getSignature().getPrototypeString()) + ",\"thunk\":" + f.isThunk() +
-				",\"body\":[" + ranges + "]}");
+				",\"fid\":" + fidHash(fid, f) + ",\"body\":[" + ranges + "]}");
 		}
 		for (Function f : functions) {
 			InstructionIterator instructions = currentProgram.getListing().getInstructions(f.getBody(), true);
@@ -118,6 +123,21 @@ public class RecExport extends GhidraScript {
 		}
 		if (decompiler != null) {
 			decompiler.dispose();
+		}
+	}
+
+	/** Function ID hashes: code units, full hash, specific hash and its extra units; or null. */
+	private static String fidHash(FidService fid, Function f) {
+		try {
+			FidHashQuad q = fid.hashFunction(f);
+			if (q == null) {
+				return "null";
+			}
+			return String.format("{\"units\":%d,\"full\":\"%016x\",\"specific\":\"%016x\",\"extra\":%d}",
+				q.getCodeUnitSize(), q.getFullHash(), q.getSpecificHash(), q.getSpecificHashAdditionalSize());
+		}
+		catch (Exception e) {
+			return "null";
 		}
 	}
 
