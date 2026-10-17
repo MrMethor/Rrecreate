@@ -3,13 +3,16 @@
 
 use dos::hybrid::{Finding, Hybrid, Mode, Override};
 
-pub const GAMES: [&str; 1] = ["testbins"];
+/// `wolf3d-planted` is Wolfenstein 3D with a planted bug, for calibration.
+pub const GAMES: [&str; 3] = ["testbins", "wolf3d", "wolf3d-planted"];
 
 /// The overrides game `game` has for `program` (a path; its file name is the module).
 pub fn overrides(game: &str, program: &str) -> Result<Vec<Override>, String> {
     let module = program.rsplit(['\\', '/']).next().unwrap_or(program).to_ascii_uppercase();
     match game {
         "testbins" => Ok(testbins::overrides(&module)),
+        "wolf3d" => Ok(wolf3d::overrides(&module)),
+        "wolf3d-planted" => Ok(wolf3d::overrides_with_planted_bug(&module)),
         other => Err(format!("unknown game {other:?} (games: {})", GAMES.join(", "))),
     }
 }
@@ -80,6 +83,26 @@ fn image_place(hybrid: &Hybrid, addr: u32) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
+}
+
+/// Each override with its mode and counts, as a JSON array.
+pub fn stats_json(hybrid: &Hybrid) -> String {
+    let items: Vec<String> = hybrid
+        .overrides()
+        .zip(&hybrid.stats)
+        .map(|((o, mode), s)| {
+            format!(
+                r#"{{"offset":{},"name":"{}","mode":"{}","rust":{},"dual":{},"mismatches":{}}}"#,
+                o.offset,
+                o.name,
+                format!("{mode:?}").to_lowercase(),
+                s.rust,
+                s.dual,
+                s.mismatches
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
 }
 
 /// The findings as a JSON array (addresses as image offsets where they are in the image).

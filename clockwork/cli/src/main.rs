@@ -543,6 +543,7 @@ struct Summary {
     issues: Vec<String>,
     files_changed: Vec<String>,
     hybrid_lines: Vec<String>,
+    stats_json: String,
     findings_json: String,
 }
 
@@ -582,6 +583,7 @@ impl Summary {
             issues,
             files_changed: m.drive.changed().map(String::from).collect(),
             hybrid_lines: m.hybrid.as_deref().map(games::summary_lines).unwrap_or_default(),
+            stats_json: m.hybrid.as_deref().map_or("[]".into(), games::stats_json),
             findings_json: m.hybrid.as_deref().map_or("[]".into(), games::findings_json),
         }
     }
@@ -632,7 +634,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"findings":{}}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{}}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -650,6 +652,7 @@ impl Summary {
             strings(&self.issues),
             strings(&self.files_changed),
             strings(&self.hybrid_lines[..self.hybrid_lines.len().min(1)]),
+            self.stats_json,
             self.findings_json,
         )
     }

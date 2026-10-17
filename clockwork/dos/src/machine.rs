@@ -687,6 +687,41 @@ impl Machine {
         }
     }
 
+    /// A byte read the way the CPU reads it: video memory at A0000-BFFFF, everything else from
+    /// RAM (for Rust overrides).
+    pub fn read_u8(&mut self, addr: u32) -> u8 {
+        let (_, mut bus) = self.split();
+        bus.read_u8(addr)
+    }
+
+    /// A byte write the way the CPU writes it (see [`Machine::read_u8`]).
+    pub fn write_u8(&mut self, addr: u32, value: u8) {
+        let (_, mut bus) = self.split();
+        bus.write_u8(addr, value);
+    }
+
+    /// A port read as `IN AL,DX` does it.
+    pub fn port_in(&mut self, port: u16) -> u8 {
+        let (_, mut bus) = self.split();
+        let value = bus.port_in_u8(port);
+        self.device_changed();
+        value
+    }
+
+    /// A port write as `OUT DX,AL` does it.
+    pub fn port_out(&mut self, port: u16, value: u8) {
+        let (_, mut bus) = self.split();
+        bus.port_out_u8(port, value);
+        self.device_changed();
+    }
+
+    fn device_changed(&mut self) {
+        if self.devices.dirty {
+            self.devices.dirty = false;
+            self.next_event = self.cpu.cycles;
+        }
+    }
+
     /// Hooks Rust overrides into the program just loaded (all in [`crate::hybrid::Mode::Original`]
     /// until set otherwise); its load image starts at its PSP's paragraph 10h.
     pub fn start_hybrid(

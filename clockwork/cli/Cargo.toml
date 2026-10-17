@@ -16,6 +16,7 @@ cpu.workspace = true
 dos.workspace = true
 machine.workspace = true
 testbins.workspace = true
+wolf3d.workspace = true
 minifb = "0.29"
 tinyaudio = "2"
 midir = "0.11"

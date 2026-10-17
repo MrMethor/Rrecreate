@@ -42,4 +42,5 @@ Reference checkout: DOSBox Staging, commit `0fdf977d9c4e41908700d7eb2255142044f8
 | Dependency `midir` (crates.io, used by `host/frontend/src/live_audio.rs`) | MIDI library by Patrick Reisert | MIT | Live MIDI output in `rec-host play` |
 | Dependency `nuked-opl3` (crates.io, used by `host/dos/src/audio.rs`) | Pure-Rust port of Nuked OPL3 by Nuke.YKT, Tony Gies | LGPL-2.1-or-later | OPL3 synthesis when rendering audio |
 | `sigs/borland-c++-1991-medium.json` | Function ID hashes (computed by Ghidra) of Borland C++ 3.0 runtime functions in id Software's Wolfenstein 3D build, with the names from its linker map | — (names and hashes only, no code) | Library identification |
+| `games/wolf3d` | Behavior of Wolfenstein 3D's functions; names and data offsets from id Software's source release and linker map (github.com/id-Software/wolf3d) | id's limited-use license: read for reference only, nothing copied; the shipped binary's disassembly is the reference the code matches | Rust overrides for the calibration game |
 | `COPYING` | GNU GPL version 2 text (via DOSBox Staging `licenses/GPL-2.0.txt`) | — | License text |

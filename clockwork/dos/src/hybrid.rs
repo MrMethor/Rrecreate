@@ -51,6 +51,9 @@ pub struct Convention {
     pub far: bool,
     /// Bytes of arguments the callee pops on return (pascal); 0 when the caller does (cdecl).
     pub pops: u16,
+    /// Bytes of stack arguments. With the C convention the caller pops them right after the call,
+    /// so whatever the callee left in them is dead (some functions use them as variables).
+    pub args: u16,
     /// Registers carrying results.
     pub outputs: u16,
     /// Registers the function leaves as it found them. The rest are scratch: not compared.
@@ -62,15 +65,15 @@ pub struct Convention {
 impl Convention {
     const CALLEE_SAVED: u16 = regs::BP | regs::SI | regs::DI | regs::DS | regs::SS;
 
-    /// C calling convention (Borland, Microsoft, Watcom `__cdecl`): arguments on the stack, the
-    /// caller pops them; result in AX (or DX:AX); BX, CX, DX and ES are scratch.
-    pub fn cdecl(far: bool, outputs: u16) -> Self {
-        Convention { far, pops: 0, outputs, preserved: Self::CALLEE_SAVED, flags: 0 }
+    /// C calling convention (Borland, Microsoft, Watcom `__cdecl`): `arg_bytes` of arguments on
+    /// the stack, which the caller pops; result in AX (or DX:AX); BX, CX, DX and ES are scratch.
+    pub fn cdecl(far: bool, arg_bytes: u16, outputs: u16) -> Self {
+        Convention { far, pops: 0, args: arg_bytes, outputs, preserved: Self::CALLEE_SAVED, flags: 0 }
     }
 
     /// Pascal convention: arguments pushed left to right, the callee pops `arg_bytes`.
     pub fn pascal(far: bool, arg_bytes: u16, outputs: u16) -> Self {
-        Convention { far, pops: arg_bytes, outputs, preserved: Self::CALLEE_SAVED, flags: 0 }
+        Convention { far, pops: arg_bytes, args: arg_bytes, outputs, preserved: Self::CALLEE_SAVED, flags: 0 }
     }
 
     /// Watcom's default register convention: arguments in AX, DX, BX, CX (`args`; then the stack,
@@ -78,12 +81,12 @@ impl Convention {
     /// freely, as dual-run showed); every other register but the results is preserved.
     pub fn watcom(far: bool, args: u16, stack_bytes: u16, outputs: u16) -> Self {
         let all = regs::AX | regs::BX | regs::CX | regs::DX | regs::ES | Self::CALLEE_SAVED;
-        Convention { far, pops: stack_bytes, outputs, preserved: all & !outputs & !args, flags: 0 }
+        Convention { far, pops: stack_bytes, args: stack_bytes, outputs, preserved: all & !outputs & !args, flags: 0 }
     }
 
     /// Hand-written code with its own contract.
     pub fn custom(far: bool, pops: u16, outputs: u16, preserved: u16, flags: u16) -> Self {
-        Convention { far, pops, outputs, preserved, flags }
+        Convention { far, pops, args: pops, outputs, preserved, flags }
     }
 }
 
@@ -294,15 +297,40 @@ pub struct Call<'a> {
 impl Call<'_> {
     /// The `i`th word of stack arguments, counting up from the return address (for cdecl the
     /// first argument; for pascal the last).
-    pub fn arg16(&self, i: u16) -> u16 {
+    pub fn arg16(&mut self, i: u16) -> u16 {
         let first = self.sp.wrapping_add(if self.far { 4 } else { 2 });
-        self.read16(self.m.cpu.regs.ss(), first.wrapping_add(2 * i))
+        let ss = self.m.cpu.regs.ss();
+        self.read16(ss, first.wrapping_add(2 * i))
     }
 
     /// Words `i` and `i + 1` of stack arguments as a 32-bit value (a `long`, or a far pointer as
     /// offset and segment).
-    pub fn arg32(&self, i: u16) -> u32 {
+    pub fn arg32(&mut self, i: u16) -> u32 {
         u32::from(self.arg16(i)) | (u32::from(self.arg16(i + 1)) << 16)
+    }
+
+    /// The run-time segment of a segment the program refers to as `relative` (a relocated
+    /// segment of its load image, as the disassembly shows it from load segment 0).
+    pub fn segment(&self, relative: u16) -> u16 {
+        let base = self.m.hybrid.as_ref().map_or(0, |h| h.base);
+        ((base >> 4) as u16).wrapping_add(relative)
+    }
+
+    /// `OUT port, value`.
+    pub fn out8(&mut self, port: u16, value: u8) {
+        self.m.port_out(port, value);
+    }
+
+    /// `OUT port, AX`: the low byte to `port`, the high byte to `port + 1`.
+    pub fn out16(&mut self, port: u16, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.m.port_out(port, lo);
+        self.m.port_out(port.wrapping_add(1), hi);
+    }
+
+    /// `IN AL, port`.
+    pub fn in8(&mut self, port: u16) -> u8 {
+        self.m.port_in(port)
     }
 
     pub fn ax(&self) -> u16 {
@@ -332,16 +360,18 @@ impl Call<'_> {
         self.m.cpu.regs.set_dx((value >> 16) as u16);
     }
 
-    pub fn read8(&self, segment: u16, offset: u16) -> u8 {
-        self.m.mem.read_u8(Machine::lin(segment, offset))
+    /// Memory as the CPU sees it (video memory included); `segment:offset`, the offset wrapping
+    /// within the segment.
+    pub fn read8(&mut self, segment: u16, offset: u16) -> u8 {
+        self.m.read_u8(Machine::lin(segment, offset))
     }
-    pub fn read16(&self, segment: u16, offset: u16) -> u16 {
+    pub fn read16(&mut self, segment: u16, offset: u16) -> u16 {
         let lo = self.read8(segment, offset);
         let hi = self.read8(segment, offset.wrapping_add(1));
         u16::from_le_bytes([lo, hi])
     }
     pub fn write8(&mut self, segment: u16, offset: u16, value: u8) {
-        self.m.mem.write_u8(Machine::lin(segment, offset), value);
+        self.m.write_u8(Machine::lin(segment, offset), value);
     }
     pub fn write16(&mut self, segment: u16, offset: u16, value: u16) {
         let [lo, hi] = value.to_le_bytes();
@@ -448,6 +478,8 @@ impl Machine {
         let (ss, sp) = (self.cpu.regs.ss(), self.cpu.regs.sp());
         let mut call = Call { m: self, sp, far: o.conv.far };
         (o.run)(&mut call).map_err(|e| format!("{} ({:05X}): {e}", o.name, o.offset))?;
+        // Code it wrote must not be fetched stale.
+        self.cpu.flush_code_cache();
         // The return: IP (and CS) from the entry's stack, then what the callee pops.
         let ip = self.mem.read_u16(Machine::lin(ss, sp));
         let mut after = sp.wrapping_add(2);
@@ -512,7 +544,14 @@ impl Machine {
             self.record(i, finding);
             return Ok(());
         }
-        compare(self, &rust, o.conv, (ss, lowest_sp, sp), &interrupts_wrote, &mut finding);
+        // Dead after the return: the original's frame below the entry SP, and the arguments the
+        // caller pops.
+        let dead_end = if o.conv.pops == 0 {
+            sp.wrapping_add(if o.conv.far { 4 } else { 2 }).wrapping_add(o.conv.args)
+        } else {
+            sp
+        };
+        compare(self, &rust, o.conv, (ss, lowest_sp, dead_end), &interrupts_wrote, &mut finding);
         if !finding.registers.is_empty()
             || finding.flags.is_some()
             || !finding.memory.is_empty()
@@ -533,13 +572,13 @@ impl Machine {
 }
 
 /// Fills `finding` with what differs between the original's result `a` and the override's `b`,
-/// leaving out the original's stack frame (SS, lowest SP, SP at entry) and what interrupt
-/// handlers wrote.
+/// leaving out the dead stack (SS, from the lowest SP to where the live stack starts) and what
+/// interrupt handlers wrote.
 fn compare(
     a: &Machine,
     b: &Machine,
     conv: Convention,
-    (ss, lowest_sp, entry_sp): (u16, u16, u16),
+    (ss, lowest_sp, live_sp): (u16, u16, u16),
     interrupts_wrote: &BTreeSet<u32>,
     finding: &mut Finding,
 ) {
@@ -563,7 +602,7 @@ fn compare(
         }
     }
     // The original's stack frame, below where SP is after the return, is dead.
-    let dead = Machine::lin(ss, lowest_sp)..Machine::lin(ss, entry_sp);
+    let dead = Machine::lin(ss, lowest_sp)..Machine::lin(ss, live_sp);
     let differing: Vec<u32> = a
         .mem
         .differences(&b.mem, MAX_DIFFERENCES * 4)
