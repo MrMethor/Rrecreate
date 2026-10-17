@@ -17,6 +17,9 @@ pub const NT: u16 = 0x4000;
 pub const RF: u32 = 0x1_0000;
 /// Virtual-8086 mode.
 pub const VM: u32 = 0x2_0000;
+/// Alignment check (80486): software can set and clear it, which is how programs tell a 486
+/// from a 386. Alignment faults themselves aren't emulated, as in DOSBox.
+pub const AC: u32 = 0x4_0000;
 
 /// Bit 1 always reads as 1.
 pub const FIXED: u16 = 0x0002;

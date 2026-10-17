@@ -172,12 +172,14 @@ impl<B: Bus> Bus for Paged<'_, B> {
     }
 }
 
-/// Which processor to behave like.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Which processor to behave like. Later models do everything earlier ones do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Model {
     I286,
     #[default]
     I386,
+    /// An early 80486 (no CPUID): BSWAP, XADD, CMPXCHG, INVD, WBINVD, INVLPG and the AC flag.
+    I486,
 }
 
 /// Why [`Cpu::step`] stopped before completing an ordinary instruction.
@@ -582,7 +584,7 @@ impl Cpu {
     pub fn load_flags(&mut self, value: u16) {
         let low = match self.model {
             Model::I286 => flags::normalize(value),
-            Model::I386 => flags::normalize_386(value),
+            Model::I386 | Model::I486 => flags::normalize_386(value),
         };
         self.regs.flags = (self.regs.flags & 0xFFFF_0000) | u32::from(low);
     }

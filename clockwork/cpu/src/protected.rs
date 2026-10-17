@@ -323,13 +323,15 @@ impl Cpu {
 
     /// The mask POPF and IRET apply: IOPL only at CPL 0, IF only when IOPL allows.
     fn popf_mask(&self) -> u32 {
+        // DOSBox `cpu_extflags_toggle`: the 486's AC flag is always writable.
+        let all = if self.model >= crate::Model::I486 { flags::ALL | flags::AC } else { flags::ALL };
         if !self.protected_mode() {
             return match self.model {
                 crate::Model::I286 => u32::from(flags::WRITABLE),
-                crate::Model::I386 => flags::ALL,
+                _ => all,
             };
         }
-        let mut mask = flags::ALL;
+        let mut mask = all;
         if self.cpl > 0 {
             mask &= !u32::from(flags::IOPL);
         }

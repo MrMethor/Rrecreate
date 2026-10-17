@@ -121,7 +121,7 @@ fn invalid_opcode() -> Abort {
 impl Cpu {
     #[inline(always)]
     pub(crate) fn exec<B: Bus>(&mut self, bus: &mut B, start_ip: u32) -> Res<()> {
-        let i386 = self.model == Model::I386;
+        let i386 = self.model >= Model::I386;
         let default32 = self.code32();
         self.fetch.base = self.segment_base(CS);
         self.fetch.ip_mask = if default32 { u32::MAX } else { 0xFFFF };
@@ -606,7 +606,8 @@ impl Cpu {
     fn exec_0f<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, start_ip: u32) -> Res<()> {
         let op = self.fetch8(bus)?;
         let v = p.v();
-        let i386 = self.model == Model::I386;
+        let i386 = self.model >= Model::I386;
+        let i486 = self.model >= Model::I486;
         let protected = self.protected_mode() && !self.v86();
         match op {
             0x00 if protected => self.system_group6(bus, p, start_ip)?,
@@ -625,6 +626,26 @@ impl Cpu {
             0x06 => {
                 self.check_privileged()?;
                 self.cr0 &= !0x08; // CLTS
+            }
+            // INVD, WBINVD: there are no caches to flush.
+            0x08 | 0x09 if i486 => self.check_privileged()?,
+            0xB0 | 0xB1 if i486 => self.cmpxchg(bus, p, op)?,
+            0xC0 | 0xC1 if i486 => {
+                // XADD: the destination gets the sum, the source register the old destination.
+                let w = p.width(op);
+                let m = self.modrm(bus, p)?;
+                let (dest, src) = (self.read_rm(bus, m.rm, w)?, self.read_reg(m.reg, w));
+                let sum = self.add(w, dest, src, 0);
+                self.write_reg(m.reg, w, dest);
+                self.write_rm(bus, m.rm, w, sum)?;
+            }
+            0xC8..=0xCF if i486 => {
+                let r = usize::from(op & 7);
+                if v == Width::Dword {
+                    self.regs.gpr[r] = self.regs.gpr[r].swap_bytes();
+                } else {
+                    self.regs.set_reg16(r, 0); // undefined; DOSBox clears it
+                }
             }
             0x20 | 0x22 if i386 => {
                 let byte = self.fetch8(bus)?;
@@ -774,7 +795,7 @@ impl Cpu {
                     let TableRegister { limit, base } = if m.reg == 0 { self.gdtr } else { self.idtr };
                     // A 16-bit SGDT/SIDT stores the base's top byte as 0 on a 386... except it
                     // stores FFh on a 286; real software doesn't rely on either.
-                    let base = if p.op32 || self.model == Model::I386 { base } else { base | 0xFF00_0000 };
+                    let base = if p.op32 || self.model >= Model::I386 { base } else { base | 0xFF00_0000 };
                     self.write_mem(bus, seg, off, mask, Width::Word, u32::from(limit))?;
                     self.write_mem(bus, seg, off.wrapping_add(2), mask, Width::Dword, base)?;
                 } else {
@@ -789,7 +810,7 @@ impl Cpu {
             (4, rm) => {
                 let msw = match self.model {
                     Model::I286 => 0xFFF0 | (self.cr0 & 0x0F),
-                    Model::I386 => self.cr0 & 0xFFFF,
+                    Model::I386 | Model::I486 => self.cr0 & 0xFFFF,
                 };
                 let w = if matches!(rm, Rm::Reg(_)) { p.v() } else { Width::Word };
                 self.write_rm(bus, rm, w, msw)?;
@@ -797,6 +818,11 @@ impl Cpu {
             (6, rm) => {
                 let value = self.read_rm(bus, rm, Width::Word)? as u16;
                 self.lmsw(bus, value)?;
+            }
+            // INVLPG (486): DOSBox flushes the whole TLB, and so does this.
+            (7, Rm::Mem { .. }) if self.model >= Model::I486 => {
+                self.check_privileged()?;
+                self.tlb.flush();
             }
             _ => return Err(self.unimplemented(bus, start_ip)),
         }
@@ -1178,8 +1204,30 @@ impl Cpu {
     fn segment_count(&self) -> usize {
         match self.model {
             Model::I286 => 4,
-            Model::I386 => 6,
+            Model::I386 | Model::I486 => 6,
         }
+    }
+
+    /// CMPXCHG (486): if the accumulator equals the destination, the source goes to the
+    /// destination; otherwise the destination goes to the accumulator. The flags are those of
+    /// CMP accumulator, destination (DOSBox sets ZF only), and memory is always written, as on
+    /// the processor.
+    fn cmpxchg<B: Bus>(&mut self, bus: &mut B, p: &Prefixes, op: u8) -> Res<()> {
+        let w = if op == 0xB0 { Width::Byte } else { p.v() };
+        let m = self.modrm(bus, p)?;
+        let dest = self.read_rm(bus, m.rm, w)?;
+        let acc = self.read_reg(0, w);
+        self.sub(w, acc, dest, 0);
+        if acc == dest {
+            let src = self.read_reg(m.reg, w);
+            self.write_rm(bus, m.rm, w, src)?;
+        } else {
+            if matches!(m.rm, Rm::Mem { .. }) {
+                self.write_rm(bus, m.rm, w, dest)?;
+            }
+            self.write_reg(0, w, dest);
+        }
+        Ok(())
     }
 
     // ---- ALU ----

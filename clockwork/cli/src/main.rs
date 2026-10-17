@@ -48,7 +48,7 @@ options:
   --no-audio         play: no sound and no MIDI output
   --midi-out NAME    play: send MIDI to the host MIDI output whose name contains NAME (default:
                      the first one, e.g. Microsoft GS Wavetable Synth; none: no MIDI)
-  --cpu 286|386      processor the program sees (default 386)
+  --cpu 286|386|486  processor the program sees (default 486)
   --no-fpu           no x87 coprocessor (escape opcodes do nothing)
   --joystick N       joysticks on the game port, 0-2 (default 0); play: the host's gamepads
                      drive them (left stick, A and B buttons)
@@ -84,7 +84,7 @@ struct Options {
     no_audio: bool,
     midi_out: Option<String>,
     scale: usize,
-    cpu: dos::CpuModel,
+    cpu: Option<dos::CpuModel>,
     cd_drive: Option<char>,
     cd_root: String,
     cd_label: String,
@@ -183,11 +183,12 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 options.environment.push((name.to_ascii_uppercase(), text.to_owned()));
             }
             "--cpu" => {
-                options.cpu = match value(arg)?.as_str() {
+                options.cpu = Some(match value(arg)?.as_str() {
                     "286" => dos::CpuModel::I286,
                     "386" => dos::CpuModel::I386,
-                    other => return Err(format!("--cpu must be 286 or 386, not {other:?}")),
-                }
+                    "486" => dos::CpuModel::I486,
+                    other => return Err(format!("--cpu must be 286, 386 or 486, not {other:?}")),
+                })
             }
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}\n\n{USAGE}")),
             _ => positional.push(arg.clone()),
@@ -250,7 +251,7 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
     }
     let config = Config {
         instructions_per_second: ips,
-        cpu_model: o.cpu,
+        cpu_model: o.cpu.unwrap_or(Config::default().cpu_model),
         cd_drive: o.cd_drive,
         cd_root: o.cd_root.clone(),
         cd_label: o.cd_label.clone(),

@@ -71,7 +71,7 @@ impl Default for Config {
         Self {
             instructions_per_second: 8_000_000,
             start_time: DateTime::new(1994, 1, 1, 8, 0, 0),
-            cpu_model: cpu::Model::I386,
+            cpu_model: cpu::Model::I486,
             fpu: true,
             cd_drive: None,
             cd_root: String::new(),

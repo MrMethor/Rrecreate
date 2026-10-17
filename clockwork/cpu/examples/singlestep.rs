@@ -241,6 +241,7 @@ fn flag_mask(model: Model) -> u32 {
     match model {
         Model::I286 => low,
         Model::I386 => low | u32::from(flags::IOPL | flags::NT),
+        Model::I486 => low | u32::from(flags::IOPL | flags::NT) | flags::AC,
     }
 }
 
@@ -333,9 +334,11 @@ fn run_test(test: &Test, model: Model, file_masks: &Registers) -> Outcome {
     cpu.regs.ip = init(r::EIP);
     cpu.regs.flags = match model {
         Model::I286 => u32::from(flags::normalize(init(r::EFLAGS) as u16)),
-        Model::I386 => init(r::EFLAGS) & (flag_mask(model) | u32::from(flags::FIXED)) | u32::from(flags::FIXED),
+        Model::I386 | Model::I486 => {
+            init(r::EFLAGS) & (flag_mask(model) | u32::from(flags::FIXED)) | u32::from(flags::FIXED)
+        }
     };
-    cpu.cr0 = (init(r::CR0) & 0x8000_001F) | if model == Model::I386 { cpu::cr0::ET } else { 0 };
+    cpu.cr0 = (init(r::CR0) & 0x8000_001F) | if model >= Model::I386 { cpu::cr0::ET } else { 0 };
     cpu.cr3 = init(r::CR3);
     cpu.dr[6] = init(r::DR6);
     cpu.dr[7] = init(r::DR7);
@@ -363,7 +366,7 @@ fn run_test(test: &Test, model: Model, file_masks: &Registers) -> Outcome {
         return Outcome::Skipped;
     }
     let mut problems = Vec::new();
-    let wide = model == Model::I386;
+    let wide = model >= Model::I386;
     for index in [
         r::EAX,
         r::EBX,
