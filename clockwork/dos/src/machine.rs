@@ -527,6 +527,9 @@ pub struct Machine {
     /// `exec_hits` (for debugging; not part of the machine state).
     pub exec_watch: Option<std::ops::Range<u32>>,
     pub exec_hits: Vec<ExecHit>,
+    /// What the started program's code executed, once [`Machine::start_coverage`] was called
+    /// (for the analysis pipeline; not part of the machine state).
+    pub coverage: Option<crate::coverage::Coverage>,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -563,6 +566,7 @@ impl Machine {
             irq_counts: [0; 16],
             exec_watch: None,
             exec_hits: Vec::new(),
+            coverage: None,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -627,8 +631,17 @@ impl Machine {
             if self.exec_watch.is_some() {
                 self.watch_exec();
             }
+            if self.coverage.is_some() {
+                self.coverage_before();
+            }
             let (cpu, mut bus) = self.split();
             let result = cpu.step(&mut bus);
+            if let Some(coverage) = &mut self.coverage {
+                match result {
+                    Ok(()) => coverage.after(self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip)),
+                    Err(_) => coverage.cancel(),
+                }
+            }
             if self.devices.dirty {
                 self.devices.dirty = false;
                 self.next_event = self.cpu.cycles;
@@ -640,6 +653,26 @@ impl Machine {
                 Err(fault) => return Stop::Fault(fault),
             }
         }
+    }
+
+    /// Starts recording coverage of the program just loaded: its load image runs from its PSP's
+    /// paragraph 10h to the end of its memory block.
+    pub fn start_coverage(&mut self) {
+        let psp = u32::from(self.dos.psp);
+        let base = (psp + 0x10) << 4;
+        let end = (psp + u32::from(self.mem.read_u16(((psp - 1) << 4) + 3))) << 4;
+        self.coverage = Some(crate::coverage::Coverage::new(base, end.saturating_sub(base)));
+    }
+
+    fn coverage_before(&mut self) {
+        let Some(coverage) = &mut self.coverage else { return };
+        if self.cpu.protected_mode() {
+            coverage.cancel();
+            return;
+        }
+        let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+        let opcode = std::array::from_fn(|i| self.mem.read_u8(linear.wrapping_add(i as u32)));
+        coverage.before(linear, opcode);
     }
 
     /// Records the instruction about to run if it starts in the watched range.

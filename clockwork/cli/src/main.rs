@@ -42,6 +42,8 @@ options:
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final screen as a BMP
   --wav FILE         run: save the sound (OPL and Sound Blaster) as a WAV file
+  --coverage FILE    run: record which instructions of the program's image ran and the calls it
+                     made (JSON, for rec)
   --save-changes DIR run: afterwards, write the files the program created or changed to DIR
                      (same paths as on C:; the game folder itself is never touched), e.g. what
                      an installer unpacked
@@ -92,6 +94,7 @@ struct Options {
     screenshot: Option<PathBuf>,
     wav: Option<PathBuf>,
     save_changes: Option<PathBuf>,
+    coverage: Option<PathBuf>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
     record: Option<PathBuf>,
@@ -232,6 +235,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--screenshot" => options.screenshot = Some(value(arg)?.into()),
             "--wav" => options.wav = Some(value(arg)?.into()),
             "--save-changes" => options.save_changes = Some(value(arg)?.into()),
+            "--coverage" => options.coverage = Some(value(arg)?.into()),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
             "--trace" => options.trace = Some(value(arg)?.into()),
@@ -367,6 +371,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         None => (o.program.clone().unwrap_or_default(), o.args.clone(), o.ips.unwrap_or(8_000_000)),
     };
     let mut m = boot(o, &program, &args, ips)?;
+    if o.coverage.is_some() {
+        m.start_coverage();
+    }
     if let Some(session) = &session {
         for &(cycle, input) in &session.inputs {
             m.queue_input(cycle, input);
@@ -411,6 +418,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     }
     if let Some(dir) = &o.save_changes {
         save_changes(&m, dir)?;
+    }
+    if let (Some(path), Some(coverage)) = (&o.coverage, &m.coverage) {
+        std::fs::write(path, coverage.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let summary = Summary::new(&m, &stop);
     if let Some(profile) = &profile {

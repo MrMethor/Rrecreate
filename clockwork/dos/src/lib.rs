@@ -7,6 +7,7 @@ pub mod audio;
 pub mod bios;
 pub mod clock;
 pub mod cmos;
+pub mod coverage;
 pub mod dma;
 pub mod dos;
 pub mod ems;
