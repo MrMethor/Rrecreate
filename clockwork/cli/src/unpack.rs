@@ -199,7 +199,7 @@ mod tests {
         let file = mz_file(&u);
         let word = |i: usize| u16::from_le_bytes([file[i], file[i + 1]]);
         assert_eq!(file.len(), 0x30 + 1000);
-        assert_eq!((word(0), word(2), word(4), word(6), word(8)), (0x5A4D, (0x430 % 512) as u16, 3, 2, 3));
+        assert_eq!((word(0), word(2), word(4), word(6), word(8)), (0x5A4D, 1048 % 512, 3, 2, 3));
         assert_eq!((word(0x0E), word(0x10), word(0x14), word(0x16)), (3, 4, 2, 1));
         assert_eq!((word(0x1C), word(0x1E), word(0x20), word(0x22)), (2, 1, 5, 0x1000));
     }
