@@ -629,7 +629,7 @@ impl Machine {
                 watch.step(&self.cpu.regs, &self.mem);
             }
             if let Some(trap) = &mut self.return_trap
-                && trap.reached(&self.cpu.regs)
+                && trap.reached(&self.cpu.regs, &self.mem)
             {
                 return Stop::Returned;
             }

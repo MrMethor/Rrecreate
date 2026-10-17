@@ -21,6 +21,15 @@ use crate::{Config, Vfs};
 /// Most distinct captures kept per function.
 pub const MAX_CAPTURES: u64 = 64;
 
+/// Cycles a captured call may take (a quarter second at the default speed). A longer one (a wait
+/// for input, a main loop) isn't captured: the program carries on from where it is, and the
+/// calls it makes are hooked again, instead of all running nested in one capture.
+pub const MAX_CAPTURE_CYCLES: u64 = 2_000_000;
+
+/// Captures nested in one another, at most; deeper calls run as the original. Each level is a
+/// nested run of the machine on the host's stack.
+pub const MAX_CAPTURE_DEPTH: usize = 16;
+
 /// One access, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Access {
@@ -29,7 +38,8 @@ pub(crate) enum Access {
     Port,
 }
 
-/// The tracing in force while a captured function runs.
+/// The tracing in force while captured functions run: one log for all of them, nested; each
+/// capture takes its part from where it started.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Tracer {
     pub(crate) log: Vec<Access>,
@@ -154,26 +164,42 @@ impl Machine {
     pub(crate) fn capture_call(&mut self, o: Override) -> Result<Option<Capture>, crate::Stop> {
         let regs = self.cpu.regs;
         let (ss, sp) = (regs.ss(), regs.sp());
-        let ret_ip = self.mem.read_u16(Machine::lin(ss, sp));
-        let ret_cs = if o.conv.far { self.mem.read_u16(Machine::lin(ss, sp.wrapping_add(2))) } else { regs.cs() };
-        let after_return = sp.wrapping_add(if o.conv.far { 4 } else { 2 }).wrapping_add(o.conv.pops);
+        // A placeholder's convention is unknown: its call may have been near, far or an interrupt.
+        let placeholder = o.name == Override::PLACEHOLDER;
+        let trap = if placeholder {
+            crate::hybrid::ReturnTrap::any_return(regs.cs(), ss, sp)
+        } else {
+            let ret_ip = self.mem.read_u16(Machine::lin(ss, sp));
+            let ret_cs = if o.conv.far { self.mem.read_u16(Machine::lin(ss, sp.wrapping_add(2))) } else { regs.cs() };
+            let after_return = sp.wrapping_add(if o.conv.far { 4 } else { 2 }).wrapping_add(o.conv.pops);
+            crate::hybrid::ReturnTrap::new(ret_cs, ret_ip, ss, after_return, sp)
+        };
         let entry = Registers::of(&regs);
         let cycle = self.cpu.cycles;
-        self.hybrid.as_mut().expect("hooked").in_dual = true;
-        self.tracer = Some(Box::default());
-        let trap = crate::hybrid::ReturnTrap::new(ret_cs, ret_ip, ss, after_return, sp);
-        let (stop, lowest_sp) = self.run_to_return_public(trap);
-        let tracer = self.tracer.take().expect("tracing");
+        self.hybrid.as_mut().expect("hooked").capturing += 1;
+        let tracer = self.tracer.get_or_insert_with(Box::default);
+        let (start, services) = (tracer.log.len(), tracer.services);
+        let (stop, lowest_sp) = self.run_to_return_within(trap, MAX_CAPTURE_CYCLES);
+        let tracer = self.tracer.as_deref_mut().expect("tracing");
+        let log = tracer.log[start..].to_vec();
+        let services = tracer.services - services;
         let hybrid = self.hybrid.as_mut().expect("hooked");
-        hybrid.in_dual = false;
+        hybrid.capturing -= 1;
         hybrid.skip = None;
+        if hybrid.capturing == 0 {
+            self.tracer = None;
+        }
+        let hybrid = self.hybrid.as_mut().expect("hooked");
         match stop {
             crate::Stop::Returned => {}
             crate::Stop::CycleLimit => return Ok(None),
             other => return Err(other),
         }
         let base = hybrid.base;
-        let dead_end = if o.conv.pops == 0 {
+        let dead_end = if placeholder {
+            // What the return popped: the return address and any arguments the callee removed.
+            self.cpu.regs.sp()
+        } else if o.conv.pops == 0 {
             sp.wrapping_add(if o.conv.far { 4 } else { 2 }).wrapping_add(o.conv.args)
         } else {
             sp
@@ -182,7 +208,7 @@ impl Machine {
         let mut inputs = BTreeMap::new();
         let mut written = BTreeMap::new();
         let mut unreplayable = None;
-        for access in &tracer.log {
+        for access in &log {
             match *access {
                 Access::Read(addr, value) => {
                     if !written.contains_key(&addr) {
@@ -195,7 +221,7 @@ impl Machine {
                 Access::Port => unreplayable = Some("port I/O".to_string()),
             }
         }
-        if tracer.services > 0 {
+        if services > 0 {
             unreplayable = Some("host services".to_string());
         }
         let video = |addr: &u32| addr.wrapping_sub(0xA_0000) < 0x2_0000;

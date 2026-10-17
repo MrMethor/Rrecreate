@@ -110,9 +110,11 @@ pub struct Signature {
 }
 
 impl Signature {
-    /// Whether `code` (the 16 bytes at the entry) matches.
+    /// Whether `code` (the 16 bytes at the entry) matches, the floating-point emulator's patches
+    /// allowed ([`same_code`]).
     pub fn matches(&self, code: &[u8; 16]) -> bool {
-        (0..16).all(|i| self.mask & 1 << i == 0 || code[i] == (self.bytes >> (8 * i)) as u8)
+        let expected: [u8; 16] = std::array::from_fn(|i| (self.bytes >> (8 * i)) as u8);
+        same_code(&expected, code, |i| self.mask & 1 << i != 0)
     }
 
     fn describe(&self) -> String {
@@ -125,6 +127,35 @@ impl Signature {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+/// Floating-point emulator fixups (Borland's and Microsoft's run-time libraries): compilers emit x87
+/// instructions as `INT 34h`-`3Dh`, and the emulator patches each into the real instruction the
+/// first time it runs on a machine with a coprocessor: `CD 34+n` becomes `9B D8+n` (WAIT, then the
+/// ESC opcode; the operand bytes stay), `CD 3D` becomes `90 9B` (FWAIT). `INT 3Ch` (a segment
+/// override) rewrites a third byte and isn't recognized, so it still stops a run.
+fn fpu_fixup(original: [u8; 2], patched: [u8; 2]) -> bool {
+    match original {
+        [0xCD, n @ 0x34..=0x3B] => patched == [0x9B, 0xD8 + (n - 0x34)],
+        [0xCD, 0x3D] => patched == [0x90, 0x9B],
+        _ => false,
+    }
+}
+
+/// Whether two snapshots of a function's first bytes are the same code: equal where `compared`,
+/// or differing only where the floating-point emulator patched an instruction in ([`fpu_fixup`]).
+fn same_code(first: &[u8; 16], now: &[u8; 16], compared: impl Fn(usize) -> bool) -> bool {
+    let mut i = 0;
+    while i < 16 {
+        if !compared(i) || first[i] == now[i] {
+            i += 1;
+        } else if i + 1 < 16 && fpu_fixup([first[i], first[i + 1]], [now[i], now[i + 1]]) {
+            i += 2;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 fn hex(code: &[u8]) -> String {
@@ -163,8 +194,12 @@ impl Override {
         fn missing(_: &mut Call) -> Result<(), String> {
             Err("no Rust version of this function yet".into())
         }
-        Override { offset, name: "-", conv: Convention::custom(false, 0, 0, 0, 0), run: missing }
+        Override { offset, name: Self::PLACEHOLDER, conv: Convention::custom(false, 0, 0, 0, 0), run: missing }
     }
+
+    /// The name of a [`Override::placeholder`]: its convention is unknown (a capture finds out
+    /// whether a call was far from the caller's code).
+    pub const PLACEHOLDER: &str = "-";
 }
 
 impl std::fmt::Debug for Override {
@@ -238,8 +273,11 @@ pub struct Hybrid {
     seen: BTreeSet<(u32, u64)>,
     /// Dual-runs of one function, at most (then it runs as the original).
     pub dual_limit: u64,
-    /// Inside a dual-run or a capture: nested hooked functions run as the original.
+    /// Inside a dual-run or a poisoned call: nested hooked functions run as the original.
     pub(crate) in_dual: bool,
+    /// Captures in progress, nested: calls inside a captured call are captured too, but a Rust
+    /// override doesn't run there (its accesses would be missing from the outer capture).
+    pub(crate) capturing: usize,
     /// The hooked entry the original was started at, not to be hooked again right away.
     pub(crate) skip: Option<u32>,
     /// What each override was written against ([`Hybrid::expect`]), by offset.
@@ -265,6 +303,7 @@ impl Hybrid {
             code: BTreeMap::new(),
             dual_limit: 100,
             in_dual: false,
+            capturing: 0,
             skip: None,
         };
         for (i, (o, _)) in hybrid.overrides.iter().enumerate() {
@@ -283,6 +322,11 @@ impl Hybrid {
         let Some(i) = self.overrides.iter().position(|(o, _)| o.name == which || Some(o.offset) == offset) else {
             return false;
         };
+        self.set_mode_of(i, mode);
+        true
+    }
+
+    fn set_mode_of(&mut self, i: usize, mode: Mode) {
         self.overrides[i].1 = mode;
         let linear = self.base + self.overrides[i].0.offset;
         let (word, bit) = (linear as usize / 64, linear % 64);
@@ -293,7 +337,6 @@ impl Hybrid {
                 self.hooks[word] |= 1 << bit;
             }
         }
-        true
     }
 
     /// The bytes the overrides were written against: at an override's first call its entry must
@@ -311,9 +354,9 @@ impl Hybrid {
     /// override is only valid for the code it was written for, so a difference stops the run.
     pub(crate) fn check_code(&mut self, o: &Override, code: [u8; 16]) -> Result<(), String> {
         if let Some(first) = self.code.get(&o.offset) {
-            if *first != code {
+            if !same_code(first, &code, |_| true) {
                 return Err(format!(
-                    "{}: the code at +{:05X} changed since its first call ({} became {}): an overlay or                      self-modifying code; the override is for the first",
+                    "{}: the code at +{:05X} changed since its first call ({} became {}): an overlay or self-modifying code; the override is for the first",
                     o.name,
                     o.offset,
                     hex(first),
@@ -326,7 +369,7 @@ impl Hybrid {
             && !s.matches(&code)
         {
             return Err(format!(
-                "{}: the code at +{:05X} isn't what the override was written for (expected {}, found {}):                  another version of the program?",
+                "{}: the code at +{:05X} isn't what the override was written for (expected {}, found {}): another version of the program?",
                 o.name,
                 o.offset,
                 s.describe(),
@@ -338,9 +381,8 @@ impl Hybrid {
     }
 
     pub fn set_all(&mut self, mode: Mode) {
-        let names: Vec<_> = self.overrides.iter().map(|(o, _)| o.name).collect();
-        for name in names {
-            self.set_mode(name, mode);
+        for i in 0..self.overrides.len() {
+            self.set_mode_of(i, mode);
         }
     }
 
@@ -360,20 +402,50 @@ pub(crate) struct ReturnTrap {
     sp: u16,
     /// Lowest SP seen while the callee ran.
     pub(crate) lowest_sp: u16,
+    /// For a call of unknown kind ([`ReturnTrap::any_return`]): the entry SP. The return address
+    /// is read from there once the stack is unwound past it, as the callee may have changed it
+    /// (an FPU emulator moves it back to rerun the instruction it patched).
+    entry_sp: Option<u16>,
 }
 
 impl ReturnTrap {
     pub(crate) fn new(cs: u16, ip: u16, ss: u16, sp: u16, lowest_sp: u16) -> Self {
-        ReturnTrap { cs, ip, ss, sp, lowest_sp }
+        ReturnTrap { cs, ip, ss, sp, lowest_sp, entry_sp: None }
+    }
+
+    /// For a function entered with SS:SP at its return address, called near, far or by an
+    /// interrupt: back at the caller's CS (near) or at the segment on the stack (far, IRET).
+    pub(crate) fn any_return(cs: u16, ss: u16, sp: u16) -> Self {
+        ReturnTrap { cs, ip: 0, ss, sp: sp.wrapping_add(2), lowest_sp: sp, entry_sp: Some(sp) }
     }
 
     #[inline]
-    pub(crate) fn reached(&mut self, regs: &cpu::Regs) -> bool {
+    pub(crate) fn reached(&mut self, regs: &cpu::Regs, mem: &machine::Memory) -> bool {
         let sp = regs.sp();
-        if regs.ss() == self.ss && sp < self.lowest_sp {
+        if regs.ss() != self.ss {
+            return false;
+        }
+        if sp < self.lowest_sp {
             self.lowest_sp = sp;
         }
-        regs.ip as u16 == self.ip && regs.cs() == self.cs && regs.ss() == self.ss && sp >= self.sp
+        if (sp.wrapping_sub(self.sp) as i16) < 0 {
+            return false;
+        }
+        let (ip, cs) = (regs.ip as u16, regs.cs());
+        match self.entry_sp {
+            None => ip == self.ip && cs == self.cs,
+            Some(entry) => {
+                ip == mem.read_u16(Machine::lin(self.ss, entry))
+                    && (cs == self.cs || cs == mem.read_u16(Machine::lin(self.ss, entry.wrapping_add(2))))
+            }
+        }
+    }
+
+    /// A nested run on the same stack went as low as `inner`'s lowest SP: so did this callee.
+    fn absorb(&mut self, inner: &ReturnTrap) {
+        if inner.ss == self.ss {
+            self.lowest_sp = self.lowest_sp.min(inner.lowest_sp);
+        }
     }
 }
 
@@ -576,7 +648,7 @@ impl Machine {
         self.cpu.regs.set_sp(sp);
         self.cpu.regs.set_cs(target_cs);
         self.cpu.regs.ip = target_ip;
-        let trap = ReturnTrap { cs, ip, ss, sp: after_args.wrapping_add(conv.pops), lowest_sp: sp };
+        let trap = ReturnTrap::new(cs, ip, ss, after_args.wrapping_add(conv.pops), sp);
         let (stop, _) = self.run_to_return(trap, MAX_DUAL_CYCLES);
         match stop {
             Stop::Returned => {
@@ -602,7 +674,9 @@ impl Machine {
         let ret_cs = if o.conv.far { self.mem.read_u16(Machine::lin(ss, sp.wrapping_add(2))) } else { regs.cs() };
         let after_return = sp.wrapping_add(if o.conv.far { 4 } else { 2 }).wrapping_add(o.conv.pops);
         self.hybrid.as_mut().expect("hooked").in_dual = true;
-        let (stop, _) = self.run_to_return_public(ReturnTrap::new(ret_cs, ret_ip, ss, after_return, sp));
+        let trap = ReturnTrap::new(ret_cs, ret_ip, ss, after_return, sp);
+        // A call that doesn't return soon (a wait, a main loop) isn't poisoned: the program goes on.
+        let (stop, _) = self.run_to_return_within(trap, crate::capture::MAX_CAPTURE_CYCLES);
         let hybrid = self.hybrid.as_mut().expect("hooked");
         hybrid.in_dual = false;
         hybrid.skip = None;
@@ -634,17 +708,22 @@ impl Machine {
         Ok(())
     }
 
-    pub(crate) fn run_to_return_public(&mut self, trap: ReturnTrap) -> (Stop, u16) {
-        self.run_to_return(trap, MAX_DUAL_CYCLES)
+    /// [`Machine::run_to_return`] with a budget of its own.
+    pub(crate) fn run_to_return_within(&mut self, trap: ReturnTrap, cycles: u64) -> (Stop, u16) {
+        self.run_to_return(trap, cycles)
     }
 
     /// Runs nested until `trap` is reached; returns why it stopped and the lowest SP seen.
     fn run_to_return(&mut self, trap: ReturnTrap, max_cycles: u64) -> (Stop, u16) {
         let outer = self.return_trap.replace(trap);
         let stop = self.run(max_cycles);
-        let lowest = self.return_trap.map_or(trap.lowest_sp, |t| t.lowest_sp);
-        self.return_trap = outer;
-        (stop, lowest)
+        let inner = self.return_trap.unwrap_or(trap);
+        // The outer run's callee contains this one: its stack went as deep.
+        self.return_trap = outer.map(|mut t| {
+            t.absorb(&inner);
+            t
+        });
+        (stop, inner.lowest_sp)
     }
 
     /// Called before each instruction while overrides are loaded: runs the override hooked at
@@ -671,8 +750,16 @@ impl Machine {
         let hybrid = self.hybrid.as_mut().expect("hooked");
         match mode {
             Mode::Original => Ok(false),
-            Mode::Dual if hybrid.in_dual || hybrid.stats[i].dual >= hybrid.dual_limit => Ok(false),
-            Mode::Capture if hybrid.in_dual || hybrid.stats[i].captured >= crate::capture::MAX_CAPTURES => Ok(false),
+            Mode::Dual if hybrid.in_dual || hybrid.capturing > 0 || hybrid.stats[i].dual >= hybrid.dual_limit => {
+                Ok(false)
+            }
+            Mode::Capture
+                if hybrid.in_dual
+                    || hybrid.capturing >= crate::capture::MAX_CAPTURE_DEPTH
+                    || hybrid.stats[i].captured >= crate::capture::MAX_CAPTURES =>
+            {
+                Ok(false)
+            }
             Mode::Capture => {
                 hybrid.skip = Some(linear);
                 if let Some(capture) = self.capture_call(o)? {
@@ -684,7 +771,8 @@ impl Machine {
                 }
                 Ok(true)
             }
-            Mode::Poison if hybrid.in_dual => Ok(false),
+            Mode::Poison if hybrid.in_dual || hybrid.capturing > 0 => Ok(false),
+            Mode::Rust if hybrid.capturing > 0 => Ok(false),
             Mode::Poison => {
                 hybrid.stats[i].poisoned += 1;
                 let n = hybrid.stats[i].poisoned;
@@ -742,7 +830,7 @@ impl Machine {
         // The original, from its entry to its return.
         let cycle = self.cpu.cycles;
         self.hybrid.as_mut().expect("hooked").in_dual = true;
-        let trap = ReturnTrap { cs: ret_cs, ip: ret_ip, ss, sp: after_return, lowest_sp: sp };
+        let trap = ReturnTrap::new(ret_cs, ret_ip, ss, after_return, sp);
         self.isr_watch = Some(IsrWatch::default());
         let (stop, lowest_sp) = self.run_to_return(trap, MAX_DUAL_CYCLES);
         let interrupts_wrote = self.isr_watch.take().map(|w| w.written).unwrap_or_default();
@@ -870,4 +958,25 @@ fn runs(addresses: &[u32], a: impl Fn(u32) -> u8, b: impl Fn(u32) -> u8) -> Vec<
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fpu_emulators_patches_are_the_same_code() {
+        // Wolfenstein 3D +01136 before and after its first call on a machine with an FPU.
+        let first = [0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0A, 0xCD, 0x35, 0x7E, 0xFE, 0xCD, 0x3D, 0x8A, 0x46, 0xFF, 0x80];
+        let now = [0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0A, 0x9B, 0xD9, 0x7E, 0xFE, 0x90, 0x9B, 0x8A, 0x46, 0xFF, 0x80];
+        assert!(same_code(&first, &now, |_| true));
+        let mut other = now;
+        other[8] = 0x7F;
+        assert!(!same_code(&first, &other, |_| true), "an operand changed: other code");
+        let mut wrong_escape = now;
+        wrong_escape[7] = 0xDA;
+        assert!(!same_code(&first, &wrong_escape, |_| true), "INT 35h stands for ESC D9, not DA");
+        let bytes = first.iter().enumerate().fold(0u128, |v, (i, &b)| v | u128::from(b) << (8 * i));
+        assert!(Signature { offset: 0x1136, bytes, mask: 0xFFFF }.matches(&now));
+    }
 }

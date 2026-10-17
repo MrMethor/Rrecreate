@@ -2778,3 +2778,66 @@ fn contracts_from_a_run() {
     assert_eq!((pascal.arg_bytes, pascal.pops.iter().copied().collect::<Vec<_>>()), (2, vec![2]));
     assert_eq!(pascal.inputs, 0);
 }
+
+#[test]
+fn placeholder_captures_follow_far_calls_and_interrupts() {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["far_fn", "handler", "skipped"] {
+            offsets.borrow_mut().insert(name, (a.addr(name) as u32).wrapping_sub(0x100));
+        }
+        // A far call into the next paragraph's segment: same code, another CS.
+        a.mov(bx, cs)?;
+        a.inc(bx)?;
+        let (far_fn, pointer) = (a.addr("far_fn"), a.addr("pointer") as u32);
+        a.mov(word_ptr(pointer), far_fn - 0x10)?;
+        a.mov(word_ptr(pointer + 2), bx)?;
+        a.mov(ax, 3)?;
+        a.call(dword_ptr(pointer))?;
+        let result = word_at(a, "result");
+        a.mov(result, ax)?;
+        // An interrupt handler that moves its return address: past the byte after INT 60h.
+        a.mov(ax, 0x2560)?;
+        load_dx(a, "handler")?;
+        a.int(0x21)?;
+        a.mov(ax, 4)?;
+        a.int(0x60)?;
+        a.db(&[0xCC])?;
+        a.here("skipped")?;
+        let result = word_at(a, "result2");
+        a.mov(result, ax)?;
+        exit(a, 0)?;
+        a.here("far_fn")?;
+        a.inc(ax)?;
+        a.retf()?;
+        a.here("handler")?;
+        a.push(bp)?;
+        a.mov(bp, sp)?;
+        a.inc(word_ptr(bp + 2))?;
+        a.pop(bp)?;
+        a.add(ax, ax)?;
+        a.iret()?;
+        a.here("pointer")?;
+        a.dw(&[0, 0])?;
+        a.here("result")?;
+        a.dw(&[0])?;
+        a.here("result2")?;
+        a.dw(&[0])
+    });
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let offsets = offsets.into_inner();
+    use dos::hybrid::{Mode, Override};
+    m.start_hybrid("P.COM", vec![Override::placeholder(offsets["far_fn"]), Override::placeholder(offsets["handler"])])
+        .set_all(Mode::Capture);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let hybrid = m.hybrid.take().unwrap();
+    let captures = hybrid.captures;
+    assert_eq!(captures.len(), 2, "{captures:?}");
+    let (far, int) = (&captures[0], &captures[1]);
+    assert_eq!((far.offset, far.entry.gpr[0], far.exit.gpr[0]), (offsets["far_fn"], 3, 4));
+    assert_eq!(far.entry.seg[1], far.exit.seg[1] + 1, "returned to the caller's segment");
+    assert_eq!((int.offset, int.entry.gpr[0], int.exit.gpr[0]), (offsets["handler"], 4, 8));
+    assert_eq!(int.exit.gpr[4], int.entry.gpr[4] + 6, "IRET");
+    assert_eq!(u32::from(int.exit.ip), offsets["skipped"] + 0x100, "at the return address it chose");
+    assert!(captures.iter().all(|c| c.unreplayable.is_none()), "{captures:?}");
+}

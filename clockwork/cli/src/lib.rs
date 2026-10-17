@@ -217,8 +217,21 @@ fn load_source(
     }
 }
 
-/// The command line, for `rec-host` (no extension) and `rec-host-py`.
-pub fn main_with(extension: Option<&dyn Extension>) -> ExitCode {
+/// The command line, for `rec-host` (no extension) and `rec-host-py`. It runs on a thread with a
+/// large stack: overrides, captures and dual-runs run the machine nested, a level per call.
+pub fn main_with(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn_scoped(scope, || command_line(extension))
+            .expect("a thread for the command line")
+            .join()
+            .unwrap_or(ExitCode::from(101))
+    })
+}
+
+fn command_line(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
+    let extension = extension.map(|e| e as &dyn Extension);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("run") => parse_options(&args[1..]).and_then(|o| cmd_run(&o, extension)),
