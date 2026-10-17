@@ -10,6 +10,7 @@ mod input_script;
 mod live_audio;
 mod play;
 mod session;
+mod unpack;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,8 @@ const USAGE: &str = "\
 usage:
   rec-host run  <game-dir> <program> [options]   run headless and print a summary
   rec-host play <game-dir> <program> [options]   run in a window with keyboard input
+  rec-host unpack <program> --out FILE [--json]  undo an executable packer (PKLITE, LZEXE, ...) by
+                                                 running it to its entry point; writes an MZ file
 
 options:
   --args TEXT        command line passed to the program
@@ -136,6 +139,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("run") => parse_options(&args[1..]).and_then(|o| cmd_run(&o)),
         Some("play") => parse_options(&args[1..]).and_then(|o| play::run(&o)),
+        Some("unpack") => cmd_unpack(&args[1..]),
         Some("--version") => {
             println!("rec-host {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
@@ -149,6 +153,59 @@ fn main() -> ExitCode {
         eprintln!("rec-host: error: {message}");
         ExitCode::from(1)
     })
+}
+
+fn cmd_unpack(args: &[String]) -> Result<ExitCode, String> {
+    let (mut program, mut out, mut json) = (None, None, false);
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--out" => out = Some(PathBuf::from(args.next().ok_or("--out needs a file")?)),
+            "--json" => json = true,
+            flag if flag.starts_with("--") => {
+                return Err(format!(
+                    "unknown option {flag}
+
+{USAGE}"
+                ));
+            }
+            path if program.is_none() => program = Some(PathBuf::from(path)),
+            extra => return Err(format!("unexpected argument {extra:?}")),
+        }
+    }
+    let program = program.ok_or("unpack needs a program")?;
+    let out = out.ok_or("unpack needs --out FILE")?;
+    let unpacked = unpack::unpack(&program)?;
+    std::fs::write(&out, unpack::mz_file(&unpacked)).map_err(|e| format!("{}: {e}", out.display()))?;
+    let u = &unpacked;
+    if json {
+        println!(
+            r#"{{"entry":"{:04X}:{:04X}","stack":"{:04X}:{:04X}","image_size":{},"relocations":{},"instructions":{},"stray_bytes":{}}}"#,
+            u.cs,
+            u.ip,
+            u.ss,
+            u.sp,
+            u.image.len(),
+            u.relocations.len(),
+            u.instructions,
+            u.stray_bytes
+        );
+    } else {
+        println!(
+            "unpacked  entry {:04X}:{:04X}, stack {:04X}:{:04X}, image {} bytes, {} relocations ({} instructions)",
+            u.cs,
+            u.ip,
+            u.ss,
+            u.sp,
+            u.image.len(),
+            u.relocations.len(),
+            u.instructions
+        );
+        if u.stray_bytes > 0 {
+            println!("warning   {} bytes differ between the two runs outside relocations", u.stray_bytes);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
