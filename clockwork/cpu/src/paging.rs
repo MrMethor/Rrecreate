@@ -113,11 +113,13 @@ impl Cpu {
         }
         if pde & 0x20 == 0 {
             pde |= 0x20;
+            self.wrote(pde_addr);
             write_u32(bus, pde_addr, pde);
         }
         let wanted = pte | 0x20 | if write { 0x40 } else { 0 };
         if wanted != pte {
             pte = wanted;
+            self.wrote(pte_addr);
             write_u32(bus, pte_addr, pte);
         }
         self.tlb.entries[slot] =

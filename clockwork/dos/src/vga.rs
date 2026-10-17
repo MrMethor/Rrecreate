@@ -515,6 +515,27 @@ impl Vga {
         self.set_planes(offset, (old & !map_mask) | (data & map_mask));
     }
 
+    /// A CPU write of `N` bytes at `offset` in the window, the same as `N` byte writes. In
+    /// chain-4 and linear access they land on consecutive bytes of video memory (an aligned
+    /// chain-4 word or doubleword fills one interleaved group), so they are copied at once; the
+    /// planar path goes byte by byte through the latches and write modes.
+    pub fn cpu_write_n<const N: usize>(&mut self, offset: u32, value: [u8; N]) {
+        let banked = self.banked(offset);
+        let at = match self.access() {
+            Access::Chained if (banked & 3) as usize + N <= 4 => chained_index(banked & (VGA_MEMORY as u32 - 1)),
+            Access::Linear => banked as usize & (self.wrap() - 1),
+            _ => usize::MAX,
+        };
+        if at.checked_add(N).is_some_and(|end| end <= self.vram.len()) {
+            self.vram[at..at + N].copy_from_slice(&value);
+            self.changed = true;
+        } else {
+            for (i, byte) in value.into_iter().enumerate() {
+                self.cpu_write(offset + i as u32, byte);
+            }
+        }
+    }
+
     /// What a CPU read would return, without loading the latches (for tools and tests).
     pub fn peek(&self, offset: u32) -> u8 {
         let offset = self.banked(offset);

@@ -126,7 +126,6 @@ impl Cpu {
         self.fetch.base = self.segment_base(CS);
         self.fetch.ip_mask = if default32 { u32::MAX } else { 0xFFFF };
         self.fetch.page_tag = 0;
-        self.fetch.buf_len = 0;
         let mut p = Prefixes { seg: None, rep: Rep::None, op32: default32, addr32: default32, lock: false };
         let mut prefixes = 0;
         let op = loop {
@@ -535,10 +534,12 @@ impl Cpu {
                 self.check_io(bus, port, w)?;
                 if op & 2 == 0 {
                     let value = port_in(bus, port, w);
+                    self.flush_code_cache();
                     self.write_reg(0, w, value);
                 } else {
                     let value = self.read_reg(0, w);
                     port_out(bus, port, w, value);
+                    self.flush_code_cache();
                 }
             }
             0xE8 => {
@@ -822,7 +823,7 @@ impl Cpu {
             // INVLPG (486): DOSBox flushes the whole TLB, and so does this.
             (7, Rm::Mem { .. }) if self.model >= Model::I486 => {
                 self.check_privileged()?;
-                self.tlb.flush();
+                self.flush_tlb();
             }
             _ => return Err(self.unimplemented(bus, start_ip)),
         }
@@ -1154,12 +1155,14 @@ impl Cpu {
             }
             0x6C => {
                 let value = port_in(bus, self.regs.dx(), w);
+                self.flush_code_cache();
                 self.write_mem(bus, ES, di, mask, w, value)?;
                 advance_di = true;
             }
             _ => {
                 let value = self.read_mem(bus, src_seg, si, mask, w)?;
                 port_out(bus, self.regs.dx(), w, value);
+                self.flush_code_cache();
                 advance_si = true;
             }
         }
@@ -1631,6 +1634,7 @@ impl Cpu {
             && let Some(linear) = Self::contiguous(off, base, mask, w.bytes())
         {
             let physical = self.translate(bus, linear, true, self.cpl == 3)?;
+            self.wrote(physical);
             match w {
                 Width::Byte => bus.write_u8(physical, value as u8),
                 Width::Word => bus.write_u16(physical, value as u16),
@@ -1651,6 +1655,7 @@ impl Cpu {
     fn write_paged<B: Bus>(&mut self, bus: &mut B, base: u32, off: u32, mask: u32, w: Width, value: u32) -> Res<()> {
         if let Some(linear) = Self::contiguous(off, base, mask, w.bytes()) {
             let physical = self.translate(bus, linear, true, self.cpl == 3)?;
+            self.wrote(physical);
             match w {
                 Width::Byte => bus.write_u8(physical, value as u8),
                 Width::Word => bus.write_u16(physical, value as u16),
@@ -1665,6 +1670,7 @@ impl Cpu {
             physical[i as usize] = self.translate(bus, base.wrapping_add(off.wrapping_add(i) & mask), true, user)?;
         }
         for i in 0..w.bytes() {
+            self.wrote(physical[i as usize]);
             bus.write_u8(physical[i as usize], (value >> (8 * i)) as u8);
         }
         Ok(())
@@ -1707,17 +1713,17 @@ impl Cpu {
             self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
             return Ok(value);
         }
-        let ahead = self.regs.ip.wrapping_sub(self.fetch.buf_ip);
-        if ahead < self.fetch.buf_len {
+        let ahead = self.fetch.base.wrapping_add(self.regs.ip).wrapping_sub(self.fetch.buf_linear);
+        if ahead < self.fetch.buf_len && self.fetch.buf_user == (self.cpl == 3) {
             self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
             return Ok(self.fetch.buf[ahead as usize]);
         }
         self.fetch8_fill(bus)
     }
 
-    /// With paging: fetches a byte through the bus, and reads ahead up to 16 bytes when that is
-    /// plain RAM (within the page, and before IP wraps), which the instruction's next fetches
-    /// then use. (Without paging, byte fetches are faster.)
+    /// With paging: fetches a byte through the bus, and reads ahead up to 16 bytes within the
+    /// page when that is plain RAM, which later fetches use (see `FetchState`). (Without
+    /// paging, byte fetches are faster.)
     #[inline(never)]
     fn fetch8_fill<B: Bus>(&mut self, bus: &mut B) -> Res<u8> {
         let linear = self.fetch.base.wrapping_add(self.regs.ip);
@@ -1729,19 +1735,16 @@ impl Cpu {
             self.fetch.frame = physical & !0xFFF;
             physical
         };
-        let ip = self.regs.ip;
         let value = match bus.code_window(physical) {
             Some(bytes) => {
-                let mut length = 16.min(0x1000 - (physical & 0xFFF));
-                if self.fetch.ip_mask == 0xFFFF {
-                    length = length.min(0x1_0000 - ip);
-                }
-                (self.fetch.buf, self.fetch.buf_ip, self.fetch.buf_len) = (bytes, ip, length);
+                let fetch = &mut self.fetch;
+                (fetch.buf, fetch.buf_linear, fetch.buf_len) = (bytes, linear, 16.min(0x1000 - (physical & 0xFFF)));
+                (fetch.buf_page, fetch.buf_user) = ((physical >> 12) + 1, self.cpl == 3);
                 bytes[0]
             }
             None => bus.read_u8(physical),
         };
-        self.regs.ip = ip.wrapping_add(1) & self.fetch.ip_mask;
+        self.regs.ip = self.regs.ip.wrapping_add(1) & self.fetch.ip_mask;
         Ok(value)
     }
 

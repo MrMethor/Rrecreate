@@ -346,9 +346,11 @@ pub struct Cpu {
     fetch: FetchState,
 }
 
-/// What instruction fetches need, computed once per instruction: CS base, EIP wrap mask, and
-/// with paging the code page last translated during this instruction and the bytes read ahead.
-/// Scratch data: equal and hashed alike whatever it holds.
+/// What instruction fetches need: CS base and EIP wrap mask (computed per instruction), and with
+/// paging the code page last translated during this instruction and code bytes read ahead,
+/// which stay valid across instructions until something could have changed them: a CPU write
+/// to their page, a TLB flush, a port write (devices may write memory), or anything the host does
+/// ([`Cpu::flush_code_cache`]). Scratch data: equal and hashed alike whatever it holds.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct FetchState {
     pub base: u32,
@@ -357,10 +359,13 @@ pub(crate) struct FetchState {
     pub page_tag: u32,
     /// Physical address of that page.
     pub frame: u32,
-    /// Code bytes read ahead in one go: `buf_len` bytes from EIP `buf_ip`.
+    /// Code bytes read ahead in one go: `buf_len` bytes from linear address `buf_linear`, in
+    /// physical page `buf_page - 1`, read at CPL 3 or not (`buf_user`).
     pub buf: [u8; 16],
-    pub buf_ip: u32,
+    pub buf_linear: u32,
     pub buf_len: u32,
+    pub buf_page: u32,
+    pub buf_user: bool,
 }
 
 impl PartialEq for FetchState {
@@ -460,6 +465,27 @@ impl Cpu {
     /// The stack is addressed with ESP rather than SP.
     pub fn stack32(&self) -> bool {
         self.cache_big(seg::SS) && !self.v86()
+    }
+
+    /// Forgets code read ahead. The host calls this when it changed memory itself (a service
+    /// writing a buffer, a device's DMA) before more instructions run.
+    #[inline]
+    pub fn flush_code_cache(&mut self) {
+        self.fetch.buf_len = 0;
+    }
+
+    /// The CPU wrote physical address `physical`: code read ahead from that page is stale.
+    #[inline]
+    pub(crate) fn wrote(&mut self, physical: u32) {
+        if (physical >> 12).wrapping_add(1) == self.fetch.buf_page {
+            self.fetch.buf_len = 0;
+        }
+    }
+
+    /// Empties the TLB, and with it the code read ahead.
+    pub(crate) fn flush_tlb(&mut self) {
+        self.tlb.flush();
+        self.fetch.buf_len = 0;
     }
 
     /// Executes one instruction (with its prefixes). A REP-prefixed string instruction runs all

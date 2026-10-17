@@ -182,6 +182,7 @@ impl Cpu {
         for i in 0..w.bytes() {
             let addr = linear.wrapping_add(i);
             let physical = if self.paging() { self.translate(bus, addr, true, false)? } else { addr };
+            self.wrote(physical);
             bus.write_u8(physical, (value >> (8 * i)) as u8);
         }
         Ok(())
@@ -405,7 +406,7 @@ impl Cpu {
             }
             3 => {
                 self.cr3 = value;
-                self.tlb.flush();
+                self.flush_tlb();
                 Ok(())
             }
             _ => Err(fault(vector::INVALID_OPCODE, 0)),
@@ -443,7 +444,7 @@ impl Cpu {
             self.cpl = 0;
         }
         if changed & (cr0::PG | cr0::PE) != 0 {
-            self.tlb.flush();
+            self.flush_tlb();
         }
         self.cr0 = value;
         Ok(())
@@ -1105,7 +1106,7 @@ impl Cpu {
         }
         self.tr = SystemSegment { selector, base: new_base, limit: d.limit(), is386: true };
         self.cr3 = new_cr3;
-        self.tlb.flush();
+        self.flush_tlb();
         self.regs.ip = new_eip;
         self.set_flags_masked(new_flags, flags::ALL | flags::VM);
         self.regs.gpr.copy_from_slice(&gpr);

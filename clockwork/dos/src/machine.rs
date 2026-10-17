@@ -390,6 +390,19 @@ impl PcBus<'_> {
         }
     }
 
+    /// `N` bytes written in the window, when they all fall inside it.
+    #[inline(never)]
+    fn window_write_n<const N: usize>(&mut self, addr: u32, value: [u8; N]) -> bool {
+        let offset = addr.wrapping_sub(vga::GRAPHICS_BASE);
+        match self.dev.vga.window_size() {
+            Some(size) if offset + N as u32 <= size => {
+                self.dev.vga.cpu_write_n(offset, value);
+                true
+            }
+            _ => false,
+        }
+    }
+
     #[inline(never)]
     fn high_read(&mut self, addr: u32) -> u8 {
         match self.dev.vga.lfb_range() {
@@ -456,6 +469,9 @@ impl Bus for PcBus<'_> {
         if plain_ram(addr, 2) {
             return self.mem.write_n(addr, value.to_le_bytes());
         }
+        if addr.wrapping_sub(vga::GRAPHICS_BASE) < 0x2_0000 && self.window_write_n(addr, value.to_le_bytes()) {
+            return;
+        }
         let [lo, hi] = value.to_le_bytes();
         self.write_u8(addr, lo);
         self.write_u8(addr.wrapping_add(1), hi);
@@ -465,6 +481,9 @@ impl Bus for PcBus<'_> {
     fn write_u32(&mut self, addr: u32, value: u32) {
         if plain_ram(addr, 4) {
             return self.mem.write_n(addr, value.to_le_bytes());
+        }
+        if addr.wrapping_sub(vga::GRAPHICS_BASE) < 0x2_0000 && self.window_write_n(addr, value.to_le_bytes()) {
+            return;
         }
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
             self.write_u8(addr.wrapping_add(i as u32), byte);
@@ -572,6 +591,8 @@ impl Machine {
 
     /// Runs until the cycle counter reaches `limit` or the program stops.
     pub fn run_until(&mut self, limit: u64) -> Stop {
+        // Memory may have changed since the last run (tools, tests, the frontend).
+        self.cpu.flush_code_cache();
         loop {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
@@ -852,6 +873,8 @@ impl Machine {
     }
 
     fn callback(&mut self, id: u16) {
+        // Services write guest memory (file reads, BIOS data, the mouse cursor).
+        self.cpu.flush_code_cache();
         self.waiting_for_input = false;
         self.returned_flags = false;
         let traced =
@@ -884,6 +907,8 @@ impl Machine {
     }
 
     fn service_events(&mut self) {
+        // Devices may write memory (Sound Blaster DMA, the mouse cursor drawn on input).
+        self.cpu.flush_code_cache();
         let cycles = self.cpu.cycles;
         let clock = self.devices.clock;
         let now = clock.pit_ticks(cycles);
