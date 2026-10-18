@@ -70,6 +70,15 @@ impl Vfs {
         self.files.insert(path.to_owned(), Arc::new(data));
     }
 
+    /// Adds a folder and its parents. For building a drive, like [`Vfs::insert_file`].
+    pub fn insert_dir(&mut self, path: &str) {
+        let mut parent = String::new();
+        for component in path.split('\\') {
+            parent = join(&parent, component);
+            self.dirs.insert(parent.clone());
+        }
+    }
+
     pub fn file(&self, path: &str) -> Option<&[u8]> {
         self.files.get(path).map(|data| data.as_slice())
     }

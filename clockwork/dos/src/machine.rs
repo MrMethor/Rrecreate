@@ -541,6 +541,9 @@ pub struct Machine {
     /// Rust overrides of the started program's functions, once [`Machine::start_hybrid`] was
     /// called (not part of the machine state).
     pub hybrid: Option<Box<crate::hybrid::Hybrid>>,
+    /// The CD drive's disc image, if it shows one (an input, like the drive's files: not part
+    /// of the machine state). Without one the drive's folder is a disc with one data track.
+    pub cd_image: Option<std::sync::Arc<crate::cdrom::CdImage>>,
     /// Where a nested run (an override calling the program, a dual-run) stops.
     pub(crate) return_trap: Option<crate::hybrid::ReturnTrap>,
     /// While a dual-run's original runs: what interrupt handlers write.
@@ -589,6 +592,7 @@ impl Machine {
             coverage: None,
             contracts: None,
             hybrid: None,
+            cd_image: None,
             return_trap: None,
             isr_watch: None,
             tracer: None,
@@ -854,6 +858,8 @@ impl Machine {
             pcm: d.sb.as_ref().map_or(&[], |sb| &sb.pcm),
             dac: d.sb.as_ref().map_or(&[], |sb| &sb.dac),
             speaker: &d.pit.speaker_log,
+            cd: &self.dos.cd_audio.segments,
+            cd_image: self.cd_image.as_deref(),
         }
     }
 

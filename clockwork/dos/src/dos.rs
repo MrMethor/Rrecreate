@@ -93,6 +93,8 @@ pub struct DosState {
     pub shells: Vec<crate::shell::Shell>,
     /// Buffered keyboard input (AH=0Ah) waiting for keys: the characters taken so far.
     pub line_input: Option<u8>,
+    /// The CD drive's audio playback (MSCDEX).
+    pub cd_audio: crate::cdrom::CdAudio,
 }
 
 impl DosState {
@@ -125,6 +127,7 @@ impl Default for DosState {
             search_dirs: Vec::new(),
             shells: Vec::new(),
             line_input: None,
+            cd_audio: crate::cdrom::CdAudio::default(),
         }
     }
 }
@@ -1205,59 +1208,240 @@ fn multiplex(m: &mut Machine) {
         0x0C => m.cpu.regs.set_bx(0x0215), // MSCDEX 2.21
         0x0D => write_bytes(m, r.es(), r.bx(), &[cd]),
         0x10 => cd_device_request(m),
+        0x02..=0x04 => {
+            // Copyright, abstract and bibliographic file names, from the volume descriptor.
+            let image = cd_image(m);
+            let at = [702, 739, 776][usize::from(r.al() - 2)];
+            let pvd = image.read_sector(16, false).unwrap_or_else(|| vec![0; 2048]);
+            let mut name: Vec<u8> = pvd[at..at + 37].iter().copied().take_while(|&b| b != b' ' && b != 0).collect();
+            name.push(0);
+            write_bytes(m, r.es(), r.bx(), &name);
+            ok(m);
+        }
+        0x05 | 0x08 if r.cx() != u16::from(cd) => fail(m, 15),
+        0x05 => {
+            // Read the volume table of contents: descriptor DX (from sector 16) to ES:BX.
+            match cd_image(m).read_sector(16 + u32::from(r.dx()), false) {
+                Some(sector) => {
+                    write_bytes(m, r.es(), r.bx(), &sector);
+                    let kind = match (&sector[1..6] == b"CD001", sector[0]) {
+                        (true, 1) => 1,
+                        (true, 0xFF) => 0xFF,
+                        _ => 0,
+                    };
+                    m.cpu.regs.set_ax(kind);
+                    ok(m);
+                }
+                None => fail(m, 21),
+            }
+        }
+        0x08 => {
+            // Absolute read: DX sectors from SI:DI to ES:BX, cooked.
+            let image = cd_image(m);
+            let first = u32::from(r.si()) << 16 | u32::from(r.di());
+            let mut at = Machine::lin(r.es(), r.bx());
+            for sector in first..first + u32::from(r.dx()) {
+                let Some(data) = image.read_sector(sector, false) else { return fail(m, 21) };
+                m.mem.load(at, &data);
+                at += 2048;
+            }
+            ok(m);
+        }
+        0x09 => fail(m, 21), // write: the disc is read-only
         al => m.diagnostic(format!("MSCDEX INT 2Fh AX=15{al:02X}h is not implemented")),
     }
 }
 
-/// AX=1510h: a device driver request for the CD drive, header at ES:BX. The disc is the game
-/// folder, so only status queries are answered; there is no raw sector or audio access.
+/// The disc in the CD drive: its image, or the drive's folder as one data track.
+fn cd_image(m: &Machine) -> std::sync::Arc<crate::cdrom::CdImage> {
+    m.cd_image.clone().unwrap_or_else(|| std::sync::Arc::new(crate::cdrom::CdImage::folder(300_000)))
+}
+
+/// AX=1510h: a device driver request for the CD drive, header at ES:BX. Ported from DOSBox
+/// Staging `dos_mscdex.cpp` (`MSCDEX_Interrupt_Handler`, `MSCDEX_IOCTL_Input`/`Optput`): IOCTL
+/// queries, PLAY, STOP, RESUME and SEEK on the disc's audio tracks (by virtual time,
+/// [`crate::cdrom::CdAudio`]), and raw sector reads from an image.
 fn cd_device_request(m: &mut Machine) {
     const DONE: u16 = 0x0100;
-    const UNKNOWN_COMMAND: u16 = 0x8103;
+    const ERROR: u16 = 0x8000;
+    const BUSY: u16 = 0x0200;
     let header = Machine::lin(m.cpu.regs.es(), m.cpu.regs.bx());
     let command = m.mem.read_u8(header + 2);
-    let status = match command {
-        0x03 => {
-            // IOCTL input: the first byte of the transfer buffer selects what to return.
-            let buffer = Machine::lin(m.mem.read_u16(header + 0x10), m.mem.read_u16(header + 0x0E));
-            match m.mem.read_u8(buffer) {
-                0x00 => {
-                    m.mem.write_u16(buffer + 1, bios::ROM_CD_DEVICE);
-                    m.mem.write_u16(buffer + 3, bios::ROM_SEGMENT);
-                    DONE
-                }
-                0x06 => {
-                    // Device status: door closed and unlocked, cooked reads, data and audio.
-                    m.mem.write_u32(buffer + 1, 0x0000_0312);
-                    DONE
-                }
-                0x07 => {
-                    m.mem.write_u8(buffer + 1, 0); // cooked mode
-                    m.mem.write_u16(buffer + 2, 2048);
-                    DONE
-                }
-                0x08 => {
-                    m.mem.write_u32(buffer + 1, 300_000); // volume size in sectors
-                    DONE
-                }
-                0x09 => {
-                    m.mem.write_u8(buffer + 1, 1); // media not changed
-                    DONE
-                }
-                code => {
-                    m.diagnostic(format!("MSCDEX IOCTL input {code:02X}h is not implemented"));
-                    UNKNOWN_COMMAND
-                }
-            }
-        }
-        // IOCTL output, open, close, stop and resume audio: accepted, nothing to do.
-        0x0C | 0x0D | 0x0E | 0x85 | 0x88 => DONE,
-        command => {
-            m.diagnostic(format!("MSCDEX device request {command:02X}h is not implemented"));
-            UNKNOWN_COMMAND
+    let buffer = Machine::lin(m.mem.read_u16(header + 0x10), m.mem.read_u16(header + 0x0E));
+    let image = cd_image(m);
+    let now = m.elapsed_ns();
+    // A sector number, given as High Sierra or as Red Book minutes, seconds, frames.
+    let address = |m: &Machine, at: u32| {
+        let value = m.mem.read_u32(at);
+        if m.mem.read_u8(header + 0x0D) == 0 {
+            value
+        } else {
+            let [frames, seconds, minutes, _] = value.to_le_bytes();
+            crate::cdrom::from_msf(minutes, seconds, frames).saturating_sub(crate::cdrom::FRAME_PADDING)
         }
     };
-    m.mem.write_u16(header + 3, status);
+    let error = match command {
+        0x03 => cd_ioctl_input(m, buffer, &image, now),
+        0x0C => cd_ioctl_output(m, buffer, &image, now),
+        0x0D | 0x0E => None,
+        0x80 | 0x82 => {
+            // READ LONG (and with prefetch): count sectors from the start, cooked or raw.
+            let (first, count) = (address(m, header + 0x14), m.mem.read_u16(header + 0x12));
+            let raw = m.mem.read_u8(header + 0x18) == 1;
+            let mut at = buffer;
+            let mut failed = None;
+            for sector in first..first + u32::from(count) {
+                match image.read_sector(sector, raw) {
+                    Some(data) => {
+                        m.mem.load(at, &data);
+                        at += data.len() as u32;
+                    }
+                    None => {
+                        failed = Some(0x08); // sector not found
+                        break;
+                    }
+                }
+            }
+            failed
+        }
+        0x83 => {
+            let sector = address(m, header + 0x14);
+            m.dos.cd_audio.seek(sector, now);
+            None
+        }
+        0x84 => {
+            let (sector, length) = (address(m, header + 0x0E), m.mem.read_u32(header + 0x12));
+            (!m.dos.cd_audio.play(&image, sector, length, now)).then_some(0x0C)
+        }
+        0x85 => {
+            m.dos.cd_audio.stop(&image, now);
+            None
+        }
+        0x88 => {
+            m.dos.cd_audio.resume(&image, now);
+            None
+        }
+        command => {
+            m.diagnostic(format!("MSCDEX device request {command:02X}h is not implemented"));
+            Some(0x03)
+        }
+    };
+    let busy = if m.dos.cd_audio.is_playing(now) { BUSY } else { 0 };
+    m.mem.write_u16(header + 3, DONE | busy | error.map_or(0, |code| ERROR | code));
+}
+
+/// IOCTL input: the first byte of the transfer buffer says what to return. None, or the error.
+fn cd_ioctl_input(m: &mut Machine, buffer: u32, image: &crate::cdrom::CdImage, now: u64) -> Option<u16> {
+    use crate::cdrom::{FRAME_PADDING, msf};
+    let audio = &m.dos.cd_audio;
+    let red_book = |sector: u32| {
+        let (minutes, seconds, frames) = msf(sector + FRAME_PADDING);
+        u32::from_le_bytes([frames, seconds, minutes, 0])
+    };
+    match m.mem.read_u8(buffer) {
+        0x00 => {
+            m.mem.write_u16(buffer + 1, bios::ROM_CD_DEVICE);
+            m.mem.write_u16(buffer + 3, bios::ROM_SEGMENT);
+        }
+        0x01 => {
+            // The head's position, High Sierra (0) or Red Book (1).
+            let sector = audio.current(image, now);
+            match m.mem.read_u8(buffer + 1) {
+                0 => m.mem.write_u32(buffer + 2, sector),
+                1 => m.mem.write_u32(buffer + 2, red_book(sector)),
+                _ => return Some(0x03),
+            }
+        }
+        0x04 => {
+            let channels = audio.channels;
+            for (i, (input, volume)) in channels.into_iter().enumerate() {
+                m.mem.write_u8(buffer + 1 + 2 * i as u32, input);
+                m.mem.write_u8(buffer + 2 + 2 * i as u32, volume);
+            }
+        }
+        0x06 => {
+            // Door closed and unlocked, raw and cooked reads, audio, Red Book and HSG; audio playing.
+            let playing = if audio.is_playing(now) { 1 << 10 } else { 0 };
+            m.mem.write_u32(buffer + 1, 1 << 2 | 1 << 4 | 1 << 8 | 1 << 9 | playing);
+        }
+        0x07 => match m.mem.read_u8(buffer + 1) {
+            0 => m.mem.write_u16(buffer + 2, 2048),
+            1 => m.mem.write_u16(buffer + 2, 2352),
+            _ => return Some(0x03),
+        },
+        0x08 => m.mem.write_u32(buffer + 1, image.lead_out() + FRAME_PADDING),
+        0x09 => m.mem.write_u8(buffer + 1, 1), // media not changed
+        0x0A => {
+            let tracks = &image.tracks;
+            let (first, last) = (tracks[0].number, tracks[tracks.len() - 2].number);
+            m.mem.write_u8(buffer + 1, first);
+            m.mem.write_u8(buffer + 2, last);
+            m.mem.write_u32(buffer + 3, red_book(image.lead_out()));
+        }
+        0x0B => {
+            let number = m.mem.read_u8(buffer + 1);
+            let track = image.tracks[..image.tracks.len() - 1].iter().find(|t| t.number == number);
+            m.mem.write_u32(buffer + 2, track.map_or(0, |t| red_book(t.start)));
+            m.mem.write_u8(buffer + 6, track.map_or(0, |t| t.attr));
+        }
+        0x0C => {
+            // The Q channel: the track, and the position in it and on the disc.
+            let sector = audio.current(image, now);
+            let track = image.track_at(sector).unwrap_or(&image.tracks[0]);
+            let relative = msf(sector.saturating_sub(track.start));
+            let absolute = msf(sector + FRAME_PADDING);
+            let bytes = [
+                track.attr,
+                crate::cdrom::bcd(track.number),
+                1,
+                relative.0,
+                relative.1,
+                relative.2,
+                0,
+                absolute.0,
+                absolute.1,
+                absolute.2,
+            ];
+            m.mem.load(buffer + 1, &bytes);
+        }
+        0x0E => m.mem.load(buffer + 1, &[0; 9]), // no catalogue number
+        0x0F => {
+            // Paused, and the last PLAY's start and end (where RESUME goes on), Red Book.
+            let paused = audio.is_paused();
+            let (start, length) = audio.last_play(now).unwrap_or((0, 0));
+            m.mem.write_u16(buffer + 1, u16::from(paused));
+            m.mem.write_u32(buffer + 3, if length == 0 { 0 } else { red_book(start) });
+            m.mem.write_u32(buffer + 7, if length == 0 { 0 } else { red_book(start + length) });
+        }
+        code => {
+            m.diagnostic(format!("MSCDEX IOCTL input {code:02X}h is not implemented"));
+            return Some(0x03);
+        }
+    }
+    None
+}
+
+/// IOCTL output: eject, lock, reset, channel control, close.
+fn cd_ioctl_output(m: &mut Machine, buffer: u32, image: &crate::cdrom::CdImage, now: u64) -> Option<u16> {
+    match m.mem.read_u8(buffer) {
+        0x00 | 0x01 | 0x05 => None,
+        0x02 => {
+            m.dos.cd_audio.stop(image, now);
+            None
+        }
+        0x03 => {
+            for i in 0..4 {
+                let input = m.mem.read_u8(buffer + 1 + 2 * i);
+                let volume = m.mem.read_u8(buffer + 2 + 2 * i);
+                m.dos.cd_audio.channels[i as usize] = (input, volume);
+            }
+            None
+        }
+        code => {
+            m.diagnostic(format!("MSCDEX IOCTL output {code:02X}h is not implemented"));
+            Some(0x03)
+        }
+    }
 }
 
 // ---- FindFirst / FindNext ----

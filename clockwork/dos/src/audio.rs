@@ -17,6 +17,7 @@ use machine::hash::Fnv64;
 use nuked_opl3::Opl3Chip;
 use std::hash::Hasher;
 
+use crate::cdrom::{CdImage, CdSegment, PCM_FRAMES_PER_SECTOR, PCM_RATE_HZ};
 use crate::clock::PIT_HZ;
 use crate::opl::OplWrite;
 use crate::pit::{SpeakerEvent, Wave};
@@ -34,11 +35,18 @@ pub struct AudioLog<'a> {
     pub pcm: &'a [PcmSegment],
     pub dac: &'a [DacWrite],
     pub speaker: &'a [SpeakerEvent],
+    /// CD audio: each PLAY, and the image its samples come from.
+    pub cd: &'a [CdSegment],
+    pub cd_image: Option<&'a CdImage>,
 }
 
 impl AudioLog<'_> {
     pub fn is_empty(&self) -> bool {
-        self.opl.is_empty() && self.pcm.is_empty() && self.dac.is_empty() && self.speaker.is_empty()
+        self.opl.is_empty()
+            && self.pcm.is_empty()
+            && self.dac.is_empty()
+            && self.speaker.is_empty()
+            && self.cd.is_empty()
     }
 
     /// A fingerprint of everything the devices played, for comparing runs.
@@ -73,6 +81,14 @@ impl AudioLog<'_> {
             h.write(&a.to_le_bytes());
             h.write(&b.to_le_bytes());
             h.write(&c.to_le_bytes());
+        }
+        // The samples come from the image (an input): what played, and when, is the log.
+        for s in self.cd {
+            h.write(&s.start_ns.to_le_bytes());
+            h.write(&s.sector.to_le_bytes());
+            h.write(&s.length.to_le_bytes());
+            h.write(&s.end_ns().to_le_bytes());
+            h.write(&s.volume);
         }
         h.finish()
     }
@@ -113,6 +129,8 @@ pub struct Renderer {
     dac: usize,
     /// The speaker event in effect at `frame`.
     speaker: usize,
+    /// The first CD segment that may still be playing.
+    cd: usize,
     speaker_filter: SpeakerFilter,
 }
 
@@ -134,6 +152,9 @@ impl Renderer {
         self.render_pcm(log.pcm, &mut mix);
         self.render_dac(log.dac, &mut mix);
         self.render_speaker(log.speaker, &mut mix);
+        if let Some(image) = log.cd_image {
+            self.render_cd(log.cd, image, &mut mix);
+        }
         self.frame = end;
         out.extend(mix.into_iter().map(|s| s.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16));
     }
@@ -189,6 +210,41 @@ impl Renderer {
             if all_done {
                 self.pcm = index + 1;
             }
+        }
+    }
+
+    fn render_cd(&mut self, segments: &[CdSegment], image: &CdImage, mix: &mut [i32]) {
+        let (first_frame, end) = (self.frame, self.frame + mix.len() / 2);
+        for segment in &segments[self.cd.min(segments.len())..] {
+            let (from, until) = (frame_at_nanos(segment.start_ns), frame_at_nanos(segment.end_ns()));
+            if from >= end {
+                break;
+            }
+            let (from, until) = (from.max(first_frame), until.min(end));
+            if from >= until {
+                continue;
+            }
+            // The disc's PCM frame playing at an output frame (nearest earlier).
+            let source = |frame: usize| {
+                let t = u128::from(frame_nanos(frame).saturating_sub(segment.start_ns));
+                u64::from(segment.sector) * u64::from(PCM_FRAMES_PER_SECTOR)
+                    + (t * u128::from(PCM_RATE_HZ) / NANOS_PER_SECOND) as u64
+            };
+            let first = source(from);
+            let samples = image.audio(first, (source(until - 1) - first + 1) as usize);
+            let [left, right] = segment.volume.map(i32::from);
+            for frame in from..until {
+                let at = (source(frame) - first) as usize * 2;
+                let out = (frame - first_frame) * 2;
+                mix[out] += i32::from(samples[at]) * left / 255;
+                mix[out + 1] += i32::from(samples[at + 1]) * right / 255;
+            }
+        }
+        while self.cd < segments.len()
+            && frame_at_nanos(segments[self.cd].end_ns()) <= end
+            && self.cd + 1 < segments.len()
+        {
+            self.cd += 1;
         }
     }
 
@@ -459,7 +515,7 @@ mod tests {
             SpeakerEvent { pit_tick: PIT_HZ / 40, wave: Wave::LowUntil(PIT_HZ / 40 + 30) },
             SpeakerEvent { pit_tick: PIT_HZ / 40 + 50, wave: square(PIT_HZ / 40 + 50, 2000) },
         ];
-        let log = AudioLog { opl: &opl, pcm: &pcm, dac: &dac, speaker: &speaker };
+        let log = AudioLog { opl: &opl, pcm: &pcm, dac: &dac, speaker: &speaker, ..AudioLog::default() };
         let whole = log.render(40_000_000);
         for step in [1_000_000, 7_333_333, 14_285_714] {
             let mut renderer = Renderer::default();

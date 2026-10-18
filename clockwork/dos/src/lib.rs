@@ -6,6 +6,7 @@
 pub mod audio;
 pub mod bios;
 pub mod capture;
+pub mod cdrom;
 pub mod clock;
 pub mod cmos;
 pub mod contracts;

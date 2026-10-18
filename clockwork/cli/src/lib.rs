@@ -94,8 +94,10 @@ options:
   --joystick N       joysticks on the game port, 0-2 (default 0); play: the host's gamepads
                      drive them (left stick, A and B buttons)
   --cd LETTER[=DIR]  add a CD-ROM drive (with MSCDEX) showing the same files as C:, or only its
-                     folder DIR (like DOSBox mounting a game's CD folder)
-  --cd-label NAME    the CD's volume label (default: its folder's name, or CDROM)
+                     folder DIR (like DOSBox mounting a game's CD folder), or a disc image:
+                     FILE.CUE (BINARY and 16-bit 44.1 kHz stereo WAVE tracks: its data track's
+                     files and its CD audio) or FILE.ISO
+  --cd-label NAME    the CD's volume label (default: the image's, its folder's name, or CDROM)
   --drive LETTER     the current drive when the program starts (default C)
   --cwd PATH         the current directory when the program starts, as if CD ran first;
                      a relative program path starts there
@@ -451,19 +453,35 @@ fn drive_letter(text: &str) -> Result<char, String> {
 /// Loads the game folder as drive C: and the program into a fresh machine.
 fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, String> {
     let game_dir = o.game_dir.as_path();
-    let (drive, warnings) = Vfs::from_host_dir(game_dir).map_err(|e| format!("{}: {e}", game_dir.display()))?;
+    let (mut drive, warnings) = Vfs::from_host_dir(game_dir).map_err(|e| format!("{}: {e}", game_dir.display()))?;
     for warning in warnings.iter().take(5) {
         eprintln!("rec-host: warning: {warning}");
     }
     if warnings.len() > 5 {
         eprintln!("rec-host: warning: ... {} more", warnings.len() - 5);
     }
+    // A disc image: its files go on the drive for the CD to show, its audio to MSCDEX.
+    let (mut cd_root, mut cd_label, mut cd_image) = (o.cd_root.clone(), o.cd_label.clone(), None);
+    let lower = cd_root.to_ascii_lowercase();
+    if lower.ends_with(".cue") || lower.ends_with(".iso") {
+        let path = [Path::new(&o.cd_root).to_path_buf(), game_dir.join(&o.cd_root)]
+            .into_iter()
+            .find(|p| p.is_file())
+            .ok_or_else(|| format!("no disc image {}", o.cd_root))?;
+        let image = dos::cdrom::CdImage::open(&path)?;
+        let (root, label) = dos::cdrom::mount(&mut drive, &image)?;
+        cd_root = root;
+        if cd_label.is_empty() {
+            cd_label = label;
+        }
+        cd_image = Some(std::sync::Arc::new(image));
+    }
     let config = Config {
         instructions_per_second: ips,
         cpu_model: o.cpu.unwrap_or(Config::default().cpu_model),
         cd_drive: o.cd_drive,
-        cd_root: o.cd_root.clone(),
-        cd_label: o.cd_label.clone(),
+        cd_root,
+        cd_label,
         start_drive: o.start_drive.unwrap_or('C'),
         start_dir: o.start_dir.clone(),
         environment: o.environment.clone(),
@@ -475,7 +493,9 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         joysticks: o.joysticks,
         ..Config::default()
     };
-    Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())
+    let mut m = Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())?;
+    m.cd_image = cd_image;
+    Ok(m)
 }
 
 fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, String> {
