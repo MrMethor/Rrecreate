@@ -151,6 +151,40 @@ pub fn cmd_replay(args: &[String], extension: Option<&dyn crate::Extension>) -> 
     Ok(if failed > 0 { std::process::ExitCode::from(3) } else { std::process::ExitCode::SUCCESS })
 }
 
+/// `rec-host overrides (--game NAME | --python FILE) --program MODULE [--json]`: the functions the
+/// game's overrides implement, one `+OFFSET NAME` line each (what `rec plan` leaves out of the work).
+pub fn cmd_overrides(
+    args: &[String],
+    extension: Option<&dyn crate::Extension>,
+) -> Result<std::process::ExitCode, String> {
+    let (mut game, mut python, mut program, mut json) = (None, None, None, false);
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--game" => game = Some(args.next().ok_or("--game needs a name")?.clone()),
+            "--python" => python = Some(std::path::PathBuf::from(args.next().ok_or("--python needs a file")?)),
+            "--program" => program = Some(args.next().ok_or("--program needs a module")?.clone()),
+            "--json" => json = true,
+            other => return Err(format!("unexpected argument {other:?}")),
+        }
+    }
+    let program = program.ok_or("overrides needs --program")?;
+    let source = crate::load_source(game.as_deref(), python.as_deref(), &program, extension)?
+        .ok_or("overrides needs --game or --python")?;
+    let mut overrides: Vec<_> = source.overrides.iter().map(|o| (o.offset, o.name)).collect();
+    overrides.sort_unstable();
+    if json {
+        let items: Vec<String> =
+            overrides.iter().map(|(offset, name)| format!(r#"{{"offset":{offset},"name":"{name}"}}"#)).collect();
+        println!("[{}]", items.join(","));
+    } else {
+        for (offset, name) in overrides {
+            println!("+{offset:05X} {name}");
+        }
+    }
+    Ok(std::process::ExitCode::SUCCESS)
+}
+
 /// What contract inference saw.
 pub fn contract_lines(contracts: &dos::contracts::Contracts) -> Vec<String> {
     let calls: u64 = contracts.functions.values().map(|c| c.calls + c.abnormal).sum();

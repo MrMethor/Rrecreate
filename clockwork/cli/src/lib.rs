@@ -35,6 +35,8 @@ usage:
                                                  replay captured calls (one per line, from
                                                  run --captures-out) against the game's overrides;
                                                  exit code 3 when a call fails
+  rec-host overrides (--game NAME | --python FILE) --program MODULE [--json]
+                                                 the functions the game's overrides implement
   rec-host listing <image> --entry OFFSET --segment SEG
                                                  a function's code from a load image (hex image
                                                  offset and link segment), following its control
@@ -257,6 +259,7 @@ fn command_line(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
         Some("unpack") => cmd_unpack(&args[1..]),
         Some("listing") => listing::cmd_listing(&args[1..]),
         Some("replay") => games::cmd_replay(&args[1..], extension),
+        Some("overrides") => games::cmd_overrides(&args[1..], extension),
         Some("--version") => {
             println!("rec-host {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
