@@ -2841,3 +2841,146 @@ fn placeholder_captures_follow_far_calls_and_interrupts() {
     assert_eq!(u32::from(int.exit.ip), offsets["skipped"] + 0x100, "at the return address it chose");
     assert!(captures.iter().all(|c| c.unreplayable.is_none()), "{captures:?}");
 }
+
+/// Prints its command tail and exits with code 3.
+fn tail_echo() -> Vec<u8> {
+    com(|a| {
+        a.mov(ah, 0x40)?;
+        a.mov(bx, 1)?;
+        a.xor(ch, ch)?;
+        a.mov(cl, byte_ptr(0x80))?;
+        a.mov(dx, 0x81)?;
+        a.int(0x21)?;
+        exit(a, 3)
+    })
+}
+
+/// Copies standard input to standard output.
+fn cat() -> Vec<u8> {
+    com(|a| {
+        a.here("loop")?;
+        a.mov(ah, 0x3F)?;
+        a.xor(bx, bx)?;
+        a.mov(cx, 1)?;
+        load_dx(a, "byte")?;
+        a.int(0x21)?;
+        let done = a.l("done");
+        a.jc(done)?;
+        a.or(ax, ax)?;
+        a.jz(done)?;
+        a.mov(ah, 0x40)?;
+        a.mov(bx, 1)?;
+        a.mov(cx, 1)?;
+        load_dx(a, "byte")?;
+        a.int(0x21)?;
+        let back = a.l("loop");
+        a.jmp(back)?;
+        a.here("done")?;
+        exit(a, 0)?;
+        a.here("byte")?;
+        a.db(&[0])
+    })
+}
+
+const GAME_BAT: &str = "@ECHO OFF\r
+ECHO Hello\r
+SET X=1\r
+IF \"%X%\"==\"1\" ECHO X is one\r
+IF EXIST TAIL.COM ECHO found\r
+TAIL arg1\r
+IF ERRORLEVEL 3 ECHO three\r
+IF NOT ERRORLEVEL 4 ECHO not four\r
+FOR %%F IN (A B) DO ECHO item %%F\r
+GOTO skip\r
+ECHO not shown\r
+:skip\r
+CALL SUB.BAT x y\r
+ECHO back in %0\r
+ECHO line> OUT.TXT\r
+TYPE OUT.TXT\r
+ECHO piped | CAT\r
+MD NEWDIR\r
+CD NEWDIR\r
+CD\r
+CD ..\r
+COPY OUT.TXT NEWDIR\\COPY.TXT\r
+DEL OUT.TXT\r
+IF NOT EXIST OUT.TXT ECHO deleted\r
+NOSUCH\r
+";
+
+#[test]
+fn batch_files_run_in_the_built_in_shell() {
+    let (tail, cat) = (tail_echo(), cat());
+    let mut m = boot(
+        &[
+            ("GAME.BAT", GAME_BAT.as_bytes()),
+            ("SUB.BAT", b"ECHO sub %1 %2\r\nSHIFT\r\nECHO shifted %1\r\n"),
+            ("TAIL.COM", &tail),
+            ("CAT.COM", &cat),
+        ],
+        "GAME.BAT",
+    );
+    assert_eq!(m.run(10 * SECOND), Stop::Exited(0));
+    assert_eq!(
+        console(&m),
+        "Hello\r\nX is one\r\nfound\r\n arg1three\r\nnot four\r\nitem A\r\nitem B\r\nsub x y\r\nshifted y\r\n\
+         back in GAME.BAT\r\nline\r\npiped\r\nC:\\NEWDIR\r\n        1 file(s) copied\r\ndeleted\r\n\
+         Bad command or file name\r\n"
+    );
+    assert!(m.drive.is_file("NEWDIR\\COPY.TXT") && !m.drive.is_file("OUT.TXT"));
+    assert_eq!(m.drive.file("NEWDIR\\COPY.TXT"), Some(&b"line\r\n"[..]));
+    assert!(!m.drive.is_file("PIPE0001.TMP"), "the pipe's file is gone");
+}
+
+#[test]
+fn a_program_runs_a_command_through_command_com() {
+    // system("ECHO from shell"): shrink, EXEC C:\COMMAND.COM /C ..., then go on.
+    let program = com(|a| {
+        a.mov(ah, 0x4A)?;
+        a.mov(bx, 0x1000)?;
+        a.int(0x21)?;
+        let (block, tail) = (a.addr("block") as u32, a.addr("tail"));
+        a.mov(word_ptr(block + 2), tail)?;
+        a.mov(word_ptr(block + 4), cs)?;
+        a.mov(word_ptr(block + 6), 0x5C)?;
+        a.mov(word_ptr(block + 8), cs)?;
+        a.mov(word_ptr(block + 10), 0x6C)?;
+        a.mov(word_ptr(block + 12), cs)?;
+        a.mov(ax, 0x4B00)?;
+        load_dx(a, "path")?;
+        a.mov(bx, block as i32)?;
+        a.int(0x21)?;
+        let failed = a.l("failed");
+        a.jc(failed)?;
+        print(a, "back")?;
+        exit(a, 0)?;
+        a.here("failed")?;
+        exit(a, 1)?;
+        a.here("path")?;
+        a.db(b"C:\\COMMAND.COM\0")?;
+        a.here("tail")?;
+        let text = b" /C ECHO from shell";
+        a.db(&[text.len() as u8])?;
+        a.db(text)?;
+        a.db(&[0x0D])?;
+        a.here("back")?;
+        a.db(b"back$")?;
+        a.here("block")?;
+        a.db(&[0; 14])
+    });
+    let mut m = boot(&[("SYS.COM", &program)], "SYS.COM");
+    assert_eq!(m.run(10 * SECOND), Stop::Exited(0));
+    assert_eq!(console(&m), "from shell\r\nback");
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn the_shell_reads_commands_at_its_prompt() {
+    let mut m = boot(&[], "COMMAND.COM");
+    m.type_text(SECOND / 10, "echo typed\rver\rexit\r", SECOND / 50);
+    assert_eq!(m.run(20 * SECOND), Stop::Exited(0));
+    let text = console(&m);
+    assert!(text.starts_with("C:\\>echo typed\r\ntyped\r\nC:\\>"), "{text:?}");
+    assert!(text.contains("MS-DOS Version 5.00"), "{text:?}");
+}

@@ -76,6 +76,8 @@ pub(crate) mod callback {
     pub const XMS: u16 = 0x0143;
     /// The VBE far-callable bank switch (`WinFuncPtr` in the mode information).
     pub const VESA_WINDOW: u16 = 0x0144;
+    /// COMMAND.COM's step ([`crate::shell`]).
+    pub const SHELL: u16 = 0x0145;
 }
 
 /// A device driver header for the emulated CD-ROM (MSCDEX AX=1501h points at it).

@@ -26,6 +26,7 @@ pub mod opl;
 pub mod pic;
 pub mod pit;
 pub mod sblaster;
+pub mod shell;
 pub mod tables;
 pub mod time;
 pub mod trace;

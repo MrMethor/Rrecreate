@@ -89,6 +89,10 @@ pub struct DosState {
     pub program: String,
     /// Directories referenced by FindFirst/FindNext state stored in DTAs.
     search_dirs: Vec<String>,
+    /// Running COMMAND.COMs ([`crate::shell`]).
+    pub shells: Vec<crate::shell::Shell>,
+    /// Buffered keyboard input (AH=0Ah) waiting for keys: the characters taken so far.
+    pub line_input: Option<u8>,
 }
 
 impl DosState {
@@ -119,6 +123,8 @@ impl Default for DosState {
             allocation_strategy: 0,
             program: String::new(),
             search_dirs: Vec::new(),
+            shells: Vec::new(),
+            line_input: None,
         }
     }
 }
@@ -234,14 +240,81 @@ pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
         callback::FAST_CONSOLE => bios::teletype(m, m.cpu.regs.al()),
         callback::MULTIPLEX => multiplex(m),
         callback::EMS => crate::ems::service(m),
+        callback::SHELL => crate::shell::step(m),
         callback::XMS => crate::xms::service(m),
         _ => return false,
     }
     true
 }
 
+/// Calls the service behind callback `id` (INT 21h: [`callback::DOS`]) from host code, the shell's
+/// way to use DOS: `set` sets the registers, and an interrupt frame on the stack takes the flags
+/// the service returns. Returns the registers afterwards and whether carry was set; the caller's
+/// registers come back as they were.
+pub(crate) fn call_service(m: &mut Machine, id: u16, set: impl FnOnce(&mut cpu::Regs)) -> (cpu::Regs, bool) {
+    let saved = m.cpu.regs;
+    set(&mut m.cpu.regs);
+    m.cpu.regs.flags &= !u32::from(CF);
+    let sp = m.cpu.regs.sp().wrapping_sub(6);
+    m.cpu.regs.set_sp(sp);
+    let frame = Machine::lin(m.cpu.regs.ss(), sp);
+    m.mem.write_u16(frame, m.cpu.regs.ip as u16);
+    m.mem.write_u16(frame + 2, m.cpu.regs.cs());
+    m.mem.write_u16(frame + 4, m.cpu.regs.flags as u16);
+    m.returned_flags = false;
+    if !bios::dispatch(m, id) {
+        dispatch(m, id);
+    }
+    let carry =
+        if m.returned_flags { m.mem.read_u16(frame + 4) & CF != 0 } else { m.cpu.regs.flags & u32::from(CF) != 0 };
+    let after = m.cpu.regs;
+    m.cpu.regs = saved;
+    (after, carry)
+}
+
 fn ok(m: &mut Machine) {
     m.set_return_flag(CF, false);
+}
+
+/// INT 21h AH=0Ah: a line from the keyboard into the buffer at DS:DX (its size, then the count
+/// and the characters, ended by CR), echoed, with backspace. It waits for keys, keeping the
+/// count so far in [`DosState::line_input`].
+fn buffered_input(m: &mut Machine) {
+    let r = m.cpu.regs;
+    let at = Machine::lin(r.ds(), r.dx());
+    let size = m.mem.read_u8(at);
+    if size == 0 {
+        return;
+    }
+    let mut count = m.dos.line_input.unwrap_or(0);
+    while let Some(key) = bios::pop_key(m) {
+        match key as u8 {
+            0x0D => {
+                m.mem.write_u8(at + 2 + u32::from(count), 0x0D);
+                m.mem.write_u8(at + 1, count);
+                bios::teletype(m, 0x0D);
+                m.dos.line_input = None;
+                return;
+            }
+            0x08 => {
+                if count > 0 {
+                    count -= 1;
+                    for c in [0x08, b' ', 0x08] {
+                        bios::teletype(m, c);
+                    }
+                }
+            }
+            0 | 0xE0 => {} // an extended key
+            c if count + 1 < size => {
+                m.mem.write_u8(at + 2 + u32::from(count), c);
+                count += 1;
+                bios::teletype(m, c);
+            }
+            _ => bios::teletype(m, 0x07),
+        }
+    }
+    m.dos.line_input = Some(count);
+    m.wait_for_input();
 }
 
 fn fail(m: &mut Machine, code: u16) {
@@ -296,6 +369,7 @@ fn int21(m: &mut Machine) {
             }
             m.cpu.regs.set_al(b'$');
         }
+        0x0A => buffered_input(m),
         0x0B => {
             let ready = bios::peek_key(m).is_some();
             m.cpu.regs.set_al(if ready { 0xFF } else { 0 });
@@ -1933,6 +2007,14 @@ struct Entry {
 
 fn find_program(m: &Machine, raw: &[u8]) -> Result<(String, Vec<u8>), LoadError> {
     let name = String::from_utf8_lossy(raw).into_owned();
+    if vfs::name_of(&name).eq_ignore_ascii_case("COMMAND.COM") {
+        // The built-in shell, wherever the program looks for it.
+        let path = match resolve(m, raw, false) {
+            Ok(Target::Path(path)) => path,
+            _ => "COMMAND.COM".into(),
+        };
+        return Ok((path, crate::shell::image()));
+    }
     match resolve(m, raw, false) {
         Ok(Target::Path(path)) if m.drive.is_file(&path) => {
             let data = m.drive.file(&path).expect("checked above").to_vec();
@@ -2210,6 +2292,11 @@ impl Machine {
     /// Loads an MZ or COM program as the first process (as if started from the DOS prompt)
     /// and points the CPU at its entry.
     pub fn load_program(&mut self, program: &str, args: &str) -> Result<(), LoadError> {
+        if program.len() > 4 && program[program.len() - 4..].eq_ignore_ascii_case(".BAT") {
+            // A batch file runs in COMMAND.COM.
+            let command = format!("/C {program} {args}");
+            return self.load_program("C:\\COMMAND.COM", command.trim_end());
+        }
         let (path, data) = find_program(self, program.as_bytes())?;
         let image = parse_program(&data)?;
         let mut strings = b"COMSPEC=C:\\COMMAND.COM\0PATH=C:\\\0PROMPT=$P$G\0".to_vec();
@@ -2261,12 +2348,7 @@ fn exec(m: &mut Machine) {
     }
     let (path, data) = match find_program(m, &raw) {
         Ok(found) => found,
-        Err(e) => {
-            if vfs::name_of(&String::from_utf8_lossy(&raw)).eq_ignore_ascii_case("COMMAND.COM") {
-                m.diagnostic("EXEC of COMMAND.COM: there is no DOS shell".into());
-            }
-            return fail(m, load_error_code(&e));
-        }
+        Err(e) => return fail(m, load_error_code(&e)),
     };
     let image = match parse_program(&data) {
         Ok(image) => image,
@@ -2389,6 +2471,9 @@ fn save_vectors(m: &mut Machine, psp: u16) {
 /// address with its registers and stack, or the end of the run for the first process.
 pub(crate) fn terminate_process(m: &mut Machine, code: u8, resident: bool) {
     let psp = m.dos.psp;
+    if !resident {
+        m.dos.shells.retain(|s| s.psp != psp);
+    }
     let at = Machine::lin(psp, 0);
     let parent = m.mem.read_u16(at + 0x16);
     m.dos.return_code = u16::from(code) | if resident { 0x0300 } else { 0 };
