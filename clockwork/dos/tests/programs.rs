@@ -2924,6 +2924,80 @@ fn rust_calls_a_far_function_in_its_own_segment() {
     assert_eq!(m.hybrid.as_ref().unwrap().stats[0].rust, 1);
 }
 
+#[test]
+fn an_override_changes_its_stack_argument_as_c_code_may() {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    // push 20; call bump; pop ax: the exit code is the argument as the callee left it.
+    let program = com(|a| {
+        offsets.borrow_mut().insert("bump", (a.addr("bump") as u32).wrapping_sub(0x100));
+        a.push(20)?;
+        let bump = a.l("bump");
+        a.call(bump)?;
+        a.pop(ax)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("bump")?;
+        a.ret()
+    });
+    fn bump(c: &mut dos::hybrid::Call) -> Result<(), String> {
+        let value = c.arg16(0) + 1;
+        c.set_arg16(0, value);
+        Ok(())
+    }
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    use dos::hybrid::{Convention, Mode, Override};
+    let o = Override {
+        offset: offsets.into_inner()["bump"],
+        name: "bump",
+        conv: Convention::cdecl(false, 2, 0),
+        run: bump,
+    };
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Rust);
+    assert_eq!(m.run(SECOND), Stop::Exited(21));
+}
+
+#[test]
+fn an_override_waits_for_the_timer_interrupt() {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    // Three waits for the BIOS tick count (0:46C) to change; the exit code is how far it moved.
+    let program = com(|a| {
+        offsets.borrow_mut().insert("wait_tick", (a.addr("wait_tick") as u32).wrapping_sub(0x100));
+        a.xor(ax, ax)?;
+        a.mov(ds, ax)?;
+        a.mov(si, word_ptr(0x46C))?;
+        let wait_tick = a.l("wait_tick");
+        for _ in 0..3 {
+            a.call(wait_tick)?;
+        }
+        a.mov(ax, word_ptr(0x46C))?;
+        a.sub(ax, si)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("wait_tick")?;
+        a.mov(dx, word_ptr(0x46C))?;
+        a.here("spin")?;
+        a.cmp(dx, word_ptr(0x46C))?;
+        let spin = a.l("spin");
+        a.je(spin)?;
+        a.ret()
+    });
+    fn wait_tick(c: &mut dos::hybrid::Call) -> Result<(), String> {
+        let start = c.read16(0, 0x46C);
+        while c.read16(0, 0x46C) == start {
+            c.wait_for_interrupt()?;
+        }
+        Ok(())
+    }
+    use dos::hybrid::{Convention, Mode, Override};
+    let offset = offsets.into_inner()["wait_tick"];
+    for mode in [Mode::Original, Mode::Rust] {
+        let mut m = boot(&[("P.COM", &program)], "P.COM");
+        let o = Override { offset, name: "wait_tick", conv: Convention::cdecl(false, 0, 0), run: wait_tick };
+        m.start_hybrid("P.COM", vec![o]).set_all(mode);
+        assert_eq!(m.run(SECOND), Stop::Exited(3), "{mode:?}");
+    }
+}
+
 /// Prints its command tail and exits with code 3.
 fn tail_echo() -> Vec<u8> {
     com(|a| {

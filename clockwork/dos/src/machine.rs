@@ -562,7 +562,7 @@ pub struct Machine {
     pub stop_on_input_wait: bool,
     /// Scheduled keyboard input: (cycle, scancode), sorted by cycle.
     inputs: VecDeque<(u64, Input)>,
-    halted: bool,
+    pub(crate) halted: bool,
     waiting_for_input: bool,
     exit_code: Option<u8>,
     next_event: u64,
@@ -659,6 +659,9 @@ impl Machine {
             {
                 let vector = crate::dpmi::irq_vector(self, vector);
                 self.halted = false;
+                if let Some(trap) = &mut self.return_trap {
+                    trap.interrupt();
+                }
                 self.count_irq(vector);
                 if let Some(watch) = &mut self.isr_watch {
                     watch.enter(&self.cpu.regs, &self.mem);

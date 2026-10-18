@@ -416,23 +416,37 @@ pub(crate) struct ReturnTrap {
     /// is read from there once the stack is unwound past it, as the callee may have changed it
     /// (an FPU emulator moves it back to rerun the instruction it patched).
     entry_sp: Option<u16>,
+    /// False until a hardware interrupt has been delivered, for a halt
+    /// ([`ReturnTrap::after_interrupt`]): it ends where it began.
+    armed: bool,
 }
 
 impl ReturnTrap {
     pub(crate) fn new(cs: u16, ip: u16, ss: u16, sp: u16, lowest_sp: u16) -> Self {
-        ReturnTrap { cs, ip, ss, sp, lowest_sp, entry_sp: None }
+        ReturnTrap { cs, ip, ss, sp, lowest_sp, entry_sp: None, armed: true }
+    }
+
+    /// For a halt at CS:IP with the stack at SP: reached back there once an interrupt has been
+    /// delivered and its handler has returned.
+    pub(crate) fn after_interrupt(cs: u16, ip: u16, ss: u16, sp: u16) -> Self {
+        ReturnTrap { cs, ip, ss, sp, lowest_sp: sp, entry_sp: None, armed: false }
+    }
+
+    /// A hardware interrupt is being delivered.
+    pub(crate) fn interrupt(&mut self) {
+        self.armed = true;
     }
 
     /// For a function entered with SS:SP at its return address, called near, far or by an
     /// interrupt: back at the caller's CS (near) or at the segment on the stack (far, IRET).
     pub(crate) fn any_return(cs: u16, ss: u16, sp: u16) -> Self {
-        ReturnTrap { cs, ip: 0, ss, sp: sp.wrapping_add(2), lowest_sp: sp, entry_sp: Some(sp) }
+        ReturnTrap { cs, ip: 0, ss, sp: sp.wrapping_add(2), lowest_sp: sp, entry_sp: Some(sp), armed: true }
     }
 
     #[inline]
     pub(crate) fn reached(&mut self, regs: &cpu::Regs, mem: &machine::Memory) -> bool {
         let sp = regs.sp();
-        if regs.ss() != self.ss {
+        if regs.ss() != self.ss || !self.armed {
             return false;
         }
         if sp < self.lowest_sp {
@@ -518,6 +532,14 @@ impl Call<'_> {
         let first = self.sp.wrapping_add(if self.far { 4 } else { 2 });
         let ss = self.m.cpu.regs.ss();
         self.read16(ss, first.wrapping_add(2 * i))
+    }
+
+    /// Sets the `i`th word of stack arguments, as C code does that uses a parameter as a
+    /// variable (the caller pops it, but it is memory all the same).
+    pub fn set_arg16(&mut self, i: u16, value: u16) {
+        let first = self.sp.wrapping_add(if self.far { 4 } else { 2 });
+        let ss = self.m.cpu.regs.ss();
+        self.write16(ss, first.wrapping_add(2 * i), value);
     }
 
     /// Words `i` and `i + 1` of stack arguments as a 32-bit value (a `long`, or a far pointer as
@@ -628,6 +650,14 @@ impl Call<'_> {
         self.m.call_function(offset, conv, stack)
     }
 
+    /// Waits as `HLT` does: virtual time passes to the next event and the program's interrupt
+    /// handlers run; returns once one has. For a function that spins until a handler changes
+    /// a variable (a timer count): the override waits for the real interrupts instead of
+    /// skipping them.
+    pub fn wait_for_interrupt(&mut self) -> Result<(), String> {
+        self.m.wait_for_interrupt()
+    }
+
     /// `INT vector` (real mode), with registers already set: through the interrupt vector
     /// table, so whatever hooked the vector runs; returns when the handler does.
     pub fn int(&mut self, vector: u8) -> Result<(), String> {
@@ -710,6 +740,23 @@ impl Machine {
                 Ok(())
             }
             other => Err(format!("the call to {offset:05X} didn't return: {other:?}")),
+        }
+    }
+
+    /// Halts until a hardware interrupt has been handled ([`Call::wait_for_interrupt`]).
+    pub fn wait_for_interrupt(&mut self) -> Result<(), String> {
+        if self.hybrid.as_ref().is_some_and(|h| h.replaying) {
+            return Err(crate::capture::WAITS_FOR_INTERRUPT.into());
+        }
+        let regs = self.cpu.regs;
+        let trap = ReturnTrap::after_interrupt(regs.cs(), regs.ip as u16, regs.ss(), regs.sp());
+        self.halted = true;
+        let (stop, _) = self.run_to_return(trap, MAX_DUAL_CYCLES);
+        self.halted = false;
+        match stop {
+            Stop::Returned => Ok(()),
+            Stop::Halted => Err("waits for an interrupt with interrupts disabled".into()),
+            other => Err(format!("no interrupt came: {other:?}")),
         }
     }
 

@@ -356,10 +356,16 @@ pub type Differences = Vec<String>;
 /// replayed (dual-run checks it).
 pub const CALLS_PROGRAM: &str = "calls the program's code, which a captured call doesn't hold";
 
-/// Whether a replay stopped at a call into the program's code ([`CALLS_PROGRAM`]) rather than
+/// A replay's difference when the override waits for an interrupt
+/// ([`crate::hybrid::Call::wait_for_interrupt`]): the program's handlers that would end the wait
+/// aren't in a captured call either.
+pub const WAITS_FOR_INTERRUPT: &str = "waits for an interrupt, which a captured call doesn't deliver";
+
+/// Whether a replay stopped at what a captured call doesn't hold (a call into the program's
+/// code, [`CALLS_PROGRAM`]; a wait for an interrupt, [`WAITS_FOR_INTERRUPT`]) rather than
 /// finding the override wrong.
 pub fn calls_program(differences: &[String]) -> bool {
-    differences.iter().any(|d| d.contains(CALLS_PROGRAM))
+    differences.iter().any(|d| d.contains(CALLS_PROGRAM) || d.contains(WAITS_FOR_INTERRUPT))
 }
 
 /// Runs override `o` on a fresh machine holding only the capture's inputs, and compares its
