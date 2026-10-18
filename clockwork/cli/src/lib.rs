@@ -10,6 +10,7 @@ mod gamepads;
 mod games;
 mod hotspots;
 mod input_script;
+mod listing;
 mod live_audio;
 mod play;
 mod session;
@@ -34,6 +35,10 @@ usage:
                                                  replay captured calls (one per line, from
                                                  run --captures-out) against the game's overrides;
                                                  exit code 3 when a call fails
+  rec-host listing <image> --entry OFFSET --segment SEG
+                                                 a function's code from a load image (hex image
+                                                 offset and link segment), following its control
+                                                 flow and jump tables, in image offsets
 
 options:
   --args TEXT        command line passed to the program
@@ -250,6 +255,7 @@ fn command_line(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
         Some("run") => parse_options(&args[1..]).and_then(|o| cmd_run(&o, extension)),
         Some("play") => parse_options(&args[1..]).and_then(|o| play::run(&o)),
         Some("unpack") => cmd_unpack(&args[1..]),
+        Some("listing") => listing::cmd_listing(&args[1..]),
         Some("replay") => games::cmd_replay(&args[1..], extension),
         Some("--version") => {
             println!("rec-host {}", env!("CARGO_PKG_VERSION"));
