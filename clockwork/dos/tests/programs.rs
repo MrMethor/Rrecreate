@@ -2842,6 +2842,38 @@ fn placeholder_captures_follow_far_calls_and_interrupts() {
     assert!(captures.iter().all(|c| c.unreplayable.is_none()), "{captures:?}");
 }
 
+#[test]
+fn an_override_raises_an_interrupt_through_the_vector_table() {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        offsets.borrow_mut().insert("doubled", (a.addr("doubled") as u32).wrapping_sub(0x100));
+        a.mov(ax, 0x2560)?;
+        load_dx(a, "handler")?;
+        a.int(0x21)?;
+        a.mov(ax, 3)?;
+        let doubled = a.l("doubled");
+        a.call(doubled)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        // The original returns AX as it is; the override doubles 5 through INT 60h.
+        a.here("doubled")?;
+        a.ret()?;
+        a.here("handler")?;
+        a.add(ax, ax)?;
+        a.iret()
+    });
+    fn doubled(c: &mut dos::hybrid::Call) -> Result<(), String> {
+        c.m.cpu.regs.set_ax(5);
+        c.int(0x60)
+    }
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    use dos::hybrid::{Convention, Mode, Override, regs::AX};
+    let conv = Convention::cdecl(false, 0, AX);
+    let offset = offsets.into_inner()["doubled"];
+    m.start_hybrid("P.COM", vec![Override { offset, name: "doubled", conv, run: doubled }]).set_all(Mode::Rust);
+    assert_eq!(m.run(SECOND), Stop::Exited(10));
+}
+
 /// Prints its command tail and exits with code 3.
 fn tail_echo() -> Vec<u8> {
     com(|a| {

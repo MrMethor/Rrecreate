@@ -623,6 +623,12 @@ impl Call<'_> {
     pub fn call(&mut self, offset: u32, conv: Convention, stack: &[u16]) -> Result<(), String> {
         self.m.call_function(offset, conv, stack)
     }
+
+    /// `INT vector` (real mode), with registers already set: through the interrupt vector
+    /// table, so whatever hooked the vector runs; returns when the handler does.
+    pub fn int(&mut self, vector: u8) -> Result<(), String> {
+        self.m.call_interrupt(vector)
+    }
 }
 
 impl Machine {
@@ -666,6 +672,31 @@ impl Machine {
                 Ok(())
             }
             other => Err(format!("the call to {offset:05X} didn't return: {other:?}")),
+        }
+    }
+
+    /// Raises software interrupt `vector` as `INT vector` does in real mode (FLAGS, CS and IP
+    /// pushed, IF and TF cleared, CS:IP from the vector table) and runs the handler, nested,
+    /// until it returns to the current CS:IP with the stack unwound (IRET, or RETF 2).
+    pub fn call_interrupt(&mut self, vector: u8) -> Result<(), String> {
+        let regs = self.cpu.regs;
+        let (ss, cs, ip) = (regs.ss(), regs.cs(), regs.ip as u16);
+        let before = regs.sp();
+        let mut sp = before;
+        for word in [regs.flags16(), cs, ip] {
+            sp = sp.wrapping_sub(2);
+            self.mem.write_u16(Machine::lin(ss, sp), word);
+        }
+        let entry = 4 * u32::from(vector);
+        let (target_ip, target_cs) = (self.mem.read_u16(entry), self.mem.read_u16(entry + 2));
+        self.cpu.regs.flags &= !u32::from(cpu::flags::IF | cpu::flags::TF);
+        self.cpu.regs.set_sp(sp);
+        self.cpu.regs.set_cs(target_cs);
+        self.cpu.regs.ip = u32::from(target_ip);
+        let trap = ReturnTrap::new(cs, ip, ss, before, sp);
+        match self.run_to_return(trap, MAX_DUAL_CYCLES).0 {
+            Stop::Returned => Ok(()),
+            other => Err(format!("INT {vector:02X}h didn't return: {other:?}")),
         }
     }
 
