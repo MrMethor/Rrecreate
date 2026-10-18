@@ -2874,6 +2874,56 @@ fn an_override_raises_an_interrupt_through_the_vector_table() {
     assert_eq!(m.run(SECOND), Stop::Exited(10));
 }
 
+#[test]
+fn rust_calls_a_far_function_in_its_own_segment() {
+    use dos::hybrid::{Call, Convention, Mode, Override, regs};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    // `target` calls a helper far below it with a near call: entered in the segment starting
+    // nearest below its entry (what `Call::call` does) the call would wrap within the segment.
+    static TARGET: AtomicU32 = AtomicU32::new(0);
+    fn outer(c: &mut Call) -> Result<(), String> {
+        // A COM program's code segment is its PSP, 10h paragraphs below the load image.
+        c.call_in(0xFFF0, TARGET.load(Ordering::Relaxed), Convention::custom(true, 0, regs::AX, 0, 0), &[])
+    }
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["outer", "target", "result"] {
+            offsets.borrow_mut().insert(name, (a.addr(name) as u32).wrapping_sub(0x100));
+        }
+        a.mov(ax, 5)?;
+        let outer = a.l("outer");
+        a.call(outer)?;
+        let result = word_at(a, "result");
+        a.mov(result, ax)?;
+        exit(a, 0)?;
+        a.here("helper")?;
+        a.add(ax, ax)?;
+        a.ret()?;
+        a.here("outer")?;
+        a.push(cs)?;
+        let target = a.l("target");
+        a.call(target)?;
+        a.ret()?;
+        a.db(&[0x90; 0x300])?;
+        a.here("target")?;
+        let helper = a.l("helper");
+        a.call(helper)?;
+        a.inc(ax)?;
+        a.retf()?;
+        a.here("result")?;
+        a.dw(&[0])
+    });
+    let offsets = offsets.into_inner();
+    TARGET.store(offsets["target"], Ordering::Relaxed);
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let conv = Convention::custom(false, 0, regs::AX, 0, 0);
+    m.start_hybrid("P.COM", vec![Override { offset: offsets["outer"], name: "outer", conv, run: outer }])
+        .set_all(Mode::Rust);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    assert_eq!(word_at_offset(&m, offsets["result"] as i32 + 0x100), 11);
+    assert_eq!(m.hybrid.as_ref().unwrap().stats[0].rust, 1);
+}
+
 /// Prints its command tail and exits with code 3.
 fn tail_echo() -> Vec<u8> {
     com(|a| {

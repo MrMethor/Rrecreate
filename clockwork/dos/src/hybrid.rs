@@ -284,6 +284,9 @@ pub struct Hybrid {
     pub(crate) originals_only: bool,
     /// The hooked entry the original was started at, not to be hooked again right away.
     pub(crate) skip: Option<u32>,
+    /// Replaying a captured call ([`crate::capture::replay`]): the machine holds the data the
+    /// original read, not the program's code, so an override can't call into it.
+    pub(crate) replaying: bool,
     /// What each override was written against ([`Hybrid::expect`]), by offset.
     signatures: BTreeMap<u32, Signature>,
     /// The code at each override's entry when it was first called, by offset.
@@ -311,6 +314,7 @@ impl Hybrid {
             pause: false,
             originals_only: false,
             skip: None,
+            replaying: false,
         };
         for (i, (o, _)) in hybrid.overrides.iter().enumerate() {
             hybrid.by_linear.insert(base + o.offset, i);
@@ -629,6 +633,19 @@ impl Call<'_> {
     pub fn int(&mut self, vector: u8) -> Result<(), String> {
         self.m.call_interrupt(vector)
     }
+
+    /// [`Call::call`] for a far function entered in code segment `segment` (relative, as the
+    /// disassembly shows the program's own calls to it from load segment 0). `call` enters a far
+    /// function in the segment that starts nearest below its entry, which is right for code that
+    /// doesn't depend on CS; code that does (a near call backwards, a `CS:` jump table) needs the
+    /// segment it was linked in.
+    pub fn call_in(&mut self, segment: u16, offset: u32, conv: Convention, stack: &[u16]) -> Result<(), String> {
+        if !conv.far {
+            return Err("a near function runs in the caller's segment: use call".into());
+        }
+        let cs = self.segment(segment);
+        self.m.call_function_in(offset, Some(cs), conv, stack)
+    }
 }
 
 impl Machine {
@@ -636,8 +653,23 @@ impl Machine {
     /// return address (the current CS:IP), runs it, nested, until it returns there, and leaves
     /// the stack as the caller of a `conv` function finds it (cdecl arguments are popped too).
     pub fn call_function(&mut self, offset: u32, conv: Convention, stack: &[u16]) -> Result<(), String> {
-        let base = self.hybrid.as_ref().ok_or("no program is hooked")?.base;
-        let linear = base + offset;
+        self.call_function_in(offset, None, conv, stack)
+    }
+
+    /// [`Machine::call_function`] with the callee's CS given (`code_segment`, a far call), or
+    /// the segment holding its entry when `None`.
+    fn call_function_in(
+        &mut self,
+        offset: u32,
+        code_segment: Option<u16>,
+        conv: Convention,
+        stack: &[u16],
+    ) -> Result<(), String> {
+        let hybrid = self.hybrid.as_ref().ok_or("no program is hooked")?;
+        if hybrid.replaying {
+            return Err(format!("{} ({offset:05X})", crate::capture::CALLS_PROGRAM));
+        }
+        let linear = hybrid.base + offset;
         let regs = self.cpu.regs;
         let (ss, cs, ip) = (regs.ss(), regs.cs(), regs.ip as u16);
         let mut sp = regs.sp();
@@ -651,11 +683,16 @@ impl Machine {
             sp = sp.wrapping_sub(2);
             self.mem.write_u16(Machine::lin(ss, sp), word);
         }
-        // The callee runs in the segment that holds its entry (a near callee must be in ours).
-        let target_cs = if conv.far { (linear >> 4) as u16 } else { cs };
+        // The callee runs in the segment given, else in the one that holds its entry (a near
+        // callee must be in ours).
+        let target_cs = match code_segment {
+            Some(segment) => segment,
+            None if conv.far => (linear >> 4) as u16,
+            None => cs,
+        };
         let target_ip = linear.wrapping_sub(u32::from(target_cs) << 4);
         if target_ip > 0xFFFF {
-            return Err(format!("{offset:05X} isn't reachable with a near call from {cs:04X}"));
+            return Err(format!("{offset:05X} isn't in segment {target_cs:04X}"));
         }
         self.cpu.regs.set_sp(sp);
         self.cpu.regs.set_cs(target_cs);

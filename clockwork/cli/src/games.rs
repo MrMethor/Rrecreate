@@ -105,7 +105,14 @@ pub fn cmd_replay(args: &[String], extension: Option<&dyn crate::Extension>) -> 
             (_, Some(reason)) => ("unreplayable", vec![reason.clone()]),
             (Some(o), None) => {
                 let differences = dos::capture::replay(&capture, *o);
-                (if differences.is_empty() { "pass" } else { "fail" }, differences)
+                let status = if differences.is_empty() {
+                    "pass"
+                } else if dos::capture::calls_program(&differences) {
+                    "unreplayable"
+                } else {
+                    "fail"
+                };
+                (status, differences)
             }
         };
         match status {

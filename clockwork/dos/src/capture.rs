@@ -351,6 +351,17 @@ impl Capture {
 /// What a replay found wrong, empty when the override matched.
 pub type Differences = Vec<String>;
 
+/// A replay's difference when the override calls a function of the program (`Call::call`): a
+/// captured call holds the data the original read, not the code it ran, so the call can't be
+/// replayed (dual-run checks it).
+pub const CALLS_PROGRAM: &str = "calls the program's code, which a captured call doesn't hold";
+
+/// Whether a replay stopped at a call into the program's code ([`CALLS_PROGRAM`]) rather than
+/// finding the override wrong.
+pub fn calls_program(differences: &[String]) -> bool {
+    differences.iter().any(|d| d.contains(CALLS_PROGRAM))
+}
+
 /// Runs override `o` on a fresh machine holding only the capture's inputs, and compares its
 /// results with the capture's outputs under the convention.
 pub fn replay(capture: &Capture, o: Override) -> Differences {
@@ -361,6 +372,7 @@ pub fn replay(capture: &Capture, o: Override) -> Differences {
     capture.entry.apply(&mut m.cpu.regs);
     let mut hybrid = Hybrid::new("", capture.base, vec![o]);
     hybrid.set_all(Mode::Rust);
+    hybrid.replaying = true;
     m.hybrid = Some(Box::new(hybrid));
     let before = m.mem.clone();
     let mut differences = Vec::new();
