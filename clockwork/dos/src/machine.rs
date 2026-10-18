@@ -366,6 +366,9 @@ pub(crate) struct PcBus<'a> {
     mem: &'a mut Memory,
     dev: &'a mut Devices,
     now: u64,
+    /// The time port writes are logged at: `now`, or during an atomic call its start
+    /// ([`Machine::set_atomic`]).
+    write_now: u64,
 }
 
 /// Physical addresses from here up can't be RAM (16 MB at most); the linear frame buffer is
@@ -505,7 +508,7 @@ impl Bus for PcBus<'_> {
     }
 
     fn port_out_u8(&mut self, port: u16, value: u8) {
-        if let Some(ControllerEffect::SetA20(on)) = self.dev.port_out(port, value, self.now, self.mem) {
+        if let Some(ControllerEffect::SetA20(on)) = self.dev.port_out(port, value, self.write_now, self.mem) {
             self.mem.set_a20(on);
         }
     }
@@ -556,9 +559,11 @@ pub struct Machine {
     pub(crate) tracer: Option<Box<crate::capture::Tracer>>,
     /// While a captured call replays: the memory it holds ([`crate::capture::replay`]).
     pub(crate) replay: Option<Box<crate::capture::Held>>,
-    /// A hooked call in a session diff ([`crate::lockstep`]): no device events are serviced and no
-    /// interrupt is taken until it returns.
+    /// A hooked call in a session diff ([`crate::lockstep`]) or a replayed captured call: no
+    /// device events are serviced and no interrupt is taken until it returns.
     pub(crate) atomic: bool,
+    /// When it began: port writes during it are logged at this time ([`Machine::set_atomic`]).
+    atomic_since: u64,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -604,6 +609,7 @@ impl Machine {
             tracer: None,
             replay: None,
             atomic: false,
+            atomic_since: 0,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -708,24 +714,22 @@ impl Machine {
                 let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 contracts.before(&self.cpu.regs, &self.mem, linear);
             }
+            let (now, write_now) = (self.cpu.cycles, self.write_time());
             let result = if let Some(tracer) = self.tracer.as_deref_mut()
                 && tracer.active(&self.cpu.regs)
             {
-                let now = self.cpu.cycles;
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
                 let fetched = Some(&mut tracer.fetched);
                 let mut bus = crate::capture::TracingBus { inner, log: &mut tracer.log, fetched };
                 self.cpu.step(&mut bus)
             } else if let Some(contracts) = self.contracts.as_deref_mut()
                 && contracts.tracing()
             {
-                let now = self.cpu.cycles;
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
                 let mut bus = crate::capture::TracingBus { inner, log: &mut contracts.log, fetched: None };
                 self.cpu.step(&mut bus)
             } else if let Some(held) = self.replay.as_deref_mut() {
-                let now = self.cpu.cycles;
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
                 let mut bus = crate::capture::ReplayBus { inner, held };
                 let result = self.cpu.step(&mut bus);
                 if let Some(addr) = bus.held.missing {
@@ -1044,9 +1048,24 @@ impl Machine {
 
     // ---- internals shared by the BIOS and DOS modules ----
 
+    /// Starts or ends an atomic call. During one, devices see port writes at its start: what an
+    /// implementation writes, in order, decides the devices' logs, not how many instructions it
+    /// took to get there (an override and the original it stands for write the same ports at
+    /// different cycles). Reads keep the real time, so polling a port still sees it change.
+    pub(crate) fn set_atomic(&mut self, on: bool) {
+        if on && !self.atomic {
+            self.atomic_since = self.cpu.cycles;
+        }
+        self.atomic = on;
+    }
+
+    fn write_time(&self) -> u64 {
+        if self.atomic { self.atomic_since } else { self.cpu.cycles }
+    }
+
     pub(crate) fn split(&mut self) -> (&mut Cpu, PcBus<'_>) {
-        let now = self.cpu.cycles;
-        (&mut self.cpu, PcBus { mem: &mut self.mem, dev: &mut self.devices, now })
+        let (now, write_now) = (self.cpu.cycles, self.write_time());
+        (&mut self.cpu, PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now })
     }
 
     pub(crate) fn lin(segment: u16, offset: u16) -> u32 {

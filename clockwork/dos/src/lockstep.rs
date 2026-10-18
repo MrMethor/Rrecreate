@@ -242,14 +242,14 @@ impl Machine {
     }
 
     fn begin_atomic(&mut self, skip: Option<u32>) {
-        self.atomic = true;
+        self.set_atomic(true);
         let hybrid = self.hybrid.as_mut().expect("hooked");
         hybrid.pause = false;
         hybrid.skip = skip;
     }
 
     fn end_atomic(&mut self) {
-        self.atomic = false;
+        self.set_atomic(false);
         let hybrid = self.hybrid.as_mut().expect("hooked");
         hybrid.pause = true;
         hybrid.skip = None;

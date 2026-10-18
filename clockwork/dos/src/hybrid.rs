@@ -985,6 +985,9 @@ impl Machine {
             }
             other => return Err(other),
         }
+        // An interrupt handler wrote memory during the original's call: keep the state at entry,
+        // to run the original again without interrupts if the results differ.
+        let entry = (!interrupts_wrote.is_empty()).then(|| rust.clone());
         // The override, on the state at entry.
         if let Some(h) = rust.hybrid.as_mut() {
             h.in_dual = true;
@@ -1002,14 +1005,47 @@ impl Machine {
             sp
         };
         compare(self, &rust, o.conv, (ss, lowest_sp, dead_end), &interrupts_wrote, &mut finding);
-        if !finding.registers.is_empty()
-            || finding.flags.is_some()
-            || !finding.memory.is_empty()
-            || !finding.vram.is_empty()
-            || !finding.palette.is_empty()
-        {
-            self.record(i, finding);
+        if !differs(&finding) {
+            return Ok(());
         }
+        if let Some(mut quiet) = entry {
+            // An interrupt came during the call (a timer tick between two reads of the time): what
+            // the original reads then isn't what the override read. The original again, from the
+            // same entry, taking no interrupts until it returns.
+            if let Some(h) = quiet.hybrid.as_mut() {
+                h.in_dual = true;
+            }
+            quiet.set_atomic(true);
+            let (stop, quiet_lowest) = quiet.run_to_return(trap, MAX_DUAL_CYCLES);
+            quiet.set_atomic(false);
+            if stop == Stop::Returned {
+                let mut again = Finding {
+                    registers: Vec::new(),
+                    flags: None,
+                    memory: Vec::new(),
+                    vram: Vec::new(),
+                    palette: Vec::new(),
+                    note: None,
+                    ..finding.clone()
+                };
+                let lowest = quiet_lowest.min(lowest_sp);
+                compare(&quiet, &rust, o.conv, (ss, lowest, dead_end), &BTreeSet::new(), &mut again);
+                if !differs(&again) {
+                    return Ok(()); // the interrupt's doing
+                }
+                again.note =
+                    Some("compared with the original run again without interrupts (one came during the call)".into());
+                finding = again;
+            } else {
+                finding.note = Some(
+                    "an interrupt came during the original's call, and without interrupts it doesn't return (it \
+                     waits for one): the differences may be the interrupt's; rec test --diff compares it in its \
+                     session"
+                        .into(),
+                );
+            }
+        }
+        self.record(i, finding);
         Ok(())
     }
 
@@ -1019,6 +1055,11 @@ impl Machine {
             h.findings.push(finding);
         }
     }
+}
+
+/// Whether a dual-run found a difference.
+fn differs(f: &Finding) -> bool {
+    !f.registers.is_empty() || f.flags.is_some() || !f.memory.is_empty() || !f.vram.is_empty() || !f.palette.is_empty()
 }
 
 /// Fills `finding` with what differs between the original's result `a` and the override's `b`,

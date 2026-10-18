@@ -3399,3 +3399,83 @@ fn without_dpmi_the_program_is_told_there_is_none() {
     assert_eq!(m.run(10 * SECOND), Stop::Exited(1));
     assert!(m.diagnostics.iter().any(|d| d.contains("--dpmi")), "{:?}", m.diagnostics);
 }
+
+/// Where the tick program keeps its tick count and the second read (unused PSP bytes).
+const TICKS: u16 = 0xF0;
+const LAST: u16 = 0xF2;
+
+/// A program whose timer handler counts ticks, and `get`: AX = the count, then after a delay
+/// `last` = the count again (so a tick can land between the two reads); called 400 times.
+fn tick_program() -> (Vec<u8>, u32) {
+    let get = std::cell::Cell::new(0);
+    let program = com(|a| {
+        get.set((a.addr("get") as u32).wrapping_sub(0x100));
+        a.mov(ax, 0x2508)?;
+        load_dx(a, "handler")?;
+        a.int(0x21)?;
+        a.mov(si, 400)?;
+        a.here("again")?;
+        let target = a.l("get");
+        a.call(target)?;
+        a.dec(si)?;
+        let again = a.l("again");
+        a.jnz(again)?;
+        exit(a, 0)?;
+        a.here("get")?;
+        a.mov(ax, word_ptr(u32::from(TICKS)))?;
+        a.mov(cx, 20000)?;
+        a.here("delay")?;
+        let delay = a.l("delay");
+        a.loop_(delay)?;
+        a.mov(bx, word_ptr(u32::from(TICKS)))?;
+        a.mov(word_ptr(u32::from(LAST)), bx)?;
+        a.ret()?;
+        a.here("handler")?;
+        a.inc(word_ptr(u32::from(TICKS)).cs())?;
+        a.push(ax)?;
+        a.mov(al, 0x20)?;
+        a.out(0x20, al)?;
+        a.pop(ax)?;
+        a.iret()
+    });
+    (program, get.get())
+}
+
+/// `get` reading the count once.
+fn get_once(c: &mut dos::hybrid::Call) -> Result<(), String> {
+    let data = c.ds();
+    let ticks = c.read16(data, TICKS);
+    c.write16(data, LAST, ticks);
+    c.ret16(ticks);
+    Ok(())
+}
+
+/// `get` with `last` one ahead.
+fn get_wrong(c: &mut dos::hybrid::Call) -> Result<(), String> {
+    let data = c.ds();
+    let ticks = c.read16(data, TICKS);
+    c.write16(data, LAST, ticks.wrapping_add(1));
+    c.ret16(ticks);
+    Ok(())
+}
+
+fn dual_tick(run: fn(&mut dos::hybrid::Call) -> Result<(), String>) -> Vec<dos::hybrid::Finding> {
+    use dos::hybrid::{Convention, Mode, Override};
+    let (program, get) = tick_program();
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    let conv = Convention::cdecl(false, 0, dos::hybrid::regs::AX);
+    m.start_hybrid("T.COM", vec![Override { offset: get, name: "get", conv, run }]).set_all(Mode::Dual);
+    assert_eq!(m.run(60 * SECOND), Stop::Exited(0));
+    m.hybrid.unwrap().findings
+}
+
+#[test]
+fn a_tick_during_the_original_s_call_is_not_a_mismatch() {
+    // Some calls have a tick between the two reads: there the original's `last` is one ahead, as
+    // the wrong version's always is, so those are the dual-runs of the wrong one that agree.
+    let wrong = dual_tick(get_wrong);
+    let ticked = 100 - wrong.len();
+    assert!(ticked > 0 && ticked < 20, "{ticked} calls with a tick between the reads");
+    // The right one reads once: in those calls the original, run again without interrupts, agrees.
+    assert_eq!(dual_tick(get_once), Vec::new());
+}

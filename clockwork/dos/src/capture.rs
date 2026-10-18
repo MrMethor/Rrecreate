@@ -528,7 +528,7 @@ pub fn replay_with(capture: &Capture, o: Override, callees: &[Override]) -> Diff
     // The program's code the override calls runs from the inputs, and takes no interrupts: what
     // handlers did during the call isn't in the capture.
     m.replay = Some(Box::new(Held::new(capture.inputs.keys().copied())));
-    m.atomic = true;
+    m.set_atomic(true);
     let before = m.mem.clone();
     let mut differences = Vec::new();
     if let Err(e) = m.run_override_public(o) {
