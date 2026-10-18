@@ -105,6 +105,9 @@ options:
   --ems KB           expanded memory size (default 4096; 0 disables EMS)
   --memory MB        total memory of the PC, 1-16 (default 16)
   --no-xms           no XMS driver (programs see the extended memory through INT 15h)
+  --dpmi             a DPMI 0.9 host, for programs that look for one (DJGPP without CWSDPMI,
+                     Borland's protected-mode programs); off by default, as extenders that
+                     bring their own (DOS/4GW) would use it instead
   --sb SPEC          sound card: none, sb1, sb2, sbpro1, sbpro2 or sb16 (default), optionally
                      followed by BLASTER-style resources, e.g. \"sbpro2 A220 I5 D1\"
   --scale N          play: window scale (default 2)";
@@ -151,6 +154,7 @@ struct Options {
     memory_mb: Option<u32>,
     no_xms: bool,
     no_fpu: bool,
+    dpmi: bool,
     joysticks: u8,
     hotspots: usize,
     disasm: Option<String>,
@@ -376,6 +380,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--no-xms" => options.no_xms = true,
             "--no-fpu" => options.no_fpu = true,
+            "--dpmi" => options.dpmi = true,
             "--joystick" => {
                 options.joysticks = value(arg)?.parse().ok().filter(|&n| n <= 2).ok_or("--joystick needs 0, 1 or 2")?;
             }
@@ -491,6 +496,7 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         xms: !o.no_xms,
         fpu: !o.no_fpu,
         joysticks: o.joysticks,
+        dpmi: o.dpmi,
         ..Config::default()
     };
     let mut m = Machine::with_program(config, drive, program, args).map_err(|e| e.to_string())?;

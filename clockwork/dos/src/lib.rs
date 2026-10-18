@@ -13,6 +13,7 @@ pub mod contracts;
 pub mod coverage;
 pub mod dma;
 pub mod dos;
+pub mod dpmi;
 pub mod ems;
 pub mod fonts;
 pub mod hybrid;

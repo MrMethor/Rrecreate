@@ -152,6 +152,31 @@ impl Xms {
     }
 }
 
+/// For the DPMI host: a block of at least `bytes`, locked (it doesn't move); its handle and
+/// physical address.
+pub(crate) fn allocate_locked(m: &mut Machine, bytes: u32) -> Result<(u16, u32), u8> {
+    let handle = m.xms.allocate(bytes.div_ceil(1024).max(1))?;
+    let block = m.xms.blocks.get_mut(&handle).expect("just allocated");
+    block.locks = 1;
+    Ok((handle, block.first_page * PAGE))
+}
+
+pub(crate) fn free_locked(m: &mut Machine, handle: u16) {
+    if let Some(block) = m.xms.blocks.get_mut(&handle) {
+        block.locks = 0;
+    }
+    let _ = m.xms.free(handle);
+}
+
+/// Resizes a locked block (it may move); its new physical address.
+pub(crate) fn resize_locked(m: &mut Machine, handle: u16, bytes: u32) -> Result<u32, u8> {
+    m.xms.blocks.get_mut(&handle).ok_or(error::INVALID_HANDLE)?.locks = 0;
+    let result = resize(m, handle, bytes.div_ceil(1024).max(1));
+    let block = m.xms.blocks.get_mut(&handle).expect("still there");
+    block.locks = 1;
+    result.map(|()| block.first_page * PAGE)
+}
+
 pub(crate) fn install(m: &mut Machine) {
     if !m.xms.enabled() {
         return;

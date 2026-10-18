@@ -95,6 +95,8 @@ pub struct DosState {
     pub line_input: Option<u8>,
     /// The CD drive's audio playback (MSCDEX).
     pub cd_audio: crate::cdrom::CdAudio,
+    /// The DPMI host's state.
+    pub dpmi: crate::dpmi::Dpmi,
 }
 
 impl DosState {
@@ -128,6 +130,7 @@ impl Default for DosState {
             shells: Vec::new(),
             line_input: None,
             cd_audio: crate::cdrom::CdAudio::default(),
+            dpmi: crate::dpmi::Dpmi::default(),
         }
     }
 }
@@ -245,7 +248,7 @@ pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
         callback::EMS => crate::ems::service(m),
         callback::SHELL => crate::shell::step(m),
         callback::XMS => crate::xms::service(m),
-        _ => return false,
+        other => return crate::dpmi::dispatch(m, other),
     }
     true
 }
@@ -1186,6 +1189,9 @@ fn multiplex(m: &mut Machine) {
         return;
     }
     let r = m.cpu.regs;
+    if r.ax() == 0x1687 {
+        return crate::dpmi::detect(m);
+    }
     let Some(cd) = m.dos.cd_drive else { return };
     if r.ah() != 0x15 {
         return;
@@ -2658,6 +2664,7 @@ pub(crate) fn terminate_process(m: &mut Machine, code: u8, resident: bool) {
     if !resident {
         m.dos.shells.retain(|s| s.psp != psp);
     }
+    crate::dpmi::terminated(m, psp);
     let at = Machine::lin(psp, 0);
     let parent = m.mem.read_u16(at + 0x16);
     m.dos.return_code = u16::from(code) | if resident { 0x0300 } else { 0 };

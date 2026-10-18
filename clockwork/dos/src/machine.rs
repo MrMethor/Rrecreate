@@ -64,6 +64,9 @@ pub struct Config {
     pub sound_blaster: Option<SbConfig>,
     /// Joysticks on the game port (0-2); with none the port reads FFh, as without a card.
     pub joysticks: u8,
+    /// A DPMI host ([`crate::dpmi`]) for programs that look for one. Off by default: DOS
+    /// extenders that bring their own (DOS/4GW) would switch to it.
+    pub dpmi: bool,
 }
 
 impl Default for Config {
@@ -85,6 +88,7 @@ impl Default for Config {
             mouse: true,
             sound_blaster: Some(SbConfig::default()),
             joysticks: 0,
+            dpmi: false,
         }
     }
 }
@@ -653,6 +657,7 @@ impl Machine {
                 && !self.atomic
                 && let Some(vector) = self.devices.acknowledge()
             {
+                let vector = crate::dpmi::irq_vector(self, vector);
                 self.halted = false;
                 self.count_irq(vector);
                 if let Some(watch) = &mut self.isr_watch {

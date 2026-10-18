@@ -2984,3 +2984,184 @@ fn the_shell_reads_commands_at_its_prompt() {
     assert!(text.starts_with("C:\\>echo typed\r\ntyped\r\nC:\\>"), "{text:?}");
     assert!(text.contains("MS-DOS Version 5.00"), "{text:?}");
 }
+
+/// A DPMI client: finds the host, enters protected mode (as a 32-bit client if `bits32`) and
+/// uses it: reflected INT 21h, INT 31h version, a descriptor on a memory block, a simulated
+/// real-mode INT 21h AH=09h, timer interrupts reflected to the BIOS, then its own handler for
+/// IRQ 0. With `fault`, it loads DS with an empty descriptor after entering.
+fn dpmi_client(bits32: bool, fault: bool) -> Vec<u8> {
+    com(|a| {
+        let fail = a.l("fail");
+        a.mov(ah, 0x4A)?;
+        a.mov(bx, 0x1000)?;
+        a.int(0x21)?;
+        a.mov(ax, 0x1687)?;
+        a.int(0x2F)?;
+        a.or(ax, ax)?;
+        a.jnz(fail)?;
+        let entry = a.addr("entry") as u32;
+        a.mov(word_ptr(entry), di)?;
+        a.mov(word_ptr(entry + 2), es)?;
+        let rmseg = a.addr("rmseg") as u32;
+        a.mov(word_ptr(rmseg), cs)?;
+        a.mov(bx, si)?;
+        a.mov(ah, 0x48)?;
+        a.int(0x21)?;
+        a.jc(fail)?;
+        a.mov(es, ax)?;
+        a.mov(ax, i32::from(bits32))?;
+        a.call(dword_ptr(entry))?;
+        a.jc(fail)?;
+        // Protected mode.
+        a.mov(ah, 2)?;
+        a.mov(dl, b'P' as i32)?;
+        a.int(0x21)?;
+        if fault {
+            a.mov(ax, 0x38)?; // an empty GDT entry: #GP
+            a.mov(ds, ax)?;
+        }
+        a.mov(ax, 0x0400)?;
+        a.int(0x31)?;
+        a.cmp(ax, 0x005A)?;
+        a.jne(fail)?;
+        // A descriptor for a 64 KB block.
+        let sel = a.addr("sel") as u32;
+        a.xor(ax, ax)?;
+        a.mov(cx, 1)?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        a.mov(word_ptr(sel), ax)?;
+        a.mov(ax, 0x0501)?;
+        a.mov(bx, 1)?;
+        a.xor(cx, cx)?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        a.mov(dx, cx)?;
+        a.mov(cx, bx)?;
+        a.mov(bx, word_ptr(sel))?;
+        a.mov(ax, 7)?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        a.mov(ax, 8)?;
+        a.mov(bx, word_ptr(sel))?;
+        a.xor(cx, cx)?;
+        a.mov(dx, 0xFFFF)?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        a.mov(es, word_ptr(sel))?;
+        a.mov(word_ptr(0x1234).es(), 0x5A5A)?;
+        a.mov(ax, word_ptr(0x1234).es())?;
+        a.cmp(ax, 0x5A5A)?;
+        a.jne(fail)?;
+        a.mov(ah, 2)?;
+        a.mov(dl, b'M' as i32)?;
+        a.int(0x21)?;
+        // INT 21h AH=09h in real mode: DS:DX = the program's segment and the message.
+        let regs = a.addr("regs") as u32;
+        a.mov(dword_ptr(regs + 0x1C), 0x0900)?;
+        let msg = a.addr("msg");
+        a.mov(dword_ptr(regs + 0x14), msg)?;
+        a.mov(ax, word_ptr(rmseg))?;
+        a.mov(word_ptr(regs + 0x24), ax)?;
+        a.push(ds)?;
+        a.pop(es)?;
+        a.xor(edi, edi)?;
+        a.mov(di, regs as i32)?;
+        a.mov(bx, 0x21)?;
+        a.xor(cx, cx)?;
+        a.mov(ax, 0x0300)?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        // The BIOS tick count moves: timer interrupts reach the real-mode handler.
+        a.mov(ax, 2)?;
+        a.mov(bx, 0x40)?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        a.mov(es, ax)?;
+        a.mov(si, word_ptr(0x6C).es())?;
+        a.sti()?;
+        a.here("tick")?;
+        a.mov(ax, word_ptr(0x6C).es())?;
+        a.cmp(ax, si)?;
+        let tick = a.l("tick");
+        a.je(tick)?;
+        a.mov(ah, 2)?;
+        a.mov(dl, b'T' as i32)?;
+        a.int(0x21)?;
+        // The client's own IRQ 0 handler (0205h): it counts.
+        a.mov(ax, 0x0205)?;
+        a.mov(bl, 8)?;
+        a.mov(cx, cs)?;
+        a.xor(edx, edx)?;
+        let handler = a.addr("handler");
+        a.mov(dx, handler)?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        a.here("count")?;
+        let counter = a.addr("counter") as u32;
+        a.cmp(word_ptr(counter), 3)?;
+        let count = a.l("count");
+        a.jb(count)?;
+        a.mov(ah, 2)?;
+        a.mov(dl, b'H' as i32)?;
+        a.int(0x21)?;
+        exit(a, 0)?;
+        a.here("fail")?;
+        exit(a, 1)?;
+        a.here("handler")?;
+        a.push(ax)?;
+        a.inc(word_ptr(counter).ss())?;
+        a.mov(al, 0x20)?;
+        a.out(0x20, al)?;
+        a.pop(ax)?;
+        if bits32 {
+            a.iretd()?;
+        } else {
+            a.iret()?;
+        }
+        a.here("entry")?;
+        a.dw(&[0, 0])?;
+        a.here("rmseg")?;
+        a.dw(&[0])?;
+        a.here("sel")?;
+        a.dw(&[0])?;
+        a.here("counter")?;
+        a.dw(&[0])?;
+        a.here("msg")?;
+        a.db(b"hello from RM$")?;
+        a.here("regs")?;
+        a.db(&[0; 0x32])
+    })
+}
+
+fn boot_dpmi(program: &[u8], dpmi: bool) -> Machine {
+    let mut drive = Vfs::new();
+    drive.insert_file("CLIENT.COM", program.to_vec());
+    Machine::with_program(Config { dpmi, ..Config::default() }, drive, "CLIENT.COM", "").unwrap()
+}
+
+#[test]
+fn a_dpmi_client_runs_in_protected_mode() {
+    for bits32 in [false, true] {
+        let mut m = boot_dpmi(&dpmi_client(bits32, false), true);
+        assert_eq!(m.run(10 * SECOND), Stop::Exited(0), "32-bit: {bits32}, {}, {:?}", console(&m), m.diagnostics);
+        assert_eq!(console(&m), "PMhello from RMTH", "32-bit: {bits32}");
+        assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+        assert!(!m.cpu.protected_mode(), "back in real mode after the exit");
+    }
+}
+
+#[test]
+fn a_faulting_dpmi_client_is_ended() {
+    let mut m = boot_dpmi(&dpmi_client(false, true), true);
+    assert_eq!(m.run(10 * SECOND), Stop::Exited(0xFF), "{}", console(&m));
+    assert_eq!(console(&m), "P");
+    assert!(m.diagnostics.iter().any(|d| d.contains("exception 0Dh")), "{:?}", m.diagnostics);
+}
+
+#[test]
+fn without_dpmi_the_program_is_told_there_is_none() {
+    let mut m = boot_dpmi(&dpmi_client(false, false), false);
+    assert_eq!(m.run(10 * SECOND), Stop::Exited(1));
+    assert!(m.diagnostics.iter().any(|d| d.contains("--dpmi")), "{:?}", m.diagnostics);
+}

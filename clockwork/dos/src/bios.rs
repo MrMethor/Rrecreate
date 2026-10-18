@@ -202,7 +202,8 @@ pub(crate) fn install(m: &mut Machine) {
     cd_device.extend(b"MSCD001 \0\0");
     m.mem.load(Machine::lin(ROM_SEGMENT, ROM_CD_DEVICE), &cd_device);
 
-    assert!(rom.next < ROM_CD_DEVICE, "ROM code overlaps the fixed ROM areas");
+    assert!(rom.next < crate::dpmi::RM_STUBS, "ROM code overlaps the fixed ROM areas");
+    crate::dpmi::install(m);
     vesa::install(m);
 
     m.mem.load(Machine::lin(ROM_SEGMENT, 0xFFF5), b"06/01/94");
