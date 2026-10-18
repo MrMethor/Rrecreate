@@ -3479,3 +3479,21 @@ fn a_tick_during_the_original_s_call_is_not_a_mismatch() {
     // The right one reads once: in those calls the original, run again without interrupts, agrees.
     assert_eq!(dual_tick(get_once), Vec::new());
 }
+
+#[test]
+fn a_captured_call_an_interrupt_changed_is_left_to_dual_run() {
+    use dos::hybrid::{Convention, Mode, Override};
+    let (program, get) = tick_program();
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    let conv = Convention::cdecl(false, 0, dos::hybrid::regs::AX);
+    let o = Override { offset: get, name: "get", conv, run: get_once };
+    m.start_hybrid("T.COM", vec![o]).set_all(Mode::Capture);
+    assert_eq!(m.run(60 * SECOND), Stop::Exited(0));
+    let captures = m.hybrid.unwrap().captures;
+    let reason = "reads memory an interrupt changed during the call";
+    let ticked = captures.iter().filter(|c| c.unreplayable.as_deref() == Some(reason)).count();
+    assert!(ticked > 0 && ticked < captures.len(), "{ticked} of {}", captures.len());
+    for c in captures.iter().filter(|c| c.unreplayable.is_none()) {
+        assert_eq!(dos::capture::replay(c, o), Vec::<String>::new(), "call at {}", c.cycle);
+    }
+}

@@ -715,12 +715,16 @@ impl Machine {
                 contracts.before(&self.cpu.regs, &self.mem, linear);
             }
             let (now, write_now) = (self.cpu.cycles, self.write_time());
-            let result = if let Some(tracer) = self.tracer.as_deref_mut()
-                && tracer.active(&self.cpu.regs)
-            {
+            // A captured call runs (traced), or an interrupt handler interrupted it (its writes logged).
+            let tracing = self.tracer.as_deref_mut().map(|t| t.active(&self.cpu.regs));
+            let result = if let (Some(true), Some(tracer)) = (tracing, self.tracer.as_deref_mut()) {
                 let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
                 let fetched = Some(&mut tracer.fetched);
                 let mut bus = crate::capture::TracingBus { inner, log: &mut tracer.log, fetched };
+                self.cpu.step(&mut bus)
+            } else if let (Some(false), Some(tracer)) = (tracing, self.tracer.as_deref_mut()) {
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
+                let mut bus = crate::capture::InterruptBus { inner, log: &mut tracer.log };
                 self.cpu.step(&mut bus)
             } else if let Some(contracts) = self.contracts.as_deref_mut()
                 && contracts.tracing()

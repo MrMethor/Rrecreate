@@ -37,6 +37,8 @@ pub(crate) enum Access {
     Read(u32, u8),
     Write(u32, u8),
     Port,
+    /// An interrupt handler wrote this byte while the call ran.
+    InterruptWrite(u32),
 }
 
 /// The tracing in force while captured functions run: one log for all of them, nested; each
@@ -263,7 +265,7 @@ impl Machine {
             tracer.reset();
             hybrid.spare_tracer = Some(tracer);
         }
-        let (inputs, mut written, ports) = match (stop, accesses) {
+        let (inputs, mut written, ports, interrupted) = match (stop, accesses) {
             (_, Some(accesses)) => accesses,
             (crate::Stop::CycleLimit, None) => return Ok(None),
             (other, None) => return Err(other),
@@ -285,6 +287,11 @@ impl Machine {
         let video = |addr: &u32| addr.wrapping_sub(0xA_0000) < 0x2_0000;
         if inputs.keys().chain(written.keys()).any(video) {
             unreplayable = Some("video memory".to_string());
+        }
+        if interrupted {
+            // A replay gives it the value from before the interrupt (a timer tick between two reads
+            // of the time): dual-run, which runs the original again without interrupts, checks it.
+            unreplayable = Some("reads memory an interrupt changed during the call".to_string());
         }
         written.retain(|addr, _| !dead.contains(addr));
         let mut h = Fnv64::default();
@@ -310,17 +317,22 @@ impl Machine {
 }
 
 /// What a call's accesses come to: the bytes it read before writing them, the final values of
-/// the bytes it wrote, and whether it used ports. `seen` is room for the bytes already read or
-/// written.
-fn sort_accesses(log: &[Access], seen: &mut ByteSet) -> (BTreeMap<u32, u8>, BTreeMap<u32, u8>, bool) {
+/// the bytes it wrote, whether it used ports, and whether it read a byte an interrupt handler
+/// changed while it ran. `seen` is room for the bytes already read or written.
+fn sort_accesses(log: &[Access], seen: &mut ByteSet) -> (BTreeMap<u32, u8>, BTreeMap<u32, u8>, bool, bool) {
     seen.clear();
     let (mut inputs, mut written, mut ports) = (Vec::new(), BTreeMap::new(), false);
+    let (mut changed, mut interrupted) = (BTreeSet::new(), false);
     for access in log {
         match *access {
             Access::Read(addr, value) => {
+                interrupted |= changed.contains(&addr);
                 if seen.insert(addr) {
                     inputs.push((addr, value));
                 }
+            }
+            Access::InterruptWrite(addr) => {
+                changed.insert(addr);
             }
             Access::Write(addr, value) => {
                 seen.insert(addr);
@@ -330,7 +342,37 @@ fn sort_accesses(log: &[Access], seen: &mut ByteSet) -> (BTreeMap<u32, u8>, BTre
         }
     }
     inputs.sort_unstable_by_key(|&(addr, _)| addr);
-    (inputs.into_iter().collect(), written, ports)
+    (inputs.into_iter().collect(), written, ports, interrupted)
+}
+
+/// The bus while a captured call is interrupted: the handler's writes are logged (for
+/// [`sort_accesses`]), nothing else.
+pub(crate) struct InterruptBus<'a, 'b> {
+    pub(crate) inner: PcBus<'a>,
+    pub(crate) log: &'b mut Vec<Access>,
+}
+
+impl Bus for InterruptBus<'_, '_> {
+    fn read_u8(&mut self, addr: u32) -> u8 {
+        self.inner.read_u8(addr)
+    }
+
+    fn write_u8(&mut self, addr: u32, value: u8) {
+        self.log.push(Access::InterruptWrite(addr));
+        self.inner.write_u8(addr, value);
+    }
+
+    fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
+        self.inner.code_window(addr)
+    }
+
+    fn port_in_u8(&mut self, port: u16) -> u8 {
+        self.inner.port_in_u8(port)
+    }
+
+    fn port_out_u8(&mut self, port: u16, value: u8) {
+        self.inner.port_out_u8(port, value);
+    }
 }
 
 impl Capture {

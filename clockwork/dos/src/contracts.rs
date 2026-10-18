@@ -712,6 +712,7 @@ impl Contracts {
             let (addr, write) = match access {
                 Access::Read(addr, _) => (addr, false),
                 Access::Write(addr, _) => (addr, true),
+                Access::InterruptWrite(_) => continue,
                 Access::Port => {
                     if let Some((offset, ..)) = frame {
                         self.functions.entry(offset).or_default().ports = true;
