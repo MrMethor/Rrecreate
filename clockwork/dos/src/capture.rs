@@ -72,8 +72,11 @@ impl Tracer {
     }
 
     /// Before each instruction: back from a handler? Returns whether the function itself runs.
+    /// Back at a context means back from every handler that interrupted it: a second interrupt
+    /// can arrive there before any instruction runs (one pending while the first handler ran),
+    /// and then two entries name the same place.
     pub(crate) fn active(&mut self, regs: &Regs) -> bool {
-        if let Some(&(cs, ip, ss, sp)) = self.interrupted.last()
+        while let Some(&(cs, ip, ss, sp)) = self.interrupted.last()
             && regs.cs() == cs
             && regs.ip as u16 == ip
             && regs.ss() == ss
@@ -609,4 +612,28 @@ pub fn replay_with(capture: &Capture, o: Override, callees: &[Override]) -> Diff
         }
     }
     differences
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_interrupts_at_one_place_both_end_there() {
+        let mut function = Regs { seg: [0, 0x1821, 0x389B, 0x389B, 0, 0], ip: 0x762, ..Regs::default() };
+        function.set_sp(0xFF6A);
+        let mut handler = function;
+        handler.ip = 0x9;
+        handler.set_sp(0xFF64);
+        let mut t = Tracer::default();
+        assert!(t.active(&function));
+        t.interrupt(&function);
+        assert!(!t.active(&handler));
+        // The handler returned, and a second interrupt, pending meanwhile, came before any
+        // instruction ran here: the same place interrupted twice.
+        t.interrupt(&function);
+        assert!(!t.active(&handler));
+        assert!(t.active(&function), "back from both handlers: the function runs");
+        assert!(t.interrupted.is_empty());
+    }
 }

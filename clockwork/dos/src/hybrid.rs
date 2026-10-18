@@ -492,13 +492,18 @@ impl IsrWatch {
         self.interrupted.push((regs.cs(), regs.ip as u16, regs.ss(), regs.sp()));
     }
 
-    /// Before each instruction: back from the innermost handler?
+    /// Before each instruction: back from the innermost handler? From all of them that
+    /// interrupted this place: a second interrupt can arrive before any instruction runs here.
     pub(crate) fn step(&mut self, regs: &cpu::Regs, mem: &machine::memory::Memory) {
-        let Some(&(cs, ip, ss, sp)) = self.interrupted.last() else { return };
-        if regs.cs() != cs || regs.ip as u16 != ip || regs.ss() != ss || regs.sp() != sp {
+        let back = |&(cs, ip, ss, sp): &(u16, u16, u16, u16)| {
+            regs.cs() == cs && regs.ip as u16 == ip && regs.ss() == ss && regs.sp() == sp
+        };
+        if !self.interrupted.last().is_some_and(back) {
             return;
         }
-        self.interrupted.pop();
+        while self.interrupted.last().is_some_and(back) {
+            self.interrupted.pop();
+        }
         if self.interrupted.is_empty()
             && let Some(before) = self.before.take()
         {
