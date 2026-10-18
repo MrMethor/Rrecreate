@@ -22,6 +22,9 @@ tinyaudio = "2"
 midir = "0.11"
 gilrs = "0.11"
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "intel"] }
+# PNG screenshots (deflate in pure Rust, and the chunks' CRC).
+flate2 = "1"
+crc32fast = "1"
 
 [lints]
 workspace = true
