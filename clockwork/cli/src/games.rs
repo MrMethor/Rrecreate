@@ -104,7 +104,7 @@ pub fn cmd_replay(args: &[String], extension: Option<&dyn crate::Extension>) -> 
             (None, _) => ("no-override", Vec::new()),
             (_, Some(reason)) => ("unreplayable", vec![reason.clone()]),
             (Some(o), None) => {
-                let differences = dos::capture::replay(&capture, *o);
+                let differences = dos::capture::replay_with(&capture, *o, &overrides);
                 let status = if differences.is_empty() {
                     "pass"
                 } else if dos::capture::calls_program(&differences) {

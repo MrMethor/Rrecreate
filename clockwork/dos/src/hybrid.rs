@@ -666,10 +666,11 @@ impl Machine {
         stack: &[u16],
     ) -> Result<(), String> {
         let hybrid = self.hybrid.as_ref().ok_or("no program is hooked")?;
-        if hybrid.replaying {
+        let linear = hybrid.base + offset;
+        // A replay holds no code: only a callee with a Rust version can run.
+        if hybrid.replaying && !hybrid.hooked(linear) {
             return Err(format!("{} ({offset:05X})", crate::capture::CALLS_PROGRAM));
         }
-        let linear = hybrid.base + offset;
         let regs = self.cpu.regs;
         let (ss, cs, ip) = (regs.ss(), regs.cs(), regs.ip as u16);
         let mut sp = regs.sp();

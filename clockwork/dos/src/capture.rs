@@ -365,12 +365,20 @@ pub fn calls_program(differences: &[String]) -> bool {
 /// Runs override `o` on a fresh machine holding only the capture's inputs, and compares its
 /// results with the capture's outputs under the convention.
 pub fn replay(capture: &Capture, o: Override) -> Differences {
+    replay_with(capture, o, &[])
+}
+
+/// [`replay`], with `callees` (the other overrides of the program) in place: the machine holds
+/// no code, so a function `o` calls ([`crate::hybrid::Call::call`]) runs as its Rust version, and
+/// one without a Rust version can't run.
+pub fn replay_with(capture: &Capture, o: Override, callees: &[Override]) -> Differences {
     let mut m = Machine::new(Config::default(), Vfs::new());
     for (&addr, &value) in &capture.inputs {
         m.write_u8(addr, value);
     }
     capture.entry.apply(&mut m.cpu.regs);
-    let mut hybrid = Hybrid::new("", capture.base, vec![o]);
+    let others = callees.iter().filter(|c| c.offset != o.offset).copied();
+    let mut hybrid = Hybrid::new("", capture.base, std::iter::once(o).chain(others).collect());
     hybrid.set_all(Mode::Rust);
     hybrid.replaying = true;
     m.hybrid = Some(Box::new(hybrid));
