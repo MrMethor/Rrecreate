@@ -2925,6 +2925,58 @@ fn rust_calls_a_far_function_in_its_own_segment() {
 }
 
 #[test]
+fn an_override_hands_pointers_to_its_locals_to_the_program() {
+    use dos::hybrid::{Call, Convention, Mode, Override, regs::AX};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    // `fill(int *a, int *b)` stores 7 and 35 through its pointers; the override reads them back
+    // from its locals. The program exits with their sum, or 99 if SP didn't come back.
+    static FILL: AtomicU32 = AtomicU32::new(0);
+    fn reader(c: &mut Call) -> Result<(), String> {
+        let at = c.locals(4);
+        c.call(FILL.load(Ordering::Relaxed), Convention::cdecl(false, 4, 0), &[at, at + 2])?;
+        let stack = c.m.cpu.regs.ss();
+        let sum = c.read16(stack, at) + c.read16(stack, at + 2);
+        c.ret16(sum);
+        Ok(())
+    }
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["reader", "fill"] {
+            offsets.borrow_mut().insert(name, (a.addr(name) as u32).wrapping_sub(0x100));
+        }
+        a.mov(si, sp)?;
+        let reader = a.l("reader");
+        a.call(reader)?;
+        a.cmp(si, sp)?;
+        let fail = a.l("fail");
+        a.jne(fail)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("fail")?;
+        a.mov(ax, 0x4C63)?;
+        a.int(0x21)?;
+        a.here("reader")?;
+        a.xor(ax, ax)?;
+        a.ret()?;
+        a.here("fill")?;
+        a.push(bp)?;
+        a.mov(bp, sp)?;
+        a.mov(bx, word_ptr(bp + 4))?;
+        a.mov(word_ptr(bx), 7u32)?;
+        a.mov(bx, word_ptr(bp + 6))?;
+        a.mov(word_ptr(bx), 35u32)?;
+        a.pop(bp)?;
+        a.ret()
+    });
+    let offsets = offsets.into_inner();
+    FILL.store(offsets["fill"], Ordering::Relaxed);
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let o = Override { offset: offsets["reader"], name: "reader", conv: Convention::cdecl(false, 0, AX), run: reader };
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Rust);
+    assert_eq!(m.run(SECOND), Stop::Exited(42));
+}
+
+#[test]
 fn an_override_changes_its_stack_argument_as_c_code_may() {
     let offsets = std::cell::RefCell::new(BTreeMap::new());
     // push 20; call bump; pop ax: the exit code is the argument as the callee left it.
@@ -2958,8 +3010,101 @@ fn an_override_changes_its_stack_argument_as_c_code_may() {
 
 #[test]
 fn an_override_waits_for_the_timer_interrupt() {
+    let (program, offset) = tick_waiter();
+    use dos::hybrid::{Convention, Mode, Override};
+    for mode in [Mode::Original, Mode::Rust] {
+        let mut m = boot(&[("P.COM", &program)], "P.COM");
+        let o = Override { offset, name: "wait_tick", conv: Convention::cdecl(false, 0, 0), run: wait_tick };
+        m.start_hybrid("P.COM", vec![o]).set_all(mode);
+        assert_eq!(m.run(SECOND), Stop::Exited(3), "{mode:?}");
+    }
+}
+
+#[test]
+fn a_session_diff_runs_a_function_that_waits_for_the_timer() {
+    // Atomic, the original would spin forever: its calls run with interrupts on, and the
+    // override waits to the cycles the original took them at.
+    let (program, offset) = tick_waiter();
+    use dos::hybrid::{Convention, Mode, Override};
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let o = Override { offset, name: "wait_tick", conv: Convention::cdecl(false, 0, 0), run: wait_tick };
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Rust);
+    let (m, d) = dos::lockstep::diff(m, SECOND, 20_000);
+    assert_eq!(d.divergence, None, "{:#?}", m.hybrid.as_ref().unwrap().findings);
+    assert_eq!(d.stop, Stop::Exited(3));
+    assert_eq!(d.calls, 3);
+}
+
+#[test]
+fn a_tick_after_the_original_stopped_waiting_comes_after_the_call() {
+    // `late` waits for a tick, then works for longer than a tick before it reads the count: run
+    // with interrupts on, the original sees a second tick that the override, taking no time,
+    // never does. The session diff runs the original again taking only the tick the override
+    // waited for; the second comes after the call on both machines.
     let offsets = std::cell::RefCell::new(BTreeMap::new());
-    // Three waits for the BIOS tick count (0:46C) to change; the exit code is how far it moved.
+    let program = com(|a| {
+        offsets.borrow_mut().insert("late", (a.addr("late") as u32).wrapping_sub(0x100));
+        a.xor(ax, ax)?;
+        a.mov(ds, ax)?;
+        a.mov(si, word_ptr(0x46C))?;
+        let late = a.l("late");
+        a.call(late)?;
+        a.sub(ax, si)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("late")?;
+        a.mov(dx, word_ptr(0x46C))?;
+        a.here("spin")?;
+        a.cmp(dx, word_ptr(0x46C))?;
+        let spin = a.l("spin");
+        a.je(spin)?;
+        a.mov(bx, 10)?;
+        a.here("outer")?;
+        a.xor(cx, cx)?;
+        a.here("inner")?;
+        let inner = a.l("inner");
+        a.loop_(inner)?;
+        a.dec(bx)?;
+        let outer = a.l("outer");
+        a.jne(outer)?;
+        a.mov(ax, word_ptr(0x46C))?;
+        a.ret()
+    });
+    fn late(c: &mut dos::hybrid::Call) -> Result<(), String> {
+        let start = c.read16(0, 0x46C);
+        while c.read16(0, 0x46C) == start {
+            c.wait_for_interrupt()?;
+        }
+        let now = c.read16(0, 0x46C);
+        c.ret16(now);
+        Ok(())
+    }
+    use dos::hybrid::{Convention, Mode, Override, regs::AX};
+    let offset = offsets.into_inner()["late"];
+    let o = Override { offset, name: "late", conv: Convention::cdecl(false, 0, AX), run: late };
+    let mut plain = boot(&[("P.COM", &program)], "P.COM");
+    plain.start_hybrid("P.COM", vec![o]);
+    assert_eq!(plain.run(SECOND), Stop::Exited(2), "alone, the original sees the second tick");
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Rust);
+    let (m, d) = dos::lockstep::diff(m, SECOND, 20_000);
+    assert_eq!(d.divergence, None, "{:#?}", m.hybrid.as_ref().unwrap().findings);
+    assert_eq!(d.stop, Stop::Exited(1));
+}
+
+/// Waits for the BIOS tick count (0:46C) to change.
+fn wait_tick(c: &mut dos::hybrid::Call) -> Result<(), String> {
+    let start = c.read16(0, 0x46C);
+    while c.read16(0, 0x46C) == start {
+        c.wait_for_interrupt()?;
+    }
+    Ok(())
+}
+
+/// Three waits for the BIOS tick count to change; the exit code is how far it moved. Returns the
+/// program and `wait_tick`'s offset.
+fn tick_waiter() -> (Vec<u8>, u32) {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
     let program = com(|a| {
         offsets.borrow_mut().insert("wait_tick", (a.addr("wait_tick") as u32).wrapping_sub(0x100));
         a.xor(ax, ax)?;
@@ -2981,21 +3126,7 @@ fn an_override_waits_for_the_timer_interrupt() {
         a.je(spin)?;
         a.ret()
     });
-    fn wait_tick(c: &mut dos::hybrid::Call) -> Result<(), String> {
-        let start = c.read16(0, 0x46C);
-        while c.read16(0, 0x46C) == start {
-            c.wait_for_interrupt()?;
-        }
-        Ok(())
-    }
-    use dos::hybrid::{Convention, Mode, Override};
-    let offset = offsets.into_inner()["wait_tick"];
-    for mode in [Mode::Original, Mode::Rust] {
-        let mut m = boot(&[("P.COM", &program)], "P.COM");
-        let o = Override { offset, name: "wait_tick", conv: Convention::cdecl(false, 0, 0), run: wait_tick };
-        m.start_hybrid("P.COM", vec![o]).set_all(mode);
-        assert_eq!(m.run(SECOND), Stop::Exited(3), "{mode:?}");
-    }
+    (program, offsets.into_inner()["wait_tick"])
 }
 
 #[test]

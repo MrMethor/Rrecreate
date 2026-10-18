@@ -546,6 +546,18 @@ impl Call<'_> {
         self.write16(ss, first.wrapping_add(2 * i), value);
     }
 
+    /// Reserves `bytes` (rounded up to words) of stack below SP for locals the override hands to
+    /// the program's functions, as C code passes `&local`; returns their offset in SS. They last
+    /// until the override returns (the host puts SP back then), and calls made meanwhile push
+    /// below them. A near pointer to them reaches them where SS is DS (DGROUP programs); else
+    /// pass SS and the offset as a far pointer. They are part of the call's dead stack, which
+    /// dual-run and session diffs don't compare.
+    pub fn locals(&mut self, bytes: u16) -> u16 {
+        let sp = self.m.cpu.regs.sp().wrapping_sub(bytes.wrapping_add(1) & !1);
+        self.m.cpu.regs.set_sp(sp);
+        sp
+    }
+
     /// Words `i` and `i + 1` of stack arguments as a 32-bit value (a `long`, or a far pointer as
     /// offset and segment).
     pub fn arg32(&mut self, i: u16) -> u32 {

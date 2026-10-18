@@ -557,6 +557,15 @@ pub struct Machine {
     pub(crate) isr_watch: Option<crate::hybrid::IsrWatch>,
     /// While a captured call runs: its accesses.
     pub(crate) tracer: Option<Box<crate::capture::Tracer>>,
+    /// While a session diff's reference runs a call that waits for interrupts: the cycles it took
+    /// them at, and the cycles it serviced device events at ([`crate::lockstep`]).
+    pub(crate) irq_log: Option<Vec<u64>>,
+    pub(crate) service_log: Option<Vec<u64>>,
+    /// While the test machine stands in for that call: interrupts are taken and device events
+    /// serviced only at these cycles, the reference's, so that handlers run, sound advances and
+    /// frames are captured at the same times on both machines.
+    pub(crate) irq_schedule: Option<VecDeque<u64>>,
+    pub(crate) service_schedule: Option<VecDeque<u64>>,
     /// While a captured call replays: the memory it holds ([`crate::capture::replay`]).
     pub(crate) replay: Option<Box<crate::capture::Held>>,
     /// A hooked call in a session diff ([`crate::lockstep`]) or a replayed captured call: no
@@ -607,6 +616,10 @@ impl Machine {
             return_trap: None,
             isr_watch: None,
             tracer: None,
+            irq_log: None,
+            service_log: None,
+            irq_schedule: None,
+            service_schedule: None,
             replay: None,
             atomic: false,
             atomic_since: 0,
@@ -659,13 +672,20 @@ impl Machine {
             if self.cpu.cycles >= limit {
                 return Stop::CycleLimit;
             }
-            if self.cpu.cycles >= self.next_event && !self.atomic {
-                self.service_events();
+            if !self.atomic && self.service_due() {
+                self.scheduled_service();
             }
             if self.cpu.interrupts_enabled()
                 && !self.atomic
+                && self.irq_scheduled()
                 && let Some(vector) = self.devices.acknowledge()
             {
+                if let Some(schedule) = &mut self.irq_schedule {
+                    schedule.pop_front();
+                }
+                if let Some(log) = &mut self.irq_log {
+                    log.push(self.cpu.cycles);
+                }
                 let vector = crate::dpmi::irq_vector(self, vector);
                 self.halted = false;
                 if let Some(trap) = &mut self.return_trap {
@@ -1137,8 +1157,59 @@ impl Machine {
         {
             return Some(Stop::WaitingForInput);
         }
-        self.cpu.cycles = self.cpu.cycles.max(self.next_event.min(limit));
+        self.cpu.cycles = self.cpu.cycles.max(self.next_wake(limit));
         None
+    }
+
+    /// When an idle CPU next has something to do: a device event, or with schedules, the next
+    /// scheduled service or interrupt (a device may raise an interrupt before its cycle).
+    fn next_wake(&self, limit: u64) -> u64 {
+        let mut until = match &self.service_schedule {
+            Some(s) => s.front().copied().unwrap_or(limit),
+            None => self.next_event,
+        }
+        .min(limit);
+        if let Some(&at) = self.irq_schedule.as_ref().and_then(|s| s.front())
+            && at > self.cpu.cycles
+        {
+            until = until.min(at);
+        }
+        until
+    }
+
+    /// Whether an interrupt may be taken now: always, unless a schedule says when.
+    fn irq_scheduled(&self) -> bool {
+        self.irq_schedule.as_ref().is_none_or(|s| s.front().is_some_and(|&at| self.cpu.cycles >= at))
+    }
+
+    /// Whether device events are due: by their time, or by the schedule if there is one.
+    fn service_due(&self) -> bool {
+        match &self.service_schedule {
+            Some(s) => s.front().is_some_and(|&at| self.cpu.cycles >= at),
+            None => self.cpu.cycles >= self.next_event,
+        }
+    }
+
+    fn scheduled_service(&mut self) {
+        if let Some(schedule) = &mut self.service_schedule {
+            schedule.pop_front();
+        }
+        if let Some(log) = &mut self.service_log {
+            log.push(self.cpu.cycles);
+        }
+        self.service_events();
+    }
+
+    /// Lets time pass to `until` as a halted CPU whose interrupts are held: device events are
+    /// serviced (when due, or at the scheduled cycles), no instruction runs, no interrupt is taken.
+    pub(crate) fn pass_time(&mut self, until: u64) {
+        while self.cpu.cycles < until {
+            if self.service_due() {
+                self.scheduled_service();
+            } else {
+                self.cpu.cycles = self.next_wake(until).max(self.cpu.cycles + 1).min(until);
+            }
+        }
     }
 
     fn service_events(&mut self) {
