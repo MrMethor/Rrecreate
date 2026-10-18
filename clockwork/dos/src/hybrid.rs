@@ -278,15 +278,14 @@ pub struct Hybrid {
     /// Captures in progress, nested: calls inside a captured call are captured too, but a Rust
     /// override doesn't run there (its accesses would be missing from the outer capture).
     pub(crate) capturing: usize,
+    /// The tracer of the last capture, reused by the next (its log's room and fetched set).
+    pub(crate) spare_tracer: Option<Box<crate::capture::Tracer>>,
     /// In a session diff ([`crate::lockstep`]): stop at hooked entries with [`Stop::Hooked`];
     /// and, on the reference side, run every hooked function as the original.
     pub(crate) pause: bool,
     pub(crate) originals_only: bool,
     /// The hooked entry the original was started at, not to be hooked again right away.
     pub(crate) skip: Option<u32>,
-    /// Replaying a captured call ([`crate::capture::replay`]): the machine holds the data the
-    /// original read, not the program's code, so an override can't call into it.
-    pub(crate) replaying: bool,
     /// What each override was written against ([`Hybrid::expect`]), by offset.
     signatures: BTreeMap<u32, Signature>,
     /// The code at each override's entry when it was first called, by offset.
@@ -311,10 +310,10 @@ impl Hybrid {
             dual_limit: 100,
             in_dual: false,
             capturing: 0,
+            spare_tracer: None,
             pause: false,
             originals_only: false,
             skip: None,
-            replaying: false,
         };
         for (i, (o, _)) in hybrid.overrides.iter().enumerate() {
             hybrid.by_linear.insert(base + o.offset, i);
@@ -695,12 +694,7 @@ impl Machine {
         conv: Convention,
         stack: &[u16],
     ) -> Result<(), String> {
-        let hybrid = self.hybrid.as_ref().ok_or("no program is hooked")?;
-        let linear = hybrid.base + offset;
-        // A replay holds no code: only a callee with a Rust version can run.
-        if hybrid.replaying && !hybrid.hooked(linear) {
-            return Err(format!("{} ({offset:05X})", crate::capture::CALLS_PROGRAM));
-        }
+        let linear = self.hybrid.as_ref().ok_or("no program is hooked")?.base + offset;
         let regs = self.cpu.regs;
         let (ss, cs, ip) = (regs.ss(), regs.cs(), regs.ip as u16);
         let mut sp = regs.sp();
@@ -739,13 +733,15 @@ impl Machine {
                 }
                 Ok(())
             }
+            // A replay that ran out of the code it holds says so as it is.
+            Stop::Override(e) if self.replay.is_some() => Err(e),
             other => Err(format!("the call to {offset:05X} didn't return: {other:?}")),
         }
     }
 
     /// Halts until a hardware interrupt has been handled ([`Call::wait_for_interrupt`]).
     pub fn wait_for_interrupt(&mut self) -> Result<(), String> {
-        if self.hybrid.as_ref().is_some_and(|h| h.replaying) {
+        if self.replay.is_some() {
             return Err(crate::capture::WAITS_FOR_INTERRUPT.into());
         }
         let regs = self.cpu.regs;
@@ -781,6 +777,7 @@ impl Machine {
         let trap = ReturnTrap::new(cs, ip, ss, before, sp);
         match self.run_to_return(trap, MAX_DUAL_CYCLES).0 {
             Stop::Returned => Ok(()),
+            Stop::Override(e) if self.replay.is_some() => Err(e),
             other => Err(format!("INT {vector:02X}h didn't return: {other:?}")),
         }
     }

@@ -554,6 +554,8 @@ pub struct Machine {
     pub(crate) isr_watch: Option<crate::hybrid::IsrWatch>,
     /// While a captured call runs: its accesses.
     pub(crate) tracer: Option<Box<crate::capture::Tracer>>,
+    /// While a captured call replays: the memory it holds ([`crate::capture::replay`]).
+    pub(crate) replay: Option<Box<crate::capture::Held>>,
     /// A hooked call in a session diff ([`crate::lockstep`]): no device events are serviced and no
     /// interrupt is taken until it returns.
     pub(crate) atomic: bool,
@@ -600,6 +602,7 @@ impl Machine {
             return_trap: None,
             isr_watch: None,
             tracer: None,
+            replay: None,
             atomic: false,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
@@ -710,15 +713,25 @@ impl Machine {
             {
                 let now = self.cpu.cycles;
                 let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
-                let mut bus = crate::capture::TracingBus { inner, log: &mut tracer.log };
+                let fetched = Some(&mut tracer.fetched);
+                let mut bus = crate::capture::TracingBus { inner, log: &mut tracer.log, fetched };
                 self.cpu.step(&mut bus)
             } else if let Some(contracts) = self.contracts.as_deref_mut()
                 && contracts.tracing()
             {
                 let now = self.cpu.cycles;
                 let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
-                let mut bus = crate::capture::TracingBus { inner, log: &mut contracts.log };
+                let mut bus = crate::capture::TracingBus { inner, log: &mut contracts.log, fetched: None };
                 self.cpu.step(&mut bus)
+            } else if let Some(held) = self.replay.as_deref_mut() {
+                let now = self.cpu.cycles;
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let mut bus = crate::capture::ReplayBus { inner, held };
+                let result = self.cpu.step(&mut bus);
+                if let Some(addr) = bus.held.missing {
+                    return Stop::Override(format!("{} ({addr:05X})", crate::capture::CALLS_PROGRAM));
+                }
+                result
             } else {
                 let (cpu, mut bus) = self.split();
                 cpu.step(&mut bus)

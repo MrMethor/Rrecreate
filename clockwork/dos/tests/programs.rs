@@ -2998,6 +2998,84 @@ fn an_override_waits_for_the_timer_interrupt() {
     }
 }
 
+#[test]
+fn a_captured_call_into_the_program_replays_with_its_code() {
+    use dos::capture::{Capture, calls_program, replay};
+    use dos::hybrid::{Call, Convention, Mode, Override, regs};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    // `outer` far-calls `target`, which near-calls `helper` (a write) and reads `bias`. The Rust
+    // `outer` calls the original `target`: its captured call holds the code that ran.
+    static TARGET: AtomicU32 = AtomicU32::new(0);
+    fn outer(c: &mut Call) -> Result<(), String> {
+        c.call_in(0xFFF0, TARGET.load(Ordering::Relaxed), Convention::custom(true, 0, regs::AX, 0, 0), &[])
+    }
+    fn wrong(c: &mut Call) -> Result<(), String> {
+        c.m.cpu.regs.set_ax(6);
+        outer(c)
+    }
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["outer", "target", "result", "doubled"] {
+            offsets.borrow_mut().insert(name, (a.addr(name) as u32).wrapping_sub(0x100));
+        }
+        a.mov(ax, 5)?;
+        let outer = a.l("outer");
+        a.call(outer)?;
+        let result = word_at(a, "result");
+        a.mov(result, ax)?;
+        exit(a, 0)?;
+        a.here("helper")?;
+        a.add(ax, ax)?;
+        let doubled = word_at(a, "doubled");
+        a.mov(doubled, ax)?;
+        a.ret()?;
+        a.here("outer")?;
+        a.push(cs)?;
+        let target = a.l("target");
+        a.call(target)?;
+        a.ret()?;
+        a.here("target")?;
+        let helper = a.l("helper");
+        a.call(helper)?;
+        let bias = word_at(a, "bias");
+        a.add(ax, bias)?;
+        a.retf()?;
+        a.here("result")?;
+        a.dw(&[0])?;
+        a.here("doubled")?;
+        a.dw(&[0])?;
+        a.here("bias")?;
+        a.dw(&[1])
+    });
+    let offsets = offsets.into_inner();
+    TARGET.store(offsets["target"], Ordering::Relaxed);
+    let conv = Convention::custom(false, 0, regs::AX, 0, 0);
+    let o = Override { offset: offsets["outer"], name: "outer", conv, run: outer };
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Capture);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    assert_eq!(word_at_offset(&m, offsets["result"] as i32 + 0x100), 11);
+    let captures = m.hybrid.take().unwrap().captures;
+    let [capture] = &captures[..] else { panic!("{captures:?}") };
+    assert_eq!((capture.entry.gpr[0], capture.exit.gpr[0], capture.unreplayable.as_deref()), (5, 11, None));
+    let (entry, target) = (capture.base + offsets["outer"], capture.base + offsets["target"]);
+    assert!(capture.inputs.contains_key(&entry) && capture.inputs.contains_key(&target), "{capture:?}");
+    assert_eq!(replay(capture, o), Vec::<String>::new());
+    assert_eq!(replay(&Capture::from_line(&capture.to_line()).unwrap(), o), Vec::<String>::new());
+    // The callee's results are compared too.
+    let doubled = capture.base + offsets["doubled"];
+    assert_eq!(
+        replay(capture, Override { run: wrong, ..o }),
+        ["AX 000B != 000D".to_string(), format!("[{doubled:05X}] 0A != 0C")]
+    );
+    // Without the callee's code (a capture from before captures held code) the replay says so
+    // instead of running zeroed memory.
+    let mut old = capture.clone();
+    old.inputs.retain(|&addr, _| !(target..capture.base + offsets["result"]).contains(&addr));
+    let differences = replay(&old, o);
+    assert!(calls_program(&differences) && differences[0].contains(&format!("({target:05X})")), "{differences:?}");
+}
+
 /// Prints its command tail and exits with code 3.
 fn tail_echo() -> Vec<u8> {
     com(|a| {

@@ -1,15 +1,16 @@
 //! Captured-call tests (PROJECT.md §5.2, "Captured-call tests"; layer L1 of §8): while a session
 //! runs, a function in [`crate::hybrid::Mode::Capture`] runs its original under a tracing bus,
 //! and the call becomes a test vector: the registers at entry and the bytes it read before
-//! writing them (its inputs), the registers after it returned and the bytes it wrote (its
-//! outputs). [`replay`] runs an override on a fresh machine given only the inputs and compares
-//! the outputs, thousands of calls a second, without the session.
+//! writing them (its inputs: data and the code it ran), the registers after it returned and the
+//! bytes it wrote (its outputs). [`replay`] runs an override on a fresh machine given only the
+//! inputs and compares the outputs, thousands of calls a second, without the session. An
+//! override that calls the program's functions runs their code from the inputs.
 //!
 //! What interrupt handlers do meanwhile isn't the function's doing and isn't recorded. A call is
 //! replayable when it only touched ordinary memory: port I/O, host services (DOS, BIOS) and video
 //! memory need device state a vector doesn't hold, so such calls are recorded but marked.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cpu::{Bus, Regs};
 use machine::hash::Fnv64;
@@ -43,6 +44,11 @@ pub(crate) enum Access {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Tracer {
     pub(crate) log: Vec<Access>,
+    /// Instruction bytes fetched since the latest capture began: only a byte's first fetch is
+    /// logged (later ones add nothing to what the capture read).
+    pub(crate) fetched: ByteSet,
+    /// Room for [`sort_accesses`].
+    seen: ByteSet,
     /// Interrupted contexts (CS, IP, SS, SP): inside a handler while any.
     interrupted: Vec<(u16, u16, u16, u16)>,
     /// Host services the function itself called.
@@ -50,6 +56,15 @@ pub(crate) struct Tracer {
 }
 
 impl Tracer {
+    /// As new, keeping what it allocated.
+    fn reset(&mut self) {
+        self.log.clear();
+        self.interrupted.clear();
+        self.services = 0;
+        self.fetched.clear();
+        self.seen.clear();
+    }
+
     pub(crate) fn interrupt(&mut self, regs: &Regs) {
         self.interrupted.push((regs.cs(), regs.ip as u16, regs.ss(), regs.sp()));
     }
@@ -68,10 +83,56 @@ impl Tracer {
     }
 }
 
-/// A bus that logs data accesses (instruction fetches aren't data).
+/// A set of physical addresses: a bit each in the real-mode address space (the HMA included),
+/// where nearly all of a captured call's accesses are. Clearing it clears only the words it set.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ByteSet {
+    bits: Vec<u64>,
+    touched: Vec<u32>,
+    beyond: BTreeSet<u32>,
+}
+
+impl ByteSet {
+    const SIZE: u32 = 0x11_0000;
+
+    /// Adds `addr`, and returns whether it was new.
+    pub(crate) fn insert(&mut self, addr: u32) -> bool {
+        if addr >= Self::SIZE {
+            return self.beyond.insert(addr);
+        }
+        if self.bits.is_empty() {
+            self.bits = vec![0; (Self::SIZE / 64) as usize];
+        }
+        let (word, bit) = ((addr / 64) as usize, 1u64 << (addr % 64));
+        if self.bits[word] == 0 {
+            self.touched.push(word as u32);
+        }
+        let new = self.bits[word] & bit == 0;
+        self.bits[word] |= bit;
+        new
+    }
+
+    pub(crate) fn contains(&self, addr: u32) -> bool {
+        if addr >= Self::SIZE {
+            return self.beyond.contains(&addr);
+        }
+        !self.bits.is_empty() && self.bits[(addr / 64) as usize] >> (addr % 64) & 1 != 0
+    }
+
+    pub(crate) fn clear(&mut self) {
+        for word in self.touched.drain(..) {
+            self.bits[word as usize] = 0;
+        }
+        self.beyond.clear();
+    }
+}
+
+/// A bus that logs data accesses, and instruction fetches as reads when it has `fetched`: a
+/// captured call's code is one of its inputs (contract inference wants data only).
 pub(crate) struct TracingBus<'a, 'b> {
     pub(crate) inner: PcBus<'a>,
     pub(crate) log: &'b mut Vec<Access>,
+    pub(crate) fetched: Option<&'b mut ByteSet>,
 }
 
 impl Bus for TracingBus<'_, '_> {
@@ -87,11 +148,18 @@ impl Bus for TracingBus<'_, '_> {
     }
 
     fn fetch_u8(&mut self, addr: u32) -> u8 {
-        self.inner.read_u8(addr)
+        let value = self.inner.read_u8(addr);
+        if let Some(fetched) = &mut self.fetched
+            && fetched.insert(addr)
+        {
+            self.log.push(Access::Read(addr, value));
+        }
+        value
     }
 
     fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
-        self.inner.code_window(addr)
+        // Logged code is fetched byte by byte: a window reads ahead of what runs.
+        if self.fetched.is_some() { None } else { self.inner.code_window(addr) }
     }
 
     fn port_in_u8(&mut self, port: u16) -> u8 {
@@ -148,14 +216,14 @@ pub struct Capture {
     pub base: u32,
     pub cycle: u64,
     pub entry: Registers,
-    /// Bytes read before being written, by physical address.
+    /// Bytes read before being written, by physical address: data, and the code that ran.
     pub inputs: BTreeMap<u32, u8>,
     pub exit: Registers,
     /// Final values of the bytes written (the dead stack left out).
     pub writes: BTreeMap<u32, u8>,
     /// Why it can't be replayed, if it can't.
     pub unreplayable: Option<String>,
-    /// Of the entry registers and inputs: equal hashes, equal calls.
+    /// Of the entry registers and inputs (code included): equal hashes, equal calls.
     pub input_hash: u64,
 }
 
@@ -176,26 +244,31 @@ impl Machine {
         };
         let entry = Registers::of(&regs);
         let cycle = self.cpu.cycles;
-        self.hybrid.as_mut().expect("hooked").capturing += 1;
-        let tracer = self.tracer.get_or_insert_with(Box::default);
+        let hybrid = self.hybrid.as_mut().expect("hooked");
+        hybrid.capturing += 1;
+        let tracer = self.tracer.get_or_insert_with(|| hybrid.spare_tracer.take().unwrap_or_default());
         let (start, services) = (tracer.log.len(), tracer.services);
+        // The code this call runs is logged again, though an outer capture logged it before.
+        tracer.fetched.clear();
         let (stop, lowest_sp) = self.run_to_return_within(trap, MAX_CAPTURE_CYCLES);
         let tracer = self.tracer.as_deref_mut().expect("tracing");
-        let log = tracer.log[start..].to_vec();
+        let accesses = (stop == crate::Stop::Returned).then(|| sort_accesses(&tracer.log[start..], &mut tracer.seen));
         let services = tracer.services - services;
         let hybrid = self.hybrid.as_mut().expect("hooked");
         hybrid.capturing -= 1;
         hybrid.skip = None;
-        if hybrid.capturing == 0 {
-            self.tracer = None;
+        if hybrid.capturing == 0
+            && let Some(mut tracer) = self.tracer.take()
+        {
+            tracer.reset();
+            hybrid.spare_tracer = Some(tracer);
         }
-        let hybrid = self.hybrid.as_mut().expect("hooked");
-        match stop {
-            crate::Stop::Returned => {}
-            crate::Stop::CycleLimit => return Ok(None),
-            other => return Err(other),
-        }
-        let base = hybrid.base;
+        let (inputs, mut written, ports) = match (stop, accesses) {
+            (_, Some(accesses)) => accesses,
+            (crate::Stop::CycleLimit, None) => return Ok(None),
+            (other, None) => return Err(other),
+        };
+        let base = self.hybrid.as_ref().expect("hooked").base;
         let dead_end = if placeholder {
             // What the return popped: the return address and any arguments the callee removed.
             self.cpu.regs.sp()
@@ -205,22 +278,7 @@ impl Machine {
             sp
         };
         let dead = Machine::lin(ss, lowest_sp)..Machine::lin(ss, dead_end);
-        let mut inputs = BTreeMap::new();
-        let mut written = BTreeMap::new();
-        let mut unreplayable = None;
-        for access in &log {
-            match *access {
-                Access::Read(addr, value) => {
-                    if !written.contains_key(&addr) {
-                        inputs.entry(addr).or_insert(value);
-                    }
-                }
-                Access::Write(addr, value) => {
-                    written.insert(addr, value);
-                }
-                Access::Port => unreplayable = Some("port I/O".to_string()),
-            }
-        }
+        let mut unreplayable = ports.then(|| "port I/O".to_string());
         if services > 0 {
             unreplayable = Some("host services".to_string());
         }
@@ -249,6 +307,30 @@ impl Machine {
             input_hash,
         }))
     }
+}
+
+/// What a call's accesses come to: the bytes it read before writing them, the final values of
+/// the bytes it wrote, and whether it used ports. `seen` is room for the bytes already read or
+/// written.
+fn sort_accesses(log: &[Access], seen: &mut ByteSet) -> (BTreeMap<u32, u8>, BTreeMap<u32, u8>, bool) {
+    seen.clear();
+    let (mut inputs, mut written, mut ports) = (Vec::new(), BTreeMap::new(), false);
+    for access in log {
+        match *access {
+            Access::Read(addr, value) => {
+                if seen.insert(addr) {
+                    inputs.push((addr, value));
+                }
+            }
+            Access::Write(addr, value) => {
+                seen.insert(addr);
+                written.insert(addr, value);
+            }
+            Access::Port => ports = true,
+        }
+    }
+    inputs.sort_unstable_by_key(|&(addr, _)| addr);
+    (inputs.into_iter().collect(), written, ports)
 }
 
 impl Capture {
@@ -351,21 +433,77 @@ impl Capture {
 /// What a replay found wrong, empty when the override matched.
 pub type Differences = Vec<String>;
 
-/// A replay's difference when the override calls a function of the program (`Call::call`): a
-/// captured call holds the data the original read, not the code it ran, so the call can't be
-/// replayed (dual-run checks it).
-pub const CALLS_PROGRAM: &str = "calls the program's code, which a captured call doesn't hold";
+/// A replay's difference when the override runs code of the program (`Call::call`) that the
+/// captured call doesn't hold: code the original didn't run in that call, or any code in a
+/// capture made before captures recorded code (2026-10-18). The call can't be replayed
+/// (dual-run checks it).
+pub const CALLS_PROGRAM: &str = "runs the program's code that the captured call doesn't hold";
 
 /// A replay's difference when the override waits for an interrupt
 /// ([`crate::hybrid::Call::wait_for_interrupt`]): the program's handlers that would end the wait
 /// aren't in a captured call either.
 pub const WAITS_FOR_INTERRUPT: &str = "waits for an interrupt, which a captured call doesn't deliver";
 
-/// Whether a replay stopped at what a captured call doesn't hold (a call into the program's
-/// code, [`CALLS_PROGRAM`]; a wait for an interrupt, [`WAITS_FOR_INTERRUPT`]) rather than
-/// finding the override wrong.
+/// Whether a replay stopped at what a captured call doesn't hold (code of the program,
+/// [`CALLS_PROGRAM`]; an interrupt to wait for, [`WAITS_FOR_INTERRUPT`]) rather than finding the
+/// override wrong.
 pub fn calls_program(differences: &[String]) -> bool {
     differences.iter().any(|d| d.contains(CALLS_PROGRAM) || d.contains(WAITS_FOR_INTERRUPT))
+}
+
+/// What a replaying machine holds: the capture's inputs and the bytes the replay wrote. Code
+/// runs only from there; the first instruction byte fetched from anywhere else is `missing`,
+/// and the run stops at it ([`CALLS_PROGRAM`]) instead of running on zeroed memory.
+#[derive(Debug, Clone)]
+pub(crate) struct Held {
+    bytes: ByteSet,
+    pub(crate) missing: Option<u32>,
+}
+
+impl Held {
+    fn new(addresses: impl IntoIterator<Item = u32>) -> Self {
+        let mut bytes = ByteSet::default();
+        for addr in addresses {
+            bytes.insert(addr);
+        }
+        Held { bytes, missing: None }
+    }
+}
+
+/// The bus the program's code runs on during a replay ([`Held`]).
+pub(crate) struct ReplayBus<'a, 'b> {
+    pub(crate) inner: PcBus<'a>,
+    pub(crate) held: &'b mut Held,
+}
+
+impl Bus for ReplayBus<'_, '_> {
+    fn read_u8(&mut self, addr: u32) -> u8 {
+        self.inner.read_u8(addr)
+    }
+
+    fn write_u8(&mut self, addr: u32, value: u8) {
+        self.held.bytes.insert(addr);
+        self.inner.write_u8(addr, value);
+    }
+
+    fn fetch_u8(&mut self, addr: u32) -> u8 {
+        if !self.held.bytes.contains(addr) {
+            self.held.missing.get_or_insert(addr);
+        }
+        self.inner.read_u8(addr)
+    }
+
+    fn code_window(&mut self, _addr: u32) -> Option<[u8; 16]> {
+        None
+    }
+
+    fn port_in_u8(&mut self, port: u16) -> u8 {
+        self.inner.port_in_u8(port)
+    }
+
+    fn port_out_u8(&mut self, port: u16, value: u8) {
+        self.inner.port_out_u8(port, value);
+    }
 }
 
 /// Runs override `o` on a fresh machine holding only the capture's inputs, and compares its
@@ -374,9 +512,9 @@ pub fn replay(capture: &Capture, o: Override) -> Differences {
     replay_with(capture, o, &[])
 }
 
-/// [`replay`], with `callees` (the other overrides of the program) in place: the machine holds
-/// no code, so a function `o` calls ([`crate::hybrid::Call::call`]) runs as its Rust version, and
-/// one without a Rust version can't run.
+/// [`replay`], with `callees` (the other overrides of the program) in place: a function `o`
+/// calls ([`crate::hybrid::Call::call`]) runs as its Rust version if it has one, else as the
+/// program's code the capture holds.
 pub fn replay_with(capture: &Capture, o: Override, callees: &[Override]) -> Differences {
     let mut m = Machine::new(Config::default(), Vfs::new());
     for (&addr, &value) in &capture.inputs {
@@ -386,8 +524,11 @@ pub fn replay_with(capture: &Capture, o: Override, callees: &[Override]) -> Diff
     let others = callees.iter().filter(|c| c.offset != o.offset).copied();
     let mut hybrid = Hybrid::new("", capture.base, std::iter::once(o).chain(others).collect());
     hybrid.set_all(Mode::Rust);
-    hybrid.replaying = true;
     m.hybrid = Some(Box::new(hybrid));
+    // The program's code the override calls runs from the inputs, and takes no interrupts: what
+    // handlers did during the call isn't in the capture.
+    m.replay = Some(Box::new(Held::new(capture.inputs.keys().copied())));
+    m.atomic = true;
     let before = m.mem.clone();
     let mut differences = Vec::new();
     if let Err(e) = m.run_override_public(o) {
@@ -414,10 +555,14 @@ pub fn replay_with(capture: &Capture, o: Override, callees: &[Override]) -> Diff
             differences.push(format!("[{addr:05X}] {value:02X} != {got:02X}"));
         }
     }
+    // The stack around the entry's SP, by offset in SS (it may wrap around the segment).
     let (ss, sp) = (capture.entry.seg[2], capture.entry.gpr[4]);
-    let frame = Machine::lin(ss, sp.wrapping_sub(0x400))..Machine::lin(ss, sp.wrapping_add(0x40));
+    let frame = |addr: u32| {
+        let offset = addr.wrapping_sub(u32::from(ss) << 4);
+        offset < 0x1_0000 && (offset as u16).wrapping_sub(sp.wrapping_sub(0x400)) < 0x440
+    };
     for addr in m.mem.differences(&before, 64) {
-        if !capture.writes.contains_key(&addr) && !frame.contains(&addr) {
+        if !capture.writes.contains_key(&addr) && !frame(addr) {
             differences.push(format!("[{addr:05X}] written, but the original didn't"));
         }
     }
