@@ -27,7 +27,8 @@ hardware layer, no runtime), so a function-by-function translation can't produce
 
 ### D3. The honest pilot. Accepted 2026-10-19, with the person.
 The pilot is Wolf3D, with id's released source kept out of the agent's reach and used only to grade the result
-afterwards; the real test follows on a game with no source release (Arena).
+afterwards; the real test follows on a small game with no source release. Arena and Daggerfall are not test
+ports: the person ports them with the finished toolkit (decided 2026-10-17).
 **Why:** a source release lets the agent take shortcuts, even unintentionally, and then the pilot proves nothing.
 
 ## The emulator

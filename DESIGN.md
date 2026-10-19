@@ -241,7 +241,7 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 | M4 Pilot | Wolf3D gameplay as a native simulation, from a transplant at the start of E1M1, compared per tick | It matches through the pushwall session. id's released source stays out of the agent's reach and grades the result afterwards |
 | M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |
 | M6 Modern mode | Fixed-rate logic, free frame rate, resolution, the first quirk fixes | The modern toggles pass their own tests |
-| M7 A game without source | The same on a real-mode game with no source release (Arena) | Honest evidence that the approach works where it's needed |
+| M7 A game without source | The same on a small real-mode game with no source release (not Arena or Daggerfall, which the person ports with the finished toolkit) | Honest evidence that the approach works where it's needed |
 
 32-bit protected-mode programs (Daggerfall and later) are designed in from M1 (IDs, protocol, mapping);
 porting one comes after M7.
