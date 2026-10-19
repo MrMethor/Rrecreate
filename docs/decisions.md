@@ -229,3 +229,31 @@ platform layer owns the main loop and all file access, and calls the simulation 
 ### D38. The toolkit and a port exchange documented files, not code. Accepted 2026-10-19.
 The session's boundary values, per-tick state traces and port states for transplants are files in documented
 formats, so a port in any language is compared by reading and writing them.
+
+## The toolkit
+
+### D42. One program, `rrc`, run in the port repository. Accepted 2026-10-19.
+The toolkit is a Rust command-line program (MIT) that finds its port repository by `rrc.toml` and drives
+Clockwork as a child process through `clockwork serve`.
+**Why:** D36 and D12; one binary needs no Python environment (Recreate's `rec` did), and an agent runs it from
+where it works.
+
+### D43. Knowledge tables are TSV, the rest TOML. Accepted 2026-10-19.
+Functions and data are tab-separated tables, one item per line sorted by ID; types, sync points, boundary values,
+sessions and the port's settings are TOML. Each item carries its provenance; a tool's name never replaces a
+decision someone made.
+**Why:** a Wolf3D has 800 functions: one line each keeps diffs and merges small (TOML would take five lines an
+item), and Recreate's knowledge was already in this form. Nested things read better as TOML.
+
+### D44. A per-user content-addressed cache; committed hashes check determinism. Accepted 2026-10-19.
+Images, Ghidra exports, snapshots and traces are stored by SHA-256 outside git (`RRC_CACHE`, or the user's
+cache folder). A session's recorded trace hash is committed; recording it again anywhere must give the same hash.
+**Why:** D31 keeps large data out of git; committing the hash turns every re-recording into a check that
+Clockwork runs the session the same way on another machine.
+
+### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Accepted 2026-10-19.
+A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
+sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the
+frames shown and the sound events. Values are little-endian bytes in hex.
+**Why:** D38 needs a format any language can read and write; only writing what changed keeps a session of
+thousands of ticks small without compression.

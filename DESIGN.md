@@ -5,7 +5,7 @@
 > superseded decision.
 
 **Status (2026-10-19):** M0 and M1 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
-serve`. M2, the toolkit, is next. Rrecreate succeeds Recreate (private), whose emulator and parts of whose
+serve`. M2, the toolkit (`rrc`, §9), is under way. Rrecreate succeeds Recreate (private), whose emulator and parts of whose
 tooling it takes over (§11).
 
 ## 1. The product
@@ -241,20 +241,55 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
   (a checkpoint plus seconds of input); start the port mid-game before menus and loading are ported; explore
   from many points; save anywhere for players.
 
-## 9. Knowledge
+## 9. Knowledge and the port repository
 
 Everything learned about a game is **text files in its port repository**: names and types of functions and
 data (with evidence and provenance), the mapping, sync points, quirks, sessions. Databases and Ghidra
-projects are caches rebuilt from them. Large data (snapshots, traces, Ghidra exports) lives in a
-content-addressed cache outside git, referenced by hash.
+projects are caches rebuilt from them. Large data (program images, Ghidra exports, snapshots, traces) lives in
+a content-addressed cache outside git, referenced by hash.
+
+```
+rrc.toml            the game, its versions (each file by SHA-256), how Clockwork runs the original
+rrc.local.toml      this machine: the game's folder, the tools (not committed)
+knowledge/
+  functions.tsv     named functions: ID, name, provenance, confidence, evidence
+  data.tsv          named data: ID, name, size, type, provenance, confidence, evidence
+  types.toml        structures and enumerations
+  ticks.toml        sync points (where a tick ends) and boundary values (what a tick reads)
+sessions/           a TOML file per session (its inputs, its length, its recorded trace's hash)
+```
+
+- Tables have one item per line, sorted by ID, so parallel changes merge.
+- **Provenance** says who decided an item and from what: `human`, `agent:<model>`, `ghidra`, `library:<pack>`,
+  `prior-art:<source>`, `import:<source>`. A tool's name never replaces a decision someone made.
+- The formats are in `docs/formats.md`. `rrc check` validates the files: IDs well formed and inside the
+  program, names unique, sizes consistent.
+- **The cache** is per user, outside git, addressed by SHA-256. A recorded trace's hash is committed with its
+  session, so re-recording it on another machine checks that the run is the same there.
+
+**The toolkit, `rrc`**, is one Rust program run inside a port repository. It drives Clockwork as a child
+process through `clockwork serve`. Its commands are short and print little: `init`, `doctor`, `status` (the
+next step), `game` (the game's folder and its version), `check`, `name`, `show`, `analyze`, `import`,
+`session`, `record`, `trace`.
+
+**Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
+the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees
+the segments); under an extender, the image dump. Ghidra imports it headless, applies the signature packs and
+exports functions, calls, disassembly and decompiled code (`ghidra/RecExport.java`) into the cache; `rrc show`
+puts that next to the knowledge.
+
+**Traces** (`rrc record <session>`): Clockwork runs the session and stops at every sync point hit, a tick;
+at each it reads the boundary values and the named data, and takes the frames and sound events since the last
+tick. The trace is a file of JSON lines in the cache (`docs/formats.md`): a header naming the items, then one
+line per tick with the inputs, the data that changed, the frames and the sound events.
 
 ## 10. The agent's workflow
 
 The agent follows `docs/porting.md` (to be written with the toolkit) and drives `rrc`:
 
-1. Set up the port repository; `rrc doctor` names what's missing.
-2. Identify and load the game, analyse it, import prior art.
-3. Record sessions; find the main loop and the sync points; record the boundary values.
+1. Set up the port repository (`rrc init`); `rrc doctor` names what's missing.
+2. Identify and load the game (`rrc game`), analyse it (`rrc analyze`), import prior art.
+3. Record sessions; find the main loop and the sync points; record the boundary values (`rrc record`).
 4. Name the state and build the mapping, starting with what the first subsystem reads.
 5. Port a subsystem; compare from a transplanted checkpoint; at each divergence, *who wrote*, then fix the
    port or register a quirk.

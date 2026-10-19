@@ -20,7 +20,7 @@ Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.
 | Path | What |
 |---|---|
 | `clockwork/` | The emulator (GPL-2.0-or-later) |
-| `rrc/` | The toolkit's command line (to come) |
+| `rrc/` | The toolkit's command line, `rrc` (being built: M2) |
 | `runtime/` | The crates a Rust port builds on (to come) |
 | `ghidra/` | The Ghidra scripts: export, and names written back |
 | `sigs/` | Library signature packs |

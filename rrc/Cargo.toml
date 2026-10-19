@@ -1,0 +1,23 @@
+[package]
+name = "rrc"
+description = "Rrecreate's toolkit: port repositories, knowledge, analysis, sessions and traces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rrc"
+path = "src/main.rs"
+
+# Clockwork is driven through its protocol, never linked (DESIGN.md §3, D12).
+[dependencies]
+ids = { path = "../ids" }
+serde.workspace = true
+serde_json = "1"
+toml = "0.9"
+sha2 = "0.10"
+
+[lints]
+workspace = true

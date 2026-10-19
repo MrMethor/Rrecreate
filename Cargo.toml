@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["clockwork/cpu", "clockwork/dos", "clockwork/cli", "ids"]
+members = ["clockwork/cpu", "clockwork/dos", "clockwork/cli", "ids", "rrc"]
 
 [workspace.package]
 version = "0.1.0"
