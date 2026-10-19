@@ -72,10 +72,15 @@ chain and cycle of each write, and the first read of memory nothing wrote.
 A snapshot is the whole machine state (serde, postcard, deflate) behind a header with a format number,
 Clockwork's version and the state hash. The game's files and the CD image are inputs, given again on load; only
 what the program changed on the drive is stored. A snapshot from another format or version is refused, and the
-loaded machine must hash as the saved one did.
+loaded machine must hash as the saved one did. Records (what a run produced: the sound devices' logs, frames,
+console output, diagnostics) are history, not state: they are in neither the snapshot nor the state hash. A
+loaded machine's records start empty, with what its sound devices are playing logged again (the OPL's
+registers, the speaker's waveform, the CD track), so its sound renders from the load on.
 **Why:** DOSBox-X's states broke between builds made with different compilers; a format that can load as a
 subtly different machine would make every comparison after it meaningless. Storing the game's files would
-make Daggerfall's snapshots hundreds of megabytes instead of two.
+make Daggerfall's snapshots hundreds of megabytes instead of two, and storing records would make a snapshot an
+hour into a game carry an hour of sound; a state hash that covered history would differ between two machines
+that will behave the same.
 
 ### D9. Clockwork stays deterministic. Accepted (carried from Recreate).
 Virtual time from executed instructions, no wall clock, no randomness, no host-dependent floating point; any

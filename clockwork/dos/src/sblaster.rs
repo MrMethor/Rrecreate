@@ -258,8 +258,8 @@ pub struct SoundBlaster {
     /// When an interrupt requested by F2h or 80h is due.
     timed_irq_ns: Option<u64>,
     mixer: Mixer,
-    pub pcm: Vec<PcmSegment>,
-    pub dac: Vec<DacWrite>,
+    pub pcm: crate::record::Record<Vec<PcmSegment>>,
+    pub dac: crate::record::Record<Vec<DacWrite>>,
     /// Things programs used that aren't emulated (each message once).
     pub unsupported: BTreeSet<String>,
 }
@@ -309,8 +309,8 @@ impl SoundBlaster {
             adc_pending: false,
             timed_irq_ns: None,
             mixer: Mixer::new(),
-            pcm: Vec::new(),
-            dac: Vec::new(),
+            pcm: Default::default(),
+            dac: Default::default(),
             unsupported: BTreeSet::new(),
         };
         sb.reset_dsp();

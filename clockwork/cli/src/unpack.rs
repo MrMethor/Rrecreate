@@ -14,9 +14,12 @@
 //! written as a plain MZ executable. The image runs up to the program's stack top (or the end
 //! of its memory block), so past the original file image it may hold the packer's leftovers.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use dos::{Config, Machine, Stop, Vfs};
+
+use crate::options::USAGE;
 
 /// Instructions to run at most before giving up on finding the hand-over.
 const MAX_INSTRUCTIONS: u64 = 400_000_000;
@@ -64,9 +67,7 @@ fn boot(path: &Path, padding: usize) -> Result<Machine, String> {
 
 fn run_to_handover(m: &mut Machine) -> Result<Handover, String> {
     let psp = u32::from(m.dos.psp);
-    let base = (psp + 0x10) << 4;
-    let block_paragraphs = u32::from(m.mem.read_u16(((psp - 1) << 4) + 3));
-    let block_end = (psp + block_paragraphs) << 4;
+    let std::ops::Range { start: base, end: block_end } = m.image_range();
     let in_block = |linear: u32| (base..block_end).contains(&linear);
     let loaded = m.mem.read_bytes(base, (block_end - base) as usize);
     let position = |m: &Machine| (m.cpu.regs.cs(), (u32::from(m.cpu.regs.cs()) << 4) + m.cpu.regs.ip);
@@ -177,6 +178,56 @@ pub fn mz_file(u: &Unpacked) -> Vec<u8> {
     out.resize(header_len, 0);
     out.extend(&u.image);
     out
+}
+
+/// `clockwork unpack`.
+pub(crate) fn cmd_unpack(args: &[String]) -> Result<ExitCode, String> {
+    let (mut program, mut out, mut json) = (None, None, false);
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--out" => out = Some(PathBuf::from(args.next().ok_or("--out needs a file")?)),
+            "--json" => json = true,
+            flag if flag.starts_with("--") => {
+                return Err(format!("unknown option {flag}\n\n{USAGE}"));
+            }
+            path if program.is_none() => program = Some(PathBuf::from(path)),
+            extra => return Err(format!("unexpected argument {extra:?}")),
+        }
+    }
+    let program = program.ok_or("unpack needs a program")?;
+    let out = out.ok_or("unpack needs --out FILE")?;
+    let unpacked = unpack(&program)?;
+    std::fs::write(&out, mz_file(&unpacked)).map_err(|e| format!("{}: {e}", out.display()))?;
+    let u = &unpacked;
+    if json {
+        println!(
+            r#"{{"entry":"{:04X}:{:04X}","stack":"{:04X}:{:04X}","image_size":{},"relocations":{},"instructions":{},"stray_bytes":{}}}"#,
+            u.cs,
+            u.ip,
+            u.ss,
+            u.sp,
+            u.image.len(),
+            u.relocations.len(),
+            u.instructions,
+            u.stray_bytes
+        );
+    } else {
+        println!(
+            "unpacked  entry {:04X}:{:04X}, stack {:04X}:{:04X}, image {} bytes, {} relocations ({} instructions)",
+            u.cs,
+            u.ip,
+            u.ss,
+            u.sp,
+            u.image.len(),
+            u.relocations.len(),
+            u.instructions
+        );
+        if u.stray_bytes > 0 {
+            println!("warning   {} bytes differ between the two runs outside relocations", u.stray_bytes);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

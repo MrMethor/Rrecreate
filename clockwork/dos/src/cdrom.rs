@@ -553,7 +553,17 @@ pub struct CdAudio {
     position: Option<u32>,
     /// Channel control (IOCTL output 03h): the input channel and volume of each output.
     pub channels: [(u8, u8); 4],
-    pub segments: Vec<CdSegment>,
+    pub segments: crate::record::Record<Vec<CdSegment>>,
+}
+
+impl CdAudio {
+    /// Logs the track playing again, for a machine loaded from a snapshot (whose log starts
+    /// empty), so the rest of it plays when its sound is rendered.
+    pub(crate) fn relog(&mut self) {
+        if let Some(segment) = self.playing {
+            self.segments.push(segment);
+        }
+    }
 }
 
 impl Default for CdAudio {
@@ -563,7 +573,7 @@ impl Default for CdAudio {
             paused: None,
             position: None,
             channels: [(0, 255), (1, 255), (2, 0), (3, 0)],
-            segments: Vec::new(),
+            segments: Default::default(),
         }
     }
 }

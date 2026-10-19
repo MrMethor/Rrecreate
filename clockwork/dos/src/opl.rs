@@ -150,7 +150,9 @@ pub struct Opl {
     dual_address: [u8; 2],
     /// OPL3 mode (the NEW bit, register 105h bit 0).
     new_mode: bool,
-    pub writes: Vec<OplWrite>,
+    /// The value last written to each sound register (as logged: bank 1 is 100h-1FFh).
+    registers: Vec<u8>,
+    pub writes: crate::record::Record<Vec<OplWrite>>,
 }
 
 impl Opl {
@@ -161,7 +163,8 @@ impl Opl {
             address: 0,
             dual_address: [0; 2],
             new_mode: false,
-            writes: Vec::new(),
+            registers: vec![0; 0x200],
+            writes: Default::default(),
         };
         if mode == OplMode::DualOpl2 {
             // The two OPL2s are an OPL3 with its channels panned left and right.
@@ -174,7 +177,24 @@ impl Opl {
         if register == 0x105 {
             self.new_mode = value & 1 != 0;
         }
+        self.registers[usize::from(register)] = value;
         self.writes.push(OplWrite { nanos, register, value });
+    }
+
+    /// Logs the registers again at `nanos`, for a machine loaded from a snapshot (whose log starts
+    /// empty): a chip rendered from the log then plays what this one plays. The mode registers go
+    /// first and the key-on and rhythm registers last, so notes start with their voices set up.
+    pub(crate) fn relog(&mut self, nanos: u64) {
+        let key = |r: &u16| matches!(r & 0xFF, 0xB0..=0xB8 | 0xBD);
+        let mode = |r: &u16| matches!(r, 0x104 | 0x105);
+        let order =
+            [0x105, 0x104].into_iter().chain((0..0x200).filter(|r| !mode(r) && !key(r))).chain((0..0x200).filter(key));
+        for register in order {
+            let value = self.registers[usize::from(register)];
+            if value != 0 {
+                self.writes.push(OplWrite { nanos, register, value });
+            }
+        }
     }
 
     /// The register an address-port write selects; ports with bit 1 set address bank 1 in OPL3

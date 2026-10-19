@@ -43,7 +43,8 @@ ones:
   `--contracts FILE` infers each called function's contract (registers read, returned and kept, stack
   arguments, memory used); both write JSON;
 - `--save-snapshot FILE` saves the machine after the run, and `--load-snapshot FILE` goes on from one for
-  `--seconds` more (the game's files aren't in a snapshot: give the same game folder and CD);
+  `--seconds` more (the game's files aren't in a snapshot: give the same game folder and CD). A snapshot holds
+  the machine's state, not what the run produced: frames, console output and sound count from the load on;
 - `--dump-image DIR` writes the program's image for analysis: in real mode its block from the load segment
   (unpacked, generated code included), in protected mode the selector map and the memory its segments cover;
 - `--cd D` (a CD drive showing C:'s files), `--cd D=DIR` (a folder of the game folder), `--cd D=GAME.CUE`;
@@ -69,7 +70,7 @@ each on one line. `load` takes `clockwork run`'s arguments; then a tool can run 
 next hit, read and write memory, take and restore snapshots, and watch memory: each read or write of the
 watched bytes comes back with its instruction, cycle and call chain. Bounds checks and uninitialized reads
 work the same way. Addresses are `+OFF` (image offsets), `SEG:OFF` or `@LINEAR`. The operations are listed in
-`cli/src/serve.rs`.
+`cli/src/serve.rs`. A request that makes Clockwork panic gets an error and drops the machine; the server goes on.
 
 `tools/who_wrote.py` is an example: who wrote a variable, and in which tick. Wolfenstein 3D's `pwallstate`
 (`+3C174`) in the pushwall walkthrough, with `CalcTics` (`+0F280`) marking the ticks:

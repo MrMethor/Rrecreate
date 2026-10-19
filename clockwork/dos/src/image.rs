@@ -49,15 +49,12 @@ impl Machine {
     /// The program's image as it is now (see [`crate::image`]).
     pub fn image(&self) -> Image {
         if !self.cpu.protected_mode() {
-            let psp = self.dos.psp;
-            let start = (u32::from(psp) + 0x10) << 4;
-            let paragraphs = u32::from(self.mem.read_u16((u32::from(psp.wrapping_sub(1)) << 4) + 3));
-            let end = (u32::from(psp) + paragraphs) << 4;
+            let (psp, image) = (self.dos.psp, self.image_range());
             let regs = &self.cpu.regs;
             return Image::Real {
                 psp,
                 load_segment: psp + 0x10,
-                bytes: self.peek_bytes(start, end.saturating_sub(start) as usize),
+                bytes: self.peek_bytes(image.start, image.len()),
                 cs: regs.cs(),
                 ip: regs.ip,
                 ss: regs.ss(),

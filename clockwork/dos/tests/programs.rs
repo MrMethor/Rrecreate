@@ -283,7 +283,7 @@ fn rtc_periodic_interrupt_runs_on_irq_8() {
     assert_eq!(m.run(SECOND), Stop::Exited(1));
     let ms = m.elapsed_ms();
     assert!((95..=110).contains(&ms), "100 interrupts at 1024 Hz took {ms} ms");
-    assert!((100..=101).contains(&m.irq_counts[8]), "{:?}", m.irq_counts);
+    assert!((100..=101).contains(&m.probes.irq_counts[8]), "{:?}", m.probes.irq_counts);
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn timer_interrupt_hook_counts_ticks() {
     assert_eq!(m.run(SECOND), Stop::Exited(5));
     let ms = m.elapsed_ms();
     assert!((270..=280).contains(&ms), "5 ticks of 54.9 ms, took {ms} ms");
-    assert!((5..=6).contains(&m.irq_counts[0]), "IRQ 0 delivered once per tick: {:?}", m.irq_counts);
+    assert!((5..=6).contains(&m.probes.irq_counts[0]), "IRQ 0 delivered once per tick: {:?}", m.probes.irq_counts);
 }
 
 #[test]
@@ -1239,9 +1239,9 @@ fn service_trace_records_calls() {
         a.db(b"MISSING.DAT\0")
     });
     let mut m = boot(&[("T.COM", &program)], "T.COM");
-    m.service_trace = Some(Vec::new());
+    m.probes.service_trace = Some(Vec::new());
     assert_eq!(m.run(SECOND), Stop::Exited(0));
-    let calls = m.service_trace.as_ref().unwrap();
+    let calls = m.probes.service_trace.as_ref().unwrap();
     let open = calls.iter().find(|c| c.before.ah() == 0x3D).expect("the open was traced");
     assert_eq!(open.path.as_deref(), Some("MISSING.DAT"));
     assert_eq!(open.after.ax(), 2);
@@ -1894,6 +1894,45 @@ fn pc_speaker_plays_samples_by_pulse_width_modulation() {
     let whole = m.audio_log().render(renderer.rendered_ns());
     assert!(live == whole, "live rendering differs from rendering the final log");
     assert!(whole.iter().any(|s| s.unsigned_abs() > 1000), "it makes a sound");
+}
+
+#[test]
+fn a_machine_loaded_from_a_snapshot_goes_on_playing() {
+    // An FM note and a speaker tone, held. A snapshot holds no sound logs: the loaded machine
+    // logs what its devices play again, and renders from the load on as the whole run does.
+    let program = com(|a| {
+        let note = [(0x20, 0x01), (0x40, 0x10), (0x60, 0xF0), (0x80, 0x77), (0x23, 0x01), (0x63, 0xF0)];
+        for (register, value) in note.into_iter().chain([(0x83, 0x77), (0xA0, 0x98), (0xB0, 0x31)]) {
+            adlib_write(a, register, value)?;
+        }
+        a.mov(al, 0xB6)?; // channel 2, both bytes, square wave
+        a.out(0x43, al)?;
+        a.mov(ax, 1193)?; // 1 kHz
+        a.out(0x42, al)?;
+        a.mov(al, ah)?;
+        a.out(0x42, al)?;
+        a.in_(al, 0x61)?;
+        a.or(al, 0x03)?;
+        a.out(0x61, al)?;
+        hold(a)
+    });
+    let mut drive = Vfs::new();
+    drive.insert_file("P.COM", program.clone());
+    let mut m = Machine::with_program(Config::default(), drive.clone(), "P.COM", "").unwrap();
+    assert_eq!(m.run(SECOND / 10), Stop::CycleLimit);
+    let mut file = Vec::new();
+    dos::snapshot::save(&m, &mut file).unwrap();
+    let mut loaded = dos::snapshot::load(&file[..], drive, None).unwrap();
+    m.run(SECOND / 5);
+    loaded.run(SECOND / 5);
+    assert_eq!(loaded.state_hash(), m.state_hash());
+    let whole = m.audio_log().render(m.elapsed_ns());
+    let rest = loaded.audio_log().render(loaded.elapsed_ns());
+    let part = rest.len() as f64 / whole.len() as f64;
+    assert!((0.66..0.67).contains(&part), "the last two thirds: {part}");
+    let energy = |s: &[i16]| s.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>();
+    let ratio = energy(&rest) / energy(&whole[whole.len() - rest.len()..]);
+    assert!((0.9..1.1).contains(&ratio), "as loud as the whole run from there: {ratio}");
 }
 
 #[test]
@@ -2756,7 +2795,7 @@ fn contracts_from_a_run() {
     let mut m = boot(&[("C.COM", &program)], "C.COM");
     m.start_contracts();
     assert_eq!(m.run(SECOND), Stop::Exited(0));
-    let contracts = m.contracts.take().unwrap();
+    let contracts = m.probes.contracts.take().unwrap();
     let offsets = offsets.into_inner();
     let contract = |name: &str| contracts.functions[&offsets[name]].clone();
     use dos::contracts::{NEAR, flag_names, register_names};

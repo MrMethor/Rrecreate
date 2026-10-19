@@ -32,7 +32,9 @@ emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN
   control protocol.
 - Clockwork stays deterministic: never read the host clock or use randomness; time comes from executed
   instructions. Floating point must give the same bits on every host (`libm`, not the `f64` methods; no NaN bits
-  produced by the host CPU in machine state). Runs are compared by state hash.
+  produced by the host CPU in machine state). Runs are compared by state hash, which covers the machine's state
+  only: records (sound logs, frames, console; `dos/src/record.rs`) and the analysis tools (`Machine::probes`)
+  aren't state, and the analysis tools never change what the machine does.
 - Before adding a Clockwork feature, look at how DOSBox Staging, DOSBox-X, 86Box, PCem, MAME, Spice86 and MartyPC
   do it, and port or adapt the best. Start the module's docs with "Ported from <emulator> `<path>` (<licence>)",
   add a row to `THIRD_PARTY.md`, and add tests of our own. Only GPL-2.0-compatible sources may be copied. Their
@@ -41,7 +43,8 @@ emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN
   Unsupported things are reported (a stop, a diagnostic), never guessed.
 - Game files are never committed. Each game's port lives in its own repository (`DESIGN.md` §3).
 - IDs: `<MODULE>[#<n>]+<offset>` (`#n`: an overlay or an LE/LX object; the offset in the loaded image, uppercase
-  hex, 5 to 8 digits), for functions and data alike.
+  hex, 5 to 8 digits), for functions and data alike. The `ids` crate parses and prints them; its cases are in
+  `testdata/function_ids.tsv`.
 - Tool output is read by agents: keep it short. Large data goes to the cache, and the output gives its hash.
 - The predecessor, Recreate (`../Recreated`, github.com/MrMethor/Recreate), is a source of code as listed in
   `DESIGN.md` §11, not of design: its `PROJECT.md` describes the approach Rrecreate replaced.

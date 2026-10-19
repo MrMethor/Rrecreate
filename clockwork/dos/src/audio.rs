@@ -38,6 +38,9 @@ pub struct AudioLog<'a> {
     /// CD audio: each PLAY, and the image its samples come from.
     pub cd: &'a [CdSegment],
     pub cd_image: Option<&'a CdImage>,
+    /// When the log starts (a machine loaded from a snapshot logs from then on); rendering
+    /// starts there.
+    pub from_ns: u64,
 }
 
 impl AudioLog<'_> {
@@ -93,10 +96,11 @@ impl AudioLog<'_> {
         h.finish()
     }
 
-    /// Renders `duration_ns` of audio as interleaved stereo samples at [`SAMPLE_RATE_HZ`].
-    pub fn render(&self, duration_ns: u64) -> Vec<i16> {
+    /// Renders the audio from the log's start up to `until_ns` as interleaved stereo samples at
+    /// [`SAMPLE_RATE_HZ`].
+    pub fn render(&self, until_ns: u64) -> Vec<i16> {
         let mut out = Vec::new();
-        Renderer::default().render(self, duration_ns, &mut out);
+        Renderer::default().render(self, until_ns, &mut out);
         out
     }
 }
@@ -143,6 +147,7 @@ impl Renderer {
     /// Appends the audio from where the last call stopped up to `until_ns` to `out`, as
     /// interleaved stereo samples at [`SAMPLE_RATE_HZ`].
     pub fn render(&mut self, log: &AudioLog, until_ns: u64, out: &mut Vec<i16>) {
+        self.frame = self.frame.max(frame_at_nanos(log.from_ns));
         let end = (u128::from(until_ns) * u128::from(SAMPLE_RATE_HZ) / NANOS_PER_SECOND) as usize;
         if end <= self.frame {
             return;

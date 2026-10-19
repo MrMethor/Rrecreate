@@ -199,7 +199,9 @@ pub struct Pit {
     /// PIT tick of channel 0's next IRQ0, if it is counting.
     next_irq0: Option<u64>,
     port61: u8,
-    pub speaker_log: Vec<SpeakerEvent>,
+    /// The speaker's waveform now (the last one logged).
+    speaker: Wave,
+    pub speaker_log: crate::record::Record<Vec<SpeakerEvent>>,
 }
 
 impl Default for Pit {
@@ -216,7 +218,8 @@ impl Pit {
             channels: [Channel::new(3, true), Channel::new(2, true), Channel::new(3, false)],
             next_irq0: None,
             port61: 0,
-            speaker_log: Vec::new(),
+            speaker: Wave::Steady(false),
+            speaker_log: Default::default(),
         };
         pit.load(0, 0);
         pit
@@ -350,10 +353,18 @@ impl Pit {
         }
     }
 
+    /// Logs the speaker's waveform again at `now`, for a machine loaded from a snapshot (whose
+    /// log starts empty).
+    pub(crate) fn relog(&mut self, now: u64) {
+        if self.speaker != Wave::Steady(false) {
+            self.speaker_log.push(SpeakerEvent { pit_tick: now, wave: self.speaker });
+        }
+    }
+
     fn log_speaker(&mut self, now: u64) {
         let wave = if self.port61 & 0x02 == 0 { Wave::Steady(false) } else { self.channels[2].wave(now) };
-        let current = self.speaker_log.last().map_or(Wave::Steady(false), |e| e.wave);
-        if wave != current {
+        if wave != self.speaker {
+            self.speaker = wave;
             self.speaker_log.push(SpeakerEvent { pit_tick: now, wave });
         }
     }
@@ -409,7 +420,7 @@ mod tests {
         pit.write_port61(0x00, 30);
         let square = Wave::Periodic { origin: 20, period: 1193, high: 597 };
         assert_eq!(
-            pit.speaker_log,
+            *pit.speaker_log,
             vec![SpeakerEvent { pit_tick: 20, wave: square }, SpeakerEvent { pit_tick: 30, wave: Wave::Steady(false) }]
         );
     }

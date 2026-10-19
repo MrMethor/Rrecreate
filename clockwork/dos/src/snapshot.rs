@@ -4,7 +4,8 @@
 //! The file: a header (`CLOCKWRK`, the format number, Clockwork's version, the machine's state
 //! hash), then the state, serialized with postcard and deflated. The game's files are an input,
 //! not state: a snapshot holds only what the program changed on the drive, and loading it takes the
-//! drive as loaded (and the CD image, if any) again.
+//! drive as loaded (and the CD image, if any) again. Records (the sound logs, frames, console) are
+//! history, not state ([`crate::record`]): a loaded machine starts them empty.
 //!
 //! DOSBox-X's save states broke between builds made with different compilers; here the format is
 //! explicit, and a snapshot from another format or version is refused. As a last guard the loaded
@@ -19,7 +20,7 @@ use crate::vfs::Vfs;
 const MAGIC: &[u8; 8] = b"CLOCKWRK";
 
 /// The format's number: changed whenever the machine's state changes shape.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -73,6 +74,7 @@ pub fn load(
     let mut m: Machine = postcard::from_bytes(&state).map_err(|e| format!("snapshot: {e}"))?;
     m.drive = std::mem::take(&mut m.drive).over(drive);
     m.cd_image = cd_image;
+    m.restart_records();
     if m.state_hash() != u64::from_le_bytes(hash) {
         return Err("the snapshot doesn't restore the machine it was taken from (another game folder, or \
                     another build of Clockwork?)"

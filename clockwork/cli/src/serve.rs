@@ -1,6 +1,8 @@
 //! `clockwork serve`: Clockwork as a long-lived process that tools drive (DESIGN.md §4.2). Requests
 //! are JSON objects, one per line, on stdin (or a TCP connection with `--port N`); each gets one line
-//! back with the same `id`: `{"id":…,"ok":true,…}` or `{"id":…,"error":"…"}`.
+//! back with the same `id`: `{"id":…,"ok":true,…}` or `{"id":…,"error":"…"}`. A request that
+//! panics inside Clockwork gets an error, and the machine is dropped (its invariants may not hold);
+//! copies in memory stay.
 //!
 //! Addresses are `+OFF` (an offset in the program's load image, hex), `SEG:OFF` (as the CPU sees it
 //! now) or `@LINEAR` (hex); answers name addresses the same way, `+OFF` where they fall in the image.
@@ -56,7 +58,7 @@ pub fn session(input: impl BufRead, mut output: impl Write) -> std::io::Result<(
                     writeln!(output, "{}", json!({"id": id, "ok": true}))?;
                     return Ok(());
                 }
-                (id, handle(&mut state, &op, &request))
+                (id, guarded(&mut state, |state| handle(state, &op, &request)))
             }
             Err(e) => (Value::Null, Err(format!("not JSON: {e}"))),
         };
@@ -73,6 +75,19 @@ pub fn session(input: impl BufRead, mut output: impl Write) -> std::io::Result<(
         output.flush()?;
     }
     Ok(())
+}
+
+/// Runs `f`, answering a panic with an error and dropping the machine.
+fn guarded(st: &mut State, f: impl FnOnce(&mut State) -> Result<Value, String>) -> Result<Value, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut *st))).unwrap_or_else(|panic| {
+        st.m = None;
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        Err(format!("Clockwork panicked: {message}; the machine is gone (load or restore one)"))
+    })
 }
 
 /// `clockwork serve [--port N]`.
@@ -103,14 +118,14 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
     match op {
         "load" | "load_snapshot" => {
             let argv = strings(r, "argv")?;
-            let mut options = crate::parse_options(&argv)?;
+            let mut options = crate::options::parse_options(&argv)?;
             if op == "load_snapshot" {
                 options.load_snapshot = Some(text(r, "file")?.into());
             }
-            let (m, _, _, base) = crate::prepare(&options)?;
-            st.image = base..image_end(&m);
+            let (m, _, _) = crate::run::prepare(&options)?;
+            st.image = m.image_range();
             st.copies.clear();
-            let reply = json!({"psp": m.dos.psp, "image": format!("@{base:X}"), "cycles": m.cpu.cycles});
+            let reply = json!({"psp": m.dos.psp, "image": format!("@{:X}", st.image.start), "cycles": m.cpu.cycles});
             st.m = Some(m);
             return Ok(reply);
         }
@@ -144,7 +159,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             Ok(json!({}))
         }
         "rebase" => {
-            st.image = (u32::from(m.dos.psp) + 0x10) << 4..image_end(m);
+            st.image = m.image_range();
             Ok(json!({"psp": m.dos.psp, "image": format!("@{:X}", st.image.start)}))
         }
         "run" => {
@@ -161,7 +176,8 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             } else {
                 return Err("run needs ms, cycles or sync".into());
             };
-            let mut reply = json!({"stop": crate::stop_text(&stop), "cycles": m.cpu.cycles, "ms": m.elapsed_ms()});
+            let mut reply =
+                json!({"stop": crate::summary::stop_text(&stop), "cycles": m.cpu.cycles, "ms": m.elapsed_ms()});
             if let dos::Stop::Sync { address, hit } = stop {
                 reply["sync"] = json!({"at": name(address), "hit": hit});
             }
@@ -268,17 +284,11 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "image" => {
             let dir = std::path::PathBuf::from(text(r, "dir")?);
-            crate::dump_image(m, &dir)?;
+            crate::run::dump_image(m, &dir)?;
             Ok(json!({}))
         }
         _ => Err(format!("unknown op {op:?}")),
     }
-}
-
-/// End of the program's block (where the load image's extent ends).
-fn image_end(m: &Machine) -> u32 {
-    let psp = u32::from(m.dos.psp);
-    (psp + u32::from(m.mem.read_u16((psp.wrapping_sub(1) << 4) + 3))) << 4
 }
 
 /// A linear address from `+OFF`, `SEG:OFF` or `@LINEAR`.
@@ -371,4 +381,19 @@ fn unhex(s: &str) -> Result<Vec<u8>, String> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| format!("bad hex {s:?}")))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panic_is_an_error_and_the_machine_goes() {
+        let mut st = State { m: None, copies: BTreeMap::new(), image: 0..0 };
+        st.m = Some(Machine::new(dos::Config::default(), dos::Vfs::new()));
+        let reply = guarded(&mut st, |_| panic!("an invariant broke"));
+        assert!(reply.is_err_and(|e| e.contains("an invariant broke")));
+        assert!(st.m.is_none());
+        assert_eq!(guarded(&mut st, |_| Ok(json!(1))), Ok(json!(1)));
+    }
 }

@@ -542,47 +542,16 @@ pub struct Machine {
     pub drive: Vfs,
     pub config: Config,
     /// Text the program wrote through DOS or the BIOS (teletype output).
-    pub console: Vec<u8>,
-    pub frames: Vec<Frame>,
+    pub console: crate::record::Record<Vec<u8>>,
+    pub frames: crate::record::Record<Vec<Frame>>,
     /// Things the emulation doesn't support that the program used; each message appears once.
-    pub diagnostics: BTreeSet<String>,
-    /// When set, every host service call is recorded here (BIOS, DOS, EMS, MSCDEX); timer and
-    /// keyboard interrupts are left out. Not part of the machine state.
+    pub diagnostics: crate::record::Record<BTreeSet<String>>,
+    /// When the records start: 0, or when the machine was loaded from a snapshot.
     #[serde(skip)]
-    pub service_trace: Option<Vec<crate::trace::ServiceCall>>,
-    /// Hardware interrupts delivered to the CPU, per IRQ line (0-15). Not part of the machine
-    /// state; for debugging.
+    pub records_since_ns: u64,
+    /// The analysis tools running (not part of the machine state).
     #[serde(skip)]
-    pub irq_counts: [u64; 16],
-    /// When set, every instruction that starts inside this linear range is recorded in
-    /// `exec_hits` (for debugging; not part of the machine state).
-    #[serde(skip)]
-    pub exec_watch: Option<std::ops::Range<u32>>,
-    #[serde(skip)]
-    pub exec_hits: Vec<ExecHit>,
-    /// What the started program's code executed, once [`Machine::start_coverage`] was called
-    /// (for the analysis pipeline; not part of the machine state).
-    #[serde(skip)]
-    pub coverage: Option<crate::coverage::Coverage>,
-    /// Contract inference ([`Machine::start_contracts`]).
-    #[serde(skip)]
-    pub contracts: Option<Box<crate::contracts::Contracts>>,
-    /// A memory watch ([`Machine::start_watch`]; not part of the machine state). It takes the
-    /// accesses contract inference would see: don't run both.
-    #[serde(skip)]
-    pub watch: Option<Box<crate::watch::Watch>>,
-    /// Call tracking ([`Machine::track_calls`]; not part of the machine state), and whether the
-    /// watch turned it on.
-    #[serde(skip)]
-    pub calls: Option<Box<crate::calls::Calls>>,
-    #[serde(skip)]
-    calls_for_watch: bool,
-    /// Bounds checks on declared data ([`Machine::start_bounds`]; not part of the machine state).
-    #[serde(skip)]
-    pub bounds: Option<Box<crate::bounds::Bounds>>,
-    /// Uninitialized reads ([`Machine::start_uninit`]; not part of the machine state).
-    #[serde(skip)]
-    pub uninit: Option<Box<crate::uninit::Uninit>>,
+    pub probes: crate::probe::Probes,
     /// Sync points and their hit counts ([`crate::sync`]; not part of the machine state, but a
     /// snapshot keeps them).
     pub syncs: crate::sync::Syncs,
@@ -620,20 +589,11 @@ impl Machine {
             mouse: Mouse::new(config.mouse),
             drive,
             config,
-            console: Vec::new(),
-            frames: Vec::new(),
-            diagnostics: BTreeSet::new(),
-            service_trace: None,
-            irq_counts: [0; 16],
-            exec_watch: None,
-            exec_hits: Vec::new(),
-            coverage: None,
-            contracts: None,
-            watch: None,
-            calls: None,
-            calls_for_watch: false,
-            bounds: None,
-            uninit: None,
+            console: Default::default(),
+            frames: Default::default(),
+            diagnostics: Default::default(),
+            records_since_ns: 0,
+            probes: Default::default(),
             syncs: crate::sync::Syncs::default(),
             cd_image: None,
             stop_on_input_wait: true,
@@ -684,11 +644,11 @@ impl Machine {
         self.cpu.flush_code_cache();
         // Analyses are set up between runs: whether any is on is decided once.
         let syncs = !self.syncs.is_empty();
-        let probes = self.contracts.is_some()
-            || self.watch.is_some()
-            || self.bounds.is_some()
-            || self.uninit.is_some()
-            || self.calls.is_some();
+        let probes = self.probes.contracts.is_some()
+            || self.probes.watch.is_some()
+            || self.probes.bounds.is_some()
+            || self.probes.uninit.is_some()
+            || self.probes.calls.is_some();
         loop {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
@@ -713,12 +673,12 @@ impl Machine {
                         return Stop::Fault(exit);
                     }
                 }
-                if let Some(contracts) = self.contracts.as_deref_mut()
+                if let Some(contracts) = self.probes.contracts.as_deref_mut()
                     && !self.cpu.protected_mode()
                 {
                     contracts.hardware_interrupt(&self.cpu.regs);
                 }
-                if let Some(calls) = self.calls.as_deref_mut() {
+                if let Some(calls) = self.probes.calls.as_deref_mut() {
                     calls.interrupt(&self.cpu, from);
                 }
                 continue;
@@ -736,13 +696,13 @@ impl Machine {
                     return Stop::Sync { address: at, hit };
                 }
             }
-            if self.exec_watch.is_some() {
+            if self.probes.exec_watch.is_some() {
                 self.watch_exec();
             }
-            if self.coverage.is_some() {
+            if self.probes.coverage.is_some() {
                 self.coverage_before();
             }
-            if let Some(contracts) = self.contracts.as_deref_mut()
+            if let Some(contracts) = self.probes.contracts.as_deref_mut()
                 && !self.cpu.protected_mode()
             {
                 let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
@@ -750,18 +710,18 @@ impl Machine {
             }
             let now = self.cpu.cycles;
             let result = if probes {
-                let tracing = self.contracts.as_deref().is_some_and(|c| c.tracing());
+                let tracing = self.probes.contracts.as_deref().is_some_and(|c| c.tracing());
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-                if let Some(calls) = self.calls.as_deref_mut() {
+                if let Some(calls) = self.probes.calls.as_deref_mut() {
                     calls.before(&self.cpu);
                 }
                 let mut bus = crate::probe::ProbeBus {
                     inner: PcBus { mem: &mut self.mem, dev: &mut self.devices, now },
-                    log: self.contracts.as_deref_mut().filter(|_| tracing).map(|c| &mut c.log),
-                    watch: self.watch.as_deref_mut(),
-                    bounds: self.bounds.as_deref_mut(),
-                    uninit: self.uninit.as_deref_mut(),
-                    calls: self.calls.as_deref(),
+                    log: self.probes.contracts.as_deref_mut().filter(|_| tracing).map(|c| &mut c.log),
+                    watch: self.probes.watch.as_deref_mut(),
+                    bounds: self.probes.bounds.as_deref_mut(),
+                    uninit: self.probes.uninit.as_deref_mut(),
+                    calls: self.probes.calls.as_deref(),
                     cs: self.cpu.regs.cs(),
                     ip: self.cpu.regs.ip,
                     at,
@@ -772,14 +732,14 @@ impl Machine {
                 let (cpu, mut bus) = self.split();
                 cpu.step(&mut bus)
             };
-            if let Some(contracts) = self.contracts.as_deref_mut() {
+            if let Some(contracts) = self.probes.contracts.as_deref_mut() {
                 contracts.after(&self.cpu.regs);
             }
-            if let Some(mut calls) = self.calls.take() {
+            if let Some(mut calls) = self.probes.calls.take() {
                 calls.after(&self.cpu, |at| self.peek_linear_u8(at));
-                self.calls = Some(calls);
+                self.probes.calls = Some(calls);
             }
-            if let Some(coverage) = &mut self.coverage {
+            if let Some(coverage) = &mut self.probes.coverage {
                 match result {
                     Ok(()) => coverage.after(self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip)),
                     Err(_) => coverage.cancel(),
@@ -833,25 +793,29 @@ impl Machine {
         }
     }
 
-    /// Starts recording coverage of the program just loaded: its load image runs from its PSP's
-    /// paragraph 10h to the end of its memory block.
-    pub fn start_coverage(&mut self) {
+    /// Where the running program's load image is, as linear addresses: from its PSP's paragraph
+    /// 10h (where load-image offsets count from) to the end of its memory block.
+    pub fn image_range(&self) -> std::ops::Range<u32> {
         let psp = u32::from(self.dos.psp);
-        let base = (psp + 0x10) << 4;
-        let end = (psp + u32::from(self.mem.read_u16(((psp - 1) << 4) + 3))) << 4;
-        self.coverage = Some(crate::coverage::Coverage::new(base, end.saturating_sub(base)));
+        let paragraphs = u32::from(self.mem.read_u16((psp.wrapping_sub(1) << 4) + 3));
+        let start = (psp + 0x10) << 4;
+        start..((psp + paragraphs) << 4).max(start)
+    }
+
+    /// Starts recording coverage of the program just loaded ([`Machine::image_range`]).
+    pub fn start_coverage(&mut self) {
+        let image = self.image_range();
+        self.probes.coverage = Some(crate::coverage::Coverage::new(image.start, image.len() as u32));
     }
 
     /// Starts contract inference ([`crate::contracts`]) for the program the machine started with.
     pub fn start_contracts(&mut self) {
-        let psp = u32::from(self.dos.psp);
-        let base = (psp + 0x10) << 4;
-        let end = (psp + u32::from(self.mem.read_u16(((psp - 1) << 4) + 3))) << 4;
-        self.contracts = Some(Box::new(crate::contracts::Contracts::new(base, end.saturating_sub(base))));
+        let image = self.image_range();
+        self.probes.contracts = Some(Box::new(crate::contracts::Contracts::new(image.start, image.len() as u32)));
     }
 
     fn coverage_before(&mut self) {
-        let Some(coverage) = &mut self.coverage else { return };
+        let Some(coverage) = &mut self.probes.coverage else { return };
         if self.cpu.protected_mode() {
             coverage.cancel();
             return;
@@ -863,14 +827,14 @@ impl Machine {
 
     /// Records the instruction about to run if it starts in the watched range.
     fn watch_exec(&mut self) {
-        let Some(range) = &self.exec_watch else { return };
+        let Some(range) = &self.probes.exec_watch else { return };
         let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-        if !range.contains(&linear) || self.exec_hits.len() >= MAX_EXEC_HITS {
+        if !range.contains(&linear) || self.probes.exec_hits.len() >= MAX_EXEC_HITS {
             return;
         }
         let sp = self.cpu.segment_base(seg::SS).wrapping_add(self.cpu.regs.sp().into());
         let stack = std::array::from_fn(|i| self.mem.read_u16(sp + 2 * i as u32));
-        self.exec_hits.push(ExecHit {
+        self.probes.exec_hits.push(ExecHit {
             cycle: self.cpu.cycles,
             cs: self.cpu.regs.cs(),
             ip: self.cpu.regs.ip,
@@ -883,7 +847,7 @@ impl Machine {
         for (pic, first_line) in [(&self.devices.pic, 0), (&self.devices.pic2, 8)] {
             let line = vector.wrapping_sub(pic.vector_base());
             if line < 8 {
-                self.irq_counts[usize::from(first_line + line)] += 1;
+                self.probes.irq_counts[usize::from(first_line + line)] += 1;
                 return;
             }
         }
@@ -903,7 +867,21 @@ impl Machine {
             speaker: &d.pit.speaker_log,
             cd: &self.dos.cd_audio.segments,
             cd_image: self.cd_image.as_deref(),
+            from_ns: self.records_since_ns,
         }
+    }
+
+    /// Starts the records of a machine loaded from a snapshot, which holds none: from now, with
+    /// what the sound devices are putting out logged again, so its sound renders from here on.
+    pub(crate) fn restart_records(&mut self) {
+        let now = self.elapsed_ns();
+        self.records_since_ns = now;
+        if let Some(opl) = &mut self.devices.opl {
+            opl.relog(now);
+        }
+        let tick = self.devices.clock.pit_ticks(self.cpu.cycles);
+        self.devices.pit.relog(tick);
+        self.dos.cd_audio.relog();
     }
 
     /// Up to when [`Machine::audio_log`] is final: what the devices log later all happens after
@@ -976,19 +954,22 @@ impl Machine {
         at
     }
 
-    /// Fingerprint of the complete machine state (CPU, memory, devices, DOS, drive). Two runs
-    /// with the same program and input must produce the same value at the same cycle.
+    /// Fingerprint of the complete machine state (CPU, memory, devices, DOS, EMS, XMS, the
+    /// drive). Two runs with the same program and input must produce the same value at the same
+    /// cycle. Inputs (the configuration, scheduled input, what the game's files held as loaded),
+    /// records and the analysis tools aren't state.
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::default();
-        self.cpu.regs.hash(&mut h);
-        self.cpu.fpu.hash(&mut h);
-        self.cpu.cycles.hash(&mut h);
+        self.cpu.hash(&mut h);
         self.mem.hash(&mut h);
         self.devices.hash(&mut h);
         self.dos.hash(&mut h);
         self.ems.hash(&mut h);
+        self.xms.hash(&mut h);
         self.mouse.hash(&mut h);
         self.drive.hash(&mut h);
+        let flags = (self.halted, self.waiting_for_input, self.keyboard_e0, self.returned_flags);
+        (flags, self.exit_code, self.next_event, self.next_frame).hash(&mut h);
         h.finish()
     }
 
@@ -1043,35 +1024,35 @@ impl Machine {
     /// Starts watching memory (see [`crate::watch`]); a watch already on is replaced. It turns call
     /// tracking on if nothing did, for the calls made from now on.
     pub fn start_watch(&mut self, watch: crate::watch::Watch) {
-        self.watch = Some(Box::new(watch));
-        if self.calls.is_none() {
-            self.calls = Some(Box::default());
-            self.calls_for_watch = true;
+        self.probes.watch = Some(Box::new(watch));
+        if self.probes.calls.is_none() {
+            self.probes.calls = Some(Box::default());
+            self.probes.calls_for_watch = true;
         }
     }
 
     /// Ends the watch and returns it, with its hits.
     pub fn take_watch(&mut self) -> Option<crate::watch::Watch> {
-        if std::mem::take(&mut self.calls_for_watch) {
-            self.calls = None;
+        if std::mem::take(&mut self.probes.calls_for_watch) {
+            self.probes.calls = None;
         }
-        self.watch.take().map(|w| *w)
+        self.probes.watch.take().map(|w| *w)
     }
 
     /// Tracks calls from now on (see [`crate::calls`]), so a watch started later knows the whole
     /// call chain; or stops tracking.
     pub fn track_calls(&mut self, on: bool) {
-        self.calls_for_watch = false;
-        self.calls = on.then(|| self.calls.take().unwrap_or_default());
+        self.probes.calls_for_watch = false;
+        self.probes.calls = on.then(|| self.probes.calls.take().unwrap_or_default());
     }
 
     /// Starts bounds checks on these objects (physical addresses; see [`crate::bounds`]).
     pub fn start_bounds(&mut self, objects: &[crate::bounds::Object]) {
-        self.bounds = Some(Box::new(crate::bounds::Bounds::new(objects)));
+        self.probes.bounds = Some(Box::new(crate::bounds::Bounds::new(objects)));
     }
 
     pub fn take_bounds(&mut self) -> Option<crate::bounds::Bounds> {
-        self.bounds.take().map(|b| *b)
+        self.probes.bounds.take().map(|b| *b)
     }
 
     /// Starts tracking uninitialized reads (see [`crate::uninit`]): what the started program finds
@@ -1080,12 +1061,12 @@ impl Machine {
         let mut ranges = crate::dos::uninitialized(self);
         ranges.extend_from_slice(more);
         self.mem.track_writes(&ranges);
-        self.uninit = Some(Box::default());
+        self.probes.uninit = Some(Box::default());
     }
 
     pub fn take_uninit(&mut self) -> Option<crate::uninit::Uninit> {
         self.mem.untrack_writes();
-        self.uninit.take().map(|u| *u)
+        self.probes.uninit.take().map(|u| *u)
     }
 
     /// The text screen as lines, or `None` in graphics modes.
@@ -1153,10 +1134,10 @@ impl Machine {
         self.cpu.flush_code_cache();
         self.waiting_for_input = false;
         self.returned_flags = false;
-        let traced =
-            self.service_trace.is_some() && !matches!(id, bios::callback::TIMER_IRQ | bios::callback::KEYBOARD_IRQ);
+        let traced = self.probes.service_trace.is_some()
+            && !matches!(id, bios::callback::TIMER_IRQ | bios::callback::KEYBOARD_IRQ);
         let call = traced.then(|| crate::trace::ServiceCall::begin(self, id));
-        let watched = self.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
+        let watched = self.probes.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
         let ax = self.cpu.regs.ax();
         if !bios::dispatch(self, id) && !dos::dispatch(self, id) {
             self.diagnostic(format!("unknown host callback {id:#06x}"));
@@ -1164,7 +1145,7 @@ impl Machine {
         if let Some(before) = watched {
             self.watch_changes(&before, crate::watch::By::Service { id, ax });
         }
-        if let (Some(mut call), Some(trace)) = (call, self.service_trace.as_mut()) {
+        if let (Some(mut call), Some(trace)) = (call, self.probes.service_trace.as_mut()) {
             call.after = self.cpu.regs;
             call.returned_flags = self.returned_flags;
             trace.push(call);
@@ -1190,16 +1171,16 @@ impl Machine {
 
     /// Records the watched bytes that changed since `before` as written by `by`.
     fn watch_changes(&mut self, before: &[u8], by: crate::watch::By) {
-        if let Some(mut watch) = self.watch.take() {
+        if let Some(mut watch) = self.probes.watch.take() {
             if let Some(after) = watch.bytes(|at| self.peek_u8(at)) {
-                watch.changed(self.cpu.cycles, before, &after, by, self.calls.as_deref());
+                watch.changed(self.cpu.cycles, before, &after, by, self.probes.calls.as_deref());
             }
-            self.watch = Some(watch);
+            self.probes.watch = Some(watch);
         }
     }
 
     fn service_events(&mut self) {
-        let watched = self.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
+        let watched = self.probes.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
         self.service_devices();
         if let Some(before) = watched {
             self.watch_changes(&before, crate::watch::By::Device);
