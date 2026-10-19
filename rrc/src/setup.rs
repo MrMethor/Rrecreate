@@ -42,6 +42,12 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
         write_new(&knowledge.join(file), &text)?;
     }
     ignore(&dir, &["/rrc.local.toml", "/.rrc/", "/target/"])?;
+    // The knowledge files are text with LF line ends on every platform (docs/formats.md).
+    write_new(
+        &dir.join(".gitattributes"),
+        "* text=auto eol=lf
+",
+    )?;
     say("port", format!("{name} in {}", dir.display()));
     say("next", "rrc game <the game's folder>");
     Ok(ExitCode::SUCCESS)

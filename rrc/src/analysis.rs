@@ -13,7 +13,7 @@ use ids::Id;
 use serde_json::Value;
 
 use crate::args::Args;
-use crate::cache::{Cache, sha256_file};
+use crate::cache::{Cache, sha256, sha256_file};
 use crate::clockwork;
 use crate::knowledge::{Decision, Knowledge};
 use crate::repo::{Repo, read_toml, write_toml};
@@ -49,13 +49,52 @@ impl Index {
 }
 
 pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &["--no-decompile"])?;
-    a.positionals(0, 0, "analyze [--no-decompile]")?;
-    let (ghidra, java) = (tools::ghidra(&repo.local)?, tools::java(&repo.local)?);
+    let a = Args::parse(args, &[], &["--no-decompile", "--again"])?;
+    a.positionals(0, 0, "analyze [--no-decompile] [--again]")?;
     let cache = Cache::open(&repo.local)?;
     let original = repo.game_dir()?.join(&repo.settings.original.program);
-    let state = repo.state()?;
-    let work = state.join("ghidra");
+    let original_hash = sha256_file(&original)?;
+    let decompile = !a.has("--no-decompile");
+    let module = repo.module();
+    // The same program through the same script gives the same export: this machine's cache keeps
+    // it for every repository (and fresh clone) of the game.
+    let key = sha256(format!("{original_hash}\n{decompile}\n{EXPORT_SCRIPT}").as_bytes());
+    let earlier = cache.recall("analysis", &key).and_then(|text| toml::from_str::<Index>(&text).ok());
+    let index = match earlier.filter(|i| !a.has("--again") && cache.has(&i.export)) {
+        Some(index) => {
+            say("program", format!("{module}: analyzed before on this machine (--again redoes it)"));
+            index
+        }
+        None => {
+            let index = run_ghidra(repo, &cache, &original, original_hash, decompile)?;
+            cache.remember("analysis", &key, &toml::to_string(&index).map_err(|e| e.to_string())?)?;
+            index
+        }
+    };
+    write_toml(&repo.state()?.join(INDEX), &index)?;
+    let records = cache.get(&index.export)?;
+    let analysis = Analysis::parse(&String::from_utf8_lossy(&records), &module, index.entry)?;
+    say("ghidra", format!("{} functions, {} calls ({})", analysis.functions.len(), analysis.calls.len(), index.ghidra));
+    let mut k = Knowledge::load(&repo.knowledge())?;
+    let named = name_library_functions(&mut k, &analysis);
+    k.save(&repo.knowledge())?;
+    let library = analysis.functions.values().filter(|f| f.library.is_some()).count();
+    say("library", format!("{library} functions from signature packs, {named} newly named"));
+    say("export", &index.export);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Unpacks the program with Clockwork (if it was packed), analyzes it with Ghidra and stores what
+/// that gives in the cache.
+fn run_ghidra(
+    repo: &Repo,
+    cache: &Cache,
+    original: &Path,
+    original_hash: String,
+    decompile: bool,
+) -> Result<Index, String> {
+    let (ghidra, java) = (tools::ghidra(&repo.local)?, tools::java(&repo.local)?);
+    let work = repo.state()?.join("ghidra");
     std::fs::create_dir_all(work.join("scripts")).map_err(|e| format!("{}: {e}", work.display()))?;
     let module = repo.module();
 
@@ -63,18 +102,18 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let program = work.join(&module);
     let unpack = Command::new(clockwork::find(&repo.local)?)
         .arg("unpack")
-        .arg(&original)
+        .arg(original)
         .arg("--out")
         .arg(&program)
         .output()
         .map_err(|e| format!("clockwork unpack: {e}"))?;
     let unpacked = unpack.status.success();
     if !unpacked {
-        std::fs::copy(&original, &program).map_err(|e| format!("{}: {e}", original.display()))?;
+        std::fs::copy(original, &program).map_err(|e| format!("{}: {e}", original.display()))?;
     }
     let bytes = std::fs::read(&program).map_err(|e| format!("{}: {e}", program.display()))?;
     let entry = mz_entry(&bytes).ok_or_else(|| format!("{module}: only MZ programs can be analyzed so far"))?;
-    say("program", format!("{module}{}", if unpacked { ", unpacked by Clockwork" } else { "" }));
+    say("program", format!("{module}{}; Ghidra takes minutes", if unpacked { ", unpacked by Clockwork" } else { "" }));
 
     let export = work.join("export.jsonl");
     let _ = std::fs::remove_file(&export);
@@ -95,7 +134,7 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         .arg(work.join("scripts"))
         .args(["-postScript", "RecExport.java"])
         .arg(&export);
-    if !a.has("--no-decompile") {
+    if decompile {
         command.arg("decompile");
     }
     let log = work.join("ghidra.log");
@@ -107,26 +146,15 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         return Err(format!("Ghidra's analysis failed (its log: {})", log.display()));
     }
     let records = std::fs::read(&export).map_err(|e| format!("{}: {e}", export.display()))?;
-    let index = Index {
-        original: sha256_file(&original)?,
+    let ghidra_version = Analysis::parse(&String::from_utf8_lossy(&records), &module, entry)?.ghidra;
+    Ok(Index {
+        original: original_hash,
         program: cache.put(&bytes)?,
         unpacked,
         export: cache.put(&records)?,
         entry,
-        ghidra: String::new(),
-    };
-    let analysis = Analysis::parse(&String::from_utf8_lossy(&records), &module, entry)?;
-    let index = Index { ghidra: analysis.ghidra.clone(), ..index };
-    write_toml(&state.join(INDEX), &index)?;
-    say("ghidra", format!("{} functions, {} calls ({})", analysis.functions.len(), analysis.calls.len(), index.ghidra));
-
-    let mut k = Knowledge::load(&repo.knowledge())?;
-    let named = name_library_functions(&mut k, &analysis);
-    k.save(&repo.knowledge())?;
-    let library = analysis.functions.values().filter(|f| f.library.is_some()).count();
-    say("library", format!("{library} functions from signature packs, {named} newly named"));
-    say("export", &index.export);
-    Ok(ExitCode::SUCCESS)
+        ghidra: ghidra_version,
+    })
 }
 
 fn headless(ghidra: &Path) -> Command {
@@ -182,6 +210,8 @@ pub struct Function {
 #[derive(Debug, Default)]
 pub struct Analysis {
     pub ghidra: String,
+    /// The linear address (in Ghidra's address space) of the load image's start.
+    pub base: u64,
     pub functions: BTreeMap<Id, Function>,
     /// (caller, call site, callee).
     pub calls: Vec<(Id, Id, Id)>,
@@ -214,8 +244,8 @@ impl Analysis {
             Id::new(module, None, u32::try_from(offset).ok()?).ok()
         };
         let packs = Packs::load()?;
-        let mut analysis =
-            Analysis { ghidra: program["ghidra"].as_str().unwrap_or("?").to_owned(), ..Analysis::default() };
+        let ghidra = program["ghidra"].as_str().unwrap_or("?").to_owned();
+        let mut analysis = Analysis { ghidra, base, ..Analysis::default() };
         for r in &records {
             match r["record"].as_str() {
                 Some("function") => {
@@ -245,6 +275,16 @@ impl Analysis {
             }
         }
         Ok(analysis)
+    }
+}
+
+impl Analysis {
+    /// The ID of Ghidra's `SEG:OFF` (hex, as in its names: `DAT_4783_991c` is `4783:991C`), if the
+    /// address is in the image.
+    pub fn id_of(&self, module: &str, address: &str) -> Option<Id> {
+        let (segment, offset) = address.split_once(':')?;
+        let linear = u64::from_str_radix(segment, 16).ok()? * 16 + u64::from_str_radix(offset, 16).ok()?;
+        Id::new(module, None, u32::try_from(linear.checked_sub(self.base)?).ok()?).ok()
     }
 }
 
@@ -315,6 +355,8 @@ mod tests {
         assert_eq!(ftol.library, Some(("F_FTOL@".into(), "borland-c++-1991-medium".into())));
         assert_eq!(a.calls, [(id("GAME.EXE+00010"), id("GAME.EXE+00018"), id("GAME.EXE+00040"))]);
         assert_eq!(a.code[&id("GAME.EXE+00040")].0, "1000:0040  RETF\n");
+        assert_eq!(a.id_of("GAME.EXE", "2000:0010"), Some(id("GAME.EXE+10010")));
+        assert_eq!(a.id_of("GAME.EXE", "0FFF:0000"), None, "before the image");
         let mut k = Knowledge::default();
         assert_eq!(name_library_functions(&mut k, &a), 1);
         assert_eq!(k.functions[&id("GAME.EXE+00040")].provenance, "library:borland-c++-1991-medium");

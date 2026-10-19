@@ -24,6 +24,9 @@ A copy of the game is a version when it holds every file the version lists with 
 without case, as DOS's do); other files in the folder don't matter. The module part of the program's IDs is
 its file name, uppercase (`WOLF3D.EXE`).
 
+A port repository also has `.gitignore` (`rrc.local.toml`, `.rrc/`, `target/`) and `.gitattributes` (text with
+LF line ends on every platform).
+
 ## `rrc.local.toml`: this machine (not committed)
 
 ```toml
@@ -57,7 +60,9 @@ plus `entry`.
 
 ## The cache
 
-A folder of files named by their SHA-256: `objects/<first 2 hex digits>/<the other 62>`. It is `RRC_CACHE`,
+A folder of files named by their SHA-256: `objects/<first 2 hex digits>/<the other 62>`; and `index/<kind>/<key>`,
+what an earlier run made from given inputs (`index/analysis/<key>`: the `analysis.toml` of a program analysed by
+the same export script, keyed by the program's hash, the script and whether it decompiled). It is `RRC_CACHE`,
 else `cache` in `rrc.local.toml`, else `%LOCALAPPDATA%\rrecreate\cache` on Windows and `$XDG_CACHE_HOME/rrecreate`
 or `~/.cache/rrecreate` elsewhere. Anything in it can be deleted; what refers to it is rebuilt or recorded again.
 

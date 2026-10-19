@@ -58,6 +58,19 @@ impl Cache {
         self.path(hash).is_file()
     }
 
+    /// Remembers `text` under `key`: what an earlier run made from inputs `key` stands for (the
+    /// analysis of a program, say), so another repository or a fresh clone can reuse it.
+    pub fn remember(&self, kind: &str, key: &str, text: &str) -> Result<(), String> {
+        let dir = self.dir.join("index").join(kind);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = dir.join(key);
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    pub fn recall(&self, kind: &str, key: &str) -> Option<String> {
+        std::fs::read_to_string(self.dir.join("index").join(kind).join(key)).ok()
+    }
+
     pub fn path(&self, hash: &str) -> PathBuf {
         let (folder, rest) = hash.split_at(2.min(hash.len()));
         self.dir.join("objects").join(folder).join(rest)
@@ -107,6 +120,9 @@ mod tests {
         assert_eq!(cache.get(&hash).unwrap(), b"abc");
         assert!(cache.has(&hash) && !cache.has(&sha256(b"abd")));
         assert_eq!(sha256_file(&cache.path(&hash)).unwrap(), hash);
+        assert_eq!(cache.recall("analysis", "k"), None);
+        cache.remember("analysis", "k", "text").unwrap();
+        assert_eq!(cache.recall("analysis", "k").as_deref(), Some("text"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

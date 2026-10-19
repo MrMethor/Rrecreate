@@ -119,11 +119,13 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &[], &["--asm", "--c"])?;
-    let [what] = a.positionals(1, 1, "show ID|NAME [--asm] [--c]")? else { unreachable!() };
+    let [what] = a.positionals(1, 1, "show ID|NAME|SEG:OFF [--asm] [--c]")? else { unreachable!() };
     let k = Knowledge::load(&repo.knowledge())?;
+    let analysis = Analysis::load(repo)?;
+    let ghidra = || analysis.as_ref().and_then(|a| a.id_of(&repo.module(), what));
     let id = match parse_id(what) {
         Ok(id) => id,
-        Err(_) => k.named(what).cloned().ok_or_else(|| format!("nothing is named {what:?}"))?,
+        Err(_) => k.named(what).cloned().or_else(ghidra).ok_or_else(|| format!("nothing is named {what:?}"))?,
     };
     let about = |d: &Decision| {
         let confidence = d.confidence.map(|c| format!(", {c}")).unwrap_or_default();
@@ -151,8 +153,8 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     for i in k.ticks.inputs.iter().filter(|i| i.at == text) {
         say("input", format!("{}, {} bytes{}", i.name, i.size, note(&i.note)));
     }
-    if let Some(analysis) = Analysis::load(repo)? {
-        show_analysis(&k, &analysis, &id, a.has("--asm"), a.has("--c"));
+    if let Some(analysis) = &analysis {
+        show_analysis(&k, analysis, &id, a.has("--asm"), a.has("--c"));
     }
     Ok(ExitCode::SUCCESS)
 }

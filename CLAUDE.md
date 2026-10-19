@@ -2,8 +2,12 @@
 
 A toolkit an AI agent uses to port DOS games to modern systems: the original runs in our deterministic
 emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN.md` §1, §2).
-**Status:** Clockwork is in `clockwork/`, driven by tools through `clockwork serve` (M0, M1); the toolkit
-(`rrc`) and the runtime don't exist yet. M2 is next (`DESIGN.md` §12).
+**Status:** Clockwork is in `clockwork/`, driven by tools through `clockwork serve` (M0, M1); the toolkit, `rrc`,
+is in `rrc/` (M2). The runtime and the comparison are M3 (`DESIGN.md` §12).
+
+- **Porting a game:** follow `docs/porting.md`, inside the game's port repository (`rrc status` names the next
+  step).
+- **Working on Rrecreate itself:** the notes below.
 
 ## Notes for agents working on Rrecreate
 
@@ -46,5 +50,10 @@ emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN
   hex, 5 to 8 digits), for functions and data alike. The `ids` crate parses and prints them; its cases are in
   `testdata/function_ids.tsv`.
 - Tool output is read by agents: keep it short. Large data goes to the cache, and the output gives its hash.
+  `rrc` prints a label and a value per line.
+- `rrc` (MIT) drives Clockwork as a program (`clockwork serve`, `clockwork run`, `clockwork unpack`), never as a
+  library. The files it reads and writes are documented in `docs/formats.md`: change the two together, and
+  `docs/porting.md` when a step of the workflow changes. `rrc/tests/flow.rs` runs the whole flow on a small
+  program with the workspace's debug `clockwork`.
 - The predecessor, Recreate (`../Recreated`, github.com/MrMethor/Recreate), is a source of code as listed in
   `DESIGN.md` §11, not of design: its `PROJECT.md` describes the approach Rrecreate replaced.

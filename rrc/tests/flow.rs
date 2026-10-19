@@ -63,6 +63,7 @@ fn a_session_is_traced_tick_by_tick() {
     let rrc = Rrc { repo: repo.clone(), cache: dir.join("cache"), clockwork: clockwork() };
 
     assert!(rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]).contains("next      rrc game"));
+    assert!(repo.join(".gitattributes").is_file() && repo.join(".gitignore").is_file());
     rrc.ok(&["game", game.to_str().unwrap(), "--add-version", "1.0"]);
     assert!(rrc.ok(&["doctor"]).contains("game      ") && rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
@@ -75,6 +76,8 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["show", "count"]).contains("count (agent)"));
 
     rrc.ok(&["session", "add", "short", "--seconds", "0.005"]);
+    let calls = rrc.ok(&["calls", "short", "--min", "10"]);
+    assert!(calls.contains("1 functions: step"), "the loop calls step once a pass: {calls}");
     // Analysis comes first (it needs Ghidra, which tests don't have).
     assert!(rrc.ok(&["status"]).contains("next      rrc analyze"));
     let recorded = rrc.ok(&["record", "short"]);

@@ -10,8 +10,15 @@ compares the two tick by tick, traces each difference to the original code that 
 The port's faithful mode is checked against the original for good; modernizations are toggles on top.
 
 **Status:** the emulator, Clockwork, runs and tools drive it (`clockwork/`, with its own
-[README](clockwork/README.md)); the toolkit and the port runtime are next. The design is [`DESIGN.md`](DESIGN.md); the decisions and their reasons
-are in [`docs/decisions.md`](docs/decisions.md).
+[README](clockwork/README.md)). The toolkit, `rrc` (`rrc/`), keeps a port repository: the game's versions,
+analysis through Ghidra, knowledge files, sessions and per-tick traces of the original
+([`docs/porting.md`](docs/porting.md)). The port runtime and the comparison are next. The design is
+[`DESIGN.md`](DESIGN.md); the decisions and their reasons are in [`docs/decisions.md`](docs/decisions.md), the
+file formats in [`docs/formats.md`](docs/formats.md).
+
+```bash
+cargo build --release -p rrc -p clockwork
+```
 
 Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.
 
@@ -20,7 +27,7 @@ Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.
 | Path | What |
 |---|---|
 | `clockwork/` | The emulator (GPL-2.0-or-later) |
-| `rrc/` | The toolkit's command line, `rrc` (being built: M2) |
+| `rrc/` | The toolkit's command line, `rrc` |
 | `runtime/` | The crates a Rust port builds on (to come) |
 | `ghidra/` | The Ghidra scripts: export, and names written back |
 | `sigs/` | Library signature packs |

@@ -4,8 +4,10 @@
 > status). When a decision changes, both files change in the same commit, and nothing here may describe a
 > superseded decision.
 
-**Status (2026-10-19):** M0 and M1 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
-serve`. M2, the toolkit (`rrc`, §9), is under way. Rrecreate succeeds Recreate (private), whose emulator and parts of whose
+**Status (2026-10-19):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
+serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. The Wolf3D
+port (local for now) has its version, its own analysis, its play tick and two traced sessions. M3, the runtime
+and the comparison, is next. Rrecreate succeeds Recreate (private), whose emulator and parts of whose
 tooling it takes over (§11).
 
 ## 1. The product
@@ -270,13 +272,14 @@ sessions/           a TOML file per session (its inputs, its length, its recorde
 **The toolkit, `rrc`**, is one Rust program run inside a port repository. It drives Clockwork as a child
 process through `clockwork serve`. Its commands are short and print little: `init`, `doctor`, `status` (the
 next step), `game` (the game's folder and its version), `check`, `name`, `show`, `analyze`, `import`,
-`session`, `record`, `trace`.
+`session`, `calls` (how often a session calls each function: loops and their ticks), `record`, `trace`.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees
 the segments); under an extender, the image dump. Ghidra imports it headless, applies the signature packs and
 exports functions, calls, disassembly and decompiled code (`ghidra/RecExport.java`) into the cache; `rrc show`
-puts that next to the knowledge.
+puts that next to the knowledge. Ghidra's analysis isn't exactly reproducible (two runs on Wolf3D found 778 and 776
+functions), so the cache keeps the analysis of a program by its hash and later runs reuse it.
 
 **Traces** (`rrc record <session>`): Clockwork runs the session and stops at every sync point hit, a tick;
 at each it reads the boundary values and the named data, and takes the frames and sound events since the last
@@ -304,8 +307,9 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
   the `Call` interface, dual-run, captured-call replay, poison checks and lockstep with overrides. Kept and
   extended: snapshots, coverage, memory-access tracing, contract inference.
 - The Ghidra export script, the library signature packs, the test programs built with Open Watcom.
-- Recreate's Wolf3D knowledge (429 named functions, globals, types) and its 46 verified overrides go to the
-  Wolf3D port as evidence for its names and logic.
+- Recreate's Wolf3D knowledge (names transferred from id's released source, globals, its 46 overrides written
+  from that source) stays outside the Wolf3D port: it grades the pilot afterwards, like the source itself (D3,
+  D46).
 - Not taken: the Python `rec` toolkit and its SQLite store, the task queue and packets, `rec submit`/`rec land`,
   Python ports. Their ideas are reused where they fit.
 
@@ -315,7 +319,7 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 |---|---|---|
 | M0 Repository | Clockwork imported and cut down; workspace, tests, CI | Clockwork's tests pass; Wolf3D, Arena and Daggerfall reach their checkpoints as before |
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
-| M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | Wolf3D's knowledge from Recreate loads; a session's trace is recorded |
+| M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | Recreate's Wolf3D knowledge loads (outside the port); a session of the Wolf3D port is traced |
 | M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, the comparison and its report | A toy port of a test program matches tick by tick |
 | M4 Pilot | Wolf3D gameplay as a native simulation, from a transplant at the start of E1M1, compared per tick | It matches through the pushwall session. id's released source stays out of the agent's reach and grades the result afterwards |
 | M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |

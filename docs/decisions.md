@@ -251,6 +251,14 @@ cache folder). A session's recorded trace hash is committed; recording it again 
 **Why:** D31 keeps large data out of git; committing the hash turns every re-recording into a check that
 Clockwork runs the session the same way on another machine.
 
+### D46. The Wolf3D port starts from its own analysis. Accepted 2026-10-19, with the person.
+Recreate's Wolf3D knowledge (every function name transferred from id's released source, data named with it at
+hand) and its overrides stay out of the Wolf3D port; the port starts from Clockwork, Ghidra and the signature
+packs, and Recreate's knowledge grades the pilot afterwards, with id's source. The port repository is local for
+now.
+**Why:** D3. Knowledge derived from the source would let the pilot take shortcuts, and it would prove nothing.
+**Supersedes:** the plan (DESIGN.md §11, M2) to give the Wolf3D port Recreate's knowledge as evidence.
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Accepted 2026-10-19.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the

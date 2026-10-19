@@ -5,6 +5,7 @@
 pub mod analysis;
 mod args;
 pub mod cache;
+mod calls;
 pub mod clockwork;
 pub mod game;
 pub mod import;
@@ -31,22 +32,28 @@ usage: rrc <command> [arguments]     (inside a port repository)
   game [FOLDER] [--add-version NAME]
                          the person's copy of the game (FOLDER is kept in rrc.local.toml) and which
                          version it is; --add-version records its files as a version the port supports
-  analyze [--no-decompile]
-                         the program, unpacked by Clockwork, analyzed by Ghidra into the cache;
+  analyze [--no-decompile] [--again]
+                         the program, unpacked by Clockwork, analyzed by Ghidra into the cache (an
+                         analysis of the same program on this machine is reused unless --again);
                          library functions the signature packs know get their names
   check                  the knowledge files: IDs, names, sizes, ticks, types (and against the image)
   name ID NAME           name a function (--evidence TEXT, --confidence 0-1, --by WHO: who decided,
                          else RRC_BY, else agent)
   data ID NAME [--size N] [--type T]
                          name data (the same options as name)
-  show ID|NAME [--asm] [--c]
-                         what is known about a function or data: its name and evidence, what Ghidra
-                         found (size, calls, callers), its disassembly (--asm) or decompiled code (--c)
+  show ID|NAME|SEG:OFF [--asm] [--c]
+                         what is known about a function or data (SEG:OFF: Ghidra's address, as in
+                         its DAT_SEG_OFF names): its name and evidence, what Ghidra found (size,
+                         calls, callers), its disassembly (--asm) or decompiled code (--c)
   session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]]
                          the sessions, or a new one: an input script (clockwork run --input-file) or
                          play recorded by clockwork play --record, and how many emulated seconds
   record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound
+  calls SESSION [--min N]
+                         how often the session calls each function, grouped by count (at least N,
+                         default 100): a loop calls its functions equally often, and the one in a
+                         group that waits for the timer is where a tick ends
   trace SESSION [--tick N] [--item NAME]
                          a recorded trace: a summary, one tick, or one item over the ticks
   import recreate DIR [--without PROVENANCE,...]
@@ -80,6 +87,7 @@ pub fn main() -> ExitCode {
         Some("data") => here().and_then(|repo| naming::data(&repo, rest)),
         Some("show") => here().and_then(|repo| naming::show(&repo, rest)),
         Some("session") => here().and_then(|repo| session::session(&repo, rest)),
+        Some("calls") => here().and_then(|repo| calls::calls(&repo, rest)),
         Some("record") => here().and_then(|repo| trace::record(&repo, rest)),
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("import") => here().and_then(|repo| import::import(&repo, rest)),
