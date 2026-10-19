@@ -184,13 +184,18 @@ subsystems.
 **Why:** Recreate's long design document kept descriptions of superseded decisions next to current ones, which
 confused readers, agents included.
 
-## Open
+## Languages and platforms
 
-### D36. Implementation language. Open.
-Proposed: Rust for Clockwork, the toolkit, the runtime and the ports; Java only for the Ghidra script. This
-would defer Recreate's Python output option (decided with the person, 2026-10-17): the runtime and the comparison
-are Rust, so a Python port would need bindings. Needs the person's confirmation.
+### D36. Rust, with room for other languages. Accepted 2026-10-19, with the person.
+Rust for Clockwork, the toolkit, the runtime and the ports; Java for the Ghidra script. Other port languages stay
+possible through D38: the Rust runtime is a convenience, not a requirement.
+**Supersedes:** Recreate's output-language setting (Python or Rust, 2026-10-17).
 
-### D37. Targets beyond the desktop. Open.
-Desktop first (Windows, Linux, macOS) with a permissive platform library (SDL3, zlib licence). Web (WASM) and
-mobile: to decide before M6, since they shape the presentation and platform layers.
+### D37. Desktop now, other platforms possible. Accepted 2026-10-19, with the person.
+The target is the desktop (Windows, Linux, macOS) with a permissive platform library (SDL3, zlib licence). The
+platform layer owns the main loop and all file access, and calls the simulation and the presentation, so a web
+(WASM) or mobile platform layer can be added without changing either.
+
+### D38. The toolkit and a port exchange documented files, not code. Accepted 2026-10-19.
+The session's boundary values, per-tick state traces and port states for transplants are files in documented
+formats, so a port in any language is compared by reading and writing them.

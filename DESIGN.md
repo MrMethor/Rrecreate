@@ -45,7 +45,7 @@ the original's behaviour is the specification.
 
 | Repository | Contents | Licence |
 |---|---|---|
-| **Rrecreate** (this one) | `clockwork/`: the emulator. `rrc`: the toolkit CLI. `runtime/`: the crates a port builds on. `ghidra/`: the Ghidra export script. Test programs. | MIT, except `clockwork/`: GPL-2.0-or-later (it contains code ported from DOSBox) |
+| **Rrecreate** (this one) | `clockwork/`: the emulator. `rrc`: the toolkit CLI. `runtime/`: the crates a Rust port builds on. `ghidra/`: the Ghidra export script. Test programs. | MIT, except `clockwork/`: GPL-2.0-or-later (it contains code ported from DOSBox) |
 | **One per game port** (e.g. `wolf3d-port`) | The port, its knowledge files (§9), its sessions and quirk register | The person's choice per game |
 
 The toolkit talks to Clockwork only through its control protocol (§4.2), never by linking it, and the runtime
@@ -115,7 +115,9 @@ the session.
 - **Simulation:** all game logic, stepped one tick at a time. Its state is one plain, serializable struct.
   It never sees the screen, the clock or the hardware.
 - **Presentation:** rendering and sound. Reads the simulation's state, never changes it; runs at any rate.
-- **Platform:** window, input devices, audio output (SDL3 or similar, under a permissive licence).
+- **Platform:** window, input devices, audio output and file access (SDL3 on the desktop). It owns the main
+  loop and calls the simulation and the presentation, so a web or mobile platform layer can be added without
+  changing either.
 
 A tick is one step of the original's main loop. Work the original did in interrupt handlers (music
 sequencing, timer counts) is a subsystem of the simulation with its own rate; its effects are part of the
@@ -180,6 +182,8 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
   comparison and builds the port's state for a transplant.
 - **Traces:** per tick, the mapped state of the original (recorded once per session through Clockwork, cached
   outside git) and of the port; comparing two traces needs no emulator.
+- **Files, not code:** the toolkit and a port exchange the session's boundary values, traces and port states as
+  files in documented formats, so a port in any language can be compared; Rust ports get this from the runtime.
 - **First divergence:** the tick and the fields that differ, then *who wrote* on the original's side; for the
   port, its own call trace for the same tick.
 - **Frames and sound:** in faithful mode, the port's rendering of each tick is compared with the original's

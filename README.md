@@ -16,7 +16,7 @@ Rrecreate succeeds [Recreate](https://github.com/MrMethor/Recreate), whose emula
 |---|---|
 | `clockwork/` | The emulator (GPL-2.0-or-later) |
 | `rrc/` | The toolkit's command line |
-| `runtime/` | The crates a port builds on |
+| `runtime/` | The crates a Rust port builds on |
 | `ghidra/` | The Ghidra export script |
 | `testbins/` | Small DOS test programs built with Open Watcom |
 
