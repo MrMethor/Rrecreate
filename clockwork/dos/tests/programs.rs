@@ -3029,10 +3029,13 @@ fn a_session_diff_runs_a_function_that_waits_for_the_timer() {
     let mut m = boot(&[("P.COM", &program)], "P.COM");
     let o = Override { offset, name: "wait_tick", conv: Convention::cdecl(false, 0, 0), run: wait_tick };
     m.start_hybrid("P.COM", vec![o]).set_all(Mode::Rust);
+    m.start_coverage();
     let (m, d) = dos::lockstep::diff(m, SECOND, 20_000);
     assert_eq!(d.divergence, None, "{:#?}", m.hybrid.as_ref().unwrap().findings);
     assert_eq!(d.stop, Stop::Exited(3));
     assert_eq!(d.calls, 3);
+    // The coverage is the program's as the originals ran it: the overridden function's too.
+    assert!(m.coverage.as_ref().unwrap().executed().any(|o| o == offset));
 }
 
 #[test]

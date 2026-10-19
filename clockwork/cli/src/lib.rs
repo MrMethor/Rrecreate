@@ -76,7 +76,7 @@ options:
                      call that caused it, reported as a finding (a session diff)
   --diff-every MS    run: with --diff, emulated milliseconds between checkpoints (default 100)
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
-                     made (JSON, for rec)
+                     made (JSON, for rec); with --diff, as the originals ran them
   --contracts FILE   run: infer each called function's contract (registers read and returned,
                      registers preserved, stack arguments and pops, memory use; JSON, for rec);
                      with --game, report where an override's convention disagrees

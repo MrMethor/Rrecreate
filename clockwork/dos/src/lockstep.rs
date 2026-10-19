@@ -66,7 +66,8 @@ pub struct Divergence {
 
 /// Runs `test` (with overrides hooked; those in Rust mode run Rust) until cycle `until`, in
 /// lockstep with a copy that runs every original, checkpointing every `interval` cycles. Returns
-/// the test machine as it ended (at the divergence, if there was one) and what was found.
+/// the test machine as it ended (at the divergence, if there was one) and what was found. Its
+/// coverage, if it records one, is the copy's: the program's code as the originals ran it.
 pub fn diff(test: Machine, until: u64, interval: u64) -> (Machine, Diff) {
     let mut pair = Pair::new(test);
     let mut equal = pair.clone();
@@ -89,11 +90,11 @@ pub fn diff(test: Machine, until: u64, interval: u64) -> (Machine, Diff) {
             let found_at = pair.test.cpu.cycles;
             let (pair, divergence) = localize(equal, target, what, (at, found_at));
             let diff = Diff { stop: Stop::CycleLimit, checkpoints, calls: pair.calls, divergence: Some(divergence) };
-            return (pair.test, diff);
+            return (pair.into_test(), diff);
         }
         if let Some(stop) = ended.or((target >= until).then_some(Stop::CycleLimit)) {
             let diff = Diff { stop, checkpoints, calls: pair.calls, divergence: None };
-            return (pair.test, diff);
+            return (pair.into_test(), diff);
         }
         equal = pair.clone();
     }
@@ -138,7 +139,15 @@ impl Pair {
         hybrid.originals_only = true;
         hybrid.pause = true;
         test.hybrid.as_mut().expect("a session diff needs overrides hooked").pause = true;
+        // Only the reference runs all of the program's code.
+        test.coverage = None;
         Pair { reference, test, calls: 0, waiting: BTreeSet::new() }
+    }
+
+    /// The test machine, with the reference's coverage.
+    fn into_test(mut self) -> Machine {
+        self.test.coverage = self.reference.coverage.take();
+        self.test
     }
 
     /// Runs both machines to cycle `target`, making the hooked calls on the way; with `check`,
