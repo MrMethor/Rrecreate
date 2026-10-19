@@ -9,8 +9,8 @@ The original game runs in **Clockwork**, a deterministic DOS emulator; the agent
 compares the two tick by tick, traces each difference to the original code that caused it, and keeps the books.
 The port's faithful mode is checked against the original for good; modernizations are toggles on top.
 
-**Status:** the emulator, Clockwork, runs (`clockwork/`, with its own [README](clockwork/README.md)); the
-toolkit and the port runtime are next. The design is [`DESIGN.md`](DESIGN.md); the decisions and their reasons
+**Status:** the emulator, Clockwork, runs and tools drive it (`clockwork/`, with its own
+[README](clockwork/README.md)); the toolkit and the port runtime are next. The design is [`DESIGN.md`](DESIGN.md); the decisions and their reasons
 are in [`docs/decisions.md`](docs/decisions.md).
 
 Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.

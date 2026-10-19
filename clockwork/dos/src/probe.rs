@@ -5,6 +5,7 @@
 use cpu::Bus;
 
 use crate::bounds::Bounds;
+use crate::calls::Calls;
 use crate::machine::PcBus;
 use crate::uninit::Uninit;
 use crate::watch::Watch;
@@ -23,7 +24,10 @@ pub(crate) struct ProbeBus<'a, 'b> {
     pub(crate) watch: Option<&'b mut Watch>,
     pub(crate) bounds: Option<&'b mut Bounds>,
     pub(crate) uninit: Option<&'b mut Uninit>,
-    /// Linear address of the instruction running.
+    pub(crate) calls: Option<&'b Calls>,
+    /// The instruction running: `cs:ip`, and its linear address.
+    pub(crate) cs: u16,
+    pub(crate) ip: u32,
     pub(crate) at: u32,
     pub(crate) now: u64,
 }
@@ -40,7 +44,8 @@ impl Bus for ProbeBus<'_, '_> {
             log.push(Access::Read(addr, value));
         }
         if let Some(watch) = self.watch.as_deref_mut() {
-            watch.on_read(self.now, addr, value);
+            let by = crate::watch::By::Instruction { cs: self.cs, ip: self.ip, linear: self.at };
+            watch.on_read(self.now, addr, value, by, self.calls);
         }
         if let Some(bounds) = self.bounds.as_deref_mut() {
             bounds.access(self.at, addr, self.now);
@@ -53,7 +58,8 @@ impl Bus for ProbeBus<'_, '_> {
             log.push(Access::Write(addr, value));
         }
         if let Some(watch) = self.watch.as_deref_mut() {
-            watch.on_write(self.now, addr, value, self.inner.peek_u8(addr));
+            let by = crate::watch::By::Instruction { cs: self.cs, ip: self.ip, linear: self.at };
+            watch.on_write(self.now, addr, value, self.inner.peek_u8(addr), by, self.calls);
         }
         if let Some(bounds) = self.bounds.as_deref_mut() {
             bounds.access(self.at, addr, self.now);

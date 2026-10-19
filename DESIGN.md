@@ -4,8 +4,9 @@
 > status). When a decision changes, both files change in the same commit, and nothing here may describe a
 > superseded decision.
 
-**Status (2026-10-19):** M0 done: Clockwork is in `clockwork/`. Rrecreate succeeds Recreate (private), whose
-emulator and parts of whose tooling it takes over (§11).
+**Status (2026-10-19):** M0 and M1 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
+serve`. M2, the toolkit, is next. Rrecreate succeeds Recreate (private), whose emulator and parts of whose
+tooling it takes over (§11).
 
 ## 1. The product
 
@@ -92,8 +93,10 @@ TCP socket; requests can be batched ("run to the 500th sync point, then return t
 - read and write memory and registers, with addresses as image offsets, segment:offset or linear;
 - inject input at exact virtual times;
 - snapshots: in memory (cheap, for bisecting) and to disk (a versioned format);
-- **who wrote:** run from a snapshot with a write watch on an address and report each write's instruction,
-  function, call chain and cycle; also the first read of memory nothing wrote;
+- **who wrote:** a watch on the bus (as MAME's are) reports each read or write of the watched bytes with its
+  instruction, cycle and call chain; host services and devices that change them are named. The chain is a
+  shadow stack kept from what instructions do to the stack; tracking calls from the start of a run gives a
+  watch started later the whole chain. Also the first read of memory nothing wrote;
 - coverage (which instructions ran, which calls were made), memory-access tracing over a range of code,
   bounds checks on declared data (an access past a named table's end is reported: a quirk candidate);
 - the loaded image: the program's memory after loading, unpacking or an extender's loader ran, with its
@@ -102,6 +105,13 @@ TCP socket; requests can be batched ("run to the 500th sync point, then return t
   (OPL and PC speaker writes, digitized sound starts), per tick.
 
 A GDB remote-protocol face lets gdb and Ghidra's debugger attach to the running original.
+
+**Built (M1):** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on
+disk, runs for a time or to a sync point's next hit, memory and registers, input, watches with call chains,
+bounds checks, uninitialized reads and image dumps (real mode in full; protected mode as the selector map and
+the segments it bounds). **Still to come:** coverage, frames and sound events through the protocol (with the
+traces, M2); image dumps of flat-model programs under an extender, which need where its loader put the LE
+objects; the GDB face.
 
 `clockwork run` and `clockwork play` stay for people: run headless, or play in a window with sound and record
 the session.

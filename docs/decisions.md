@@ -68,6 +68,15 @@ Clockwork reruns the original from a snapshot with a write watch and reports the
 chain and cycle of each write, and the first read of memory nothing wrote.
 **Why:** it turns "this field differs at tick 412" into "this code wrote it", which is what the agent fixes from.
 
+### D41. Snapshots: the machine without the game's files, refused across versions. Accepted 2026-10-19.
+A snapshot is the whole machine state (serde, postcard, deflate) behind a header with a format number,
+Clockwork's version and the state hash. The game's files and the CD image are inputs, given again on load; only
+what the program changed on the drive is stored. A snapshot from another format or version is refused, and the
+loaded machine must hash as the saved one did.
+**Why:** DOSBox-X's states broke between builds made with different compilers; a format that can load as a
+subtly different machine would make every comparison after it meaningless. Storing the game's files would
+make Daggerfall's snapshots hundreds of megabytes instead of two.
+
 ### D9. Clockwork stays deterministic. Accepted (carried from Recreate).
 Virtual time from executed instructions, no wall clock, no randomness, no host-dependent floating point; any
 difference between two runs is a bug.

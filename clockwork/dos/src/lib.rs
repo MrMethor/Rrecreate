@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod bios;
 pub mod bounds;
+pub mod calls;
 pub mod cdrom;
 pub mod clock;
 pub mod cmos;

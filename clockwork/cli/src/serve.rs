@@ -18,7 +18,8 @@
 //! - `read` `{"ranges": [{"at", "len"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
 //! - `watch` `{"ranges": [{"at", "len"}], "reads": false}` … `watch_end`: who wrote (or read) each
-//!   byte, with the instruction, the cycle and the call chain.
+//!   byte, with the instruction, the cycle and the call chain. `calls` `{"on": true}` tracks calls
+//!   from now on, so a watch started later sees the whole chain.
 //! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
 //!   `uninit_end`.
 //! - `image` `{"dir"}`: the loaded image for analysis; `rebase`: image offsets count from the
@@ -208,6 +209,10 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             for line in strings(r, "lines")? {
                 crate::input_script::Script::parse(&line)?.schedule(m);
             }
+            Ok(json!({}))
+        }
+        "calls" => {
+            m.track_calls(r.get("on").and_then(Value::as_bool).unwrap_or(true));
             Ok(json!({}))
         }
         "watch" => {

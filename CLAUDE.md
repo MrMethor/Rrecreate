@@ -2,8 +2,8 @@
 
 A toolkit an AI agent uses to port DOS games to modern systems: the original runs in our deterministic
 emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN.md` §1, §2).
-**Status:** Clockwork is in `clockwork/` (M0); the toolkit (`rrc`) and the runtime don't exist yet. M1 is next
-(`DESIGN.md` §12).
+**Status:** Clockwork is in `clockwork/`, driven by tools through `clockwork serve` (M0, M1); the toolkit
+(`rrc`) and the runtime don't exist yet. M2 is next (`DESIGN.md` §12).
 
 ## Notes for agents working on Rrecreate
 

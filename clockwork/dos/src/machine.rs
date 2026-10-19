@@ -571,6 +571,12 @@ pub struct Machine {
     /// accesses contract inference would see: don't run both.
     #[serde(skip)]
     pub watch: Option<Box<crate::watch::Watch>>,
+    /// Call tracking ([`Machine::track_calls`]; not part of the machine state), and whether the
+    /// watch turned it on.
+    #[serde(skip)]
+    pub calls: Option<Box<crate::calls::Calls>>,
+    #[serde(skip)]
+    calls_for_watch: bool,
     /// Bounds checks on declared data ([`Machine::start_bounds`]; not part of the machine state).
     #[serde(skip)]
     pub bounds: Option<Box<crate::bounds::Bounds>>,
@@ -624,6 +630,8 @@ impl Machine {
             coverage: None,
             contracts: None,
             watch: None,
+            calls: None,
+            calls_for_watch: false,
             bounds: None,
             uninit: None,
             syncs: crate::sync::Syncs::default(),
@@ -676,7 +684,11 @@ impl Machine {
         self.cpu.flush_code_cache();
         // Analyses are set up between runs: whether any is on is decided once.
         let syncs = !self.syncs.is_empty();
-        let probes = self.contracts.is_some() || self.watch.is_some() || self.bounds.is_some() || self.uninit.is_some();
+        let probes = self.contracts.is_some()
+            || self.watch.is_some()
+            || self.bounds.is_some()
+            || self.uninit.is_some()
+            || self.calls.is_some();
         loop {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
@@ -706,8 +718,8 @@ impl Machine {
                 {
                     contracts.hardware_interrupt(&self.cpu.regs);
                 }
-                if let Some(watch) = self.watch.as_deref_mut() {
-                    watch.interrupt(&self.cpu, from);
+                if let Some(calls) = self.calls.as_deref_mut() {
+                    calls.interrupt(&self.cpu, from);
                 }
                 continue;
             }
@@ -740,8 +752,8 @@ impl Machine {
             let result = if probes {
                 let tracing = self.contracts.as_deref().is_some_and(|c| c.tracing());
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-                if let Some(watch) = self.watch.as_deref_mut() {
-                    watch.before(&self.cpu);
+                if let Some(calls) = self.calls.as_deref_mut() {
+                    calls.before(&self.cpu);
                 }
                 let mut bus = crate::probe::ProbeBus {
                     inner: PcBus { mem: &mut self.mem, dev: &mut self.devices, now },
@@ -749,6 +761,9 @@ impl Machine {
                     watch: self.watch.as_deref_mut(),
                     bounds: self.bounds.as_deref_mut(),
                     uninit: self.uninit.as_deref_mut(),
+                    calls: self.calls.as_deref(),
+                    cs: self.cpu.regs.cs(),
+                    ip: self.cpu.regs.ip,
                     at,
                     now,
                 };
@@ -760,9 +775,9 @@ impl Machine {
             if let Some(contracts) = self.contracts.as_deref_mut() {
                 contracts.after(&self.cpu.regs);
             }
-            if let Some(mut watch) = self.watch.take() {
-                watch.after(&self.cpu, |at| self.peek_linear_u8(at));
-                self.watch = Some(watch);
+            if let Some(mut calls) = self.calls.take() {
+                calls.after(&self.cpu, |at| self.peek_linear_u8(at));
+                self.calls = Some(calls);
             }
             if let Some(coverage) = &mut self.coverage {
                 match result {
@@ -1025,14 +1040,29 @@ impl Machine {
         Some(self.peek_u8(physical))
     }
 
-    /// Starts watching memory (see [`crate::watch`]); a watch already on is replaced.
+    /// Starts watching memory (see [`crate::watch`]); a watch already on is replaced. It turns call
+    /// tracking on if nothing did, for the calls made from now on.
     pub fn start_watch(&mut self, watch: crate::watch::Watch) {
         self.watch = Some(Box::new(watch));
+        if self.calls.is_none() {
+            self.calls = Some(Box::default());
+            self.calls_for_watch = true;
+        }
     }
 
     /// Ends the watch and returns it, with its hits.
     pub fn take_watch(&mut self) -> Option<crate::watch::Watch> {
+        if std::mem::take(&mut self.calls_for_watch) {
+            self.calls = None;
+        }
         self.watch.take().map(|w| *w)
+    }
+
+    /// Tracks calls from now on (see [`crate::calls`]), so a watch started later knows the whole
+    /// call chain; or stops tracking.
+    pub fn track_calls(&mut self, on: bool) {
+        self.calls_for_watch = false;
+        self.calls = on.then(|| self.calls.take().unwrap_or_default());
     }
 
     /// Starts bounds checks on these objects (physical addresses; see [`crate::bounds`]).
@@ -1162,7 +1192,7 @@ impl Machine {
     fn watch_changes(&mut self, before: &[u8], by: crate::watch::By) {
         if let Some(mut watch) = self.watch.take() {
             if let Some(after) = watch.bytes(|at| self.peek_u8(at)) {
-                watch.changed(self.cpu.cycles, before, &after, by);
+                watch.changed(self.cpu.cycles, before, &after, by, self.calls.as_deref());
             }
             self.watch = Some(watch);
         }

@@ -3542,3 +3542,43 @@ fn uninitialized_reads_are_the_bytes_nothing_wrote() {
     assert_eq!(found, [(unset, o["read_unset"]), (unset + 1, o["read_unset"])]);
     assert!(m.mem.was_written(0), "tracking ended");
 }
+
+#[test]
+fn calls_tracked_from_the_start_give_a_later_watch_the_whole_chain() {
+    // The same program as `a_watch_names_the_instruction_and_its_callers`; the watch starts only
+    // when `setter` is reached, two calls deep.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["outer", "after_outer", "setter", "after_setter", "value"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        let outer = a.l("outer");
+        a.call(outer)?;
+        a.here("after_outer")?;
+        exit(a, 0)?;
+        a.here("outer")?;
+        let setter = a.l("setter");
+        a.call(setter)?;
+        a.here("after_setter")?;
+        a.ret()?;
+        a.here("setter")?;
+        let value = word_at(a, "value");
+        a.mov(value, 0x0102)?;
+        a.ret()?;
+        a.here("value")?;
+        a.dw(&[0])
+    });
+    let o = offsets.into_inner();
+    let chain_seen = |track: bool| {
+        let mut m = boot(&[("W.COM", &program)], "W.COM");
+        let base = u32::from(m.dos.psp) << 4;
+        m.track_calls(track);
+        assert!(matches!(m.run_to_sync(base + o["setter"], 1, SECOND), Stop::Sync { .. }));
+        m.start_watch(dos::watch::Watch::range(base + o["value"]..base + o["value"] + 1, false));
+        assert_eq!(m.run(SECOND), Stop::Exited(0));
+        let hits = m.take_watch().unwrap().hits;
+        hits[0].chain.iter().map(|f| (f.entry - base, f.from - base)).collect::<Vec<_>>()
+    };
+    assert_eq!(chain_seen(true), [(o["setter"], o["after_setter"]), (o["outer"], o["after_outer"])]);
+    assert_eq!(chain_seen(false), [], "without tracking, only the calls made since the watch began");
+}
