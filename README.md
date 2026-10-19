@@ -1,9 +1,13 @@
 # Rrecreate
 
-A toolkit an AI agent uses to port DOS games to modern systems. The original game runs in **Clockwork**, a
-deterministic DOS emulator; the agent writes a native port and the toolkit compares the two tick by tick, traces
-each difference to the original code that caused it, and keeps the books. The port has a faithful mode, checked
-against the original, and a modern mode on top.
+A toolkit an AI agent uses to port DOS games to modern systems. What it produces for a game is a **Rust port as
+close to the original's behaviour as can be checked, built to be modernized**: its logic is separate from how the
+game is shown, heard and controlled, so graphics (up to real 3D), sound, performance and platforms can change
+without touching it.
+
+The original game runs in **Clockwork**, a deterministic DOS emulator; the agent writes the port and the toolkit
+compares the two tick by tick, traces each difference to the original code that caused it, and keeps the books.
+The port's faithful mode is checked against the original for good; modernizations are toggles on top.
 
 **Status:** design only. Start with [`DESIGN.md`](DESIGN.md); the decisions and their reasons are in
 [`docs/decisions.md`](docs/decisions.md).
