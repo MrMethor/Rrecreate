@@ -102,11 +102,6 @@ impl Regs {
         };
     }
 
-    /// The low 16 bits of a general register by index.
-    pub fn reg16(&self, index: usize) -> u16 {
-        self.gpr[index] as u16
-    }
-
     pub fn set_reg16(&mut self, index: usize, value: u16) {
         self.gpr[index] = (self.gpr[index] & 0xFFFF_0000) | u32::from(value);
     }
@@ -121,11 +116,6 @@ impl Regs {
         } else {
             self.flags &= !u32::from(mask);
         }
-    }
-
-    /// The low 16 bits of EFLAGS.
-    pub fn flags16(&self) -> u16 {
-        self.flags as u16
     }
 
     /// The I/O privilege level (EFLAGS bits 12-13).

@@ -27,17 +27,9 @@ pub const FIXED: u16 = 0x0002;
 /// Bits software can change in 80286 real mode. Bits 3, 5 and 12–15 always read as 0.
 pub const WRITABLE: u16 = CF | PF | AF | ZF | SF | TF | IF | DF | OF;
 
-/// Bits software can change in 80386 real mode: IOPL and NT as well.
-pub const WRITABLE_386: u16 = WRITABLE | IOPL | NT;
-
 /// The value FLAGS takes on an 80286 when software loads `value` into it (POPF, IRET, SAHF).
 pub const fn normalize(value: u16) -> u16 {
     (value & WRITABLE) | FIXED
-}
-
-/// The same for an 80386.
-pub const fn normalize_386(value: u16) -> u16 {
-    (value & WRITABLE_386) | FIXED
 }
 
 /// Arithmetic flags (DOSBox `FMASK_TEST`).

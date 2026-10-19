@@ -150,10 +150,6 @@ impl Fpu {
         }
     }
 
-    pub fn control_word(&self) -> u16 {
-        self.cw
-    }
-
     pub fn status_word(&self) -> u16 {
         (self.sw & !TOP) | (u16::from(self.top) << 11)
     }

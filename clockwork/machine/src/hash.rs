@@ -1,7 +1,7 @@
 //! A small stable hash for state and frame fingerprints. Not cryptographic: it only needs to be
 //! identical across runs, platforms and Rust versions, which `std`'s default hasher isn't.
 
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 
 const OFFSET_BASIS: u64 = 0xCBF2_9CE4_8422_2325;
 const PRIME: u64 = 0x0000_0100_0000_01B3;
@@ -31,13 +31,6 @@ impl Hasher for Fnv64 {
 pub fn fnv64(bytes: &[u8]) -> u64 {
     let mut h = Fnv64::default();
     h.write(bytes);
-    h.finish()
-}
-
-/// Stable hash of any `Hash` value (integers are fed in little-endian byte order by `std`).
-pub fn stable_hash<T: Hash + ?Sized>(value: &T) -> u64 {
-    let mut h = Fnv64::default();
-    value.hash(&mut h);
     h.finish()
 }
 

@@ -613,25 +613,8 @@ impl Cpu {
         }
     }
 
-    pub fn push16<B: Bus>(&mut self, bus: &mut B, value: u16) {
-        let _ = self.push(bus, exec::Width::Word, u32::from(value));
-    }
-
-    pub fn pop16<B: Bus>(&mut self, bus: &mut B) -> u16 {
-        self.pop(bus, exec::Width::Word).unwrap_or(0) as u16
-    }
-
     /// Linear address of `offset` in segment register `seg` (an index from [`seg`]).
     pub fn linear(&self, seg: usize, offset: u16) -> u32 {
         self.segment_base(seg).wrapping_add(u32::from(offset))
-    }
-
-    /// Loads FLAGS the way POPF/IRET/SAHF do in real mode for this model.
-    pub fn load_flags(&mut self, value: u16) {
-        let low = match self.model {
-            Model::I286 => flags::normalize(value),
-            Model::I386 | Model::I486 => flags::normalize_386(value),
-        };
-        self.regs.flags = (self.regs.flags & 0xFFFF_0000) | u32::from(low);
     }
 }

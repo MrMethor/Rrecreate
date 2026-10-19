@@ -85,13 +85,6 @@ pub enum DisplayKind {
     TrueColor32,
 }
 
-impl DisplayKind {
-    /// Pixels are colors themselves rather than palette indexes.
-    pub fn is_direct_color(self) -> bool {
-        matches!(self, Self::HiColor15 | Self::HiColor16 | Self::TrueColor24 | Self::TrueColor32)
-    }
-}
-
 /// The S3 Trio64's extended registers: CRTC indexes 2Dh-6Bh and sequencer indexes 08h-18h
 /// (DOSBox `SVGA_S3_WriteCRTC`, `SVGA_S3_ReadCRTC`, `SVGA_S3_WriteSEQ`, `SVGA_S3_ReadSEQ`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

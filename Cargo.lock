@@ -262,7 +262,6 @@ dependencies = [
  "iced-x86",
  "libm",
  "serde",
- "serde-big-array",
 ]
 
 [[package]]
