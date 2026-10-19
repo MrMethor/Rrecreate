@@ -3,12 +3,12 @@
 use std::collections::VecDeque;
 
 /// Side effects of a controller write that reach beyond the keyboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ControllerEffect {
     SetA20(bool),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Keyboard {
     queue: VecDeque<u8>,
     /// Byte in the output buffer, not yet read from port 60h.

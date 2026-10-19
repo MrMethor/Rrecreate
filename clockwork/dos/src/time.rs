@@ -1,6 +1,6 @@
 //! Calendar arithmetic for the emulated wall clock (virtual, never the host's).
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DateTime {
     pub year: u16,
     pub month: u8,

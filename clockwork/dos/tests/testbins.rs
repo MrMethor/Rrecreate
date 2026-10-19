@@ -78,3 +78,41 @@ fn floating_point_on_the_8087() {
 fn medium_model_far_calls_and_a_jump_table() {
     assert_eq!(output(&run("MEDIUM.EXE")), "151 6765\r\n");
 }
+
+#[test]
+fn a_snapshot_on_disk_goes_on_exactly_as_the_machine_would_have() {
+    // Files written and renamed, mode 13h and the DAC, a timer interrupt handler, x87 code: half
+    // way through, saved and loaded again, each runs on to the same end as without the snapshot.
+    for (name, cycles) in
+        [("FILEIO.EXE", 4_000), ("MODE13.EXE", 450_000), ("TIMER.EXE", 2_000_000), ("FLOAT.EXE", 5_500)]
+    {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testbins/bin").join(name);
+        let mut drive = Vfs::new();
+        drive.insert_file(name, std::fs::read(&path).unwrap());
+        let mut m = Machine::with_program(Config::default(), drive.clone(), name, "").unwrap();
+        assert_eq!(m.run(cycles), Stop::CycleLimit, "{name} ended before the snapshot");
+        let mut file = Vec::new();
+        dos::snapshot::save(&m, &mut file).unwrap();
+        let mut loaded = dos::snapshot::load(&file[..], drive.clone(), None).unwrap();
+        assert_eq!(loaded.state_hash(), m.state_hash(), "{name}");
+        let (a, b) = (m.run(5 * SECOND), loaded.run(5 * SECOND));
+        assert!(matches!(a, Stop::Exited(_)), "{name}: {a:?}");
+        assert_eq!((a, m.state_hash(), &m.console), (b, loaded.state_hash(), &loaded.console), "{name}");
+        // The game's files aren't in the snapshot; another folder doesn't restore the machine.
+        let mut other = drive.clone();
+        other.insert_file(name, vec![0; 10]);
+        assert!(dos::snapshot::load(&file[..], other, None).is_err(), "{name}");
+    }
+}
+
+#[test]
+fn a_snapshot_from_another_format_is_refused() {
+    let mut drive = Vfs::new();
+    drive.insert_file("A.COM", vec![0xCD, 0x20]);
+    let m = Machine::with_program(Config::default(), drive.clone(), "A.COM", "").unwrap();
+    let mut file = Vec::new();
+    dos::snapshot::save(&m, &mut file).unwrap();
+    file[8] ^= 0xFF; // the format number
+    let error = dos::snapshot::load(&file[..], drive, None).map(|_| ()).unwrap_err();
+    assert!(error.contains("format"), "{error}");
+}

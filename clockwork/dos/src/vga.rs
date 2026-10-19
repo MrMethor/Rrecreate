@@ -37,7 +37,7 @@ pub const LFB_BASE: u32 = 0xC000_0000;
 
 /// Video memory. In VGA-compatible modes it is four planes, interleaved (byte
 /// `offset * 4 + plane`), as in DOSBox; SVGA modes address the same bytes linearly.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Vram(Box<[u8]>);
 
 impl std::fmt::Debug for Vram {
@@ -60,7 +60,7 @@ impl std::ops::DerefMut for Vram {
 }
 
 /// How the attribute and graphics controllers interpret memory (DOSBox `VGA_DetermineMode`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DisplayKind {
     Text,
     /// CGA 4-color graphics (modes 4, 5), from RAM at B8000.
@@ -94,7 +94,7 @@ impl DisplayKind {
 
 /// The S3 Trio64's extended registers: CRTC indexes 2Dh-6Bh and sequencer indexes 08h-18h
 /// (DOSBox `SVGA_S3_WriteCRTC`, `SVGA_S3_ReadCRTC`, `SVGA_S3_WriteSEQ`, `SVGA_S3_ReadSEQ`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct S3 {
     /// CR31 memory configuration; bit 3 enables enhanced mapping (memory above 256 KB).
     pub reg_31: u8,
@@ -142,7 +142,7 @@ pub struct S3 {
 /// CR36 for 4 MB of fast-page DRAM (DOSBox `SVGA_Setup_S3`).
 const S3_REG_36: u8 = 0b0001_1110;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Vga {
     /// The mode number of the last BIOS mode set, VESA modes included (informational; drawing
     /// follows the registers).
@@ -151,6 +151,7 @@ pub struct Vga {
     /// other mode set.
     pub vesa_mode: Option<u16>,
     /// 6-bit RGB per entry.
+    #[serde(with = "serde_big_array::BigArray")]
     pub dac: [[u8; 3]; 256],
     dac_write_index: u8,
     dac_read_index: u8,
@@ -294,7 +295,7 @@ pub fn chained_index(address: u32) -> usize {
 
 /// How a CPU access in the window reaches memory (DOSBox's page handler choice in
 /// `VGA_SetupHandlers`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Access {
     /// Chain-4 in VGA-compatible addressing: interleaved, plane = address & 3.
     Chained,

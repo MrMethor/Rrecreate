@@ -13,7 +13,7 @@ use crate::{Abort, Bus, Cpu, Exit, Fault, Model, Res, TableRegister, vector};
 /// Longest run of prefixes accepted before the instruction is treated as invalid.
 const MAX_PREFIXES: usize = 14;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Width {
     Byte,
     Word,
@@ -58,7 +58,7 @@ impl Width {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Rm {
     Reg(u8),
     /// `mask` is 0xFFFF for 16-bit addressing (offsets wrap within the segment) and all ones
@@ -70,13 +70,13 @@ pub(crate) enum Rm {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModRm {
     pub(crate) reg: u8,
     pub(crate) rm: Rm,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Rep {
     None,
     /// F3: REP / REPE.

@@ -28,7 +28,7 @@ pub const FRAME_PADDING: u32 = 150;
 /// the CD drive reaches it.
 pub const IMAGE_ROOT: &str = "[CD]";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Track {
     pub number: u8,
     /// 0 for audio, 40h for data (the Q-channel's control and address byte).
@@ -43,7 +43,7 @@ pub struct Track {
     file: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct TrackFile {
     path: PathBuf,
     /// Where the sectors (or the WAVE's samples) start in the file, and how many bytes there are.
@@ -65,7 +65,7 @@ impl TrackFile {
 pub type IsoEntry = (String, Option<Vec<u8>>);
 
 /// A CD image: its tracks (the lead-out last) and the files they come from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CdImage {
     pub tracks: Vec<Track>,
     files: Vec<TrackFile>,
@@ -521,7 +521,7 @@ fn wave(path: &Path) -> Result<TrackFile, String> {
 }
 
 /// One PLAY: what the renderer mixes in (the drive's part of the audio log).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CdSegment {
     pub start_ns: u64,
     pub sector: u32,
@@ -543,7 +543,7 @@ impl CdSegment {
 /// The drive's audio as MSCDEX sees it (DOSBox `CMscdex` with `CDROM_Interface_Image`'s
 /// player), kept by virtual time: a PLAY starts at a time, and where it has got to follows from
 /// the time now.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CdAudio {
     playing: Option<CdSegment>,
     /// Stopped while playing: RESUME (or a PLAY from there) goes on from this sector, for this

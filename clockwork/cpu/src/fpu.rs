@@ -78,7 +78,7 @@ const TRIG_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 const CONSTANTS: [f64; 7] = [1.0, LOG2_10, LOG2_E, PI, LOG10_2, LN_2, 0.0];
 
 /// Where the last non-control instruction and its memory operand were, for FSTENV and FSAVE.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Pointers {
     cs: u16,
     ip: u32,
@@ -89,7 +89,7 @@ struct Pointers {
 }
 
 /// The FPU's state. Plain data, so cloning the CPU snapshots it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Fpu {
     /// Physical registers R0-R7; ST(i) is R[(TOP + i) mod 8].
     regs: [f64; 8],
@@ -1152,7 +1152,7 @@ impl Cpu {
 }
 
 /// A memory operand of an escape instruction.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct Operand {
     seg: usize,
     off: u32,

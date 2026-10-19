@@ -906,7 +906,7 @@ fn fill_row(m: &mut Machine, left: u16, right: u16, row: u16, attribute: u8, bas
 }
 
 /// A rectangle of character cells, inclusive.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct Window {
     top: u16,
     left: u16,

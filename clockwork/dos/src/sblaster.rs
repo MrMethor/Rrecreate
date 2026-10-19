@@ -25,7 +25,7 @@ const READ_STEP_HZ: u64 = 1000;
 /// DMA transfer units per sample in 14-bit fixed point (DOSBox's `SbShift`).
 const SHIFT: u32 = 14;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SbType {
     Sb1 = 1,
     SbPro1 = 2,
@@ -35,7 +35,7 @@ pub enum SbType {
 }
 
 /// Card type and resources, as in the `BLASTER` variable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SbConfig {
     pub kind: SbType,
     pub base: u16,
@@ -72,7 +72,7 @@ impl SbConfig {
 }
 
 /// Samples played by DMA from `start_ns` on: signed 16-bit, interleaved left/right in stereo.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PcmSegment {
     pub start_ns: u64,
     pub rate_hz: u32,
@@ -81,13 +81,13 @@ pub struct PcmSegment {
 }
 
 /// A byte written to the DAC directly (command 10h); it plays until the next one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DacWrite {
     pub nanos: u64,
     pub value: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum DspState {
     Reset,
     /// Reset released; ready (with AAh to read) at the given time.
@@ -95,7 +95,7 @@ enum DspState {
     Normal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 enum Mode {
     None,
     Dac,
@@ -104,7 +104,7 @@ enum Mode {
     DmaMasked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 enum DmaMode {
     None,
     Adpcm2,
@@ -116,7 +116,7 @@ enum DmaMode {
     Pcm16Aliased,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct DmaState {
     mode: DmaMode,
     autoinit: bool,
@@ -138,7 +138,7 @@ struct DmaState {
     dangling: Option<i16>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Mixer {
     index: u8,
     master: [u8; 2],
@@ -224,7 +224,7 @@ const E2_STEPS: [[i32; 9]; 4] = [
 const OUTPUT_FIFO: usize = 64;
 const DEFAULT_RATE_HZ: u32 = 22050;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SoundBlaster {
     pub config: SbConfig,
     irq: u8,

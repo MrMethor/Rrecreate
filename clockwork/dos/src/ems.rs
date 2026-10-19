@@ -40,7 +40,7 @@ mod status {
     pub const NAME_EXISTS: u8 = 0xA1;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 struct Handle {
     /// Storage page ids, in logical page order.
     pages: Vec<u16>,
@@ -48,7 +48,7 @@ struct Handle {
     saved_map: Option<[Option<(u16, u16)>; PHYSICAL_PAGES]>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Ems {
     total_pages: u16,
     /// Contents of storage pages that aren't currently mapped; allocated on first use.

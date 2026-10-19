@@ -17,7 +17,7 @@ use std::hash::Hasher;
 
 /// A rendered screen, row by row: one DAC index per pixel in `pixels`, or for the direct-color
 /// SVGA modes three bytes (red, green, blue) per pixel in `rgb`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Picture {
     pub width: usize,
     pub height: usize,

@@ -47,7 +47,7 @@ pub mod event {
     pub const MIDDLE_UP: u16 = 0x40;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Handler {
     mask: u16,
     segment: u16,
@@ -56,13 +56,13 @@ struct Handler {
 
 /// What a drawn cursor covers: a text cell (linear address, character and attribute) or
 /// graphics pixels (x, y, color).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum Background {
     Text(u32, u16),
     Pixels(Vec<(u16, u16, u8)>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Mouse {
     pub enabled: bool,
     pub x: i32,

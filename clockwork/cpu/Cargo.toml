@@ -8,6 +8,8 @@ publish.workspace = true
 license = "GPL-2.0-or-later"
 
 [dependencies]
+serde.workspace = true
+serde-big-array.workspace = true
 # Transcendental functions that give the same bits on every host (x87 FSIN, FYL2X, ...).
 libm = "0.2"
 

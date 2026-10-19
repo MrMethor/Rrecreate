@@ -107,7 +107,7 @@ mod error {
 type FarPointer = (u16, u32);
 
 /// The host's state (in the DOS state, so it is hashed and cloned with the machine).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Dpmi {
     /// The host area's linear address and XMS handle, once a client has entered.
     area: Option<(u32, u16)>,
@@ -118,7 +118,7 @@ pub struct Dpmi {
     interrupted: Vec<Regs>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Client {
     bits32: bool,
     psp: u16,
@@ -145,7 +145,7 @@ struct Client {
 }
 
 /// The protected-mode CPU state a host round trip to real mode comes back to.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct PmState {
     regs: Regs,
     segs: [SegmentCache; 6],
@@ -154,7 +154,7 @@ struct PmState {
     ldtr: SystemSegment,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum Saved {
     /// A reflected interrupt: back to the stub's IRET, with the handler's registers and flags.
     Reflect(PmState),

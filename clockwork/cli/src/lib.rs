@@ -53,6 +53,9 @@ options:
                      made (JSON)
   --contracts FILE   run: infer each called function's contract (registers read and returned,
                      registers preserved, stack arguments and pops, memory use; JSON)
+  --save-snapshot FILE  run: afterwards, save the machine to FILE (without the game's files)
+  --load-snapshot FILE  run: go on from a snapshot instead of starting the program, for
+                     --seconds more (the game folder and CD must be those it was taken with)
   --save-changes DIR run: afterwards, write the files the program created or changed to DIR
                      (same paths as on C:; the game folder itself is never touched), e.g. what
                      an installer unpacked
@@ -110,6 +113,8 @@ struct Options {
     screenshot: Option<PathBuf>,
     wav: Option<PathBuf>,
     save_changes: Option<PathBuf>,
+    save_snapshot: Option<PathBuf>,
+    load_snapshot: Option<PathBuf>,
     coverage: Option<PathBuf>,
     contracts: Option<PathBuf>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
@@ -259,6 +264,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--screenshot" => options.screenshot = Some(value(arg)?.into()),
             "--wav" => options.wav = Some(value(arg)?.into()),
             "--save-changes" => options.save_changes = Some(value(arg)?.into()),
+            "--save-snapshot" => options.save_snapshot = Some(value(arg)?.into()),
+            "--load-snapshot" => options.load_snapshot = Some(value(arg)?.into()),
             "--coverage" => options.coverage = Some(value(arg)?.into()),
             "--contracts" => options.contracts = Some(value(arg)?.into()),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
@@ -323,8 +330,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         }
         _ => return Err(format!("expected <game-dir> and <program>\n\n{USAGE}")),
     }
-    if options.program.is_none() && options.replay.is_none() {
+    if options.program.is_none() && options.replay.is_none() && options.load_snapshot.is_none() {
         return Err("missing <program>".into());
+    }
+    if options.replay.is_some() && options.load_snapshot.is_some() {
+        return Err("--replay and --load-snapshot exclude each other".into());
     }
     if options.seconds.is_some_and(|s| !s.is_finite() || s <= 0.0) || options.scale == 0 {
         return Err("--seconds and --scale must be positive".into());
@@ -373,7 +383,11 @@ fn drive_letter(text: &str) -> Result<char, String> {
 }
 
 /// Loads the game folder as drive C: and the program into a fresh machine.
-fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, String> {
+/// The game folder as drive C:, and the disc image the CD shows (with its folder and label), if
+/// one.
+type GameDrive = (Vfs, String, String, Option<std::sync::Arc<dos::cdrom::CdImage>>);
+
+fn game_drive(o: &Options) -> Result<GameDrive, String> {
     let game_dir = o.game_dir.as_path();
     let (mut drive, warnings) = Vfs::from_host_dir(game_dir).map_err(|e| format!("{}: {e}", game_dir.display()))?;
     for warning in warnings.iter().take(5) {
@@ -398,6 +412,11 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
         }
         cd_image = Some(std::sync::Arc::new(image));
     }
+    Ok((drive, cd_root, cd_label, cd_image))
+}
+
+fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, String> {
+    let (drive, cd_root, cd_label, cd_image) = game_drive(o)?;
     let config = Config {
         instructions_per_second: ips,
         cpu_model: o.cpu.unwrap_or(Config::default().cpu_model),
@@ -427,7 +446,19 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         Some(s) => (s.program.clone(), s.args.clone(), o.ips.unwrap_or(s.instructions_per_second)),
         None => (o.program.clone().unwrap_or_default(), o.args.clone(), o.ips.unwrap_or(8_000_000)),
     };
-    let mut m = boot(o, &program, &args, ips)?;
+    let mut m = match &o.load_snapshot {
+        Some(path) => {
+            let (drive, _, _, cd_image) = game_drive(o)?;
+            let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            dos::snapshot::load(std::io::BufReader::new(file), drive, cd_image)?
+        }
+        None => boot(o, &program, &args, ips)?,
+    };
+    let (program, ips) = if o.load_snapshot.is_some() {
+        (m.dos.program.clone(), o.ips.unwrap_or(m.config.instructions_per_second))
+    } else {
+        (program, ips)
+    };
     // The program's load image starts at its PSP's paragraph 10h (where image offsets count from).
     let image_base = (u32::from(m.dos.psp) + 0x10) << 4;
     if o.coverage.is_some() {
@@ -482,6 +513,10 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     }
     if let Some(dir) = &o.save_changes {
         save_changes(&m, dir)?;
+    }
+    if let Some(path) = &o.save_snapshot {
+        let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        dos::snapshot::save(&m, std::io::BufWriter::new(file))?;
     }
     if let (Some(path), Some(coverage)) = (&o.coverage, &m.coverage) {
         std::fs::write(path, coverage.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;

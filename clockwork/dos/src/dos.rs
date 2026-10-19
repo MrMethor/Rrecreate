@@ -46,7 +46,7 @@ pub mod error {
     pub const FILE_EXISTS: u16 = 0x50;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Handle {
     Console,
     Null,
@@ -54,7 +54,7 @@ pub enum Handle {
 }
 
 /// An entry in the system file table.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct OpenFile {
     pub handle: Handle,
     /// Job file table entries (in any process) that refer to this entry.
@@ -63,7 +63,7 @@ pub struct OpenFile {
     pub inherit: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DosState {
     pub psp: u16,
     pub dta: (u16, u16),
@@ -138,7 +138,7 @@ impl Default for DosState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LoadError {
     NotFound(String),
     BadFormat(String),
@@ -2159,7 +2159,7 @@ fn fcb_function(m: &mut Machine) {
 
 // ---- memory control blocks ----
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct Mcb {
     segment: u16,
     kind: u8,

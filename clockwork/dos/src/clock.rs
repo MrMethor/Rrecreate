@@ -14,7 +14,7 @@ pub const FRAME_PIT_TICKS: u64 = PIT_HZ / 70;
 /// Scan lines per frame (400 visible + 49 blanking) in the 70 Hz VGA timing.
 pub const LINES_PER_FRAME: u64 = 449;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Clock {
     pub instructions_per_second: u64,
 }

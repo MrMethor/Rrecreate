@@ -12,13 +12,13 @@ const ACK: u8 = 0xFE;
 /// Status register: bit 7 set = no data to read, bit 6 set = not ready for output.
 const NO_DATA: u8 = 0x80;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MidiByte {
     pub pit_tick: u64,
     pub value: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Mpu401 {
     input: VecDeque<u8>,
     uart_mode: bool,
@@ -75,7 +75,7 @@ const MAX_SYSEX: usize = 20 * 1024;
 /// Splits a stream of MIDI bytes, as programs send them to the MPU-401, into whole messages:
 /// running status is expanded (each message carries its status byte), SysEx messages are
 /// collected up to their end, and real-time bytes pass through on their own.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MidiParser {
     status: u8,
     message: [u8; 3],

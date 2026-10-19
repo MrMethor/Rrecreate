@@ -1,6 +1,6 @@
 //! Intel 8259A programmable interrupt controller, edge-triggered, fully nested mode.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum Init {
     Ready,
     Icw2,
@@ -8,7 +8,7 @@ enum Init {
     Icw4,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Pic {
     irr: u8,
     isr: u8,

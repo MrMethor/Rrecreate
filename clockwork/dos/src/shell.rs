@@ -45,7 +45,7 @@ pub(crate) fn image() -> Vec<u8> {
 }
 
 /// A running shell.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Shell {
     pub(crate) psp: u16,
     echo: bool,
@@ -68,14 +68,14 @@ pub struct Shell {
     calling: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Pending {
     line: String,
     /// A pipe's stage reads what the one before wrote.
     stdin: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Batch {
     /// `%0` (the name as entered), then the arguments.
     args: Vec<String>,
@@ -85,7 +85,7 @@ struct Batch {
     echo: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum Waiting {
     Nothing,
     Program,
@@ -95,7 +95,7 @@ enum Waiting {
 }
 
 /// The shell's own standard input and output, saved while a command's are redirected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Restore {
     stdin: Option<u16>,
     stdout: Option<u16>,

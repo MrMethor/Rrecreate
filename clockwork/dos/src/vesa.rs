@@ -16,7 +16,7 @@ use crate::machine::Machine;
 use crate::vga::{self, LFB_BASE, VRAM_SIZE};
 
 /// How a mode stores pixels (DOSBox's `VGAModes`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModeType {
     Text,
     Lin4,
@@ -33,7 +33,7 @@ const PIXEL_DOUBLE: u8 = 1;
 const LINE_DOUBLE: u8 = 2;
 
 /// One SVGA mode: DOSBox's `VideoModeBlock`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModeBlock {
     pub mode: u16,
     pub kind: ModeType,

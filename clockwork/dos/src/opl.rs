@@ -7,7 +7,7 @@
 //! (start timer 1, wait, read the status) behaves as on hardware.
 
 /// Which chips the card has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OplMode {
     /// One OPL2: AdLib, Sound Blaster 1.x/2.0.
     Opl2,
@@ -18,14 +18,14 @@ pub enum OplMode {
 }
 
 /// A register write as the OPL3 synthesizer receives it: bank 1 registers are 100h-1FFh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct OplWrite {
     pub nanos: u64,
     pub register: u16,
     pub value: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Timer {
     /// Length of one counter step: 80 µs (timer 1) or 320 µs (timer 2).
     step_ns: u64,
@@ -90,7 +90,7 @@ impl Timer {
 }
 
 /// The timer part of one chip.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Chip {
     timers: [Timer; 2],
 }
@@ -142,7 +142,7 @@ impl Chip {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Opl {
     pub mode: OplMode,
     chips: [Chip; 2],

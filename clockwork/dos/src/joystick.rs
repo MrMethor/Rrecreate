@@ -18,14 +18,14 @@ const OFFSET_NS: u64 = 20_000;
 pub const AXIS_MAX: i16 = 32767;
 
 /// One joystick: its position and buttons (bit 0: button 1, bit 1: button 2).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Stick {
     pub x: i16,
     pub y: i16,
     pub buttons: u8,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GamePort {
     /// The connected sticks (A and B); `None` is not connected.
     pub sticks: [Option<Stick>; 2],

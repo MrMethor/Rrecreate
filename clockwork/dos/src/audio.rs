@@ -315,7 +315,7 @@ fn speaker_high(events: &[SpeakerEvent], index: &mut usize, from: u64, to: u64) 
 }
 
 /// One section of an IIR filter: y = b0·x + b1·x1 + b2·x2 − a1·y1 − a2·y2.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Section {
     b: [f64; 3],
     a: [f64; 2],
@@ -355,7 +355,7 @@ fn butterworth3(cutoff_hz: f64, high_pass: bool) -> [Section; 2] {
 }
 
 /// What stands for the speaker's cone (DOSBox Staging's `pcspeaker_filter = on`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct SpeakerFilter {
     sections: [Section; 4],
 }

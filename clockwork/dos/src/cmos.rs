@@ -13,9 +13,10 @@ use crate::time::DateTime;
 /// The real-time clock's time base.
 pub const RTC_HZ: u64 = 32_768;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Cmos {
     index: u8,
+    #[serde(with = "serde_big_array::BigArray")]
     ram: [u8; 128],
     /// Emulated wall clock at cycle 0, in seconds since 1970.
     start_epoch: i64,

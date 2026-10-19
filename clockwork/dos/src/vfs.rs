@@ -10,7 +10,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Vfs {
     files: BTreeMap<String, Arc<Vec<u8>>>,
     dirs: BTreeSet<String>,
@@ -35,7 +35,7 @@ impl std::hash::Hash for Vfs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DirEntry {
     pub name: String,
     pub is_dir: bool,
@@ -191,6 +191,32 @@ impl Vfs {
 
     pub fn changed(&self) -> impl Iterator<Item = &str> {
         self.changed.iter().map(String::as_str)
+    }
+
+    /// The drive without the files as loaded: only what the program changed, for a snapshot.
+    pub(crate) fn changes_only(&self) -> Vfs {
+        let files = self.files.iter().filter(|(path, _)| self.changed.contains(*path));
+        Vfs {
+            files: files.map(|(path, data)| (path.clone(), data.clone())).collect(),
+            dirs: self.dirs.clone(),
+            changed: self.changed.clone(),
+        }
+    }
+
+    /// The changes of `changes_only` on top of the files as loaded (`base`): a changed path it
+    /// doesn't hold was deleted or renamed away.
+    pub(crate) fn over(self, mut base: Vfs) -> Vfs {
+        for path in &self.changed {
+            match self.files.get(path) {
+                Some(data) => {
+                    base.files.insert(path.clone(), data.clone());
+                }
+                None => {
+                    base.files.remove(path);
+                }
+            }
+        }
+        Vfs { files: base.files, dirs: self.dirs, changed: self.changed }
     }
 }
 

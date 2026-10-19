@@ -28,7 +28,7 @@ use crate::vga_draw;
 use crate::xms::{self, Xms};
 use crate::{bios, dos};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// Speed of the emulated PC: one cycle is one instruction (or string repetition).
     pub instructions_per_second: u64,
@@ -98,7 +98,7 @@ pub const MAX_EXEC_HITS: usize = 1_000_000;
 
 /// An instruction that ran in the watched range: when, where, the registers, and the top of the
 /// stack (a near or far return address right after a call).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExecHit {
     pub cycle: u64,
     pub cs: u16,
@@ -108,7 +108,7 @@ pub struct ExecHit {
 }
 
 /// One scheduled input event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Input {
     /// A scancode delivered through the keyboard controller.
     Key(u8),
@@ -143,7 +143,7 @@ pub enum Stop {
 pub const MAX_EXTENDED_KB: u32 = 15 * 1024;
 
 /// One displayed frame, fingerprinted at the start of vertical retrace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
     pub number: u64,
     pub cycle: u64,
@@ -152,7 +152,7 @@ pub struct Frame {
     pub hash: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Devices {
     pub pic: Pic,
     pub pic2: Pic,
@@ -530,7 +530,7 @@ impl Bus for PcBus<'_> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Machine {
     pub cpu: Cpu,
     pub mem: Memory,
@@ -548,31 +548,42 @@ pub struct Machine {
     pub diagnostics: BTreeSet<String>,
     /// When set, every host service call is recorded here (BIOS, DOS, EMS, MSCDEX); timer and
     /// keyboard interrupts are left out. Not part of the machine state.
+    #[serde(skip)]
     pub service_trace: Option<Vec<crate::trace::ServiceCall>>,
     /// Hardware interrupts delivered to the CPU, per IRQ line (0-15). Not part of the machine
     /// state; for debugging.
+    #[serde(skip)]
     pub irq_counts: [u64; 16],
     /// When set, every instruction that starts inside this linear range is recorded in
     /// `exec_hits` (for debugging; not part of the machine state).
+    #[serde(skip)]
     pub exec_watch: Option<std::ops::Range<u32>>,
+    #[serde(skip)]
     pub exec_hits: Vec<ExecHit>,
     /// What the started program's code executed, once [`Machine::start_coverage`] was called
     /// (for the analysis pipeline; not part of the machine state).
+    #[serde(skip)]
     pub coverage: Option<crate::coverage::Coverage>,
     /// Contract inference ([`Machine::start_contracts`]).
+    #[serde(skip)]
     pub contracts: Option<Box<crate::contracts::Contracts>>,
     /// A memory watch ([`Machine::start_watch`]; not part of the machine state). It takes the
     /// accesses contract inference would see: don't run both.
+    #[serde(skip)]
     pub watch: Option<Box<crate::watch::Watch>>,
     /// Bounds checks on declared data ([`Machine::start_bounds`]; not part of the machine state).
+    #[serde(skip)]
     pub bounds: Option<Box<crate::bounds::Bounds>>,
     /// Uninitialized reads ([`Machine::start_uninit`]; not part of the machine state).
+    #[serde(skip)]
     pub uninit: Option<Box<crate::uninit::Uninit>>,
     /// Sync points and their hit counts ([`crate::sync`]; not part of the machine state, but a
     /// snapshot keeps them).
     pub syncs: crate::sync::Syncs,
     /// The CD drive's disc image, if it shows one (an input, like the drive's files: not part
     /// of the machine state). Without one the drive's folder is a disc with one data track.
+    /// A loaded snapshot needs it given again.
+    #[serde(skip)]
     pub cd_image: Option<std::sync::Arc<crate::cdrom::CdImage>>,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.

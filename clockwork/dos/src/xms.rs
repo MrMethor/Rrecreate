@@ -45,7 +45,7 @@ mod error {
     pub const NO_UMBS: u8 = 0xB1;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct Block {
     first_page: u32,
     pages: u32,
@@ -53,7 +53,7 @@ struct Block {
     locks: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Xms {
     enabled: bool,
     /// Page after the last page of memory.

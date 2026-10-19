@@ -13,6 +13,11 @@ machine.workspace = true
 libm = "0.2"
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info"] }
 nuked-opl3 = "0.1"
+serde.workspace = true
+serde-big-array.workspace = true
+# Snapshots on disk: the machine's state, compact and compressed.
+postcard = { version = "1", features = ["use-std"] }
+flate2 = "1"
 
 [dev-dependencies]
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "code_asm", "decoder"] }

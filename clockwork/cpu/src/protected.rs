@@ -17,7 +17,7 @@ use crate::{Abort, Bus, Cpu, Exit, Fault, Res, SegmentCache, SystemSegment, cr0,
 
 /// How an interrupt was raised: software interrupts check the gate's privilege, and others set
 /// the EXT bit in error codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum IntKind {
     /// INT n: checks the gate's DPL, and IOPL in V86 mode.
     Software,
@@ -27,7 +27,7 @@ pub(crate) enum IntKind {
     Exception,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum TaskSwitch {
     Jmp,
     CallOrInt,
@@ -50,7 +50,7 @@ mod kind {
     pub const TRAP_GATE_386: u8 = 0x0F;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Descriptor {
     low: u32,
     high: u32,

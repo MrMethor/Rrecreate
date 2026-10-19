@@ -22,7 +22,7 @@ pub mod seg {
     pub const GS: usize = 5;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Regs {
     /// EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI. 16-bit code uses the low halves.
     pub gpr: [u32; 8],

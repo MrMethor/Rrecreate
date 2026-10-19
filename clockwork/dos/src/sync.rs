@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 /// Linear addresses below this are checked against a bit set, above it against the map.
 const BITS_END: u32 = 0x11_0000;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Point {
     /// Times the instruction was reached.
     pub hits: u64,
@@ -18,7 +18,7 @@ pub struct Point {
     pub cycles: Option<Vec<u64>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Syncs {
     points: BTreeMap<u32, Point>,
     bits: Vec<u64>,

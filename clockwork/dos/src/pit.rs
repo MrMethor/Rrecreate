@@ -10,7 +10,7 @@
 
 /// The speaker's input from a moment on, while nothing changes: high (pushed out) or low (at
 /// rest) as a function of the PIT tick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Wave {
     Steady(bool),
     /// Low until this tick, high from it on: modes 0 and 1 counting down.
@@ -61,13 +61,13 @@ impl Wave {
 
 /// The speaker's waveform from `pit_tick` on, until the next event (before the first one, it is
 /// at rest).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SpeakerEvent {
     pub pit_tick: u64,
     pub wave: Wave,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Channel {
     pub mode: u8,
     /// 1 = low byte only, 2 = high byte only, 3 = low then high.
@@ -193,7 +193,7 @@ impl Channel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Pit {
     pub channels: [Channel; 3],
     /// PIT tick of channel 0's next IRQ0, if it is counting.

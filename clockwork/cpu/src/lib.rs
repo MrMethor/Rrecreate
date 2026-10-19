@@ -186,7 +186,7 @@ impl<B: Bus> Bus for Paged<'_, B> {
 }
 
 /// Which processor to behave like. Later models do everything earlier ones do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum Model {
     I286,
     #[default]
@@ -291,7 +291,7 @@ impl From<Exit> for Abort {
 pub(crate) type Res<T> = Result<T, Abort>;
 
 /// Descriptor table register contents (LGDT/LIDT).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TableRegister {
     pub limit: u16,
     pub base: u32,
@@ -300,7 +300,7 @@ pub struct TableRegister {
 /// A segment register's hidden part, loaded from a descriptor in protected mode. The cache
 /// remembers the selector it was loaded for: when the selector register changes without a
 /// descriptor load (host code setting real-mode segments), real-mode addressing applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct SegmentCache {
     pub selector: u16,
     pub base: u32,
@@ -310,7 +310,7 @@ pub struct SegmentCache {
 }
 
 /// LDTR or TR: a system segment selected from the GDT.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct SystemSegment {
     pub selector: u16,
     pub base: u32,
@@ -320,14 +320,14 @@ pub struct SystemSegment {
 }
 
 /// CPU state saved at the start of each protected-mode instruction, restored if it faults.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Checkpoint {
     regs: Regs,
     segs: [SegmentCache; 6],
     cpl: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Cpu {
     pub regs: Regs,
     pub model: Model,
@@ -369,7 +369,7 @@ pub struct Cpu {
 /// which stay valid across instructions until something could have changed them: a CPU write
 /// to their page, a TLB flush, a port write (devices may write memory), or anything the host does
 /// ([`Cpu::flush_code_cache`]). Scratch data: equal and hashed alike whatever it holds.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FetchState {
     pub base: u32,
     pub ip_mask: u32,

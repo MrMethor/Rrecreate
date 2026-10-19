@@ -10,7 +10,7 @@ use crate::{Abort, Bus, Cpu, Fault, Res, cr0, vector};
 
 const TLB_ENTRIES: usize = 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 struct Entry {
     /// Linear page number + 1; 0 marks an empty entry.
     tag: u32,
@@ -24,7 +24,7 @@ struct Entry {
 
 /// Translation cache, direct-mapped by linear page number. Flushed when CR3 is written or
 /// paging is switched on or off.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Tlb {
     entries: Box<[Entry]>,
 }

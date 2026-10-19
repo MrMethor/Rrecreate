@@ -12,7 +12,7 @@ pub const ROM_START: u32 = 0xF_0000;
 const PAGE_SIZE: usize = 4096;
 
 /// `Clone` is a full snapshot: the 1.1 MB real-mode image plus the extended pages written so far.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Memory {
     bytes: Box<[u8]>,
     a20: bool,
@@ -27,7 +27,7 @@ pub struct Memory {
 }
 
 /// A bit per byte of physical memory: written since tracking began (or initialized then).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Written(Vec<u64>);
 
 impl Written {
