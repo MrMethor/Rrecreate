@@ -5,12 +5,14 @@
 //! KEYS is text typed on a US keyboard, one key every 120 ms, each held 60 ms (a game that polls
 //! slowly may need more time between steps), with named keys in braces:
 //! `{enter}` `{esc}` `{tab}` `{bksp}` `{space}` `{up}` `{down}` `{left}` `{right}` `{home}`
-//! `{end}` `{pgup}` `{pgdn}` `{ins}` `{del}` `{f1}`-`{f12}`; `{click X Y}` (and `{rclick X Y}`)
+//! `{end}` `{pgup}` `{pgdn}` `{ins}` `{del}` `{f1}`-`{f12}`, and the modifiers `{shift}` (left),
+//! `{rshift}` `{ctrl}` `{rctrl}` `{alt}` `{ralt}` `{caps}`; `{click X Y}` (and `{rclick X Y}`)
 //! moves the mouse to X, Y in the mouse driver's coordinates, presses the button 100 ms later and
 //! releases it 250 ms after that (moving before pressing matters: some games, like Arena,
 //! put the cursor back where they last read it every frame); `{move X Y}` only moves;
 //! `{hold KEY MS}` holds a key (a named one or a character) down for MS ms, to walk in a game;
-//! `{wait MS}` waits.
+//! `{keydown KEY}` and `{keyup KEY}` press and release one with other steps between (Ctrl held
+//! while walking, Alt+X); `{wait MS}` waits.
 
 use dos::Machine;
 use dos::keyboard::{LEFT_SHIFT, ascii_to_scancode};
@@ -27,6 +29,10 @@ enum Step {
     Key(Vec<u8>),
     /// The same, held down for a number of milliseconds.
     Hold(Vec<u8>, u64),
+    /// A key pressed (and left down).
+    KeyDown(Vec<u8>),
+    /// A key released.
+    KeyUp(Vec<u8>),
     Click {
         x: i16,
         y: i16,
@@ -64,6 +70,13 @@ fn named_key(name: &str) -> Option<Vec<u8>> {
         "pgdn" => extended(0x51),
         "ins" => extended(0x52),
         "del" => extended(0x53),
+        "shift" | "lshift" => Some(vec![LEFT_SHIFT]),
+        "rshift" => Some(vec![0x36]),
+        "ctrl" | "lctrl" => Some(vec![0x1D]),
+        "rctrl" => extended(0x1D),
+        "alt" | "lalt" => Some(vec![0x38]),
+        "ralt" => extended(0x38),
+        "caps" => Some(vec![0x3A]),
         "f11" => Some(vec![0x57]),
         "f12" => Some(vec![0x58]),
         f => match f.strip_prefix('f')?.parse::<u8>() {
@@ -71,6 +84,14 @@ fn named_key(name: &str) -> Option<Vec<u8>> {
             _ => None,
         },
     }
+}
+
+/// A named key, or a character's key (unshifted).
+fn key(name: &str) -> Option<Vec<u8>> {
+    named_key(name).or_else(|| match name.as_bytes() {
+        &[c] => ascii_to_scancode(c).map(|(make, _)| vec![make]),
+        _ => None,
+    })
 }
 
 impl Script {
@@ -90,14 +111,13 @@ impl Script {
                     ["rclick", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 2 },
                     ["move", x, y] => Step::Move { x: number(x)?, y: number(y)? },
                     ["wait", ms] => Step::Wait(ms.parse().map_err(|_| format!("--input {spec:?}: bad wait {ms:?}"))?),
-                    ["hold", key, ms] => {
-                        let codes = named_key(key)
-                            .or_else(|| match key.as_bytes() {
-                                &[c] => ascii_to_scancode(c).map(|(make, _)| vec![make]),
-                                _ => None,
-                            })
-                            .ok_or_else(|| format!("--input {spec:?}: unknown key {key:?}"))?;
+                    ["hold", name, ms] => {
+                        let codes = key(name).ok_or_else(|| format!("--input {spec:?}: unknown key {name:?}"))?;
                         Step::Hold(codes, ms.parse().map_err(|_| format!("--input {spec:?}: bad time {ms:?}"))?)
+                    }
+                    [action @ ("keydown" | "keyup"), name] => {
+                        let codes = key(name).ok_or_else(|| format!("--input {spec:?}: unknown key {name:?}"))?;
+                        if *action == "keydown" { Step::KeyDown(codes) } else { Step::KeyUp(codes) }
                     }
                     [name] => {
                         Step::Key(named_key(name).ok_or_else(|| format!("--input {spec:?}: unknown key {{{name}}}"))?)
@@ -145,6 +165,15 @@ impl Script {
                     m.queue_mouse(at, x, y, 0);
                     at += ms(m, KEY_SPACING_MS);
                 }
+                Step::KeyDown(codes) => {
+                    m.queue_scancodes(at, codes);
+                    at += ms(m, KEY_SPACING_MS);
+                }
+                Step::KeyUp(codes) => {
+                    let (last, prefix) = codes.split_last().expect("a key has a scancode");
+                    m.queue_scancodes(at, &[prefix, &[last | 0x80]].concat());
+                    at += ms(m, KEY_SPACING_MS);
+                }
                 &Step::Wait(wait) => at += ms(m, wait),
             }
         }
@@ -173,7 +202,20 @@ mod tests {
                 Step::Hold(vec![0x2D], 20),
             ]
         );
+        let script = Script::parse("0:{keydown ctrl}{hold up 500}{keyup ctrl}{keydown ralt}{keyup w}").unwrap();
+        assert_eq!(
+            script.steps,
+            [
+                Step::KeyDown(vec![0x1D]),
+                Step::Hold(vec![0xE0, 0x48], 500),
+                Step::KeyUp(vec![0x1D]),
+                Step::KeyDown(vec![0xE0, 0x38]),
+                Step::KeyUp(vec![0x11]),
+            ]
+        );
+        assert_eq!(Script::parse("0:{down}{up}").unwrap().steps[1], Step::Key(vec![0xE0, 0x48]), "arrows still");
         assert!(Script::parse("12:{nope}").is_err());
+        assert!(Script::parse("12:{keydown}").is_err());
         assert!(Script::parse("x:a").is_err());
     }
 }

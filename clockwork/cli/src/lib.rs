@@ -50,8 +50,10 @@ options:
   --type-at MS       run: when typing starts, in emulated ms (default 500)
   --input MS:KEYS    run: keys and clicks from emulated time MS (repeatable): text, {enter} {esc}
                      {tab} {bksp} {space} {up} {down} {left} {right} {home} {end} {pgup} {pgdn}
-                     {ins} {del} {f1}..{f12}, {click X Y} {rclick X Y} {move X Y} (mouse driver
-                     coordinates), {wait MS}; keys 120 ms apart
+                     {ins} {del} {f1}..{f12} {shift} {rshift} {ctrl} {rctrl} {alt} {ralt} {caps},
+                     {hold KEY MS} (held MS ms), {keydown KEY} {keyup KEY} (KEY a name or a
+                     character), {click X Y} {rclick X Y} {move X Y} (mouse driver coordinates),
+                     {wait MS}; one step after the other, keys 120 ms apart
   --input-file FILE  run: --input lines from FILE (# starts a comment)
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final screen as a PNG (FILE.png) or a BMP
@@ -89,7 +91,8 @@ options:
   --watch-exec SEG:OFF[:LEN]  run: record each instruction run in that range (real-mode address,
                      LEN hex, default 1) and list the entry points with their callers
   --watch-log FILE   run: with --watch-exec, write every recorded instruction and its registers
-  --dump SEG:OFF[:LEN]  run: afterwards, hex-dump LEN bytes (default 64) of memory there
+  --dump SEG:OFF[:LEN]  run: afterwards, hex-dump LEN bytes (hex, default 40h) of memory there;
+                     +OFF[:LEN] for an offset in the program's load image (as in function IDs)
   --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
                      (or: here, for the current CS:IP)
   --record FILE      play: record keyboard input as a session
@@ -117,7 +120,8 @@ options:
                      bring their own (DOS/4GW) would use it instead
   --sb SPEC          sound card: none, sb1, sb2, sbpro1, sbpro2 or sb16 (default), optionally
                      followed by BLASTER-style resources, e.g. \"sbpro2 A220 I5 D1\"
-  --scale N          play: window scale (default 2)";
+  --scale N          play: window scale (default 2)
+  --help             this text";
 
 #[derive(Default)]
 struct Options {
@@ -253,6 +257,10 @@ pub fn main_with(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
 fn command_line(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
     let extension = extension.map(|e| e as &dyn Extension);
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let result = match args.first().map(String::as_str) {
         Some("run") => parse_options(&args[1..]).and_then(|o| cmd_run(&o, extension)),
         Some("play") => parse_options(&args[1..]).and_then(|o| play::run(&o)),
@@ -449,6 +457,18 @@ fn print_dump(m: &Machine, segment: u16, offset: u32, length: usize) -> Result<(
     Ok(())
 }
 
+/// Hex-dumps the program's load image (at linear `base`) from image offset `offset`.
+fn print_image_dump(m: &Machine, base: u32, offset: u32, length: usize) {
+    let linear = base + offset;
+    println!("dump      +{offset:05X} (linear {linear:08X}), {length:#x} bytes");
+    for (row, chunk) in (0..length as u32).map(|i| m.mem.read_u8(linear + i)).collect::<Vec<_>>().chunks(16).enumerate()
+    {
+        let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02X}")).collect();
+        let text: String = chunk.iter().map(|&b| dos::cp437_to_char(b)).collect();
+        println!("  +{:05X}  {:<48} {text}", offset + row as u32 * 16, hex.join(" "));
+    }
+}
+
 /// `SEG:OFF` in hex; the offset may be 32-bit (protected mode).
 fn parse_address(text: &str) -> Result<(u16, u32), String> {
     let (segment, offset) = text.split_once(':').ok_or_else(|| format!("expected SEG:OFF in hex, not {text:?}"))?;
@@ -520,6 +540,8 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
         None => (o.program.clone().unwrap_or_default(), o.args.clone(), o.ips.unwrap_or(8_000_000)),
     };
     let mut m = boot(o, &program, &args, ips)?;
+    // The program's load image starts at its PSP's paragraph 10h (where image offsets count from).
+    let image_base = (u32::from(m.dos.psp) + 0x10) << 4;
     if o.coverage.is_some() {
         m.start_coverage();
     }
@@ -676,14 +698,21 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
         println!("trace     {} service calls written to {}", calls.len(), path.display());
     }
     if let Some(at) = &o.dump {
-        let (address, length) = match at.rsplit_once(':') {
-            Some((address, length)) if address.contains(':') => {
-                (address, usize::from_str_radix(length, 16).map_err(|_| format!("bad length {length:?}"))?)
-            }
-            _ => (at.as_str(), 64),
-        };
-        let (segment, offset) = parse_address(address)?;
-        print_dump(&m, segment, offset, length)?;
+        if let Some(image) = at.strip_prefix('+') {
+            let (offset, length) = image.split_once(':').unwrap_or((image, "40"));
+            let offset = u32::from_str_radix(offset, 16).map_err(|_| format!("bad hex image offset {offset:?}"))?;
+            let length = usize::from_str_radix(length, 16).map_err(|_| format!("bad hex length {length:?}"))?;
+            print_image_dump(&m, image_base, offset, length);
+        } else {
+            let (address, length) = match at.rsplit_once(':') {
+                Some((address, length)) if address.contains(':') => {
+                    (address, usize::from_str_radix(length, 16).map_err(|_| format!("bad hex length {length:?}"))?)
+                }
+                _ => (at.as_str(), 64),
+            };
+            let (segment, offset) = parse_address(address)?;
+            print_dump(&m, segment, offset, length)?;
+        }
     }
     if let Some(at) = &o.disasm {
         let (cs, ip, code) = if at == "here" {
