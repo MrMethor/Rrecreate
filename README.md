@@ -8,7 +8,7 @@ against the original, and a modern mode on top.
 **Status:** design only. Start with [`DESIGN.md`](DESIGN.md); the decisions and their reasons are in
 [`docs/decisions.md`](docs/decisions.md).
 
-Rrecreate succeeds [Recreate](https://github.com/MrMethor/Recreate), whose emulator it takes over.
+Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.
 
 ## Layout (planned)
 
