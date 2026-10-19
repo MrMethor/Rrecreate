@@ -10,6 +10,7 @@ mod input_script;
 mod listing;
 mod live_audio;
 mod play;
+pub mod serve;
 mod session;
 mod unpack;
 
@@ -28,6 +29,8 @@ usage:
   clockwork play <game-dir> <program> [options]  run in a window with keyboard input
   clockwork unpack <program> --out FILE [--json] undo an executable packer (PKLITE, LZEXE, ...) by
                                                  running it to its entry point; writes an MZ file
+  clockwork serve [--port N]                     be driven by a tool: JSON requests, one per line,
+                                                 on stdin or a local TCP port (see serve.rs)
   clockwork listing <image> --entry OFFSET --segment SEG
                                                  a function's code from a load image (hex image
                                                  offset and link segment), following its control
@@ -176,6 +179,7 @@ pub fn main() -> ExitCode {
         Some("play") => parse_options(&args[1..]).and_then(|o| play::run(&o)),
         Some("unpack") => cmd_unpack(&args[1..]),
         Some("listing") => listing::cmd_listing(&args[1..]),
+        Some("serve") => serve::cmd_serve(&args[1..]),
         Some("--version") => {
             println!("clockwork {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
@@ -445,7 +449,10 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
     Ok(m)
 }
 
-fn cmd_run(o: &Options) -> Result<ExitCode, String> {
+/// A machine set up as `run`'s options say: booted (or loaded from a snapshot), with its input
+/// scheduled and its debugging records on; with the program's name, the speed, and where its
+/// load image starts.
+fn prepare(o: &Options) -> Result<(Machine, String, u64, u32), String> {
     let session = o.replay.as_deref().map(Session::load).transpose()?;
     let (program, args, ips) = match &session {
         Some(s) => (s.program.clone(), s.args.clone(), o.ips.unwrap_or(s.instructions_per_second)),
@@ -498,6 +505,11 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         let start = (u32::from(segment) << 4).wrapping_add(offset);
         m.exec_watch = Some(start..start.wrapping_add(length));
     }
+    Ok((m, program, ips, image_base))
+}
+
+fn cmd_run(o: &Options) -> Result<ExitCode, String> {
+    let (mut m, program, ips, image_base) = prepare(o)?;
     let limit = (o.seconds.unwrap_or(10.0) * ips as f64) as u64;
     let (stop, profile) = if o.hotspots > 0 {
         let (stop, profile) = hotspots::run_sampled(&mut m, limit);
@@ -646,14 +658,7 @@ struct Summary {
 
 impl Summary {
     fn new(m: &Machine, stop: &Stop) -> Self {
-        let stop_text = match stop {
-            Stop::Exited(code) => format!("exited with code {code}"),
-            Stop::CycleLimit => "time limit reached".into(),
-            Stop::WaitingForInput => "waiting for keyboard input".into(),
-            Stop::Halted => "halted with interrupts disabled".into(),
-            Stop::Fault(exit) => format!("fault: {exit}"),
-            Stop::Sync { address, hit } => format!("sync point {address:05X}, hit {hit}"),
-        };
+        let stop_text = stop_text(stop);
         let mut issues: Vec<String> = m.diagnostics.iter().cloned().collect();
         if !m.devices.unknown_ports.is_empty() {
             let ports: Vec<String> = m.devices.unknown_ports.iter().map(|p| format!("{p:X}h")).collect();
@@ -788,6 +793,18 @@ fn dump_image(m: &Machine, dir: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Why a run stopped, in words.
+fn stop_text(stop: &Stop) -> String {
+    match stop {
+        Stop::Exited(code) => format!("exited with code {code}"),
+        Stop::CycleLimit => "time limit reached".into(),
+        Stop::WaitingForInput => "waiting for keyboard input".into(),
+        Stop::Halted => "halted with interrupts disabled".into(),
+        Stop::Fault(exit) => format!("fault: {exit}"),
+        Stop::Sync { address, hit } => format!("sync point @{address:X}, hit {hit}"),
+    }
 }
 
 /// What contract inference saw.
