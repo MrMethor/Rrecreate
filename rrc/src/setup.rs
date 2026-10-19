@@ -113,10 +113,7 @@ pub(crate) fn status(repo: &Repo) -> Result<ExitCode, String> {
             "rrc game --add-version <name>: record this copy's files as a version".to_owned()
         }
         Err(e) => e,
-        Ok(_) => match crate::analysis::Index::load(repo)? {
-            None => "rrc analyze".to_owned(),
-            Some(_) => "the toolkit's next commands are still being built (M2)".to_owned(),
-        },
+        Ok(_) => next_after_setup(repo)?,
     };
     say("next", next);
     Ok(ExitCode::SUCCESS)
@@ -157,4 +154,25 @@ pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String>
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The next step once the game is there: analysis, ticks, sessions, traces.
+fn next_after_setup(repo: &Repo) -> Result<String, String> {
+    if crate::analysis::Index::load(repo)?.is_none() {
+        return Ok("rrc analyze".into());
+    }
+    let k = knowledge::Knowledge::load(&repo.knowledge())?;
+    if k.ticks.syncs.is_empty() {
+        return Ok("find where a tick ends (the main loop) and add it to knowledge/ticks.toml as a sync point".into());
+    }
+    let sessions = crate::session::names(repo)?;
+    if sessions.is_empty() {
+        return Ok("rrc session add NAME --seconds N --inputs FILE: a session to reproduce".into());
+    }
+    for name in &sessions {
+        if crate::session::Session::load(repo, name)?.trace.is_none() {
+            return Ok(format!("rrc record {name}"));
+        }
+    }
+    Ok("the state mapping and the port come with M3".into())
 }

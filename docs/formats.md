@@ -118,3 +118,45 @@ at = "WOLF3D.EXE+4114C"
 size = 2
 note = "time since the last frame, in 70 Hz tics"
 ```
+
+## `sessions/<name>.toml`: a session
+
+```toml
+description = "E1M1 up the main corridor, the pushwall pushed"
+inputs = "pushwall.inputs"      # an input script (clockwork run --input-file), beside it; or
+# replay = "play.session"       # play recorded by clockwork play --record
+seconds = 86.0                  # emulated seconds it runs
+options = []                    # optional: more `clockwork run` options
+
+[trace]                         # written by rrc record
+hash = "6e7f…"                  # the trace, in the cache
+ticks = 2770
+clockwork = "0.1.0"             # the Clockwork that recorded it
+```
+
+Recording a session again must give the same hash (D44): `rrc record` says whether it did.
+
+## Traces
+
+JSON lines (D45): a header, a line per tick, and an end line.
+
+```
+{"format":"rrc-trace","version":1,"game":"wolf3d","session":"pushwall","program":"WOLF3D.EXE","clockwork":"0.1.0",
+ "syncs":[{"name":"play","at":"WOLF3D.EXE+0F280"}],
+ "inputs":[{"name":"tics","at":"WOLF3D.EXE+4114C","size":2}],
+ "state":[{"name":"pwallstate","at":"WOLF3D.EXE+3C174","size":2}, …]}
+{"tick":1,"sync":"play","cycle":20391734,"inputs":["0100"],"state":[[0,"0000"], …],"frames":[[284,20380102,19,"61f5…"]],
+ "sound":{"opl":[[2549120000,176,49]]}}
+{"end":"the session's end","cycles":688003448}
+```
+
+- A tick ends when the original reaches one of the sync points (`knowledge/ticks.toml`), before that instruction
+  runs; `sync` names which, `cycle` is Clockwork's instruction count then.
+- `inputs`: every boundary value at every tick, in the header's order. `state`: `[index, value]` for each named
+  data item (`knowledge/data.tsv`, those with a size) that changed since the tick before; the first tick has
+  them all. Values are the bytes memory holds, in hex (so little-endian); `null` where memory isn't mapped.
+- `frames`: the frames Clockwork showed since the tick before: `[number, cycle, BIOS video mode, hash]`.
+- `sound`: the sound events since the tick before, by device, only those with events: `opl` `[ns, register,
+  value]`, `speaker` `[pit_tick, waveform]`, `pcm` (digitized sound starts) `[ns, rate, stereo]`, `midi`
+  `[pit_tick, byte]`, `cd` `[ns, sector, sectors]`.
+- The end line says why the run stopped: `the session's end`, or the program exiting, halting or faulting.

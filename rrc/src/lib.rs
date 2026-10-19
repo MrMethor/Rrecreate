@@ -11,8 +11,10 @@ pub mod import;
 pub mod knowledge;
 mod naming;
 pub mod repo;
+pub mod session;
 mod setup;
 pub mod tools;
+pub mod trace;
 
 use std::process::ExitCode;
 
@@ -40,6 +42,13 @@ usage: rrc <command> [arguments]     (inside a port repository)
   show ID|NAME [--asm] [--c]
                          what is known about a function or data: its name and evidence, what Ghidra
                          found (size, calls, callers), its disassembly (--asm) or decompiled code (--c)
+  session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]]
+                         the sessions, or a new one: an input script (clockwork run --input-file) or
+                         play recorded by clockwork play --record, and how many emulated seconds
+  record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
+                         hit) the boundary values, the named data that changed, frames and sound
+  trace SESSION [--tick N] [--item NAME]
+                         a recorded trace: a summary, one tick, or one item over the ticks
   import recreate DIR [--without PROVENANCE,...]
                          Recreate's knowledge files (its games/<game>/knowledge), leaving out the
                          items of the provenances named
@@ -70,6 +79,9 @@ pub fn main() -> ExitCode {
         Some("name") => here().and_then(|repo| naming::name(&repo, rest)),
         Some("data") => here().and_then(|repo| naming::data(&repo, rest)),
         Some("show") => here().and_then(|repo| naming::show(&repo, rest)),
+        Some("session") => here().and_then(|repo| session::session(&repo, rest)),
+        Some("record") => here().and_then(|repo| trace::record(&repo, rest)),
+        Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("import") => here().and_then(|repo| import::import(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
