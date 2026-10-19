@@ -487,6 +487,9 @@ impl Cpu {
                 let base = self.fetch8(bus)?;
                 let al = self.regs.al();
                 let Some(quotient) = al.checked_div(base) else {
+                    // Before the divide error the 286 and 386 have set SF, ZF and PF from AL
+                    // shifted right once, a first divide step (SingleStepTests).
+                    self.set_szp(Width::Byte, u32::from(al >> 1));
                     return Err(Abort::Fault(Fault::new(vector::DIVIDE)));
                 };
                 self.regs.set_ah(quotient);

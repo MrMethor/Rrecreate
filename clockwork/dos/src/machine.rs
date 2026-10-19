@@ -145,6 +145,35 @@ pub enum Stop {
 /// Extended memory is limited to what a 24-bit (286/386SX) address bus reaches: 16 MB in all.
 pub const MAX_EXTENDED_KB: u32 = 15 * 1024;
 
+/// A session diff's call that takes interrupts: when it began, and the places interrupts
+/// interrupted (inside a handler while any). Its own port writes are logged at its start.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CallWrites {
+    pub(crate) since: u64,
+    pub(crate) interrupted: Vec<(u16, u16, u16, u16)>,
+}
+
+impl CallWrites {
+    /// Whether a handler runs: an interrupted place the CPU isn't back at (an override's wait
+    /// returns there before an instruction would let [`CallWrites::step`] see it).
+    fn in_handler(&self, regs: &cpu::Regs) -> bool {
+        let here = (regs.cs(), regs.ip as u16, regs.ss(), regs.sp());
+        self.interrupted.iter().any(|&place| place != here)
+    }
+
+    /// Before each instruction: back from the handlers that interrupted this place?
+    fn step(&mut self, regs: &cpu::Regs) {
+        while let Some(&(cs, ip, ss, sp)) = self.interrupted.last()
+            && regs.cs() == cs
+            && regs.ip as u16 == ip
+            && regs.ss() == ss
+            && regs.sp() == sp
+        {
+            self.interrupted.pop();
+        }
+    }
+}
+
 /// One displayed frame, fingerprinted at the start of vertical retrace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Frame {
@@ -566,6 +595,9 @@ pub struct Machine {
     /// frames are captured at the same times on both machines.
     pub(crate) irq_schedule: Option<VecDeque<u64>>,
     pub(crate) service_schedule: Option<VecDeque<u64>>,
+    /// During such a call: its own port writes are logged at its start, as in an atomic call,
+    /// and the handlers' at their time.
+    pub(crate) call_writes: Option<CallWrites>,
     /// While a captured call replays: the memory it holds ([`crate::capture::replay`]).
     pub(crate) replay: Option<Box<crate::capture::Held>>,
     /// A hooked call in a session diff ([`crate::lockstep`]) or a replayed captured call: no
@@ -620,6 +652,7 @@ impl Machine {
             service_log: None,
             irq_schedule: None,
             service_schedule: None,
+            call_writes: None,
             replay: None,
             atomic: false,
             atomic_since: 0,
@@ -686,6 +719,14 @@ impl Machine {
                 if let Some(log) = &mut self.irq_log {
                     log.push(self.cpu.cycles);
                 }
+                if let Some(writes) = &mut self.call_writes {
+                    writes.interrupted.push((
+                        self.cpu.regs.cs(),
+                        self.cpu.regs.ip as u16,
+                        self.cpu.regs.ss(),
+                        self.cpu.regs.sp(),
+                    ));
+                }
                 let vector = crate::dpmi::irq_vector(self, vector);
                 self.halted = false;
                 if let Some(trap) = &mut self.return_trap {
@@ -733,6 +774,9 @@ impl Machine {
             {
                 let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 contracts.before(&self.cpu.regs, &self.mem, linear);
+            }
+            if let Some(writes) = &mut self.call_writes {
+                writes.step(&self.cpu.regs);
             }
             let (now, write_now) = (self.cpu.cycles, self.write_time());
             // A captured call runs (traced), or an interrupt handler interrupted it (its writes logged).
@@ -1084,7 +1128,11 @@ impl Machine {
     }
 
     fn write_time(&self) -> u64 {
-        if self.atomic { self.atomic_since } else { self.cpu.cycles }
+        match &self.call_writes {
+            _ if self.atomic => self.atomic_since,
+            Some(writes) if !writes.in_handler(&self.cpu.regs) => writes.since,
+            _ => self.cpu.cycles,
+        }
     }
 
     pub(crate) fn split(&mut self) -> (&mut Cpu, PcBus<'_>) {

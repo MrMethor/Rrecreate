@@ -16,6 +16,7 @@
 //! them and services its devices, and the test machine does both at exactly those cycles, in the
 //! override's waits (`Call::wait_for_interrupt`) and then until the cycle the original returned,
 //! so handlers run, sound advances and frames are captured at the same times on both machines.
+//! Port writes are logged at the call's start, as in atomic calls, except the handlers'.
 //! The original takes time where the
 //! override takes none, so an interrupt can come after it stopped waiting and before it returned
 //! (a tick between its last check of the time and its read of it): then the reference runs the
@@ -316,6 +317,7 @@ impl Machine {
 
     fn begin_call(&mut self, skip: Option<u32>, waits: bool) {
         self.set_atomic(!waits);
+        self.call_writes = waits.then(|| crate::machine::CallWrites { since: self.cpu.cycles, ..Default::default() });
         let hybrid = self.hybrid.as_mut().expect("hooked");
         hybrid.pause = false;
         hybrid.skip = skip;
@@ -323,6 +325,7 @@ impl Machine {
 
     fn end_call(&mut self) {
         self.set_atomic(false);
+        self.call_writes = None;
         let hybrid = self.hybrid.as_mut().expect("hooked");
         hybrid.pause = true;
         hybrid.skip = None;

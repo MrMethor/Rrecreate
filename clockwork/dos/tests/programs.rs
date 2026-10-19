@@ -3092,6 +3092,59 @@ fn a_tick_after_the_original_stopped_waiting_comes_after_the_call() {
     assert_eq!(d.stop, Stop::Exited(1));
 }
 
+#[test]
+fn a_session_diff_logs_a_waiting_call_s_port_writes_at_its_start() {
+    // `chime` writes an OPL register, waits for a tick and writes another; the override writes
+    // them at once around its wait. Logged at their real times, the second write's time would
+    // differ between the machines; logged at the call's start, as in atomic calls, it doesn't.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        offsets.borrow_mut().insert("chime", (a.addr("chime") as u32).wrapping_sub(0x100));
+        a.xor(ax, ax)?;
+        a.mov(ds, ax)?;
+        let chime = a.l("chime");
+        a.call(chime)?;
+        a.mov(ax, 0x4C00)?;
+        a.int(0x21)?;
+        a.here("chime")?;
+        for (register, value) in [(0x20, 1), (0xA0, 0x44)] {
+            a.mov(dx, 0x388)?;
+            a.mov(al, register)?;
+            a.out(dx, al)?;
+            a.inc(dx)?;
+            a.mov(al, value)?;
+            a.out(dx, al)?;
+            if register == 0x20 {
+                a.mov(bx, word_ptr(0x46C))?;
+                a.here("spin")?;
+                a.cmp(bx, word_ptr(0x46C))?;
+                let spin = a.l("spin");
+                a.je(spin)?;
+            }
+        }
+        a.ret()
+    });
+    fn chime(c: &mut dos::hybrid::Call) -> Result<(), String> {
+        c.out8(0x388, 0x20);
+        c.out8(0x389, 1);
+        let start = c.read16(0, 0x46C);
+        while c.read16(0, 0x46C) == start {
+            c.wait_for_interrupt()?;
+        }
+        c.out8(0x388, 0xA0);
+        c.out8(0x389, 0x44);
+        Ok(())
+    }
+    use dos::hybrid::{Convention, Mode, Override};
+    let offset = offsets.into_inner()["chime"];
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let o = Override { offset, name: "chime", conv: Convention::cdecl(false, 0, 0), run: chime };
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Rust);
+    let (m, d) = dos::lockstep::diff(m, SECOND, 20_000);
+    assert_eq!(d.divergence, None, "{:#?}", m.hybrid.as_ref().unwrap().findings);
+    assert_eq!(d.stop, Stop::Exited(0));
+}
+
 /// Waits for the BIOS tick count (0:46C) to change.
 fn wait_tick(c: &mut dos::hybrid::Call) -> Result<(), String> {
     let start = c.read16(0, 0x46C);
