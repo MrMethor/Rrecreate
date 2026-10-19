@@ -46,3 +46,60 @@ again only when it changed.
 A folder of files named by their SHA-256: `objects/<first 2 hex digits>/<the other 62>`. It is `RRC_CACHE`,
 else `cache` in `rrc.local.toml`, else `%LOCALAPPDATA%\rrecreate\cache` on Windows and `$XDG_CACHE_HOME/rrecreate`
 or `~/.cache/rrecreate` elsewhere. Anything in it can be deleted; what refers to it is rebuilt or recorded again.
+
+## `knowledge/functions.tsv` and `knowledge/data.tsv`: named functions and data
+
+Tab-separated, a header line starting `#`, then one item per line sorted by ID (D43):
+
+```
+# id	name	provenance	confidence	evidence
+WOLF3D.EXE+0F280	CalcTics	agent:claude-opus-5-5	0.8	called once per frame from PlayLoop
+```
+
+```
+# id	name	size	type	provenance	confidence	evidence
+WOLF3D.EXE+4114C	tics	2	u16	human
+```
+
+- **id:** `<MODULE>[#<n>]+<offset>` (D29), the offset in the loaded image, uppercase hex, 5 to 8 digits.
+- **name:** letters, digits and `_`, not starting with a digit; unique across both tables.
+- **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a primitive (`u8`,
+  `i16`, `u32`, ...), an array (`u8[256]`), or empty.
+- **provenance:** who decided, and from what: `human`, `agent:<model>`, `ghidra`, `library:<pack>`,
+  `prior-art:<source>`, `recreate:<its provenance>` for what came from Recreate.
+- **confidence:** 0 to 1, or empty. **evidence:** free text (IDs, sessions, sources), no tabs.
+
+Trailing empty columns may be left out. Lines starting `#` and blank lines are ignored.
+
+## `knowledge/types.toml`: structures and enumerations
+
+```toml
+[[struct]]
+name = "objstruct"
+size = 60
+provenance = "agent:claude-opus-5-5"
+fields = [
+    { offset = 0, size = 2, name = "active", type = "u16" },
+    { offset = 2, size = 2, name = "ticcount", type = "i16" },
+]
+
+[[enum]]
+name = "dirtype"
+size = 2
+values = { east = 0, northeast = 1 }
+```
+
+## `knowledge/ticks.toml`: where ticks end and what they read
+
+```toml
+[[sync]]                        # a sync point: the instruction where a tick ends (one per loop)
+name = "play"
+at = "WOLF3D.EXE+0F280"
+note = "CalcTics: once per frame of play"
+
+[[input]]                       # a boundary value: what the original's logic reads at each tick (D15)
+name = "tics"
+at = "WOLF3D.EXE+4114C"
+size = 2
+note = "time since the last frame, in 70 Hz tics"
+```

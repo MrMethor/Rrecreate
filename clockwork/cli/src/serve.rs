@@ -11,8 +11,9 @@
 //!
 //! Operations:
 //! - `load` `{"argv": [dir, program, options…]}`: a machine as `clockwork run` would start it (the
-//!   same options: drives, CD, input scripts…). `load_snapshot` `{"argv": [dir, options…],
-//!   "file"}`: from a snapshot. `save` `{"file"}`: a snapshot on disk.
+//!   same options: drives, CD, input scripts…); says where the program's image is and its size.
+//!   `load_snapshot` `{"argv": [dir, options…], "file"}`: from a snapshot. `save` `{"file"}`: a
+//!   snapshot on disk.
 //! - `snapshot` / `restore` / `forget` `{"name"}`: copies of the machine in memory.
 //! - `run` `{"ms"}` or `{"cycles"}`, or `{"sync": addr, "n": 1, "max_ms": 60000}`: runs on; says why it
 //!   stopped and when. `{"sync": "next"}` stops at the next hit of any sync point: the next tick.
@@ -129,7 +130,8 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let (m, _, _) = crate::run::prepare(&options)?;
             st.image = m.image_range();
             st.copies.clear();
-            let reply = json!({"psp": m.dos.psp, "image": format!("@{:X}", st.image.start), "cycles": m.cpu.cycles});
+            let image = format!("@{:X}", st.image.start);
+            let reply = json!({"psp": m.dos.psp, "image": image, "image_size": st.image.len(), "cycles": m.cpu.cycles});
             st.m = Some(m);
             return Ok(reply);
         }

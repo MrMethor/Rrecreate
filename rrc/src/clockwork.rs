@@ -52,15 +52,16 @@ impl Clockwork {
     }
 
     /// Starts the port's original program in a fresh Clockwork, with `options` added to the
-    /// port's own (`clockwork run` options).
-    pub fn original(repo: &Repo, options: &[String]) -> Result<Clockwork, String> {
+    /// port's own (`clockwork run` options); also returns what `load` answered (where the image is,
+    /// its size).
+    pub fn original(repo: &Repo, options: &[String]) -> Result<(Clockwork, Value), String> {
         let mut clockwork = Clockwork::start(&find(&repo.local)?)?;
         let original = &repo.settings.original;
         let mut argv = vec![repo.game_dir()?.to_string_lossy().into_owned(), original.program.clone()];
         argv.extend(original.options.iter().cloned());
         argv.extend(options.iter().cloned());
-        clockwork.ask("load", json!({ "argv": argv }))?;
-        Ok(clockwork)
+        let loaded = clockwork.ask("load", json!({ "argv": argv }))?;
+        Ok((clockwork, loaded))
     }
 }
 
