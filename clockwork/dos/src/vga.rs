@@ -18,7 +18,7 @@
 //! and the graphics engine are not emulated.
 
 use crate::clock::{FRAME_PIT_TICKS, LINES_PER_FRAME};
-use machine::hash::fnv64;
+use crate::hash::fnv64;
 
 /// Scan lines (from the start of a frame) during which the vertical retrace pulse is active.
 const RETRACE_LINES: u64 = 2;

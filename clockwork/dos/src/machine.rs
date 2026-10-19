@@ -3,10 +3,10 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
+use crate::hash::Fnv64;
+use crate::memory::Memory;
 use cpu::flags::IF;
 use cpu::{Bus, Cpu, seg};
-use machine::Memory;
-use machine::hash::Fnv64;
 
 use crate::clock::{Clock, FRAME_PIT_TICKS};
 use crate::cmos::Cmos;

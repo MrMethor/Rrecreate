@@ -7,7 +7,7 @@
 //! page during a transfer, as the 8237's 16-bit counter does. Memory-to-memory transfers and
 //! address decrement are not emulated (DOSBox doesn't either).
 
-use machine::Memory;
+use crate::memory::Memory;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Channel {

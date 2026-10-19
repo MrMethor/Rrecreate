@@ -21,12 +21,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::memory::Memory;
 use cpu::Regs;
 use iced_x86::{
     Decoder, DecoderOptions, FlowControl, InstructionInfoFactory, InstructionInfoOptions, Mnemonic, OpAccess, OpKind,
     Register, RflagsBits,
 };
-use machine::memory::Memory;
 
 use crate::probe::Access;
 
@@ -69,7 +69,7 @@ pub const FAR: u8 = 2;
 pub const IRET: u8 = 4;
 
 /// Addresses traced: the real-mode space.
-const SPACE: usize = machine::addr::REAL_MODE_SPACE;
+const SPACE: usize = crate::addr::REAL_MODE_SPACE;
 /// Bytes above the return address looked at for stack arguments.
 const ARGS_WINDOW: u32 = 64;
 /// Most load-image bytes listed per function, read and written each.

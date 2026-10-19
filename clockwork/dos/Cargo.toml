@@ -9,7 +9,6 @@ license = "GPL-2.0-or-later"
 
 [dependencies]
 cpu.workspace = true
-machine.workspace = true
 libm = "0.2"
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info"] }
 nuked-opl3 = "0.1"

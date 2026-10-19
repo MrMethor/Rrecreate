@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["clockwork/cpu", "clockwork/machine", "clockwork/dos", "clockwork/cli"]
+members = ["clockwork/cpu", "clockwork/dos", "clockwork/cli", "ids"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,7 +15,6 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde-big-array = "0.5"
 cpu = { path = "clockwork/cpu" }
 dos = { path = "clockwork/dos" }
-machine = { path = "clockwork/machine" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use machine::Memory;
+use crate::memory::Memory;
 
 use crate::dma::Dma;
 use crate::opl::OplMode;

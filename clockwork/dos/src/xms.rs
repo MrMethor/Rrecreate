@@ -3,7 +3,7 @@
 //!
 //! Ported from DOSBox Staging `src/ints/xms.cpp` (GPL-2.0-or-later): function numbers, error
 //! codes, A20 counting and the move rules follow it. Blocks are contiguous runs of 4 KB pages
-//! in [`machine::Memory`]'s extended memory, so a locked block's address is its real physical
+//! in [`crate::memory::Memory`]'s extended memory, so a locked block's address is its real physical
 //! address. Unlike DOSBox Staging, the HMA can be requested (DOS isn't loaded high here).
 //! Upper memory blocks (functions 10h-12h) aren't provided: programs are told "no UMBs".
 

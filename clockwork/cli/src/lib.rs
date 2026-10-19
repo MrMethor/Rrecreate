@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use dos::hash::fnv64;
 use dos::{Config, Machine, Stop, Vfs};
-use machine::hash::fnv64;
 
 use crate::session::Session;
 
@@ -677,7 +677,7 @@ impl Summary {
             pcm_frames: m.audio_log().pcm.iter().map(|s| s.samples.len() / if s.stereo { 2 } else { 1 }).sum(),
             audio_hash: m.audio_log().hash(),
             frames_hash: {
-                let mut h = machine::hash::Fnv64::default();
+                let mut h = dos::hash::Fnv64::default();
                 for f in &m.frames {
                     std::hash::Hash::hash(&f.hash, &mut h);
                 }

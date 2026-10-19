@@ -1,6 +1,7 @@
 //! Clockwork's PC: devices, BIOS and DOS services as high-level emulation, program loading and
 //! the deterministic run loop.
 
+pub mod addr;
 pub mod audio;
 pub mod bios;
 pub mod bounds;
@@ -15,10 +16,12 @@ pub mod dos;
 pub mod dpmi;
 pub mod ems;
 pub mod fonts;
+pub mod hash;
 pub mod image;
 pub mod joystick;
 pub mod keyboard;
 mod machine;
+pub mod memory;
 pub mod mouse;
 pub mod mpu401;
 mod mz;

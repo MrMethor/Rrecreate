@@ -13,7 +13,7 @@
 //! then filtered like DOSBox Staging's speaker (`pcspeaker_impulse.cpp`: third-order
 //! Butterworth high-pass at 120 Hz and low-pass at 4.3 kHz, standing in for the cone).
 
-use machine::hash::Fnv64;
+use crate::hash::Fnv64;
 use nuked_opl3::Opl3Chip;
 use std::hash::Hasher;
 

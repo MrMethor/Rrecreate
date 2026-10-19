@@ -11,8 +11,8 @@
 //! start address bits widen the CRTC values, 256-color modes show 8 pixels per character clock
 //! in enhanced mode (CR3A bit 4) and 4 otherwise, high-color modes 4 and true-color modes 8.
 
+use crate::hash::Fnv64;
 use crate::vga::{DisplayKind, FONT_BLOCKS, Vga, chained_index};
-use machine::hash::Fnv64;
 use std::hash::Hasher;
 
 /// A rendered screen, row by row: one DAC index per pixel in `pixels`, or for the direct-color

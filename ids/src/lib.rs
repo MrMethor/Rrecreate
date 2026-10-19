@@ -1,10 +1,11 @@
-//! Stable function identifiers.
+//! Stable IDs of a program's functions and data (DESIGN.md §5, decision D29).
 //!
-//! Canonical text form: `<MODULE>[#<overlay>]+<offset>`, for example `GAME.EXE+0A4D2` or
-//! `GAME.EXE#3+00120`. The offset is relative to the start of the module's (unpacked) load
-//! image, never a runtime `segment:offset`: load segments and overlay placement vary
-//! between runs. Tested against `testdata/function_ids.tsv`, which every implementation of the
-//! format shares.
+//! Canonical text form: `<MODULE>[#<n>]+<offset>`, for example `GAME.EXE+0A4D2` or
+//! `GAME.EXE#3+00120`. `#n` is a part of the module: an overlay of an MZ program, or an object of an
+//! LE/LX program. The offset is relative to the start of the module's (unpacked) load image or of
+//! the part, never a runtime `segment:offset`: load segments and where parts are placed vary between
+//! runs. Tested against `testdata/function_ids.tsv`, which every implementation of the format
+//! shares.
 
 use std::fmt;
 use std::str::FromStr;
@@ -15,45 +16,46 @@ const OFFSET_MAX_DIGITS: usize = 8;
 const MODULE_PUNCTUATION: &str = "._-~!$%&()@^{}'";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FunctionId {
+pub struct Id {
     module: String,
-    overlay: Option<u16>,
+    part: Option<u16>,
     offset: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseFunctionIdError {
+pub struct ParseIdError {
     input: String,
     reason: &'static str,
 }
 
-impl fmt::Display for ParseFunctionIdError {
+impl fmt::Display for ParseIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid function id {:?}: {}", self.input, self.reason)
+        write!(f, "invalid id {:?}: {}", self.input, self.reason)
     }
 }
 
-impl std::error::Error for ParseFunctionIdError {}
+impl std::error::Error for ParseIdError {}
 
-impl FunctionId {
+impl Id {
     /// Builds an ID from parts. `module` must be an uppercase DOS-style file name.
-    pub fn new(module: impl Into<String>, overlay: Option<u16>, offset: u32) -> Result<Self, ParseFunctionIdError> {
+    pub fn new(module: impl Into<String>, part: Option<u16>, offset: u32) -> Result<Self, ParseIdError> {
         let module = module.into();
         if let Err(reason) = validate_module(&module) {
-            return Err(ParseFunctionIdError { input: module, reason });
+            return Err(ParseIdError { input: module, reason });
         }
-        Ok(Self { module, overlay, offset })
+        Ok(Self { module, part, offset })
     }
 
     pub fn module(&self) -> &str {
         &self.module
     }
 
-    pub fn overlay(&self) -> Option<u16> {
-        self.overlay
+    /// The overlay (MZ) or object (LE/LX), if any.
+    pub fn part(&self) -> Option<u16> {
+        self.part
     }
 
-    /// Offset into the module's load image (or into the overlay, if any).
+    /// Offset into the module's load image (or into the part, if any).
     pub fn offset(&self) -> u32 {
         self.offset
     }
@@ -73,27 +75,27 @@ fn validate_module(module: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-impl fmt::Display for FunctionId {
+impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.module)?;
-        if let Some(overlay) = self.overlay {
-            write!(f, "#{overlay}")?;
+        if let Some(part) = self.part {
+            write!(f, "#{part}")?;
         }
         write!(f, "+{:05X}", self.offset)
     }
 }
 
-impl FromStr for FunctionId {
-    type Err = ParseFunctionIdError;
+impl FromStr for Id {
+    type Err = ParseIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let err = |reason| ParseFunctionIdError { input: s.to_owned(), reason };
+        let err = |reason| ParseIdError { input: s.to_owned(), reason };
 
         let (head, offset_text) = s.rsplit_once('+').ok_or_else(|| err("missing '+<offset>'"))?;
-        let (module, overlay) = match head.split_once('#') {
-            Some((module, overlay)) => {
-                let overlay = overlay.parse::<u16>().map_err(|_| err("bad overlay number"))?;
-                (module, Some(overlay))
+        let (module, part) = match head.split_once('#') {
+            Some((module, part)) => {
+                let part = part.parse::<u16>().map_err(|_| err("bad part number"))?;
+                (module, Some(part))
             }
             None => (head, None),
         };
@@ -105,7 +107,7 @@ impl FromStr for FunctionId {
         }
         let offset = u32::from_str_radix(offset_text, 16).map_err(|_| err("bad offset"))?;
 
-        let id = FunctionId::new(module, overlay, offset).map_err(|e| err(e.reason))?;
+        let id = Id::new(module, part, offset).map_err(|e| err(e.reason))?;
         // Rejects leading zeros beyond 5 digits, "#03", "#+3" and similar non-canonical spellings.
         if id.to_string() != s {
             return Err(err("not in canonical form"));
@@ -118,7 +120,7 @@ impl FromStr for FunctionId {
 mod tests {
     use super::*;
 
-    const VECTORS: &str = include_str!("../../../testdata/function_ids.tsv");
+    const VECTORS: &str = include_str!("../../testdata/function_ids.tsv");
 
     #[test]
     fn shared_vectors() {
@@ -130,13 +132,13 @@ mod tests {
             let cols: Vec<&str> = line.split('\t').collect();
             assert_eq!(cols.len(), 5, "malformed vector line: {line:?}");
             let (expect, text) = (cols[0], cols[1]);
-            let parsed = text.parse::<FunctionId>();
+            let parsed = text.parse::<Id>();
             match expect {
                 "ok" => {
                     let id = parsed.unwrap_or_else(|e| panic!("{e}"));
                     assert_eq!(id.module(), cols[2]);
-                    let overlay = (cols[3] != "-").then(|| cols[3].parse::<u16>().unwrap());
-                    assert_eq!(id.overlay(), overlay);
+                    let part = (cols[3] != "-").then(|| cols[3].parse::<u16>().unwrap());
+                    assert_eq!(id.part(), part);
                     assert_eq!(id.offset(), u32::from_str_radix(cols[4], 16).unwrap());
                     assert_eq!(id.to_string(), text);
                 }
@@ -150,9 +152,9 @@ mod tests {
 
     #[test]
     fn new_rejects_bad_modules() {
-        assert!(FunctionId::new("game.exe", None, 0).is_err());
-        assert!(FunctionId::new("", None, 0).is_err());
-        assert!(FunctionId::new("A".repeat(65), None, 0).is_err());
-        assert_eq!(FunctionId::new("GAME.EXE", Some(2), 0x120).unwrap().to_string(), "GAME.EXE#2+00120");
+        assert!(Id::new("game.exe", None, 0).is_err());
+        assert!(Id::new("", None, 0).is_err());
+        assert!(Id::new("A".repeat(65), None, 0).is_err());
+        assert_eq!(Id::new("GAME.EXE", Some(2), 0x120).unwrap().to_string(), "GAME.EXE#2+00120");
     }
 }

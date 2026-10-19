@@ -1,6 +1,7 @@
-# Shared function-ID test vectors, read by both the Rust (host/machine) and Python (tools/rec) tests.
-# Columns (tab-separated): expect  text  module  overlay  offset_hex   ("-" = none / not applicable)
-# Canonical form: <MODULE>[#<overlay>]+<offset>, offset uppercase hex, at least 5 digits, at most 8.
+# ID test vectors (the ids crate's tests read them; any other implementation of the format should too).
+# Columns (tab-separated): expect  text  module  part  offset_hex   ("-" = none / not applicable)
+# Canonical form: <MODULE>[#<part>]+<offset>, the part an overlay (MZ) or object (LE/LX), the offset
+# uppercase hex, at least 5 digits, at most 8.
 ok	GAME.EXE+0A4D2	GAME.EXE	-	0A4D2
 ok	GAME.EXE#3+00120	GAME.EXE	3	00120
 ok	KEEN1.EXE+00000	KEEN1.EXE	-	00000
