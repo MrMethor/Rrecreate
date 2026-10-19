@@ -16,8 +16,13 @@
 //! return into a real-mode stub, whose callback switches back. A DOS exit from protected mode
 //! is then an ordinary real-mode termination, after which the client's state is dropped.
 //!
-//! Not done: interrupts arriving in real mode go to real-mode handlers only (a protected-mode
-//! handler hears those that come while protected mode runs), no VCPI, no DPMI 1.0 functions.
+//! A hardware interrupt that comes while the client is in real mode (in DOS, in a real-mode call)
+//! goes to the client's protected-mode handler if it has one: the host switches to protected
+//! mode, runs the handler on its own stack and switches back when it returns. The previous
+//! handler 0204h gives a client to chain to is the host's default for that vector (reflection
+//! to real mode), never the client's own.
+//!
+//! Not done: no VCPI, no DPMI 1.0 functions.
 
 use std::collections::BTreeMap;
 
@@ -43,9 +48,13 @@ pub mod id {
     pub const RAW_TO_RM: u16 = 0x0153;
     pub const EXCEPTION_RETURN: u16 = 0x0154;
     pub const CALLBACK_RETURN: u16 = 0x0155;
+    /// A protected-mode handler of an interrupt that came in real mode returned.
+    pub const RM_IRQ_RETURN: u16 = 0x0156;
     pub const RM_CALLBACK: u16 = 0x0160;
     /// 0200h + vector: a protected-mode interrupt.
     pub const PM_INT: u16 = 0x0200;
+    /// 0300h + vector: the host's default handler, which 0204h gives clients to chain to.
+    pub const PM_DEFAULT: u16 = 0x0300;
 }
 
 /// The vectors the PIC's IRQ 0-15 come in on while a client runs.
@@ -61,6 +70,12 @@ const PM_RAW: u32 = STUBS + 0x800;
 const PM_EXCEPTION_RETURN: u32 = STUBS + 0x810;
 const PM_CALLBACK_RETURN: u32 = STUBS + 0x820;
 const PM_RETF: u32 = STUBS + 0x830;
+const PM_IRQ_RETURN: u32 = STUBS + 0x840;
+/// The default handlers' stubs (6 bytes each: callback, IRET or IRETD).
+const DEFAULT_STUBS: u32 = STUBS + 0x900;
+/// Where on the host's stack the handlers of interrupts that came in real mode start (the
+/// exception frames are above), 200h a level.
+const RM_IRQ_STACK: u32 = 0x800;
 const HOST_STACK: u32 = 0x13000;
 const AREA_SIZE: u32 = 0x14000;
 /// GDT selectors: the host's code (the stubs) and the LDT.
@@ -98,6 +113,8 @@ pub struct Dpmi {
     client: Option<Client>,
     /// Protected-mode states waiting for a real-mode handler or call to come back.
     saved: Vec<Saved>,
+    /// Real-mode states a hardware interrupt interrupted, while their protected-mode handlers run.
+    interrupted: Vec<Regs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -190,10 +207,12 @@ pub(crate) fn dispatch(m: &mut Machine, callback: u16) -> bool {
         id::RAW_TO_RM => raw_to_rm(m),
         id::EXCEPTION_RETURN => exception_return(m),
         id::CALLBACK_RETURN => callback_return(m),
+        id::RM_IRQ_RETURN => rm_irq_return(m),
         n if (id::RM_CALLBACK..id::RM_CALLBACK + CALLBACKS as u16).contains(&n) => {
             rm_callback(m, usize::from(n - id::RM_CALLBACK))
         }
         n if (id::PM_INT..id::PM_INT + 0x100).contains(&n) => pm_interrupt(m, (n - id::PM_INT) as u8),
+        n if (id::PM_DEFAULT..id::PM_DEFAULT + 0x100).contains(&n) => default_interrupt(m, (n - id::PM_DEFAULT) as u8),
         _ => return false,
     }
     true
@@ -222,6 +241,7 @@ pub(crate) fn terminated(m: &mut Machine, psp: u16) {
     m.mem.write_u16(Machine::lin(psp, 0x2C), environment);
     m.dos.dpmi.client = None;
     m.dos.dpmi.saved.clear();
+    m.dos.dpmi.interrupted.clear();
 }
 
 // ---- descriptors ----
@@ -527,6 +547,12 @@ fn build_tables(m: &mut Machine, bits32: bool) {
     put(m, base + PM_EXCEPTION_RETURN, &[&callback_instruction(id::EXCEPTION_RETURN)[..], &[0xF4]].concat());
     put(m, base + PM_CALLBACK_RETURN, &[&callback_instruction(id::CALLBACK_RETURN)[..], &[0xF4]].concat());
     put(m, base + PM_RETF, retf);
+    put(m, base + PM_IRQ_RETURN, &[&callback_instruction(id::RM_IRQ_RETURN)[..], &[0xF4]].concat());
+    for n in 0..256u32 {
+        let mut stub = callback_instruction(id::PM_DEFAULT + n as u16).to_vec();
+        stub.extend(if bits32 { &[0x66, 0xCF][..] } else { &[0xCF][..] });
+        put(m, base + DEFAULT_STUBS + 6 * n, &stub);
+    }
 }
 
 // ---- interrupts in protected mode ----
@@ -550,6 +576,84 @@ fn pm_interrupt(m: &mut Machine, vector: u8) {
         0x00..=0x0F => exception(m, vector),
         0x2F if m.cpu.regs.ax() == 0x1686 => m.cpu.regs.set_ax(0), // in protected mode
         v => interrupt(m, v),
+    }
+}
+
+/// The host's default handler of `vector`, which a client's handler chains to (an INT frame in
+/// place): what an interrupt the client didn't hook does, without asking the client's table.
+fn default_interrupt(m: &mut Machine, vector: u8) {
+    if m.dos.dpmi.client.is_none() {
+        return;
+    }
+    match vector {
+        0x31 => services(m),
+        0x2F if m.cpu.regs.ax() == 0x1686 => m.cpu.regs.set_ax(0),
+        v => reflect(m, v),
+    }
+}
+
+/// A hardware interrupt in real mode while a client runs: to its protected-mode handler, if it
+/// has one for the vector, on the host's stack; [`rm_irq_return`] comes back. False: the
+/// real-mode handler takes it as usual.
+pub(crate) fn real_mode_irq(m: &mut Machine, vector: u8) -> bool {
+    if m.cpu.protected_mode() || !matches!(vector, 0x08..=0x0F | 0x70..=0x77) {
+        return false;
+    }
+    let Some((selector, offset, wide)) =
+        m.dos.dpmi.client.as_ref().and_then(|c| c.vectors.get(&vector).map(|&(s, o)| (s, o, c.bits32)))
+    else {
+        return false;
+    };
+    let level = m.dos.dpmi.interrupted.len() as u32;
+    if level >= 4 {
+        return false;
+    }
+    let interrupted = m.cpu.regs;
+    m.dos.dpmi.interrupted.push(interrupted);
+    tables_pm(m);
+    load(m, seg::SS, HOST_STACK_SELECTOR);
+    for i in [seg::DS, seg::ES, seg::FS, seg::GS] {
+        load(m, i, 0);
+    }
+    // An interrupt frame returning into the host's stub.
+    let stack_base = area(m) + HOST_STACK - 0x1000;
+    let mut sp = RM_IRQ_STACK - 0x200 * level;
+    let flags = interrupted.flags & !(IF | 0x0100);
+    for value in [flags, u32::from(HOST_CODE), PM_IRQ_RETURN - STUBS] {
+        if wide {
+            sp -= 4;
+            m.mem.write_u32(stack_base + sp, value);
+        } else {
+            sp -= 2;
+            m.mem.write_u16(stack_base + sp, value as u16);
+        }
+    }
+    m.cpu.regs.gpr[4] = sp;
+    m.cpu.regs.flags &= !(IF | 0x0100);
+    if !load(m, seg::CS, selector) {
+        m.dos.dpmi.interrupted.pop();
+        to_real(m);
+        m.cpu.regs = interrupted;
+        for i in [seg::ES, seg::CS, seg::SS, seg::DS, seg::FS, seg::GS] {
+            set_real(m, i, interrupted.seg[i]);
+        }
+        return false;
+    }
+    m.cpu.regs.ip = offset;
+    true
+}
+
+/// The protected-mode handler of an interrupt that came in real mode returned: real mode again,
+/// where the interrupt came.
+fn rm_irq_return(m: &mut Machine) {
+    let Some(interrupted) = m.dos.dpmi.interrupted.pop() else {
+        m.diagnostic("DPMI: a return to real mode with nothing to return to".into());
+        return;
+    };
+    to_real(m);
+    m.cpu.regs = interrupted;
+    for i in [seg::ES, seg::CS, seg::SS, seg::DS, seg::FS, seg::GS] {
+        set_real(m, i, interrupted.seg[i]);
     }
 }
 
@@ -910,8 +1014,11 @@ fn service(m: &mut Machine) -> Result<(), u16> {
             if r.ax() == 0x0202 && vector >= 0x20 {
                 return Err(error::INVALID_VALUE);
             }
-            let (selector, offset) =
-                m.dos.dpmi.client.as_ref().and_then(table).unwrap_or((HOST_CODE, u32::from(vector) * 8));
+            // The host's own handler: for exceptions the gate's stub, for interrupts the default
+            // handler, which doesn't ask the client's table again (a client chains to it).
+            let default =
+                if r.ax() == 0x0202 { u32::from(vector) * 8 } else { DEFAULT_STUBS - STUBS + 6 * u32::from(vector) };
+            let (selector, offset) = m.dos.dpmi.client.as_ref().and_then(table).unwrap_or((HOST_CODE, default));
             m.cpu.regs.set_cx(selector);
             m.cpu.regs.gpr[2] = if wide { offset } else { (m.cpu.regs.gpr[2] & 0xFFFF_0000) | (offset & 0xFFFF) };
         }

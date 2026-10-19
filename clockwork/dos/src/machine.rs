@@ -739,9 +739,12 @@ impl Machine {
                 if let Some(tracer) = &mut self.tracer {
                     tracer.interrupt(&self.cpu.regs);
                 }
-                let (cpu, mut bus) = self.split();
-                if let Err(exit) = cpu.interrupt(&mut bus, vector) {
-                    return Stop::Fault(exit);
+                // A DPMI client's protected-mode handler may take it, though it came in real mode.
+                if !crate::dpmi::real_mode_irq(self, vector) {
+                    let (cpu, mut bus) = self.split();
+                    if let Err(exit) = cpu.interrupt(&mut bus, vector) {
+                        return Stop::Fault(exit);
+                    }
                 }
                 if let Some(contracts) = self.contracts.as_deref_mut()
                     && !self.cpu.protected_mode()

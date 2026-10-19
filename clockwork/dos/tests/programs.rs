@@ -3552,6 +3552,125 @@ fn dpmi_client(bits32: bool, fault: bool) -> Vec<u8> {
     })
 }
 
+/// A 16-bit DPMI client whose handlers chain: it hooks INT 21h and prints through its hook, which
+/// counts and chains to the handler 0204h gave it; then it hooks IRQ 0 the same way and calls a
+/// real-mode procedure (0301h) that waits until the protected-mode handler has counted three
+/// ticks: interrupts that come in real mode must reach it.
+fn dpmi_hooks_client() -> Vec<u8> {
+    com(|a| {
+        let fail = a.l("fail");
+        a.mov(ah, 0x4A)?;
+        a.mov(bx, 0x1000)?;
+        a.int(0x21)?;
+        a.mov(ax, 0x1687)?;
+        a.int(0x2F)?;
+        a.or(ax, ax)?;
+        a.jnz(fail)?;
+        let entry = a.addr("entry") as u32;
+        a.mov(word_ptr(entry), di)?;
+        a.mov(word_ptr(entry + 2), es)?;
+        let rmseg = a.addr("rmseg") as u32;
+        a.mov(word_ptr(rmseg), cs)?;
+        a.mov(bx, si)?;
+        a.mov(ah, 0x48)?;
+        a.int(0x21)?;
+        a.jc(fail)?;
+        a.mov(es, ax)?;
+        a.xor(ax, ax)?;
+        a.call(dword_ptr(entry))?;
+        a.jc(fail)?;
+        // The handlers run on the host's stack: they find the data through the code segment.
+        let dsel = a.addr("dsel") as u32;
+        a.mov(word_ptr(dsel), ds)?;
+        // Hooks: the previous handler (0204h), then this one (0205h).
+        for (vector, previous, handler) in [(0x21, "prev21", "hook21"), (0x08, "prev08", "hook08")] {
+            let previous = a.addr(previous) as u32;
+            a.mov(ax, 0x0204)?;
+            a.mov(bl, vector)?;
+            a.int(0x31)?;
+            a.mov(word_ptr(previous), dx)?;
+            a.mov(word_ptr(previous + 2), cx)?;
+            a.mov(ax, 0x0205)?;
+            a.mov(bl, vector)?;
+            a.mov(cx, cs)?;
+            let handler = a.addr(handler);
+            a.mov(dx, handler)?;
+            a.int(0x31)?;
+            a.jc(fail)?;
+            if vector == 0x21 {
+                a.mov(ah, 2)?;
+                a.mov(dl, b'C' as i32)?;
+                a.int(0x21)?;
+                let hooked = a.addr("hooked21") as u32;
+                a.cmp(word_ptr(hooked), 1)?;
+                a.jne(fail)?;
+            }
+        }
+        // The real-mode wait (0301h, interrupts on).
+        let regs = a.addr("regs") as u32;
+        a.mov(word_ptr(regs + 0x20), 0x0202)?;
+        let rmwait = a.addr("rmwait");
+        a.mov(word_ptr(regs + 0x2A), rmwait)?;
+        a.mov(ax, word_ptr(rmseg))?;
+        a.mov(word_ptr(regs + 0x2C), ax)?;
+        a.push(ds)?;
+        a.pop(es)?;
+        a.mov(di, regs as i32)?;
+        a.xor(bh, bh)?;
+        a.xor(cx, cx)?;
+        a.mov(ax, 0x0301)?;
+        a.sti()?;
+        a.int(0x31)?;
+        a.jc(fail)?;
+        let count = a.addr("count08") as u32;
+        a.cmp(word_ptr(count), 3)?;
+        a.jb(fail)?;
+        a.mov(ah, 2)?;
+        a.mov(dl, b'R' as i32)?;
+        a.int(0x21)?;
+        exit(a, 0)?;
+        a.here("fail")?;
+        exit(a, 1)?;
+        for (handler, counter, previous) in [("hook21", "hooked21", "prev21"), ("hook08", "count08", "prev08")] {
+            a.here(handler)?;
+            a.push(ds)?;
+            a.mov(ds, word_ptr(dsel).cs())?;
+            let counter = a.addr(counter) as u32;
+            a.inc(word_ptr(counter))?;
+            a.pop(ds)?;
+            a.pushf()?;
+            let previous = a.addr(previous) as u32;
+            a.call(dword_ptr(previous).cs())?;
+            a.iret()?;
+        }
+        // Real mode: CS is the program's segment.
+        a.here("rmwait")?;
+        let counter = a.addr("count08") as u32;
+        a.cmp(word_ptr(counter).cs(), 3)?;
+        let rmwait = a.l("rmwait");
+        a.jb(rmwait)?;
+        a.retf()?;
+        for name in ["entry", "prev21", "prev08"] {
+            a.here(name)?;
+            a.dw(&[0, 0])?;
+        }
+        for name in ["rmseg", "hooked21", "count08", "dsel"] {
+            a.here(name)?;
+            a.dw(&[0])?;
+        }
+        a.here("regs")?;
+        a.db(&[0; 0x32])
+    })
+}
+
+#[test]
+fn a_dpmi_client_s_handlers_chain_and_hear_interrupts_in_real_mode() {
+    let mut m = boot_dpmi(&dpmi_hooks_client(), true);
+    assert_eq!(m.run(10 * SECOND), Stop::Exited(0), "{}, {:?}", console(&m), m.diagnostics);
+    assert_eq!(console(&m), "CR");
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
 fn boot_dpmi(program: &[u8], dpmi: bool) -> Machine {
     let mut drive = Vfs::new();
     drive.insert_file("CLIENT.COM", program.to_vec());
