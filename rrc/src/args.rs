@@ -39,7 +39,6 @@ impl Args {
         self.value(name).ok_or_else(|| format!("{name} is needed"))
     }
 
-    #[allow(dead_code, reason = "no command has a switch yet")]
     pub fn has(&self, name: &str) -> bool {
         self.switches.contains(name)
     }

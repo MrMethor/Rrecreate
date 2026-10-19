@@ -113,7 +113,10 @@ pub(crate) fn status(repo: &Repo) -> Result<ExitCode, String> {
             "rrc game --add-version <name>: record this copy's files as a version".to_owned()
         }
         Err(e) => e,
-        Ok(_) => "the toolkit's next commands are still being built (M2)".to_owned(),
+        Ok(_) => match crate::analysis::Index::load(repo)? {
+            None => "rrc analyze".to_owned(),
+            Some(_) => "the toolkit's next commands are still being built (M2)".to_owned(),
+        },
     };
     say("next", next);
     Ok(ExitCode::SUCCESS)

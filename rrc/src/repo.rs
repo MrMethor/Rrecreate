@@ -53,7 +53,7 @@ pub struct Local {
     /// The cache, if not the user's default (`RRC_CACHE` overrides both).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Tools::is_empty")]
     pub tools: Tools,
 }
 
@@ -68,6 +68,12 @@ pub struct Tools {
     /// A JDK for Ghidra (its folder: `JAVA_HOME`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub java: Option<PathBuf>,
+}
+
+impl Tools {
+    fn is_empty(&self) -> bool {
+        *self == Tools::default()
+    }
 }
 
 pub struct Repo {

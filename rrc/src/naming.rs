@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use ids::Id;
 
+use crate::analysis::Analysis;
 use crate::args::Args;
 use crate::clockwork::Clockwork;
 use crate::knowledge::{Datum, Decision, Knowledge, is_name, parse_id};
@@ -53,7 +54,7 @@ fn provenance(a: &Args) -> String {
 
 fn decision(a: &Args, name: &str) -> Result<Decision, String> {
     if !is_name(name) {
-        return Err(format!("{name:?} isn't a name (letters, digits and _, not starting with a digit)"));
+        return Err(format!("{name:?} isn't a name (letters, digits, _, @ and $, not starting with a digit)"));
     }
     let confidence = match a.value("--confidence") {
         Some(c) => Some(c.parse::<f64>().ok().filter(|c| (0.0..=1.0).contains(c)).ok_or("--confidence is 0 to 1")?),
@@ -117,8 +118,8 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 }
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &[])?;
-    let [what] = a.positionals(1, 1, "show ID|NAME")? else { unreachable!() };
+    let a = Args::parse(args, &[], &["--asm", "--c"])?;
+    let [what] = a.positionals(1, 1, "show ID|NAME [--asm] [--c]")? else { unreachable!() };
     let k = Knowledge::load(&repo.knowledge())?;
     let id = match parse_id(what) {
         Ok(id) => id,
@@ -150,7 +151,35 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     for i in k.ticks.inputs.iter().filter(|i| i.at == text) {
         say("input", format!("{}, {} bytes{}", i.name, i.size, note(&i.note)));
     }
+    if let Some(analysis) = Analysis::load(repo)? {
+        show_analysis(&k, &analysis, &id, a.has("--asm"), a.has("--c"));
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// What Ghidra found about `id`: the function there, its calls and callers, its code.
+fn show_analysis(k: &Knowledge, analysis: &Analysis, id: &Id, asm: bool, c: bool) {
+    let Some(f) = analysis.functions.get(id) else { return };
+    let library = f.library.as_ref().map(|(name, pack)| format!(", {name} in {pack}")).unwrap_or_default();
+    say("ghidra", format!("{}, {} bytes{library}", f.name, f.size));
+    let named = |id: &Id| k.functions.get(id).map_or_else(|| id.to_string(), |d| d.name.clone());
+    let mut calls: Vec<String> = analysis.calls.iter().filter(|c| &c.0 == id).map(|c| named(&c.2)).collect();
+    let mut callers: Vec<String> = analysis.calls.iter().filter(|c| &c.2 == id).map(|c| named(&c.0)).collect();
+    for (label, list) in [("calls", &mut calls), ("callers", &mut callers)] {
+        list.sort();
+        list.dedup();
+        if !list.is_empty() {
+            say(label, list.join(", "));
+        }
+    }
+    if let Some((disassembly, decompiled)) = analysis.code.get(id) {
+        if asm {
+            print!("{disassembly}");
+        }
+        if c {
+            println!("{}", decompiled.as_deref().unwrap_or("(Ghidra didn't decompile it)"));
+        }
+    }
 }
 
 fn note(text: &str) -> String {

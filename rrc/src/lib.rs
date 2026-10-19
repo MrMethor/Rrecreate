@@ -2,6 +2,7 @@
 //! knowledge files, and drives Clockwork through `clockwork serve`. Its output is read by agents:
 //! a few lines, a label and a value each.
 
+pub mod analysis;
 mod args;
 pub mod cache;
 pub mod clockwork;
@@ -28,12 +29,17 @@ usage: rrc <command> [arguments]     (inside a port repository)
   game [FOLDER] [--add-version NAME]
                          the person's copy of the game (FOLDER is kept in rrc.local.toml) and which
                          version it is; --add-version records its files as a version the port supports
+  analyze [--no-decompile]
+                         the program, unpacked by Clockwork, analyzed by Ghidra into the cache;
+                         library functions the signature packs know get their names
   check                  the knowledge files: IDs, names, sizes, ticks, types (and against the image)
   name ID NAME           name a function (--evidence TEXT, --confidence 0-1, --by WHO: who decided,
                          else RRC_BY, else agent)
   data ID NAME [--size N] [--type T]
                          name data (the same options as name)
-  show ID|NAME           what is known about a function or data
+  show ID|NAME [--asm] [--c]
+                         what is known about a function or data: its name and evidence, what Ghidra
+                         found (size, calls, callers), its disassembly (--asm) or decompiled code (--c)
   import recreate DIR [--without PROVENANCE,...]
                          Recreate's knowledge files (its games/<game>/knowledge), leaving out the
                          items of the provenances named
@@ -59,6 +65,7 @@ pub fn main() -> ExitCode {
         Some("doctor") => here().and_then(|repo| setup::doctor(&repo)),
         Some("status") => here().and_then(|repo| setup::status(&repo)),
         Some("game") => here().and_then(|mut repo| setup::game(&mut repo, rest)),
+        Some("analyze") => here().and_then(|repo| analysis::analyze(&repo, rest)),
         Some("check") => here().and_then(|repo| naming::check(&repo)),
         Some("name") => here().and_then(|repo| naming::name(&repo, rest)),
         Some("data") => here().and_then(|repo| naming::data(&repo, rest)),

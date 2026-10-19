@@ -38,8 +38,22 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 
 ## `.rrc/`: this machine's state for the port (not committed)
 
-`files.tsv` holds the hashes of the game's files with their size and modification time, so `rrc` hashes a file
-again only when it changed.
+- `files.tsv`: the hashes of the game's files with their size and modification time, so `rrc` hashes a file
+  again only when it changed.
+- `analysis.toml`: what `rrc analyze` left: the hash of the game's program it analyzed (`original`), what Ghidra
+  imported (`program`, in the cache: unpacked by Clockwork when `unpacked`), Ghidra's export (`export`, in the
+  cache), the entry point's offset in the load image (`entry`, which places Ghidra's addresses in the image) and
+  Ghidra's version.
+- `ghidra/`: the last analysis's working files: the program Ghidra imported, the export script, Ghidra's log.
+
+## Ghidra's export
+
+JSON lines from `ghidra/RecExport.java`: a `program` record (name, language, compiler, `entry`, Ghidra's
+version), `block` records (memory blocks), `function` records (`address`, `name`, `source`, `convention`,
+`signature`, `thunk`, `fid`: Function ID hashes `{units, full, specific, extra}`, `body`: `[address, length]`
+ranges), `call` records (`caller`, `site`, `callee`) and `code` records (`address`, `asm`, `c`). Addresses are
+`{"linear": n, "text": "SSSS:OOOO"}`; an address's image offset is its linear address minus the entry point's,
+plus `entry`.
 
 ## The cache
 
@@ -62,7 +76,8 @@ WOLF3D.EXE+4114C	tics	2	u16	human
 ```
 
 - **id:** `<MODULE>[#<n>]+<offset>` (D29), the offset in the loaded image, uppercase hex, 5 to 8 digits.
-- **name:** letters, digits and `_`, not starting with a digit; unique across both tables.
+- **name:** letters, digits, `_`, and the `@` and `$` of compilers' runtime names, not starting with a digit;
+  unique across both tables.
 - **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a primitive (`u8`,
   `i16`, `u32`, ...), an array (`u8[256]`), or empty.
 - **provenance:** who decided, and from what: `human`, `agent:<model>`, `ghidra`, `library:<pack>`,

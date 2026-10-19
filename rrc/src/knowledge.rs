@@ -212,7 +212,7 @@ impl Knowledge {
                 problems.push(format!("{} names both {other} and {id}", d.name));
             }
             if !is_name(&d.name) {
-                problems.push(format!("{id}: {:?} isn't a name (letters, digits and _)", d.name));
+                problems.push(format!("{id}: {:?} isn't a name", d.name));
             }
             if id.module() != module {
                 problems.push(format!("{id}: not in {module}"));
@@ -262,11 +262,11 @@ impl Knowledge {
     }
 }
 
-/// A C-style name: what a port can use as an identifier.
+/// A C-style name, with the `@` and `$` compilers' runtime names have (`F_LXMUL@`).
 pub fn is_name(name: &str) -> bool {
     let mut chars = name.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    let other = |c: char| c.is_ascii_alphanumeric() || "_@$".contains(c);
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(other)
 }
 
 pub fn parse_id(text: &str) -> Result<Id, String> {
