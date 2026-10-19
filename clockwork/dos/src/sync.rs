@@ -25,6 +25,8 @@ pub struct Syncs {
     any_high: bool,
     /// Stop just before this point's hit number.
     target: Option<(u32, u64)>,
+    /// Stop just before the next hit of any point.
+    next: bool,
     /// The instruction a run stopped at: its hit was counted already.
     resume_at: Option<u32>,
 }
@@ -59,8 +61,13 @@ impl Syncs {
         self.target = Some((at, hit));
     }
 
+    pub(crate) fn set_next(&mut self) {
+        self.next = true;
+    }
+
     pub(crate) fn clear_target(&mut self) {
         self.target = None;
+        self.next = false;
     }
 
     /// Before the instruction at `at` runs: counts a hit there, and says whether to stop (the
@@ -85,8 +92,8 @@ impl Syncs {
         if let Some(cycles) = &mut point.cycles {
             cycles.push(cycle);
         }
-        if self.target == Some((at, point.hits)) {
-            self.target = None;
+        if self.next || self.target == Some((at, point.hits)) {
+            (self.target, self.next) = (None, false);
             self.resume_at = Some(at);
             return true;
         }

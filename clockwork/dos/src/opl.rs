@@ -152,7 +152,7 @@ pub struct Opl {
     new_mode: bool,
     /// The value last written to each sound register (as logged: bank 1 is 100h-1FFh).
     registers: Vec<u8>,
-    pub writes: crate::record::Record<Vec<OplWrite>>,
+    pub writes: crate::record::Record<crate::record::Log<OplWrite>>,
 }
 
 impl Opl {

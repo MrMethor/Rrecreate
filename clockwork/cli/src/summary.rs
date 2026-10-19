@@ -61,7 +61,7 @@ impl Summary {
             irqs: irq_summary(m),
             last_frame: m.frames.last().copied(),
             state_hash: m.state_hash(),
-            console_hash: fnv64(&m.console),
+            console_hash: fnv64(&m.console.to_vec()),
             issues,
             files_changed: m.drive.changed().map(String::from).collect(),
             contract_lines: m.probes.contracts.as_deref().map(contract_lines).unwrap_or_default(),
@@ -70,7 +70,7 @@ impl Summary {
 
     pub(crate) fn print(&self, m: &Machine) {
         println!("stop      {} at {} ms ({} cycles)", self.stop, self.elapsed_ms, self.cycles);
-        println!("console   {} bytes: {}", m.console.len(), escape_tail(&m.console, 200));
+        println!("console   {} bytes: {}", m.console.len(), escape_tail(&m.console.to_vec(), 200));
         match self.last_frame {
             Some(f) => println!(
                 "frames    {} ({} distinct), last: mode {:02X}h hash {:016x}",

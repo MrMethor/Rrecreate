@@ -106,12 +106,12 @@ TCP socket; requests can be batched ("run to the 500th sync point, then return t
 
 A GDB remote-protocol face lets gdb and Ghidra's debugger attach to the running original.
 
-**Built (M1):** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on
-disk, runs for a time or to a sync point's next hit, memory and registers, input, watches with call chains,
-bounds checks, uninitialized reads and image dumps (real mode in full; protected mode as the selector map and
-the segments it bounds). **Still to come:** coverage, frames and sound events through the protocol (with the
-traces, M2); image dumps of flat-model programs under an extender, which need where its loader put the LE
-objects; the GDB face.
+**Built:** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on disk,
+runs for a time, to a sync point's next hit or to the next tick (any sync point's next hit), memory and
+registers, input, the frames and sound events of a span of time, watches with call chains, bounds checks,
+uninitialized reads and image dumps (real mode in full; protected mode as the selector map and the segments it
+bounds). **Still to come:** coverage through the protocol; frames as indexed pixels and palette (M5); image
+dumps of flat-model programs under an extender, which need where its loader put the LE objects; the GDB face.
 
 `clockwork run` and `clockwork play` stay for people: run headless, or play in a window with sound and record
 the session.

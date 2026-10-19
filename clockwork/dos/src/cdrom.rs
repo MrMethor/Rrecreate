@@ -553,7 +553,7 @@ pub struct CdAudio {
     position: Option<u32>,
     /// Channel control (IOCTL output 03h): the input channel and volume of each output.
     pub channels: [(u8, u8); 4],
-    pub segments: crate::record::Record<Vec<CdSegment>>,
+    pub segments: crate::record::Record<crate::record::Log<CdSegment>>,
 }
 
 impl CdAudio {

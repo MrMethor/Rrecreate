@@ -69,3 +69,41 @@ fn a_tool_finds_who_wrote_a_variable() {
     assert_eq!(answers[11]["error"], "unknown op \"frobnicate\"");
     assert_eq!(answers[11]["id"], 12);
 }
+
+/// A COM program: the PC speaker at 1 kHz (PIT channel 2), then forever `again: call step; jmp again`
+/// with `step` (+00017) a `ret`; `again` is at +00012.
+const TICKS: [u8; 24] = [
+    0xB0, 0xB6, 0xE6, 0x43, 0xB0, 0xA9, 0xE6, 0x42, 0xB0, 0x04, 0xE6, 0x42, 0xE4, 0x61, 0x0C, 0x03, 0xE6, 0x61, 0xE8,
+    0x02, 0x00, 0xEB, 0xFB, 0xC3,
+];
+
+#[test]
+fn a_tool_steps_tick_by_tick_and_reads_frames_and_sound() {
+    let dir = std::env::temp_dir().join(format!("clockwork-ticks-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("T.COM"), TICKS).unwrap();
+    let dir = dir.to_string_lossy().into_owned();
+    let answers = serve(&[
+        json!({"id": 1, "op": "load", "argv": [dir, "T.COM"]}),
+        json!({"id": 2, "op": "sync", "at": "+00012"}),
+        json!({"id": 3, "op": "sync", "at": "+00017"}),
+        json!({"id": 4, "op": "run", "sync": "next"}),
+        json!({"id": 5, "op": "run", "sync": "next"}),
+        json!({"id": 6, "op": "run", "sync": "next"}),
+        json!({"id": 7, "op": "run", "ms": 100}),
+        json!({"id": 8, "op": "frames", "from": 0}),
+        json!({"id": 9, "op": "sound", "from": 0}),
+        json!({"id": 10, "op": "frames", "from": 0, "to": 0}),
+    ]);
+    std::fs::remove_dir_all(&dir).ok();
+    let ticks: Vec<(&str, u64)> =
+        answers[3..6].iter().map(|a| (a["sync"]["at"].as_str().unwrap(), a["sync"]["hit"].as_u64().unwrap())).collect();
+    assert_eq!(ticks, [("+00012", 1), ("+00017", 1), ("+00012", 2)], "{answers:#?}");
+    let frames = answers[7]["frames"].as_array().unwrap();
+    assert!((6..=8).contains(&frames.len()), "70 frames a second: {frames:?}");
+    assert_eq!(frames[0].as_array().unwrap().len(), 4, "number, cycle, mode, hash");
+    let speaker = answers[8]["speaker"].as_array().unwrap();
+    assert_eq!(speaker.len(), 1, "the tone starts: {speaker:?}");
+    assert!(speaker[0][1].get("Periodic").is_some(), "a square wave: {speaker:?}");
+    assert_eq!(answers[9]["frames"], json!([]));
+}

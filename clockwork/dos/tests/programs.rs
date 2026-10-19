@@ -85,7 +85,7 @@ fn boot(files: &[(&str, &[u8])], program: &str) -> Machine {
 }
 
 fn console(m: &Machine) -> String {
-    String::from_utf8_lossy(&m.console).into_owned()
+    String::from_utf8_lossy(&m.console.to_vec()).into_owned()
 }
 
 /// `mov ah,9; int 21h` for the `$`-terminated string at label `name`.
@@ -3455,11 +3455,11 @@ fn a_watch_sees_an_interrupt_handler_and_reads() {
     );
 }
 
-/// A program that calls `step` ten times; `step` counts its calls in `count`.
+/// A program that calls `step` ten times (from `again`); `step` counts its calls in `count`.
 fn ten_steps() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
     let offsets = std::cell::RefCell::new(BTreeMap::new());
     let program = com(|a| {
-        for name in ["step", "count"] {
+        for name in ["again", "step", "count"] {
             offsets.borrow_mut().insert(name, a.addr(name) as u32);
         }
         a.mov(cx, 10)?;
@@ -3496,6 +3496,23 @@ fn a_run_stops_at_a_sync_point_s_hit() {
     assert_eq!(m.run(SECOND), Stop::Exited(0));
     assert_eq!(m.syncs.get(step).unwrap().hits, 10);
     assert_eq!(snapshot.syncs.get(step).unwrap().hits, 4, "a snapshot keeps the counts");
+}
+
+#[test]
+fn a_run_stops_at_the_next_hit_of_any_sync_point() {
+    let (program, o) = ten_steps();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let (step, again) = (base + o["step"], base + o["again"]);
+    m.syncs.add(step, false);
+    m.syncs.add(again, false);
+    let mut timeline = Vec::new();
+    while let Stop::Sync { address, hit } = m.run_to_next_sync(SECOND) {
+        timeline.push((address == step, hit));
+    }
+    let expected: Vec<_> = (1..=10).flat_map(|n| [(false, n), (true, n)]).collect();
+    assert_eq!(timeline, expected, "each loop's call, then the step it calls");
+    assert_eq!(m.exit_code(), Some(0));
 }
 
 #[test]

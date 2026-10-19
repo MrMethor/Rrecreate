@@ -165,10 +165,21 @@ pub(crate) fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         profile.print(&m, o.hotspots);
     }
     if let Some(path) = &o.midi {
+        // A line per PIT tick.
         let mut text = String::new();
-        for chunk in m.devices.mpu.midi_log.chunk_by(|a, b| a.pit_tick == b.pit_tick) {
-            let bytes: Vec<String> = chunk.iter().map(|b| format!("{:02X}", b.value)).collect();
-            text.push_str(&format!("{:>12} {}\n", chunk[0].pit_tick, bytes.join(" ")));
+        let mut tick = None;
+        for byte in m.devices.mpu.midi_log.iter() {
+            if tick != Some(byte.pit_tick) {
+                if tick.is_some() {
+                    text.push('\n');
+                }
+                text.push_str(&format!("{:>12}", byte.pit_tick));
+                tick = Some(byte.pit_tick);
+            }
+            text.push_str(&format!(" {:02X}", byte.value));
+        }
+        if tick.is_some() {
+            text.push('\n');
         }
         std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }

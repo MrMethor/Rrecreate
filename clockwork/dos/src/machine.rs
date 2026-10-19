@@ -542,8 +542,8 @@ pub struct Machine {
     pub drive: Vfs,
     pub config: Config,
     /// Text the program wrote through DOS or the BIOS (teletype output).
-    pub console: crate::record::Record<Vec<u8>>,
-    pub frames: crate::record::Record<Vec<Frame>>,
+    pub console: crate::record::Record<crate::record::Log<u8>>,
+    pub frames: crate::record::Record<crate::record::Log<Frame>>,
     /// Things the emulation doesn't support that the program used; each message appears once.
     pub diagnostics: crate::record::Record<BTreeSet<String>>,
     /// When the records start: 0, or when the machine was loaded from a snapshot.
@@ -633,6 +633,15 @@ impl Machine {
         self.syncs.add(at, false);
         let hit = self.syncs.get(at).map_or(0, |p| p.hits) + n.max(1);
         self.syncs.set_target(at, hit);
+        let stop = self.run(max_cycles);
+        self.syncs.clear_target();
+        stop
+    }
+
+    /// Runs until just before the next hit of any sync point (a session's next tick), for at most
+    /// `max_cycles`.
+    pub fn run_to_next_sync(&mut self, max_cycles: u64) -> Stop {
+        self.syncs.set_next();
         let stop = self.run(max_cycles);
         self.syncs.clear_target();
         stop
@@ -859,11 +868,11 @@ impl Machine {
 
     /// What the sound devices played so far (render it with [`crate::audio::AudioLog::render`]).
     pub fn audio_log(&self) -> crate::audio::AudioLog<'_> {
-        let d = &self.devices;
+        let (d, none) = (&self.devices, crate::audio::AudioLog::default());
         crate::audio::AudioLog {
-            opl: d.opl.as_ref().map_or(&[], |opl| &opl.writes),
-            pcm: d.sb.as_ref().map_or(&[], |sb| &sb.pcm),
-            dac: d.sb.as_ref().map_or(&[], |sb| &sb.dac),
+            opl: d.opl.as_ref().map_or(none.opl, |opl| &opl.writes),
+            pcm: d.sb.as_ref().map_or(none.pcm, |sb| &sb.pcm),
+            dac: d.sb.as_ref().map_or(none.dac, |sb| &sb.dac),
             speaker: &d.pit.speaker_log,
             cd: &self.dos.cd_audio.segments,
             cd_image: self.cd_image.as_deref(),

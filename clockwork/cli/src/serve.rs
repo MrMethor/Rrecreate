@@ -15,7 +15,11 @@
 //!   "file"}`: from a snapshot. `save` `{"file"}`: a snapshot on disk.
 //! - `snapshot` / `restore` / `forget` `{"name"}`: copies of the machine in memory.
 //! - `run` `{"ms"}` or `{"cycles"}`, or `{"sync": addr, "n": 1, "max_ms": 60000}`: runs on; says why it
-//!   stopped and when.
+//!   stopped and when. `{"sync": "next"}` stops at the next hit of any sync point: the next tick.
+//! - `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as their number,
+//!   cycle, video mode and hash. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
+//!   register, value]`), PC speaker waveforms (`[pit_tick, wave]`), digitized sound starts (`[ns, rate,
+//!   stereo]`), MIDI bytes (`[pit_tick, byte]`) and CD audio plays (`[ns, sector, sectors]`).
 //! - `sync` `{"at", "log": false}`: a sync point; `syncs`: each point's hits (and their cycles).
 //! - `read` `{"ranges": [{"at", "len"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
@@ -164,10 +168,12 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "run" => {
             let ips = m.config.instructions_per_second;
-            let stop = if let Some(at) = r.get("sync").and_then(Value::as_str) {
+            let max = r.get("max_ms").and_then(Value::as_u64).unwrap_or(60_000) * ips / 1000;
+            let stop = if r.get("sync").and_then(Value::as_str) == Some("next") {
+                m.run_to_next_sync(max)
+            } else if let Some(at) = r.get("sync").and_then(Value::as_str) {
                 let at = addr(m, at)?;
                 let n = r.get("n").and_then(Value::as_u64).unwrap_or(1);
-                let max = r.get("max_ms").and_then(Value::as_u64).unwrap_or(60_000) * ips / 1000;
                 m.run_to_sync(at, n, max)
             } else if let Some(ms) = r.get("ms").and_then(Value::as_u64) {
                 m.run(ms * ips / 1000)
@@ -282,6 +288,41 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 .collect();
             Ok(json!({"reads": reads, "dropped": uninit.dropped}))
         }
+        "frames" => {
+            let (from, to) = span(m, r)?;
+            let first = m.frames.partition_point(|f| f.cycle < from);
+            let frames: Vec<Value> = m
+                .frames
+                .iter_from(first)
+                .take_while(|f| f.cycle < to)
+                .map(|f| json!([f.number, f.cycle, f.mode, format!("{:016x}", f.hash)]))
+                .collect();
+            Ok(json!({"frames": frames}))
+        }
+        "sound" => {
+            let (from, to) = span(m, r)?;
+            let clock = &m.devices.clock;
+            let (ns, ticks) = (clock.nanos(from)..clock.nanos(to), clock.pit_ticks(from)..clock.pit_ticks(to));
+            let log = m.audio_log();
+            let opl = log.opl.iter_from(log.opl.partition_point(|w| w.nanos < ns.start));
+            let opl: Vec<Value> =
+                opl.take_while(|w| w.nanos < ns.end).map(|w| json!([w.nanos, w.register, w.value])).collect();
+            let speaker = log.speaker.iter_from(log.speaker.partition_point(|e| e.pit_tick < ticks.start));
+            let speaker: Vec<Value> =
+                speaker.take_while(|e| e.pit_tick < ticks.end).map(|e| json!([e.pit_tick, e.wave])).collect();
+            // A stream's pieces carry its start; the first one is where it starts.
+            let pcm = log.pcm.iter_from(log.pcm.partition_point(|s| s.start_ns < ns.start));
+            let pcm = pcm.take_while(|s| s.start_ns < ns.end).filter(|s| s.first_frame == 0);
+            let pcm: Vec<Value> = pcm.map(|s| json!([s.start_ns, s.rate_hz, s.stereo])).collect();
+            let midi = &m.devices.mpu.midi_log;
+            let midi = midi.iter_from(midi.partition_point(|b| b.pit_tick < ticks.start));
+            let midi: Vec<Value> =
+                midi.take_while(|b| b.pit_tick < ticks.end).map(|b| json!([b.pit_tick, b.value])).collect();
+            let cd = log.cd.iter_from(log.cd.partition_point(|s| s.start_ns < ns.start));
+            let cd: Vec<Value> =
+                cd.take_while(|s| s.start_ns < ns.end).map(|s| json!([s.start_ns, s.sector, s.length])).collect();
+            Ok(json!({"opl": opl, "speaker": speaker, "pcm": pcm, "midi": midi, "cd": cd}))
+        }
         "image" => {
             let dir = std::path::PathBuf::from(text(r, "dir")?);
             crate::run::dump_image(m, &dir)?;
@@ -345,6 +386,13 @@ fn hit(h: &dos::watch::Hit, name: &impl Fn(u32) -> String, name_physical: &impl 
         "at": name_physical(h.address), "kind": if h.kind == dos::watch::Kind::Write { "write" } else { "read" },
         "value": h.value, "old": h.old, "cycle": h.cycle, "by": by, "chain": chain,
     })
+}
+
+/// `{"from", "to"}` in cycles; `to` defaults to now.
+fn span(m: &Machine, r: &Value) -> Result<(u64, u64), String> {
+    let from = r.get("from").and_then(Value::as_u64).ok_or("missing \"from\" (cycles)")?;
+    let to = r.get("to").and_then(Value::as_u64).unwrap_or(m.cpu.cycles);
+    Ok((from, to))
 }
 
 fn text<'a>(r: &'a Value, key: &str) -> Result<&'a str, String> {

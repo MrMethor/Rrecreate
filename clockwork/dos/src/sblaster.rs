@@ -71,14 +71,22 @@ impl SbConfig {
     }
 }
 
-/// Samples played by DMA from `start_ns` on: signed 16-bit, interleaved left/right in stereo.
+/// Samples played by DMA: signed 16-bit, interleaved left/right in stereo. A stream that plays on
+/// without a gap from `start_ns` is logged in pieces of at most [`PIECE_FRAMES`] frames, so copies
+/// of a machine share all but the last.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PcmSegment {
+    /// When the stream started.
     pub start_ns: u64,
     pub rate_hz: u32,
     pub stereo: bool,
+    /// Frames of the stream in the pieces before this one.
+    pub first_frame: u64,
     pub samples: Vec<i16>,
 }
+
+/// The most frames a [`PcmSegment`] holds.
+pub const PIECE_FRAMES: usize = 1024;
 
 /// A byte written to the DAC directly (command 10h); it plays until the next one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -258,8 +266,8 @@ pub struct SoundBlaster {
     /// When an interrupt requested by F2h or 80h is due.
     timed_irq_ns: Option<u64>,
     mixer: Mixer,
-    pub pcm: crate::record::Record<Vec<PcmSegment>>,
-    pub dac: crate::record::Record<Vec<DacWrite>>,
+    pub pcm: crate::record::Record<crate::record::Log<PcmSegment>>,
+    pub dac: crate::record::Record<crate::record::Log<DacWrite>>,
     /// Things programs used that aren't emulated (each message once).
     pub unsupported: BTreeSet<String>,
 }
@@ -587,19 +595,29 @@ impl SoundBlaster {
             return;
         }
         let rate_hz = self.frame_rate();
+        let channels = if stereo { 2 } else { 1 };
+        let (mut start_ns, mut first_frame) = (start_ns, 0);
         if let Some(last) = self.pcm.last_mut()
             && last.rate_hz == rate_hz
             && last.stereo == stereo
         {
-            let frames = (last.samples.len() / if stereo { 2 } else { 1 }) as u128;
-            let end = last.start_ns + (frames * NANOS_PER_SECOND / u128::from(rate_hz)) as u64;
-            // Continue the segment when these samples follow on without a gap (1 ms slack).
+            let frames = last.first_frame + (last.samples.len() / channels) as u64;
+            let end = last.start_ns + (u128::from(frames) * NANOS_PER_SECOND / u128::from(rate_hz)) as u64;
+            // Continue the stream when these samples follow on without a gap (1 ms slack).
             if start_ns.abs_diff(end) <= SEGMENT_SLACK_NS {
-                last.samples.extend(samples);
-                return;
+                let room = (PIECE_FRAMES * channels).saturating_sub(last.samples.len()).min(samples.len());
+                last.samples.extend(samples.drain(..room));
+                start_ns = last.start_ns;
+                first_frame = last.first_frame + (last.samples.len() / channels) as u64;
             }
         }
-        self.pcm.push(PcmSegment { start_ns, rate_hz, stereo, samples });
+        while !samples.is_empty() {
+            let rest = samples.split_off((PIECE_FRAMES * channels).min(samples.len()));
+            let frames = (samples.len() / channels) as u64;
+            self.pcm.push(PcmSegment { start_ns, rate_hz, stereo, first_frame, samples });
+            first_frame += frames;
+            samples = rest;
+        }
     }
 
     fn start_dma(&mut self, now: u64, mode: DmaMode, autoinit: bool, stereo: bool, old_style: bool) {

@@ -22,7 +22,7 @@ pub struct MidiByte {
 pub struct Mpu401 {
     input: VecDeque<u8>,
     uart_mode: bool,
-    pub midi_log: crate::record::Record<Vec<MidiByte>>,
+    pub midi_log: crate::record::Record<crate::record::Log<MidiByte>>,
 }
 
 impl Mpu401 {

@@ -148,15 +148,15 @@ impl Midi {
     }
 
     /// Sends the logged MIDI bytes up to PIT tick `until`.
-    fn send_until(&mut self, log: &[dos::mpu401::MidiByte], until: u64) {
-        let due = log[self.next..].iter().take_while(|b| b.pit_tick <= until).count();
+    fn send_until(&mut self, log: &dos::record::Log<dos::mpu401::MidiByte>, until: u64) {
+        let due = log.iter_from(self.next).take_while(|b| b.pit_tick <= until).count();
         if due == 0 {
             return;
         }
         if !self.tried {
             self.open();
         }
-        for byte in &log[self.next..self.next + due] {
+        for byte in log.iter_from(self.next).take(due) {
             if let Some(connection) = &mut self.connection {
                 self.parser.push(byte.value, |message| {
                     let _ = connection.send(message);

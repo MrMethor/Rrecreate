@@ -21,7 +21,7 @@ fn run(name: &str) -> Machine {
 }
 
 fn output(m: &Machine) -> String {
-    String::from_utf8_lossy(&m.console).into_owned()
+    String::from_utf8_lossy(&m.console.to_vec()).into_owned()
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn a_snapshot_on_disk_goes_on_exactly_as_the_machine_would_have() {
         assert!(matches!(a, Stop::Exited(_)), "{name}: {a:?}");
         assert_eq!((a, m.state_hash()), (b, loaded.state_hash()), "{name}");
         // Records start empty in a loaded machine: it printed the end of what the machine printed.
-        assert!(m.console.ends_with(&loaded.console), "{name}");
+        assert!(m.console.to_vec().ends_with(&loaded.console.to_vec()), "{name}");
         // The game's files aren't in the snapshot; another folder doesn't restore the machine.
         let mut other = drive.clone();
         other.insert_file(name, vec![0; 10]);

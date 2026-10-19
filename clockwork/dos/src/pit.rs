@@ -201,7 +201,7 @@ pub struct Pit {
     port61: u8,
     /// The speaker's waveform now (the last one logged).
     speaker: Wave,
-    pub speaker_log: crate::record::Record<Vec<SpeakerEvent>>,
+    pub speaker_log: crate::record::Record<crate::record::Log<SpeakerEvent>>,
 }
 
 impl Default for Pit {
@@ -422,6 +422,7 @@ mod tests {
         assert_eq!(
             *pit.speaker_log,
             vec![SpeakerEvent { pit_tick: 20, wave: square }, SpeakerEvent { pit_tick: 30, wave: Wave::Steady(false) }]
+                .into()
         );
     }
 
