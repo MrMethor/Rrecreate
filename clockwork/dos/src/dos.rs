@@ -1,5 +1,5 @@
 //! DOS services (INT 20h/21h/29h) as high-level emulation: memory blocks, files on the virtual
-//! drive, console I/O, program loading (PROJECT.md §5.2, "HLE services").
+//! drive, console I/O, program loading.
 //!
 //! Memory control blocks live in emulated memory like real DOS keeps them, so programs that
 //! walk the MCB chain see a consistent picture. File handles and search state are host-side.

@@ -1,7 +1,7 @@
 # testbins/
 
-Synthetic DOS test programs with known source, used to test the host and the analysis pipeline
-against ground truth (PROJECT.md §13, Phase 0 / calibration step 1).
+Synthetic DOS test programs with known source, used to test Clockwork and the analysis against ground
+truth.
 
 Small C programs built with Open Watcom v2 for 16-bit DOS, each exercising one thing:
 
@@ -18,8 +18,8 @@ Small C programs built with Open Watcom v2 for 16-bit DOS, each exercising one t
 
 `src/` has the sources, `bin/` the programs and their linker maps (`NAME.MAP`: every function's
 segment:offset, the ground truth for function discovery and naming). The built files are
-committed, so tests don't need the compiler; `host/dos/tests/testbins.rs` runs each program on
-the host and checks its output.
+committed, so tests don't need the compiler; `clockwork/dos/tests/testbins.rs` runs each program on
+Clockwork and checks its output.
 
 To rebuild (the EXEs come out byte for byte the same; the maps' "Created on" line changes):
 

@@ -766,7 +766,7 @@ mod tests {
     /// GAME.BIN: the volume as raw MODE1/2352 sectors (30), 2 sectors of pregap, then 75 sectors
     /// of audio (track 2); T3.WAV: 37 sectors of audio (track 3).
     fn disc(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("recreate-cd-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("clockwork-cd-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut bin = Vec::new();
         for (i, sector) in iso_volume().chunks(2048).enumerate() {

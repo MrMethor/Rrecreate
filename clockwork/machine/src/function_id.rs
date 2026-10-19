@@ -1,10 +1,10 @@
-//! Stable function identifiers (PROJECT.md §6).
+//! Stable function identifiers.
 //!
 //! Canonical text form: `<MODULE>[#<overlay>]+<offset>`, for example `GAME.EXE+0A4D2` or
 //! `GAME.EXE#3+00120`. The offset is relative to the start of the module's (unpacked) load
 //! image, never a runtime `segment:offset`: load segments and overlay placement vary
-//! between runs. The Python tooling (`rec.ids`) implements the same format; both are tested
-//! against `testdata/function_ids.tsv`.
+//! between runs. Tested against `testdata/function_ids.tsv`, which every implementation of the
+//! format shares.
 
 use std::fmt;
 use std::str::FromStr;

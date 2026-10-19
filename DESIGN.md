@@ -4,8 +4,8 @@
 > status). When a decision changes, both files change in the same commit, and nothing here may describe a
 > superseded decision.
 
-**Status (2026-10-19):** design only; no code yet. Rrecreate succeeds Recreate (private), whose emulator and
-parts of whose tooling it takes over (§11).
+**Status (2026-10-19):** M0 done: Clockwork is in `clockwork/`. Rrecreate succeeds Recreate (private), whose
+emulator and parts of whose tooling it takes over (§11).
 
 ## 1. The product
 

@@ -1,4 +1,4 @@
-//! `rec-host play`: a window showing the emulated screen, with keyboard input and live sound.
+//! `clockwork play`: a window showing the emulated screen, with keyboard input and live sound.
 //!
 //! The emulator runs about one 70 Hz frame of virtual time per window refresh, a little more or
 //! less to keep pace with the sound output ([`crate::live_audio`]). Keys are delivered at the
@@ -28,7 +28,7 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
         3..=4 => Scale::X2,
         _ => Scale::X4,
     };
-    let title = format!("rec-host: {program} (close the window to quit)");
+    let title = format!("clockwork: {program} (close the window to quit)");
     let mut window = Window::new(&title, WIDTH, HEIGHT, WindowOptions { scale, ..WindowOptions::default() })
         .map_err(|e| format!("can't open a window: {e}"))?;
     window.set_target_fps(70);
@@ -78,16 +78,16 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     }
 
     match &stop {
-        Some(stop) => eprintln!("rec-host: program stopped: {stop:?}"),
-        None => eprintln!("rec-host: stopped after {} ms of emulated time", m.elapsed_ms()),
+        Some(stop) => eprintln!("clockwork: program stopped: {stop:?}"),
+        None => eprintln!("clockwork: stopped after {} ms of emulated time", m.elapsed_ms()),
     }
     for issue in &m.diagnostics {
-        eprintln!("rec-host: issue: {issue}");
+        eprintln!("clockwork: issue: {issue}");
     }
     if let Some(path) = &o.record {
         let session = Session { program, args: o.args.clone(), instructions_per_second: ips, inputs: recorded };
         session.save(path)?;
-        eprintln!("rec-host: recorded {} input events to {}", session.inputs.len(), path.display());
+        eprintln!("clockwork: recorded {} input events to {}", session.inputs.len(), path.display());
     }
     Ok(if matches!(stop, Some(Stop::Fault(_))) { ExitCode::from(2) } else { ExitCode::SUCCESS })
 }

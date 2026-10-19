@@ -1,4 +1,4 @@
-//! Deterministic x86 CPU interpreter for the Recreate host (PROJECT.md §5.2).
+//! Deterministic x86 CPU interpreter, Clockwork's CPU.
 //!
 //! Two models are emulated:
 //! - [`Model::I286`]: the 8086/80186 instruction set with 80286 behavior in real mode: shift and

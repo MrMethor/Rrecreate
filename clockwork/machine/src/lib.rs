@@ -1,4 +1,4 @@
-//! Foundations shared by the Recreate host crates (PROJECT.md §5.2): function identifiers,
+//! Foundations shared by Clockwork's crates: function identifiers,
 //! real-mode addressing, the memory image and stable hashing.
 
 pub mod addr;

@@ -1,6 +1,6 @@
-//! Contract inference (PROJECT.md §5.4): what each function of the program reads, returns and
-//! keeps, from what its calls did during a run, so a calling convention needn't be guessed
-//! (hand-written assembly is common in DOS games) and dual-run compares what callers use.
+//! Contract inference: what each function of the program reads, returns and keeps, from what
+//! its calls did during a run, so a calling convention needn't be guessed (hand-written assembly
+//! is common in DOS games).
 //!
 //! Every instruction is decoded (iced-x86's instruction info: the registers and flags it reads
 //! and writes) and every data access is traced. A `CALL` opens a frame, which closes when the

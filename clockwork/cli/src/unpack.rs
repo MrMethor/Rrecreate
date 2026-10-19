@@ -1,6 +1,5 @@
-//! `rec-host unpack`: undoes an executable packer (PKLITE, LZEXE, EXEPACK, DIET, ...) by running
-//! the program on the host until the packer hands over to it: the generic unpacker of
-//! PROJECT.md §5.3, step 2.
+//! `clockwork unpack`: undoes an executable packer (PKLITE, LZEXE, EXEPACK, DIET, ...) by running
+//! the program until the packer hands over to it, whatever the packer.
 //!
 //! Packers decompress the program into its load area, then jump to its entry point from their
 //! own code, which sits higher in the program's memory block (where they moved themselves). So

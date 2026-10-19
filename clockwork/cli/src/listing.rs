@@ -1,8 +1,8 @@
-//! `rec-host listing IMAGE --entry OFFSET --segment SEG`: a function's code from a load image,
+//! `clockwork listing IMAGE --entry OFFSET --segment SEG`: a function's code from a load image,
 //! found by following its control flow from the entry, so a jump table's cases are in it however
-//! the analysis split the function. Lines are image offsets (`+135F5`), as function IDs and
-//! overrides have them; near and far branch and call targets are image offsets too; a jump through
-//! a table in the code segment lists the table. `rec context` shows it in task packets.
+//! the analysis split the function. Lines are image offsets (`+135F5`), as function IDs have
+//! them; near and far branch and call targets are image offsets too; a jump through a table in
+//! the code segment lists the table.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
@@ -30,7 +30,7 @@ pub fn cmd_listing(args: &[String]) -> Result<ExitCode, String> {
             other => return Err(format!("unexpected argument {other:?}")),
         }
     }
-    let path = path.ok_or("usage: rec-host listing IMAGE --entry OFFSET --segment SEG")?;
+    let path = path.ok_or("usage: clockwork listing IMAGE --entry OFFSET --segment SEG")?;
     let image = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
     let entry = entry.ok_or("--entry OFFSET (image offset, hex) is needed")?;
     let segment = segment.ok_or("--segment SEG (the function's link segment, hex) is needed")?;

@@ -1,6 +1,5 @@
-//! Coverage of a program's code during a run, for the analysis pipeline (PROJECT.md §5.3, step 6,
-//! "Dynamic augmentation"): which instructions of its load image ran, and which calls were made
-//! from it, with their targets and counts. Code static analysis missed (functions reached only
+//! Coverage of a program's code during a run, for analysis: which instructions of its load image
+//! ran, and which calls were made from it, with their targets and counts. Code static analysis missed (functions reached only
 //! through pointers, overlays) shows up in the call targets.
 //!
 //! Recorded in real and virtual-8086 mode only (DOS extender code runs elsewhere), and only for

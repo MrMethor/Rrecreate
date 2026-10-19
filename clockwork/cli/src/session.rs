@@ -1,9 +1,9 @@
-//! Recorded input sessions (PROJECT.md §5.2, "Sessions"): timed input events that replay
+//! Recorded input sessions: timed input events that replay
 //! bit-identically because time is virtual.
 //!
 //! Text format:
 //! ```text
-//! # rec-host session v1
+//! # clockwork session v1
 //! program GAME.EXE
 //! args -level 3
 //! ips 8000000
@@ -29,7 +29,9 @@ pub struct Session {
     pub inputs: Vec<(u64, Input)>,
 }
 
-const MAGIC: &str = "# rec-host session v1";
+const MAGIC: &str = "# clockwork session v1";
+/// What Recreate's `rec-host` wrote: the same format.
+const OLD_MAGIC: &str = "# rec-host session v1";
 
 impl Session {
     pub fn to_text(&self) -> String {
@@ -48,7 +50,7 @@ impl Session {
 
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut lines = text.lines();
-        if lines.next().map(str::trim) != Some(MAGIC) {
+        if !matches!(lines.next().map(str::trim), Some(MAGIC | OLD_MAGIC)) {
             return Err(format!("not a session file (first line must be {MAGIC:?})"));
         }
         let mut session = Session::default();
@@ -126,7 +128,8 @@ mod tests {
 
     #[test]
     fn reads_the_old_key_format() {
-        let session = Session::parse("# rec-host session v1\nprogram A.EXE\nips 8000000\n100 1E\n").unwrap();
+        let session = Session::parse("# clockwork session v1\nprogram A.EXE\nips 8000000\n100 1E\n").unwrap();
+        assert_eq!(Session::parse("# rec-host session v1\nprogram A.EXE\nips 8000000\n").unwrap().program, "A.EXE");
         assert_eq!(session.inputs, vec![(100, Input::Key(0x1E))]);
     }
 }

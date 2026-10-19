@@ -1,4 +1,4 @@
-//! Live sound for `rec-host play`.
+//! Live sound for `clockwork play`.
 //!
 //! After every frame, the audio the machine played since the last one is rendered from its
 //! device logs, up to the time they are final ([`Machine::audio_settled_ns`]), and queued for
@@ -59,7 +59,7 @@ impl LiveAudio {
                 *out = queue.pop_front().map_or(0.0, |s| f32::from(s) / 32768.0);
             }
         });
-        let device = device.map_err(|e| eprintln!("rec-host: no sound: {e}")).ok();
+        let device = device.map_err(|e| eprintln!("clockwork: no sound: {e}")).ok();
         LiveAudio { renderer: Renderer::default(), rendered: Vec::new(), queue, device, midi: Midi::new(midi_port) }
     }
 
@@ -121,7 +121,7 @@ impl Midi {
     fn open(&mut self) {
         self.tried = true;
         let result = (|| {
-            let output = MidiOutput::new("rec-host").map_err(|e| e.to_string())?;
+            let output = MidiOutput::new("clockwork").map_err(|e| e.to_string())?;
             let ports = output.ports();
             let wanted = self.port.as_deref().map(str::to_ascii_lowercase);
             let port = ports
@@ -135,15 +135,15 @@ impl Midi {
                     None => "no MIDI output on this computer".to_string(),
                 })?;
             let name = output.port_name(port).unwrap_or_default();
-            let connection = output.connect(port, "rec-host").map_err(|e| e.to_string())?;
+            let connection = output.connect(port, "clockwork").map_err(|e| e.to_string())?;
             Ok::<_, String>((name, connection))
         })();
         match result {
             Ok((name, connection)) => {
-                eprintln!("rec-host: MIDI goes to {name}");
+                eprintln!("clockwork: MIDI goes to {name}");
                 self.connection = Some(connection);
             }
-            Err(e) => eprintln!("rec-host: MIDI isn't played: {e}"),
+            Err(e) => eprintln!("clockwork: MIDI isn't played: {e}"),
         }
     }
 

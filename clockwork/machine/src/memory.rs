@@ -1,4 +1,4 @@
-//! The PC's physical memory (PROJECT.md §5.2): the real-mode image (1 MB plus the HMA), which
+//! The PC's physical memory: the real-mode image (1 MB plus the HMA), which
 //! the CPU addresses through the A20 gate, and extended memory above it, which real-mode
 //! programs reach through XMS or INT 15h block moves ([`Memory::read_phys`] and friends).
 
@@ -62,8 +62,7 @@ impl Memory {
         self.size
     }
 
-    /// Physical addresses where two snapshots differ, ascending, at most `max` of them (dual-run
-    /// compares the original's memory with an override's this way).
+    /// Physical addresses where two snapshots differ, ascending, at most `max` of them.
     pub fn differences(&self, other: &Memory, max: usize) -> Vec<u32> {
         let mut found = Vec::new();
         let compare = |base: u32, a: &[u8], b: &[u8], found: &mut Vec<u32>| {

@@ -186,7 +186,7 @@ pub(crate) fn install(m: &mut Machine) {
 /// INT 2Fh AX=1687h: the host's entry point (or a note that there is none).
 pub(crate) fn detect(m: &mut Machine) {
     if !m.config.dpmi {
-        m.diagnostic("the program looked for a DPMI host (INT 2Fh AX=1687h): rec-host run --dpmi provides one".into());
+        m.diagnostic("the program looked for a DPMI host (INT 2Fh AX=1687h): clockwork run --dpmi provides one".into());
         return;
     }
     let r = &mut m.cpu.regs;

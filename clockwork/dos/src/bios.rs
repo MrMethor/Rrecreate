@@ -1,5 +1,5 @@
 //! BIOS: ROM stubs, interrupt vector table, BIOS data area and the BIOS services as
-//! high-level emulation (PROJECT.md §5.2, "HLE services").
+//! high-level emulation.
 //!
 //! Each service vector points at a small ROM stub: a host callback followed by real code
 //! (`IRET`, `INT 1Ch`, the EOI to the PIC). Programs can hook and chain these vectors exactly as

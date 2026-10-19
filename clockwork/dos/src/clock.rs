@@ -1,4 +1,4 @@
-//! Virtual time (PROJECT.md §5.2, "Virtual clock").
+//! Virtual time.
 //!
 //! Time is derived from the CPU's cycle counter, never from the host's clock. One cycle is one
 //! executed instruction (or string repetition); `instructions_per_second` sets how fast the

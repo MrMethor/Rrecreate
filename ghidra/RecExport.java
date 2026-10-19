@@ -1,13 +1,13 @@
-// Exports what `rec` needs from an analyzed program as JSON lines (PROJECT.md §5.3, "Export").
-// Run by `rec analyze` through Ghidra's headless analyzer:
+// Exports an analyzed program as JSON lines, for the toolkit's knowledge files (DESIGN.md §5).
+// Run through Ghidra's headless analyzer:
 //   analyzeHeadless ... -postScript RecExport.java <out.jsonl> [decompile]
 // One JSON object per line: a "program" record, then "block", "function" and "call" records,
 // then one "code" record per function with its disassembly (and its decompilation when asked).
 // Function records carry Ghidra's Function ID hashes ("fid"), which library signature packs
-// (`rec sigs`) match.
-// Addresses are linear (segment * 16 + offset) as Ghidra stores them; `rec` turns them into
+// (`sigs/`) match.
+// Addresses are linear (segment * 16 + offset) as Ghidra stores them; the toolkit turns them into
 // load-image offsets with the program record's entry point.
-//@category Recreate
+//@category Rrecreate
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;

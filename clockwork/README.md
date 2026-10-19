@@ -1,0 +1,120 @@
+# Clockwork
+
+A deterministic IBM PC with DOS, emulated in Rust: the controlled environment Rrecreate runs original games
+in (`../DESIGN.md` §4). The same program with the same inputs gives the same run, bit for bit: time is
+virtual, counted in executed instructions.
+
+- **CPU:** our own 486 interpreter (real, protected and virtual-8086 mode, paging) with an 80387-compatible
+  FPU; `--cpu 386` or `--cpu 286` for older processors, `--no-fpu` for none. It is checked against the
+  SingleStepTests recordings of real CPUs (below).
+- **Devices:** VGA and an S3 Trio64 with 4 MB and VESA BIOS Extensions 2.0, Sound Blaster 1.x to 16, OPL2 and
+  OPL3, MPU-401, PC speaker, PIT, PIC, keyboard controller, CMOS and its real-time clock, game port, mouse.
+- **DOS:** BIOS and DOS services as high-level emulation, child programs and TSRs, EMS and XMS, a CD-ROM
+  drive with MSCDEX (a folder or a CUE/ISO image, CD audio included), a DPMI host, DOS extenders that bring
+  their own host (CauseWay so far), and a COMMAND.COM with batch files.
+
+Much of it is ported from DOSBox Staging; `../THIRD_PARTY.md` lists what came from where. Clockwork is
+GPL-2.0-or-later (`LICENSE`).
+
+## Running a program
+
+```bash
+cargo build --release -p clockwork
+```
+
+```bash
+target/release/clockwork run "C:/Games/KEEN1" KEEN1.EXE --seconds 20
+```
+
+The game folder becomes drive C:, and nothing the program writes leaves the emulation. `run` is headless and
+prints a short summary: why it stopped, console output, frame fingerprints, a state hash, and anything the
+program used that isn't emulated yet (`--json` for tools). `clockwork --help` lists every option. The main
+ones:
+
+- `--input "25000:{enter}"` (repeatable) and `--input-file FILE` script keys and clicks at emulated times:
+  text, named keys (`{esc}`, `{up}`, `{f1}`, `{ctrl}`...), `{click X Y}` in the mouse driver's coordinates,
+  `{hold KEY MS}`, `{keydown KEY}`/`{keyup KEY}`, `{wait MS}`. Run it, look at the `--screenshot`, add the
+  next step. `../testdata/inputs/` has walkthroughs that take Wolfenstein 3D into its first level and past a
+  pushwall, and Arena and Daggerfall to their first dungeons;
+- `--screenshot out.png` (or `.bmp`) saves the last screen in any video mode;
+- `--save-changes DIR` writes the files the program created or changed to DIR (the game folder is never
+  touched): that's how to install a game with its own installer;
+- `--coverage FILE` records which instructions of the program ran and which calls it made, and
+  `--contracts FILE` infers each called function's contract (registers read, returned and kept, stack
+  arguments, memory used); both write JSON;
+- `--cd D` (a CD drive showing C:'s files), `--cd D=DIR` (a folder of the game folder), `--cd D=GAME.CUE`;
+  `--cd-label NAME`; `--drive D` and `--cwd DIR` for where the program starts; `--env NAME=VALUE`; `--ems KB`,
+  `--memory MB`, `--no-xms`, `--dpmi`, `--joystick N`, `--sb SPEC`; `--wav out.wav` saves the sound.
+
+```bash
+target/release/clockwork play "C:/Games/KEEN1" KEEN1.EXE --record keen.session
+```
+
+`play` opens a window with keyboard, mouse and gamepad input and live sound (OPL, Sound Blaster and PC
+speaker through the sound output, MIDI through the computer's synthesizer: `--midi-out NAME`, `--no-audio`).
+With `--record`, the input is saved as a session that `run DIR --replay keen.session` reproduces exactly.
+Session files are text: `<cycle> K <scancode hex>` for keys and `<cycle> M <x> <y> <buttons>` for the mouse.
+
+`unpack` undoes an executable packer (PKLITE, LZEXE, EXEPACK, DIET...) by running the program until the
+packer hands over; `listing` prints a function's code from a load image, following its control flow.
+
+## Investigating a program
+
+- `--hotspots N` samples where the CPU spends its time and disassembles the N hottest addresses;
+- `--disasm SEG:OFF` (or `here`) prints registers and a disassembly after the run;
+- `--dump SEG:OFF[:LEN]` hex-dumps memory after the run (LEN in hex), `--dump +OFF[:LEN]` the program's load
+  image at an image offset;
+- these three follow protected mode (a selector's descriptor, the page tables) without disturbing the
+  machine;
+- the summary shows the timer rate, who owns INT 08h/1Ch, how often each IRQ line was delivered and which
+  are masked;
+- `--trace FILE` writes every BIOS/DOS/EMS service call with its inputs and results; `--midi FILE` the MIDI
+  bytes; `--opl FILE` the OPL register writes;
+- `--watch-exec SEG:OFF[:LEN]` records every instruction run in a range and where it was entered from;
+  `--watch-log FILE` writes each with its registers.
+
+## The test games
+
+The walkthroughs in `../testdata/inputs/` are the regression check for whole games: after a change to
+Clockwork, they should still reach their screenshots. Steam's DOSBox setups translate as:
+
+```bash
+target/release/clockwork run "<Wolf3D folder>" WOLF3D.EXE --input-file testdata/inputs/wolf3d-first-level.inputs --seconds 51 --screenshot wolf3d.png
+```
+
+```bash
+target/release/clockwork run "<Arena's ARENA folder>" ACD.EXE --cd D --drive D --env ARENADATA=C: --args "-Ssbpdig.adv -IOS220 -IRQS7 -DMAS1 -Msbp2fm.adv -IOM220 -IRQM7 -DMAM1" --input-file testdata/inputs/arena-first-dungeon.inputs --seconds 340 --screenshot arena.png
+```
+
+```bash
+target/release/clockwork run "<Daggerfall's DF folder>" DAGGER.EXE --cwd DAGGER --cd D=DFCD --cd-label Daggerfall --input-file testdata/inputs/daggerfall-privateers-hold.inputs --seconds 370 --screenshot daggerfall.png
+```
+
+(Wolfenstein 3D's shareware v1.4 installs with its own installer: `run 1wolf14 INSTALL.EXE --seconds 60
+--input "1000:{enter}" --input "12000:c" --save-changes installed`, then `run installed/WOLF3D WOLF.EXE
+--seconds 60 --save-changes wolf3d`.)
+
+## Validating the CPU
+
+The interpreter is checked against the SingleStepTests suites: instruction tests recorded on a real 80386EX
+and 80286 (MIT, data in the public domain). Fetch the real-mode sets into `reference/SingleStepTests`
+(git-ignored):
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse https://github.com/SingleStepTests/80386.git reference/SingleStepTests/80386
+```
+
+```bash
+git -C reference/SingleStepTests/80386 sparse-checkout set v1_ex_real_mode
+```
+
+(the same for `80286` with `v1_real_mode`), then run them:
+
+```bash
+cargo run --release -p cpu --example singlestep -- reference/SingleStepTests/80386/v1_ex_real_mode --skip-limit-faults
+```
+
+A name filter (`D3`, `660FA4`) runs some files only; `--show N` and `--detail` show failures. Known
+differences: real-mode segment-limit faults (not enforced, as in DOSBox; counted apart), an 8-bit IDIV quirk
+(10 tests where an overflowing division returns AL=80h instead of #DE), and two tests where an address wraps at
+a segment's end or above 1 MB (669A, C2). Anything else failing is a regression.

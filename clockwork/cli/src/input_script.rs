@@ -1,4 +1,4 @@
-//! Scripted input for `rec-host run --input MS:KEYS`: keys and mouse clicks at set times of
+//! Scripted input for `clockwork run --input MS:KEYS`: keys and mouse clicks at set times of
 //! emulated time, so a tool or an agent can drive a program through its menus, and the run
 //! stays exactly reproducible.
 //!

@@ -601,7 +601,7 @@ impl Shell {
     fn date(&mut self, m: &mut Machine, args: &str) {
         let words: Vec<&str> = args.split_whitespace().collect();
         if words.iter().any(|w| w.eq_ignore_ascii_case("/H")) {
-            m.diagnostic("DATE /H: the clock is virtual (rec-host's start time), not the host's".into());
+            m.diagnostic("DATE /H: the clock is virtual (clockwork's start time), not the host's".into());
             return;
         }
         let only = words.iter().any(|w| w.eq_ignore_ascii_case("/T"));
@@ -637,7 +637,7 @@ impl Shell {
     fn time(&mut self, m: &mut Machine, args: &str) {
         let words: Vec<&str> = args.split_whitespace().collect();
         if words.iter().any(|w| w.eq_ignore_ascii_case("/H")) {
-            m.diagnostic("TIME /H: the clock is virtual (rec-host's start time), not the host's".into());
+            m.diagnostic("TIME /H: the clock is virtual (clockwork's start time), not the host's".into());
             return;
         }
         let only = words.iter().any(|w| w.eq_ignore_ascii_case("/T"));

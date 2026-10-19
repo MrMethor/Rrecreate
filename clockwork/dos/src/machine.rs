@@ -1,4 +1,4 @@
-//! The emulated PC: CPU, memory, devices, BIOS/DOS state and the run loop (PROJECT.md §5.2).
+//! The emulated PC: CPU, memory, devices, BIOS/DOS state and the run loop.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::hash::{Hash, Hasher};

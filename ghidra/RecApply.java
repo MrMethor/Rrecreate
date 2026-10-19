@@ -1,10 +1,10 @@
-// Applies names decided in the knowledge store to a program (PROJECT.md §5.3, "Write-back").
-// Run by `rec sync-ghidra` through Ghidra's headless analyzer on an imported program:
+// Applies names from the knowledge files to a program in Ghidra (write-back).
+// Run through Ghidra's headless analyzer on an imported program:
 //   analyzeHeadless <project> <name> -process <MODULE> -noanalysis -postScript RecApply.java <names.txt>
 // Each line of names.txt is "<linear address> <name>", or "<linear address> -" for a function to
 // create without a name (found at run time or by prior art). A function is created where Ghidra
 // has none, disassembling first; names are set as user-defined, so they win over Ghidra's own.
-//@category Recreate
+//@category Rrecreate
 
 import java.nio.file.Files;
 import java.nio.file.Path;

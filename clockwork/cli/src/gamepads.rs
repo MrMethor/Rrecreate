@@ -1,4 +1,4 @@
-//! Host gamepads as the emulated joysticks in `rec-host play`, through `gilrs`.
+//! Host gamepads as the emulated joysticks in `clockwork play`, through `gilrs`.
 //!
 //! The first connected gamepad drives joystick A, the second joystick B: the left stick is the
 //! position, the South and East buttons (A and B on an Xbox pad) are buttons 1 and 2. Changes
@@ -22,14 +22,14 @@ impl Gamepads {
             Ok(gilrs) => {
                 let names: Vec<String> = gilrs.gamepads().map(|(_, pad)| pad.name().to_string()).collect();
                 if names.is_empty() {
-                    eprintln!("rec-host: no gamepad connected; the joysticks stay centered");
+                    eprintln!("clockwork: no gamepad connected; the joysticks stay centered");
                 } else {
-                    eprintln!("rec-host: joysticks from {}", names.join(", "));
+                    eprintln!("clockwork: joysticks from {}", names.join(", "));
                 }
                 Some(Gamepads { gilrs, sticks, last: [None; 2] })
             }
             Err(e) => {
-                eprintln!("rec-host: can't read gamepads: {e}");
+                eprintln!("clockwork: can't read gamepads: {e}");
                 None
             }
         }

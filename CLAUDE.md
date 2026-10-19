@@ -2,13 +2,31 @@
 
 A toolkit an AI agent uses to port DOS games to modern systems: the original runs in our deterministic
 emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN.md` §1, §2).
-**Status:** design only; M0 (`DESIGN.md` §12) is next.
+**Status:** Clockwork is in `clockwork/` (M0); the toolkit (`rrc`) and the runtime don't exist yet. M1 is next
+(`DESIGN.md` §12).
 
 ## Notes for agents working on Rrecreate
 
 - `DESIGN.md` is the design, `docs/decisions.md` the decisions and their reasons. Read the sections you need.
   When a decision changes: mark the old one `superseded by Dn`, add the new one, and update `DESIGN.md` in the
   same commit. Never leave text that describes a superseded decision.
+- Tests: `cargo test --workspace`. Lint: `cargo clippy --workspace --all-targets -- -D warnings`. Format:
+  `cargo fmt --all` (`rustfmt.toml`). CI runs all three on Windows and Linux.
+- To check Clockwork on a real program: `cargo build --release -p clockwork`, then
+  `target/release/clockwork run <dir> <program> --json`. When a program misbehaves, use `--hotspots 10` (where it
+  loops), `--trace FILE` (which service call went wrong), `--disasm SEG:OFF` and `--dump SEG:OFF:LEN` before
+  guessing (`clockwork/README.md`). After changing Clockwork, the test games' walkthroughs should still reach their
+  screenshots (`clockwork/README.md`, "The test games").
+- After changing the CPU, rerun the SingleStepTests suites (`clockwork/README.md`, "Validating the CPU"); its
+  known differences are listed there, anything else failing is a regression.
+- Tests that need DOS code: `clockwork/dos/tests/programs.rs` assembles small programs with iced-x86; 16-bit code
+  can't use iced's label memory operands, so use the two-pass `Asm` helper there (`a.here("name")`,
+  `a.addr("name")`, `a.l("name")`). CPU tests in `clockwork/cpu/tests/` hand-encode instructions (protected-mode
+  tests in `protected.rs` assemble with iced-x86; FPU tests in `fpu.rs` use iced's `fsub_2`, `fdivr_2`... for
+  two-operand register forms); shared helpers are in `tests/common/mod.rs`. `testbins/` has C programs built with
+  Open Watcom (`testbins/README.md`).
+- `clockwork/dos/src/fonts.rs` and `vga_params.rs` are generated from DOSBox Staging's sources by the scripts in
+  `clockwork/tools/`; don't edit them by hand.
 - Licences: everything is MIT except `clockwork/`, which is GPL-2.0-or-later. Code from DOSBox or other GPL
   sources goes into `clockwork/` only. `rrc` and `runtime/` never depend on Clockwork's crates; they use its
   control protocol.

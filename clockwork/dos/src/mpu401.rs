@@ -1,8 +1,7 @@
 //! Roland MPU-401 MIDI interface at ports 330h/331h, UART mode only.
 //!
 //! Commands are acknowledged so drivers detect the card; MIDI bytes the program sends are
-//! recorded with their time, which is the audio observation channel for MIDI music
-//! (PROJECT.md §5.2). Nothing is synthesized.
+//! recorded with their time, which is how MIDI music is observed. Nothing is synthesized.
 //!
 //! [`MidiParser`], which splits the recorded bytes into whole messages for a MIDI device, is
 //! ported from DOSBox Staging `src/midi/midi.cpp` (`MIDI_RawOutByte`, GPL-2.0-or-later).

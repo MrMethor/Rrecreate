@@ -813,7 +813,7 @@ fn command_tail_and_environment() {
 
 #[test]
 fn live_input_between_chunks_replays_identically() {
-    // What `rec-host play` does: run one 70 Hz frame at a time, queue keys at the cycle where
+    // What `clockwork play` does: run one 70 Hz frame at a time, queue keys at the cycle where
     // the run paused. A replay that queues the same (cycle, scancode) pairs up front must end in
     // exactly the same state.
     let program = interactive_program();

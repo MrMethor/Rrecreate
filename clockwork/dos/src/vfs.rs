@@ -1,5 +1,5 @@
-//! The emulated drive C: an in-memory copy of the game folder (PROJECT.md §12: programs only
-//! see a project-local virtual drive).
+//! The emulated drive C: an in-memory copy of the game folder (programs never see the host's
+//! files).
 //!
 //! File contents are shared (`Arc`) between snapshots and copied only when written, so cloning
 //! a machine is cheap and every write stays inside the emulation. Paths are canonical DOS paths:

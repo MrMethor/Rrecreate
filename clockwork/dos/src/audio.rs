@@ -111,7 +111,7 @@ fn frame_nanos(frame: usize) -> u64 {
     (frame as u128 * NANOS_PER_SECOND / u128::from(SAMPLE_RATE_HZ)) as u64
 }
 
-/// Renders a log a piece at a time while a run goes on (`rec-host play` does this every
+/// Renders a log a piece at a time while a run goes on (`clockwork play` does this every
 /// frame). It keeps the OPL chip and its place in each log, and gives exactly the samples
 /// [`AudioLog::render`] gives for the whole log, as long as each piece ends no later than the
 /// time up to which the log is final (`Machine::audio_settled_ns`).

@@ -377,10 +377,10 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
     let game_dir = o.game_dir.as_path();
     let (mut drive, warnings) = Vfs::from_host_dir(game_dir).map_err(|e| format!("{}: {e}", game_dir.display()))?;
     for warning in warnings.iter().take(5) {
-        eprintln!("rec-host: warning: {warning}");
+        eprintln!("clockwork: warning: {warning}");
     }
     if warnings.len() > 5 {
-        eprintln!("rec-host: warning: ... {} more", warnings.len() - 5);
+        eprintln!("clockwork: warning: ... {} more", warnings.len() - 5);
     }
     // A disc image: its files go on the drive for the CD to show, its audio to MSCDEX.
     let (mut cd_root, mut cd_label, mut cd_image) = (o.cd_root.clone(), o.cd_label.clone(), None);

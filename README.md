@@ -9,19 +9,22 @@ The original game runs in **Clockwork**, a deterministic DOS emulator; the agent
 compares the two tick by tick, traces each difference to the original code that caused it, and keeps the books.
 The port's faithful mode is checked against the original for good; modernizations are toggles on top.
 
-**Status:** design only. Start with [`DESIGN.md`](DESIGN.md); the decisions and their reasons are in
-[`docs/decisions.md`](docs/decisions.md).
+**Status:** the emulator, Clockwork, runs (`clockwork/`, with its own [README](clockwork/README.md)); the
+toolkit and the port runtime are next. The design is [`DESIGN.md`](DESIGN.md); the decisions and their reasons
+are in [`docs/decisions.md`](docs/decisions.md).
 
 Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.
 
-## Layout (planned)
+## Layout
 
 | Path | What |
 |---|---|
 | `clockwork/` | The emulator (GPL-2.0-or-later) |
-| `rrc/` | The toolkit's command line |
-| `runtime/` | The crates a Rust port builds on |
-| `ghidra/` | The Ghidra export script |
+| `rrc/` | The toolkit's command line (to come) |
+| `runtime/` | The crates a Rust port builds on (to come) |
+| `ghidra/` | The Ghidra scripts: export, and names written back |
+| `sigs/` | Library signature packs |
+| `testdata/inputs/` | Walkthroughs of the test games, as input scripts |
 | `testbins/` | Small DOS test programs built with Open Watcom |
 
 Each game's port lives in its own repository.

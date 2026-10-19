@@ -1,7 +1,5 @@
-//! The emulated PC for the Recreate host (PROJECT.md §5.2): devices, BIOS and DOS services as
-//! high-level emulation, program loading and the deterministic run loop.
-//!
-//! These services become the native port's runtime later (§7.3).
+//! Clockwork's PC: devices, BIOS and DOS services as high-level emulation, program loading and
+//! the deterministic run loop.
 
 pub mod audio;
 pub mod bios;
