@@ -175,6 +175,7 @@ dependencies = [
  "machine",
  "midir",
  "minifb",
+ "serde_json",
  "tinyaudio",
 ]
 

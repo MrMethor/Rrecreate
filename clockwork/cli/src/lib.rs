@@ -53,6 +53,9 @@ options:
                      made (JSON)
   --contracts FILE   run: infer each called function's contract (registers read and returned,
                      registers preserved, stack arguments and pops, memory use; JSON)
+  --dump-image DIR   run: afterwards, write the program's image for analysis to DIR: in real mode
+                     image.bin (from the load segment) and image.json, in protected mode
+                     segments.json (the selector map) and the memory segments cover
   --save-snapshot FILE  run: afterwards, save the machine to FILE (without the game's files)
   --load-snapshot FILE  run: go on from a snapshot instead of starting the program, for
                      --seconds more (the game folder and CD must be those it was taken with)
@@ -114,6 +117,7 @@ struct Options {
     wav: Option<PathBuf>,
     save_changes: Option<PathBuf>,
     save_snapshot: Option<PathBuf>,
+    dump_image: Option<PathBuf>,
     load_snapshot: Option<PathBuf>,
     coverage: Option<PathBuf>,
     contracts: Option<PathBuf>,
@@ -265,6 +269,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--wav" => options.wav = Some(value(arg)?.into()),
             "--save-changes" => options.save_changes = Some(value(arg)?.into()),
             "--save-snapshot" => options.save_snapshot = Some(value(arg)?.into()),
+            "--dump-image" => options.dump_image = Some(value(arg)?.into()),
             "--load-snapshot" => options.load_snapshot = Some(value(arg)?.into()),
             "--coverage" => options.coverage = Some(value(arg)?.into()),
             "--contracts" => options.contracts = Some(value(arg)?.into()),
@@ -514,6 +519,9 @@ fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     if let Some(dir) = &o.save_changes {
         save_changes(&m, dir)?;
     }
+    if let Some(dir) = &o.dump_image {
+        dump_image(&m, dir)?;
+    }
     if let Some(path) = &o.save_snapshot {
         let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
         dos::snapshot::save(&m, std::io::BufWriter::new(file))?;
@@ -747,6 +755,39 @@ impl Summary {
             strings(&self.files_changed),
         )
     }
+}
+
+/// Writes [`Machine::image`] to `dir`.
+fn dump_image(m: &Machine, dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let write = |name: &str, data: &[u8]| {
+        let path = dir.join(name);
+        std::fs::write(&path, data).map_err(|e| format!("{}: {e}", path.display()))
+    };
+    match m.image() {
+        dos::image::Image::Real { psp, load_segment, bytes, cs, ip, ss, sp } => {
+            write("image.bin", &bytes)?;
+            let map = serde_json::json!({
+                "mode": "real", "psp": psp, "load_segment": load_segment, "size": bytes.len(),
+                "cs": cs, "ip": ip, "ss": ss, "sp": sp,
+            });
+            write("image.json", map.to_string().as_bytes())?;
+            println!("image     {} bytes from {load_segment:04X}:0000 in {}", bytes.len(), dir.display());
+        }
+        dos::image::Image::Protected { segments, regions } => {
+            for (base, bytes) in &regions {
+                write(&format!("region-{base:08X}.bin"), bytes)?;
+            }
+            let map = serde_json::json!({
+                "mode": "protected",
+                "segments": segments,
+                "regions": regions.iter().map(|(base, bytes)| serde_json::json!({"base": base, "size": bytes.len()})).collect::<Vec<_>>(),
+            });
+            write("segments.json", map.to_string().as_bytes())?;
+            println!("image     {} segments, {} regions in {}", segments.len(), regions.len(), dir.display());
+        }
+    }
+    Ok(())
 }
 
 /// What contract inference saw.
