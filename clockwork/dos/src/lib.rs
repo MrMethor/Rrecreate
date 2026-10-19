@@ -25,6 +25,7 @@ pub mod pic;
 pub mod pit;
 pub mod sblaster;
 pub mod shell;
+pub mod sync;
 pub mod tables;
 pub mod time;
 pub mod trace;

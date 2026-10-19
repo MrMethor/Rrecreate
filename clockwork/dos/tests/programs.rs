@@ -3415,3 +3415,58 @@ fn a_watch_sees_an_interrupt_handler_and_reads() {
                 && h.chain.is_empty())
     );
 }
+
+/// A program that calls `step` ten times; `step` counts its calls in `count`.
+fn ten_steps() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["step", "count"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.mov(cx, 10)?;
+        a.here("again")?;
+        let step = a.l("step");
+        a.call(step)?;
+        let again = a.l("again");
+        a.loop_(again)?;
+        exit(a, 0)?;
+        a.here("step")?;
+        let count = word_at(a, "count");
+        a.inc(count)?;
+        a.ret()?;
+        a.here("count")?;
+        a.dw(&[0])
+    });
+    (program, offsets.into_inner())
+}
+
+#[test]
+fn a_run_stops_at_a_sync_point_s_hit() {
+    let (program, o) = ten_steps();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let step = base + o["step"];
+    let count = || (base + o["count"]) as usize;
+    assert_eq!(m.run_to_sync(step, 3, SECOND), Stop::Sync { address: step, hit: 3 });
+    assert_eq!(m.mem.read_u16(count() as u32), 2, "stopped before the third call ran");
+    assert_eq!(m.cpu.segment_base(cpu::seg::CS).wrapping_add(m.cpu.regs.ip), step);
+    // Going on runs the instruction it stopped at without counting it again.
+    assert_eq!(m.run_to_sync(step, 1, SECOND), Stop::Sync { address: step, hit: 4 });
+    assert_eq!(m.mem.read_u16(count() as u32), 3);
+    let snapshot = m.clone();
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    assert_eq!(m.syncs.get(step).unwrap().hits, 10);
+    assert_eq!(snapshot.syncs.get(step).unwrap().hits, 4, "a snapshot keeps the counts");
+}
+
+#[test]
+fn a_sync_point_logs_its_timeline() {
+    let (program, o) = ten_steps();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let step = (u32::from(m.dos.psp) << 4) + o["step"];
+    m.syncs.add(step, true);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let cycles = m.syncs.get(step).unwrap().cycles.clone().unwrap();
+    assert_eq!(cycles.len(), 10);
+    assert!(cycles.windows(2).all(|w| w[0] < w[1]), "{cycles:?}");
+}

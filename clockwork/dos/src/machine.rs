@@ -134,6 +134,9 @@ pub enum Stop {
     /// The CPU met an instruction it doesn't implement, or one asking for something the host
     /// doesn't emulate (such as protected mode).
     Fault(cpu::Exit),
+    /// About to run the instruction at this linear address, a sync point, for the n-th time
+    /// ([`Machine::run_to_sync`]).
+    Sync { address: u32, hit: u64 },
 }
 
 /// Extended memory is limited to what a 24-bit (286/386SX) address bus reaches: 16 MB in all.
@@ -556,6 +559,9 @@ pub struct Machine {
     /// A memory watch ([`Machine::start_watch`]; not part of the machine state). It takes the
     /// accesses contract inference would see: don't run both.
     pub watch: Option<Box<crate::watch::Watch>>,
+    /// Sync points and their hit counts ([`crate::sync`]; not part of the machine state, but a
+    /// snapshot keeps them).
+    pub syncs: crate::sync::Syncs,
     /// The CD drive's disc image, if it shows one (an input, like the drive's files: not part
     /// of the machine state). Without one the drive's folder is a disc with one data track.
     pub cd_image: Option<std::sync::Arc<crate::cdrom::CdImage>>,
@@ -598,6 +604,7 @@ impl Machine {
             coverage: None,
             contracts: None,
             watch: None,
+            syncs: crate::sync::Syncs::default(),
             cd_image: None,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
@@ -627,6 +634,18 @@ impl Machine {
     /// Runs for up to `max_cycles` more cycles.
     pub fn run(&mut self, max_cycles: u64) -> Stop {
         self.run_until(self.cpu.cycles.saturating_add(max_cycles))
+    }
+
+    /// Runs until the instruction at linear address `at`, a sync point (added if it isn't one),
+    /// is about to run for the `n`-th time from now (`n` at least 1), or for up to `max_cycles`
+    /// (or until the program stops) if that comes first.
+    pub fn run_to_sync(&mut self, at: u32, n: u64, max_cycles: u64) -> Stop {
+        self.syncs.add(at, false);
+        let hit = self.syncs.get(at).map_or(0, |p| p.hits) + n.max(1);
+        self.syncs.set_target(at, hit);
+        let stop = self.run(max_cycles);
+        self.syncs.clear_target();
+        stop
     }
 
     /// Runs until the cycle counter reaches `limit` or the program stops.
@@ -672,6 +691,13 @@ impl Machine {
                     return stop;
                 }
                 continue;
+            }
+            if !self.syncs.is_empty() {
+                let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+                if self.syncs.reached(at, self.cpu.cycles) {
+                    let hit = self.syncs.get(at).map_or(0, |p| p.hits);
+                    return Stop::Sync { address: at, hit };
+                }
             }
             if self.exec_watch.is_some() {
                 self.watch_exec();

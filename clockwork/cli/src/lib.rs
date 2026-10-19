@@ -609,6 +609,7 @@ impl Summary {
             Stop::WaitingForInput => "waiting for keyboard input".into(),
             Stop::Halted => "halted with interrupts disabled".into(),
             Stop::Fault(exit) => format!("fault: {exit}"),
+            Stop::Sync { address, hit } => format!("sync point {address:05X}, hit {hit}"),
         };
         let mut issues: Vec<String> = m.diagnostics.iter().cloned().collect();
         if !m.devices.unknown_ports.is_empty() {
