@@ -4,16 +4,28 @@
 > status). When a decision changes, both files change in the same commit, and nothing here may describe a
 > superseded decision.
 
-**Status (2026-10-19):** design only; no code yet. Rrecreate succeeds Recreate (github.com/MrMethor/Recreate),
-whose emulator and parts of whose tooling it takes over (§11).
+**Status (2026-10-19):** design only; no code yet. Rrecreate succeeds Recreate (private), whose emulator and
+parts of whose tooling it takes over (§11).
 
-## 1. Goal
+## 1. The product
 
-Rrecreate is a toolkit an AI agent uses to port a DOS game to a modern system. The result is a native,
-readable program that behaves exactly like the original in its **faithful mode**, checked against the
-original running in an emulator, with a **modern mode** on top: logic decoupled from the frame rate and
-the CPU's speed, higher resolutions, modern controls, and the original's bugs fixed where the player wants
-them fixed.
+What Rrecreate produces for each game is a **Rust port of the original game**:
+
+- **As close to the original's behaviour as can be checked.** In its **faithful mode** it matches the original
+  tick by tick, frame by frame and sound event by sound event, the original's bugs included, compared with the
+  original running in an emulator.
+- **Built to be modernized.** The game's logic is plain, named Rust, separate from how the game is shown, heard
+  and controlled (§6.1), so each of these can change without touching it:
+  - **graphics:** the faithful renderer is one way to draw the game's world; another can replace it, up to real
+    3D: Arena's world drawn as 3D geometry instead of by its raycaster;
+  - **sound:** the faithful OPL and Sound Blaster output is one backend; sampled, remastered or positional audio
+    are others;
+  - **performance:** native code, with the logic at a fixed rate independent of the frame rate and the CPU's
+    speed;
+  - **portability:** a new platform is a new platform layer.
+- **Modernizations are toggles on top** (§6.4); the faithful mode stays checkable against the original for good.
+
+Rrecreate is the toolkit an AI agent uses to make such ports:
 
 - **The person** supplies the game's files, makes the calls that are theirs (what to port, downloads,
   publishing) and answers what the agent escalates.
@@ -110,11 +122,12 @@ the session.
 
 ## 6. The port
 
-### 6.1 Layers
+### 6.1 Layers and seams
 
 - **Simulation:** all game logic, stepped one tick at a time. Its state is one plain, serializable struct.
   It never sees the screen, the clock or the hardware.
-- **Presentation:** rendering and sound. Reads the simulation's state, never changes it; runs at any rate.
+- **Presentation:** rendering and sound. Reads the simulation through the seams below, never changes it; runs
+  at any rate.
 - **Platform:** window, input devices, audio output and file access (SDL3 on the desktop). It owns the main
   loop and calls the simulation and the presentation, so a web or mobile platform layer can be added without
   changing either.
@@ -122,6 +135,23 @@ the session.
 A tick is one step of the original's main loop. Work the original did in interrupt handlers (music
 sequencing, timer counts) is a subsystem of the simulation with its own rate; its effects are part of the
 state at each tick.
+
+The simulation meets the rest through three **seams**, which carry meaning, never pixels or hardware registers:
+
+- **Scene:** what there is to draw: the camera, the map's geometry and textures, the entities with their
+  positions, orientations and current sprite or animation frame, effects, and the interface (status bar,
+  menus, text).
+- **Sound events:** which sound or music plays, from where and how loud; music as notes and instruments, not
+  register writes.
+- **Actions:** what the player does (move, turn, use, fire), not scancodes. The platform turns devices into
+  actions; the faithful mode derives them from the boundary values (§6.2) exactly as the original's input code
+  did.
+
+Backends sit behind the seams. The faithful renderer and sound backend reproduce the original's pixels and its
+OPL and Sound Blaster writes from the scene and the sound events; a modern backend uses the same seams its own
+way, for example Arena's map and entities drawn as 3D geometry. What a faithful backend needs beyond the meaning
+(a raycaster's fixed-point precision, the order sprites are clipped in) is added to the seams as well, so a
+backend never reads the simulation's state directly and a modern one can ignore what it doesn't need.
 
 ### 6.2 Time and inputs
 

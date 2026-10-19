@@ -7,6 +7,15 @@ decisions wait for the person.
 "With the person" marks decisions the person made or confirmed; the rest were made by the agent within what
 the person asked for and can be revisited freely.
 
+## The product
+
+### D39. A faithful Rust port, built to be modernized. Accepted 2026-10-19, with the person.
+What Rrecreate produces for a game is a Rust port as close to the original's behaviour as can be checked, whose
+graphics, sound, performance and platforms can be modernized without touching its logic: Arena's faithful port,
+for example, should be able to get a real 3D renderer.
+**Why:** the faithful port is the base for modern versions of the game, not the end; behaviour that can't be
+checked against the original is lost, and logic tangled with its presentation can't be modernized.
+
 ## Approach
 
 ### D1. Port by behaviour, compared with the original as a whole program. Accepted 2026-10-19, with the person.
@@ -84,6 +93,13 @@ their own licence. The person said licences matter little; the boundary stays be
 **Why:** a port shaped around matching frames would block modernization (frame rate separate from update rate,
 logic independent of the CPU's speed). Comparing frames is a mode of the presentation, not a constraint on the
 structure.
+
+### D40. Presentation through seams that carry meaning. Accepted 2026-10-19, with the person (carried from Recreate, 2026-10-17).
+The simulation meets the presentation and the platform through a scene (camera, map geometry, entities, interface),
+sound events (sounds and music as notes, not register writes) and actions (not scancodes). Faithful and modern
+backends implement the same seams; what a faithful backend needs beyond the meaning goes into the seams too.
+**Why:** a modern backend, up to a real 3D renderer, can only be written against what the world contains, not
+against the original's pixels; keeping backends off the simulation's state keeps both kinds interchangeable.
 
 ### D14. Time is an input; faithful and modern modes. Accepted 2026-10-19, with the person.
 A step takes the elapsed time; faithful mode feeds what the original measured, modern mode a fixed rate.
