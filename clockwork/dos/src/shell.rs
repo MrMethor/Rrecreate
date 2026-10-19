@@ -543,6 +543,18 @@ impl Shell {
                 self.dir(m, args);
                 Next::Yield
             }
+            "DATE" => {
+                self.date(m, args);
+                Next::Yield
+            }
+            "TIME" => {
+                self.time(m, args);
+                Next::Yield
+            }
+            "ATTRIB" => {
+                self.attrib(m, args);
+                Next::Yield
+            }
             "VER" => {
                 self.print(m, "\r\nMS-DOS Version 5.00 (Recreate)\r\n\r\n");
                 Next::Yield
@@ -583,6 +595,182 @@ impl Shell {
             _ => return None,
         };
         Some(next)
+    }
+
+    /// DATE [/T] [MM-DD-YYYY] (DOSBox `CMD_DATE`, the USA format): shows or sets the DOS date.
+    fn date(&mut self, m: &mut Machine, args: &str) {
+        let words: Vec<&str> = args.split_whitespace().collect();
+        if words.iter().any(|w| w.eq_ignore_ascii_case("/H")) {
+            m.diagnostic("DATE /H: the clock is virtual (rec-host's start time), not the host's".into());
+            return;
+        }
+        let only = words.iter().any(|w| w.eq_ignore_ascii_case("/T"));
+        if let Some(date) = words.iter().find(|w| !w.starts_with('/')) {
+            let parts: Vec<Option<u16>> = date.split('-').map(|p| p.parse().ok()).collect();
+            if let [Some(month), Some(day), Some(year)] = parts[..] {
+                let (r, _) = dos::call_service(m, callback::DOS, |r| {
+                    r.set_ah(0x2B);
+                    r.set_cx(year);
+                    r.set_dh(month as u8);
+                    r.set_dl(day as u8);
+                });
+                if r.al() == 0xFF || month > 0xFF || day > 0xFF {
+                    self.print(m, "The specified date is not correct.\r\n");
+                }
+                return;
+            }
+        }
+        let (r, _) = dos::call_service(m, callback::DOS, |r| r.set_ah(0x2A));
+        let date = format!("{:02}-{:02}-{:04}", r.dh(), r.dl(), r.cx());
+        if only {
+            self.print(m, &format!("{date}\r\n"));
+        } else {
+            let day = &"SunMonTueWedThuFriSat"[usize::from(r.al() % 7) * 3..][..3];
+            self.print(
+                m,
+                &format!("Current date: {day} {date}\r\nRun date MM-DD-YYYY to change the current date.\r\n"),
+            );
+        }
+    }
+
+    /// TIME [/T] [hh:mm:ss] (DOSBox `CMD_TIME`, the USA format): shows or sets the DOS time.
+    fn time(&mut self, m: &mut Machine, args: &str) {
+        let words: Vec<&str> = args.split_whitespace().collect();
+        if words.iter().any(|w| w.eq_ignore_ascii_case("/H")) {
+            m.diagnostic("TIME /H: the clock is virtual (rec-host's start time), not the host's".into());
+            return;
+        }
+        let only = words.iter().any(|w| w.eq_ignore_ascii_case("/T"));
+        if let Some(time) = words.iter().find(|w| !w.starts_with('/')) {
+            let parts: Vec<Option<u8>> = time.split(':').map(|p| p.parse().ok()).collect();
+            if let [Some(hour), Some(minute), Some(second)] = parts[..] {
+                let (r, _) = dos::call_service(m, callback::DOS, |r| {
+                    r.set_ah(0x2D);
+                    r.set_ch(hour);
+                    r.set_cl(minute);
+                    r.set_dh(second);
+                    r.set_dl(0);
+                });
+                if r.al() == 0xFF {
+                    self.print(m, "The specified time is not correct.\r\n");
+                }
+                return;
+            }
+        }
+        let (r, _) = dos::call_service(m, callback::DOS, |r| r.set_ah(0x2C));
+        let (hour, minute, second, hundredths) = (r.ch(), r.cl(), r.dh(), r.dl());
+        if only {
+            self.print(m, &format!("{hour}:{minute:02}:{second:02}\r\n"));
+        } else {
+            // The 12-hour clock of the USA: 1:02:03.04pm.
+            let shown = if hour == 12 { 12 } else { hour % 12 };
+            let half = if hour != 12 && hour == shown { "am" } else { "pm" };
+            self.print(
+                m,
+                &format!(
+                    "Current time: {shown}:{minute:02}:{second:02}.{hundredths:02}{half}\r\n\
+                     Run time hh:mm:ss to change the current time.\r\n"
+                ),
+            );
+        }
+    }
+
+    /// ATTRIB [+|-A] [+|-S] [+|-H] [+|-R] [pattern] [/S] (DOSBox `CMD_ATTRIB`): shows or changes
+    /// file attributes, in subdirectories too with /S.
+    fn attrib(&mut self, m: &mut Machine, args: &str) {
+        let mut pattern = "*.*".to_string();
+        let (mut set, mut clear, mut recurse) = (0u8, 0u8, false);
+        for word in args.split_whitespace() {
+            let bit = |c: &str| match c.to_ascii_uppercase().as_str() {
+                "A" => Some(0x20),
+                "S" => Some(0x04),
+                "H" => Some(0x02),
+                "R" => Some(0x01),
+                _ => None,
+            };
+            match (word.get(..1), word.get(1..).and_then(bit)) {
+                (Some("+"), Some(b)) => set |= b,
+                (Some("-"), Some(b)) => clear |= b,
+                _ if word.eq_ignore_ascii_case("/S") => recurse = true,
+                (Some("/"), _) => {
+                    self.print(m, &format!("Illegal switch: {word}\r\n"));
+                    return;
+                }
+                _ => pattern = word.to_string(),
+            }
+        }
+        let (dir, name) = split_dir(&pattern);
+        let (dir, name) = (dir.to_string(), if name.is_empty() { "*.*".to_string() } else { name.to_string() });
+        let mut dirs = vec![dir];
+        let mut found = false;
+        while let Some(dir) = dirs.pop() {
+            for file in self.find(m, &format!("{dir}{name}"), 0x37) {
+                if file.attr & 0x10 != 0 && name.contains(['*', '?']) {
+                    continue;
+                }
+                found = true;
+                let path = format!("{dir}{}", file.name);
+                let full = self.truename(m, &path).unwrap_or(path.clone());
+                let mut attr = file.attr & 0x27;
+                if set | clear != 0 {
+                    attr = (attr | set) & !clear;
+                    if !self.set_attributes(m, &path, attr) {
+                        self.print(m, &format!("Unable to set attributes: {full}\r\n"));
+                        continue;
+                    }
+                }
+                let flag = |bit: u8, c: char| if attr & bit != 0 { c } else { ' ' };
+                let line = format!(
+                    "  {}  {}{}{}     {full}\r\n",
+                    flag(0x20, 'A'),
+                    flag(0x02, 'H'),
+                    flag(0x04, 'S'),
+                    flag(0x01, 'R')
+                );
+                self.print(m, &line);
+            }
+            if recurse {
+                let mut subdirs: Vec<String> = self
+                    .find(m, &format!("{dir}*.*"), 0x16)
+                    .into_iter()
+                    .filter(|f| f.attr & 0x10 != 0)
+                    .map(|f| format!("{dir}{}\\", f.name))
+                    .collect();
+                subdirs.reverse();
+                dirs.extend(subdirs);
+            }
+        }
+        if !found {
+            self.print(m, &format!("File not found - '{pattern}'\r\n"));
+        }
+    }
+
+    /// TRUENAME (AH=60h): a path in full.
+    fn truename(&self, m: &mut Machine, path: &str) -> Option<String> {
+        self.put_path(m, SCRATCH, path);
+        let psp = self.psp;
+        let (_, failed) = dos::call_service(m, callback::DOS, |r| {
+            r.set_ah(0x60);
+            r.seg[cpu::seg::DS] = psp;
+            r.set_si(SCRATCH);
+            r.seg[cpu::seg::ES] = psp;
+            r.set_di(SCRATCH2);
+        });
+        let at = Machine::lin(psp, SCRATCH2);
+        (!failed).then(|| text(&(0..128).map(|i| m.mem.read_u8(at + i)).take_while(|&b| b != 0).collect::<Vec<_>>()))
+    }
+
+    /// AX=4301h: sets a file's attributes.
+    fn set_attributes(&self, m: &mut Machine, path: &str, attr: u8) -> bool {
+        self.put_path(m, SCRATCH, path);
+        let psp = self.psp;
+        let (_, failed) = dos::call_service(m, callback::DOS, |r| {
+            r.set_ax(0x4301);
+            r.set_cx(u16::from(attr));
+            r.seg[cpu::seg::DS] = psp;
+            r.set_dx(SCRATCH);
+        });
+        !failed
     }
 
     fn echo_command(&mut self, m: &mut Machine, args: &str) {

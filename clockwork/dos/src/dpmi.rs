@@ -36,7 +36,8 @@ pub const RM_STUBS: u16 = 0x8800;
 const RM_ENTRY: u16 = RM_STUBS;
 const RM_RETURN: u16 = RM_STUBS + 0x10;
 const RM_RAW: u16 = RM_STUBS + 0x20;
-const RM_RETF: u16 = RM_STUBS + 0x30;
+/// A RETF in the ROM (also the DOS case map routine).
+pub(crate) const RM_RETF: u16 = RM_STUBS + 0x30;
 const RM_CALLBACKS: u16 = RM_STUBS + 0x40;
 const CALLBACKS: usize = 16;
 

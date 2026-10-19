@@ -3352,6 +3352,40 @@ fn batch_files_run_in_the_built_in_shell() {
 }
 
 #[test]
+fn the_shell_shows_and_sets_the_date_and_time_and_attributes() {
+    let script = "@ECHO OFF\r\nDATE /T\r\nDATE\r\nDATE 02-29-2000\r\nDATE /T\r\nDATE 02-30-2000\r\nTIME 13:14:15\r\n\
+                  TIME /T\r\nATTRIB +R NOTE.TXT\r\nATTRIB SUB\\*.*\r\nATTRIB -R NOTE.TXT\r\nATTRIB NONE.TXT\r\n";
+    let mut m = boot(&[("T.BAT", script.as_bytes()), ("NOTE.TXT", b"note"), ("SUB\\INNER.TXT", b"inner")], "T.BAT");
+    assert_eq!(m.run(10 * SECOND), Stop::Exited(0));
+    assert_eq!(
+        console(&m),
+        "01-01-1994\r\nCurrent date: Sat 01-01-1994\r\nRun date MM-DD-YYYY to change the current date.\r\n\
+         02-29-2000\r\nThe specified date is not correct.\r\n13:14:15\r\n\
+         \x20 A    R     C:\\NOTE.TXT\r\n  A          C:\\SUB\\INNER.TXT\r\n\
+         \x20 A          C:\\NOTE.TXT\r\nFile not found - 'NONE.TXT'\r\n"
+    );
+}
+
+#[test]
+fn dos_gives_country_information() {
+    // AH=38h into a buffer; the exit code is the date separator.
+    let program = com(|a| {
+        a.mov(ax, 0x3800)?;
+        let info = a.addr("info");
+        a.mov(dx, info)?;
+        a.int(0x21)?;
+        a.mov(al, byte_ptr(info as u32 + 0x0B))?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("info")?;
+        a.db(&[0; 0x22])
+    });
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(b'-'));
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
 fn a_program_runs_a_command_through_command_com() {
     // system("ECHO from shell"): shrink, EXEC C:\COMMAND.COM /C ..., then go on.
     let program = com(|a| {

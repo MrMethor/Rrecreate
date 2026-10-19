@@ -97,6 +97,8 @@ pub struct DosState {
     pub cd_audio: crate::cdrom::CdAudio,
     /// The DPMI host's state.
     pub dpmi: crate::dpmi::Dpmi,
+    /// Seconds the DOS clock was set ahead of (or behind) the virtual clock (AH=2Bh, 2Dh).
+    pub clock_offset: i64,
 }
 
 impl DosState {
@@ -131,6 +133,7 @@ impl Default for DosState {
             line_input: None,
             cd_audio: crate::cdrom::CdAudio::default(),
             dpmi: crate::dpmi::Dpmi::default(),
+            clock_offset: 0,
         }
     }
 }
@@ -233,7 +236,45 @@ fn drive_argument(m: &Machine, dl: u8) -> u8 {
 /// The emulated wall clock: the configured start time plus elapsed virtual time.
 pub(crate) fn wall_clock(m: &Machine) -> DateTime {
     let elapsed = (m.cpu.cycles / m.config.instructions_per_second) as i64;
-    DateTime::from_epoch_seconds(m.config.start_time.to_epoch_seconds() + elapsed)
+    DateTime::from_epoch_seconds(m.config.start_time.to_epoch_seconds() + elapsed + m.dos.clock_offset)
+}
+
+/// AH=2Bh and 2Dh: the DOS clock set to `to` from now on (the virtual clock keeps running under
+/// it); setting the time also sets the BIOS tick count, as DOS does through INT 1Ah.
+fn set_clock(m: &mut Machine, to: DateTime) {
+    let now = wall_clock(m);
+    m.dos.clock_offset += to.to_epoch_seconds() - now.to_epoch_seconds();
+    if to.seconds_since_midnight() != now.seconds_since_midnight() {
+        let ticks = u64::from(to.seconds_since_midnight()) * crate::clock::PIT_HZ / 65536;
+        m.mem.write_u32(bios::BDA_TICKS, ticks as u32);
+        m.mem.write_u8(bios::BDA_TICKS + 4, 0);
+    }
+}
+
+fn days_in_month(year: u16, month: u8) -> u8 {
+    match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// The country information of AH=38h (USA, as DOSBox has it by default): date format,
+/// currency, separators, time format, the case map routine and the list separator.
+fn country_info() -> [u8; 0x18] {
+    let mut info = [0u8; 0x18];
+    info[0x02] = b'$';
+    info[0x07] = b',';
+    info[0x09] = b'.';
+    info[0x0B] = b'-';
+    info[0x0D] = b':';
+    info[0x10] = 2;
+    // The case map routine: a RETF in the ROM (no characters above 7Fh change).
+    info[0x12..0x14].copy_from_slice(&crate::dpmi::RM_RETF.to_le_bytes());
+    info[0x14..0x16].copy_from_slice(&bios::ROM_SEGMENT.to_le_bytes());
+    info[0x16] = b',';
+    info
 }
 
 pub(crate) fn dispatch(m: &mut Machine, id: u16) -> bool {
@@ -408,7 +449,26 @@ fn int21(m: &mut Machine) {
             m.cpu.regs.set_dl(now.day);
             m.cpu.regs.set_al(now.weekday());
         }
-        0x2B | 0x2D => m.cpu.regs.set_al(0), // setting date/time: accepted, ignored
+        0x2B => {
+            let (year, month, day) = (r.cx(), r.dh(), r.dl());
+            let valid = (1980..=2099).contains(&year)
+                && (1..=12).contains(&month)
+                && (1..=days_in_month(year, month)).contains(&day);
+            if valid {
+                let now = wall_clock(m);
+                set_clock(m, DateTime::new(year, month, day, now.hour, now.minute, now.second));
+            }
+            m.cpu.regs.set_al(if valid { 0 } else { 0xFF });
+        }
+        0x2D => {
+            let (hour, minute, second, hundredths) = (r.ch(), r.cl(), r.dh(), r.dl());
+            let valid = hour < 24 && minute < 60 && second < 60 && hundredths < 100;
+            if valid {
+                let now = wall_clock(m);
+                set_clock(m, DateTime::new(now.year, now.month, now.day, hour, minute, second));
+            }
+            m.cpu.regs.set_al(if valid { 0 } else { 0xFF });
+        }
         0x2C => {
             let now = wall_clock(m);
             let centis = (m.cpu.cycles % m.config.instructions_per_second) * 100 / m.config.instructions_per_second;
@@ -497,6 +557,41 @@ fn int21(m: &mut Machine) {
                 m.cpu.regs.set_dx(0xFFF0);
             } else {
                 m.cpu.regs.set_ax(0xFFFF);
+            }
+        }
+        0x38 if r.dx() == 0xFFFF => {
+            // Setting the country: only to the one it is (as on MS-DOS 6.22, DOSBox notes).
+            let country = if r.al() == 0xFF { r.bx() } else { u16::from(r.al()) };
+            if country == 1 {
+                m.cpu.regs.set_ax(0);
+                ok(m);
+            } else {
+                fail(m, error::FILE_NOT_FOUND);
+            }
+        }
+        0x38 => {
+            let at = Machine::lin(r.ds(), r.dx());
+            m.mem.load(at, &country_info());
+            m.cpu.regs.set_bx(1);
+            m.cpu.regs.set_ax(1);
+            ok(m);
+        }
+        0x60 => {
+            // TRUENAME: DS:SI's path in full, upper case, at ES:DI (a device as X:/NAME).
+            let raw = read_asciiz(m, r.ds(), r.si());
+            let drive = path_drive(m, &raw);
+            let letter = char::from(b'A' + drive);
+            let full = match resolve(m, &raw, true) {
+                Ok(Target::Path(path)) => Ok(format!("{letter}:\\{}", guest_path(m, drive, &path))),
+                Ok(Target::Device(name)) => Ok(format!("{letter}:/{name}")),
+                Err(code) => Err(code),
+            };
+            match full {
+                Ok(full) => {
+                    write_bytes(m, r.es(), r.di(), &[full.as_bytes(), &[0]].concat());
+                    ok(m);
+                }
+                Err(code) => fail(m, code),
             }
         }
         0x39 => path_op(m, true, |m, path| if m.drive.make_dir(&path) { Ok(()) } else { Err(error::ACCESS_DENIED) }),
