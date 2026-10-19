@@ -1,0 +1,21 @@
+[package]
+name = "dos"
+description = "PC machine for the Recreate host: devices, BIOS and DOS services (high-level emulation), program loading"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+cpu.workspace = true
+machine.workspace = true
+libm = "0.2"
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info"] }
+nuked-opl3 = "0.1"
+
+[dev-dependencies]
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "code_asm", "decoder"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,333 @@
+Open Watcom Linker Version 2.0 beta Oct  1 2026 06:41:58 (64-bit)
+Copyright (c) 2002-2026 The Open Watcom Contributors. All Rights Reserved.
+Portions Copyright (c) 1985-2002 Sybase, Inc. All Rights Reserved.
+Created on:       26/10/17 10:29:36
+Executable Image: bin\FILEIO.EXE
+creating a DOS executable
+
+
+                        +------------+
+                        |   Groups   |
+                        +------------+
+
+Group                           Address              Size
+=====                           =======              ====
+
+DGROUP                          02db:0000            00000bb0
+
+
+
+                        +--------------+
+                        |   Segments   |
+                        +--------------+
+
+Segment                Class          Group          Address         Size
+=======                =====          =====          =======         ====
+
+BEGTEXT                CODE           AUTO           0000:0000       00000007
+_TEXT                  CODE           AUTO           0000:0010       00002d92
+FAR_DATA               FAR_DATA       AUTO           02da:0002       00000000
+_NULL                  BEGDATA        DGROUP         02db:0000       00000020
+_AFTERNULL             BEGDATA        DGROUP         02dd:0000       00000002
+CONST                  DATA           DGROUP         02dd:0002       0000008e
+CONST2                 DATA           DGROUP         02e6:0000       00000025
+_DATA                  DATA           DGROUP         02e8:0006       000001a4
+XIB                    DATA           DGROUP         0302:000a       00000000
+XI                     DATA           DGROUP         0302:000a       00000012
+XIE                    DATA           DGROUP         0303:000c       00000000
+YIB                    DATA           DGROUP         0303:000c       00000000
+YI                     DATA           DGROUP         0303:000c       0000000c
+YIE                    DATA           DGROUP         0304:0008       00000000
+DATA                   DATA           DGROUP         0304:0008       00000000
+_BSS                   BSS            DGROUP         0304:0008       00000113
+STACK                  STACK          DGROUP         0316:0000       00000800
+
+
+                        +----------------+
+                        |   Memory Map   |
+                        +----------------+
+
+* = unreferenced symbol
++ = symbol only referenced locally
+
+Address        Symbol
+=======        ======
+
+Module: obj\fileio.obj(obj\fileio.obj)
+0000:0010      main_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(stk)
+0000:00c7      __STK
+0000:00de*     __STKOVERFLOW_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fopen.c)
+0000:00f9+     __open_flags_
+0000:0288+     _fsopen_
+0000:02ca      fopen_
+0000:0324*     freopen_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(printf.c)
+0000:0367      printf_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fputs.c)
+0000:037c      fputs_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fclose.c)
+0000:03f3      __doclose_
+0000:0481      __shutdown_stream_
+0000:0492      fclose_
+02db:0298+     ___RmTmpFileFn
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fseek.c)
+0000:0508      fseek_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(ftell.c)
+0000:0607      ftell_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(memset.c)
+0000:0655      memset_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fread.c)
+0000:0670      fread_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(renam.c)
+0000:07ba      rename_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(remove.c)
+0000:07cc      remove_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(cstart)
+0000:0003*     ___begtext
+02db:0000*     __nullarea
+0000:07d0      _cstart_
+0000:097a      __exit_
+0000:0997      __do_exit_with_msg_
+0000:0a5d      __GETDS
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(cmodel)
+0000:0a68      _small_code_
+0000:0a68*     CodeModelMismatch
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(xmsg.c)
+0000:0a68*     __exit_with_msg_
+0000:0a6b      __fatal_runtime_error_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(crwdata)
+02db:00d8      __curbrk
+02db:00e0      __STACKLOW
+02db:00e2      __STACKTOP
+02db:00e4      __cbyte
+02db:00e6      __child
+02db:00e8      __no87
+02db:00f5      ___FPE_handler
+02db:00da      __psp
+02db:00e9      __get_ovl_stack
+02db:00ed      __restore_ovl_stack
+02db:00f1      __close_ovl_file
+02db:00f9      __LpCmdLine
+02db:00fd      __LpPgmName
+02db:00dc      __osmajor
+02db:00dd      __osminor
+02db:00de      __osmode
+02db:00df      __HShift
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(comtflag.c)
+02db:0102      __commode
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(errno.c)
+0000:0a82*     __get_errno_ptr_
+02db:029a      _errno
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(textmode.c)
+02db:0104      __fmode
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(tolower.c)
+0000:0a86      tolower_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(open.c)
+0000:0c38*     open_
+0000:0c57      _sopen_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(chktty.c)
+0000:0c71      __chktty_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(freefp.c)
+0000:0c96      __freefp_
+0000:0cba      __purgefp_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(allocfp.c)
+0000:0cd1      __allocfp_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(iob.c)
+02db:0106      ___iob
+02db:029c      ___OpenStreams
+02db:029e      ___ClosedStreams
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fprtf.c)
+0000:0d60      __fprtf_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fputc.c)
+0000:0df7      fputc_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(flush.c)
+0000:0e9d      __flush_
+0000:0e9d*     __clib_flush_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(ioalloc.c)
+0000:0f86      __ioalloc_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(__lseek.c)
+0000:0ff2      __lseek_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(_clse.c)
+0000:1030      __close_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(nfree.c)
+0000:1059      _nfree_
+0000:1059      free_
+02db:02a0+     ___MiniHeapFreeRover
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(lseek.c)
+0000:111c      lseek_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(tell.c)
+0000:1147      _tell_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fflush.c)
+0000:1156      fflush_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(memcpy.c)
+0000:1163      memcpy_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(qread.c)
+0000:1180      __qread_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fgetc.c)
+0000:1196      __fill_buffer_
+0000:124b*     fgetc_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(doserror)
+0000:12ca      __doserror_
+0000:12d6      __doserror1_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(unlnk.c)
+0000:12e0      unlink_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(cmain086.c)
+0000:12ec      __CMain
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(initrtns.c)
+0000:132c      __InitRtns
+0000:1383      __FiniRtns
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(uselfn.c)
+02db:021e      ___uselfn
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(dosseg)
+0000:13e2      __DOSseg__
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(enterdb.c)
+0000:13e3      __EnterWVIDEO_
+02db:0220+     __WD_Present
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(opendos.c)
+0000:13ff      _dos_open_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(iomode.c)
+0000:1413      __GetIOMode_
+0000:142a      __SetIOMode_
+02db:0222      ___NFiles
+02db:0224      ___init_mode
+02db:024c      ___io_mode
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(isatt.c)
+0000:143f      isatty_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(doserrno.c)
+0000:1465*     __get_doserrno_ptr_
+02db:02a2      __doserrno
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(umaskval.c)
+02db:024e      ___umaskval
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(creatdos.c)
+0000:1469      _dos_creat_
+0000:147b*     _dos_creatnew_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(stiomode.c)
+0000:148d+     __grow_iomode_
+0000:150f      __SetIOMode_grow_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(dosret.c)
+0000:1558      __set_errno_dos_
+0000:15a7*     __set_errno_dos_reterr_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(nmalloc.c)
+0000:15b1      _nmalloc_
+0000:15b1      malloc_
+02db:0264      ___nheapbeg
+02db:0266      ___MiniHeapRover
+02db:0268      ___LargestSizeB4MiniHeapRover
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(initfile.c)
+0000:166a      __InitFiles_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(ioexit.c)
+0000:1742*     fcloseall_
+0000:1747      __full_io_exit_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(prtf.c)
+0000:206a      __prtf_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(qwrit.c)
+0000:226e      __qwrite_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(fsync.c)
+0000:22c4      fsync_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(mem.c)
+0000:22d0      __MemAllocator
+0000:2398      __MemFree
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(flushall.c)
+0000:2512      __flushall_
+0000:2543      flushall_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(gtche.c)
+0000:2548      getche_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(___argc.c)
+02db:02a6      ____Argc
+02db:02a8      ____Argv
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(exit.c)
+0000:255d+     __null_int23_exit_
+0000:255e      exit_
+0000:257a*     _exit_
+02db:026a+     ___int23_exit
+02db:026c+     ___FPE_handler_exit
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(sgdef086)
+02db:027a      __Start_XI
+02db:028c      __End_XI
+02db:028c      __Start_YI
+02db:0298      __End_YI
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(nrealloc.c)
+0000:258a*     _nrealloc_
+0000:258a      realloc_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(iomodtty.c)
+0000:25df      __ChkTTYIOMode_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(nmemneed.c)
+0000:2611      __nmemneed_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(grownear.c)
+0000:267a+     __LastFree_
+0000:26e1      __ExpandDGROUP_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(wctomb.c)
+0000:27b4      wctomb_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(itoa.c)
+0000:27d1+     utoa_
+0000:2816      itoa_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(strlen.c)
+0000:2831      strlen_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(i4m)
+0000:2848*     __I4M
+0000:2848      __U4M
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(noefgfmt.c)
+02db:026e      ___EFG_printf
+02db:0270*     ___EFG_scanf
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(lltoa.c)
+0000:286d      ulltoa_
+0000:2931*     lltoa_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(strupr.c)
+0000:2984      _strupr_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(ltoa.c)
+0000:29a4      ultoa_
+0000:29f7*     ltoa_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(mbislead.c)
+0000:2a17      _ismbblead_
+02db:02aa      ___MBCSIsTable
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(filedos.c)
+0000:2a2c*     _dos_close_
+0000:2a38      _dos_commit_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(nmsize.c)
+0000:2a45*     _msize_
+0000:2a45      _nmsize_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(nexpand.c)
+0000:2a54      _nexpand_
+0000:2a54*     _expand_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(amblksiz.c)
+02db:0272      __amblksiz
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(heapen.c)
+0000:2a9f*     _heapenable_
+02db:0274      ___heap_enabled
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(sbrk.c)
+0000:2aab      __brk_
+0000:2afc*     sbrk_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(alphabet.c)
+02db:00b0      ___Alphabet
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(mbinit.c)
+0000:2b55      __mbinit_
+02db:0276+     ___MBCodePage
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(_expand.c)
+0000:2bb9      __HeapManager_expand_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(mbisdbcs.c)
+02db:0278      ___IsDBCS
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(getltdos.c)
+0000:2d48      dos_get_dbcs_lead_table_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(getcpdos.c)
+0000:2d71      dos_get_code_page_
+Module: C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib(bfree.c)
+0000:2d81      _bfree_
+
+
+                        +--------------------+
+                        |   Libraries Used   |
+                        +--------------------+
+
+C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib
+
+
+                        +-----------------------+
+                        |   Linker Statistics   |
+                        +-----------------------+
+
+Stack size:  0800 (2048.)
+Memory size:  3960 (14688.)
+Entry point address: 0000:07d0
+Link time: 00:00.03

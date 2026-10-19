@@ -1,0 +1,49 @@
+# TES Arena: from the intro to the first dungeon (driver coordinates: x is doubled in mode 13h)
+25000:{enter} {enter} {enter}
+62000:s
+76000:{esc}
+80000:{esc}
+84000:{esc}
+88000:{esc}
+96000:{enter}
+100000:tester{enter}
+107000:{click 320 125}
+113000:{click 320 100}
+116000:{click 290 45}
+121000:{click 320 127}
+127000:{click 320 100}
+133000:{click 320 100}
+136000:{click 320 100}
+141000:{click 320 100}
+148000:{click 320 100}
+150000:{click 30 186}
+156000:{click 30 186}
+163000:{click 320 100}
+186000:{click 320 100}
+187500:{click 16 61}
+189000:{click 86 58}
+190000:{click 86 58}
+191000:{click 86 58}
+192000:{click 86 58}
+193000:{click 86 58}
+194000:{click 86 58}
+195000:{click 86 58}
+196000:{click 86 58}
+197000:{click 86 58}
+198000:{click 86 58}
+199000:{click 86 58}
+200000:{click 86 58}
+201000:{click 86 58}
+202000:{click 86 58}
+203000:{click 86 58}
+204000:{click 86 58}
+205000:{click 86 58}
+206000:{click 86 58}
+208500:{click 30 186}
+214000:{click 320 100}
+246000:{click 320 100}
+250000:{click 30 186}
+300000:{esc}
+306000:{esc}
+312000:{esc}
+331000:{click 570 130}

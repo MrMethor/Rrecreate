@@ -1,0 +1,9 @@
+# Wolfenstein 3D shareware v1.4: from the sign-on screen through the menus into E1M1, out of the
+# first room and into the corridor. Run with --seconds 51.
+15000:{space}
+27000:{space}
+# Main menu: the cursor starts on "Read This!"; up five times to "New Game", then the episode and
+# the difficulty.
+31000:{up}{wait 300}{up}{wait 300}{up}{wait 300}{up}{wait 300}{up}{wait 500}{enter}{wait 1500}{enter}{wait 1500}{enter}
+# In the game: walk to the door, open it, walk through and look down the corridor.
+44000:{hold up 2500}{hold space 200}{wait 1500}{hold up 1200}{hold left 700}

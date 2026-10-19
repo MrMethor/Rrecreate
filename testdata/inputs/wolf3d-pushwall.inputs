@@ -1,0 +1,43 @@
+# Wolfenstein 3D shareware v1.4: E1M1 from the start up the main corridor, three guards shot, and
+# the pushwall at tile (30, 22) (the painting west of the corridor's top) pushed into the secret
+# room, where it moves two tiles. Run with --seconds 86.
+#
+# Steered by dumping the player (DS:AB6E: x and y at +10h, angle at +2Ah) after each step. Turns
+# move 3-4 degrees a frame, so positions are fixed by walking into walls, not by angles. Ctrl
+# can't be typed: the mouse button fires. The mouse is put at (160, 100) first and every click is
+# there, so firing doesn't move it.
+1000:{move 160 100}
+# Menus into the game, and through the first door, as in wolf3d-first-level.inputs.
+15000:{space}
+27000:{space}
+31000:{up}{wait 300}{up}{wait 300}{up}{wait 300}{up}{wait 300}{up}{wait 500}{enter}{wait 1500}{enter}{wait 1500}{enter}
+44000:{hold up 2500}{hold space 200}{wait 1500}{hold up 1200}{hold left 700}
+# North to the door at (34, 50); into the corridor's west wall, back east to the door's column,
+# open it, and north to the next door at (34, 38).
+51000:{hold up 1300}
+52500:{hold left 790}
+53500:{hold up 500}
+54200:{hold right 1470}
+56000:{hold up 210}
+56500:{hold left 735}
+57400:{hold space 200}
+59000:{hold up 2300}
+# Open it, cross the big room to the door at (34, 28); turn back and shoot the patrolling guard.
+61600:{hold space 200}
+63300:{hold up 2000}
+65500:{hold left 1000}
+66700:{click 160 100}{click 160 100}{click 160 100}{click 160 100}
+# Back to the door's column, open it, north to the hallway at row 22, face west and shoot the
+# guard standing at the pushwall.
+68900:{hold left 1215}
+70300:{hold up 90}
+70600:{hold left 735}
+71600:{hold space 200}
+73300:{hold up 1255}
+74700:{hold left 720}
+75500:{click 160 100}{click 160 100}
+# West to the painting and push it; turn and shoot the guard coming from the north while the wall
+# moves.
+76700:{hold up 600}{hold space 200}
+77700:{hold right 1290}
+79100:{hold right 100}{click 160 100}{click 160 100}{click 160 100}
