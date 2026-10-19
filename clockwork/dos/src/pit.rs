@@ -226,21 +226,23 @@ impl Pit {
         self.next_irq0
     }
 
-    /// Call when `now >= next_irq0()`; returns whether IRQ0 should be raised.
-    pub fn take_irq0(&mut self, now: u64) -> bool {
-        let Some(due) = self.next_irq0 else { return false };
+    /// Call when `now >= next_irq0()`; returns how many edges IRQ0 had since (0: none). Several
+    /// periods may have passed (one long REP instruction): the PIC latches one edge.
+    pub fn take_irq0(&mut self, now: u64) -> u64 {
+        let Some(due) = self.next_irq0 else { return 0 };
         if now < due {
-            return false;
+            return 0;
         }
         let ch = &self.channels[0];
-        self.next_irq0 = if ch.periodic() {
+        let (edges, next) = if ch.periodic() {
             let period = ch.period();
-            // Several periods may have passed (one long REP instruction); the PIC latches one edge.
-            Some(due + period * ((now - due) / period + 1))
+            let edges = (now - due) / period + 1;
+            (edges, Some(due + period * edges))
         } else {
-            None
+            (1, None)
         };
-        true
+        self.next_irq0 = next;
+        edges
     }
 
     pub fn write(&mut self, port: u16, value: u8, now: u64) {
@@ -365,8 +367,8 @@ mod tests {
     fn bios_default_is_18_hz() {
         let mut pit = Pit::new();
         assert_eq!(pit.next_irq0(), Some(65536));
-        assert!(!pit.take_irq0(65535));
-        assert!(pit.take_irq0(65536));
+        assert_eq!(pit.take_irq0(65535), 0);
+        assert_eq!(pit.take_irq0(65536), 1);
         assert_eq!(pit.next_irq0(), Some(131072));
     }
 
@@ -378,7 +380,7 @@ mod tests {
         pit.write(0x40, 0x9C, 100);
         pit.write(0x40, 0x2E, 100); // 0x2E9C = 11932 → 100 Hz
         assert_eq!(pit.next_irq0(), Some(100 + 11932));
-        assert!(pit.take_irq0(100 + 3 * 11932 + 5), "late: one edge for several periods");
+        assert_eq!(pit.take_irq0(100 + 3 * 11932 + 5), 3, "late: the edges of several periods");
         assert_eq!(pit.next_irq0(), Some(100 + 4 * 11932));
     }
 

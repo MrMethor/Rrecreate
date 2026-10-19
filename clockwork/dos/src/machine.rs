@@ -605,6 +605,12 @@ pub struct Machine {
     pub(crate) atomic: bool,
     /// When it began: port writes during it are logged at this time ([`Machine::set_atomic`]).
     atomic_since: u64,
+    /// An atomic call just ended: the next servicing of devices catches up with it.
+    after_atomic: bool,
+    /// Timer ticks an atomic call held back past the one the PIC latches, delivered one after
+    /// another as IRQ 0 goes quiet: the program's clock doesn't lose the call's time (it would
+    /// only with interrupts off that long, which the program didn't ask for).
+    held_ticks: u64,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -656,6 +662,8 @@ impl Machine {
             replay: None,
             atomic: false,
             atomic_since: 0,
+            after_atomic: false,
+            held_ticks: 0,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -707,6 +715,10 @@ impl Machine {
             }
             if !self.atomic && self.service_due() {
                 self.scheduled_service();
+            }
+            if self.held_ticks > 0 && !self.atomic && self.devices.pic.quiet(0) {
+                self.held_ticks -= 1;
+                self.devices.pic.raise(0);
             }
             if self.cpu.interrupts_enabled()
                 && !self.atomic
@@ -1049,6 +1061,9 @@ impl Machine {
         self.ems.hash(&mut h);
         self.mouse.hash(&mut h);
         self.drive.hash(&mut h);
+        if self.held_ticks != 0 {
+            self.held_ticks.hash(&mut h);
+        }
         h.finish()
     }
 
@@ -1126,6 +1141,9 @@ impl Machine {
     pub(crate) fn set_atomic(&mut self, on: bool) {
         if on && !self.atomic {
             self.atomic_since = self.cpu.cycles;
+        }
+        if !on && self.atomic {
+            self.after_atomic = true;
         }
         self.atomic = on;
     }
@@ -1285,8 +1303,13 @@ impl Machine {
         if self.devices.keyboard.pump() {
             self.devices.pic.raise(1);
         }
-        if self.devices.pit.take_irq0(now) {
+        let after_atomic = std::mem::take(&mut self.after_atomic);
+        let edges = self.devices.pit.take_irq0(now);
+        if edges > 0 {
             self.devices.pic.raise(0);
+            if after_atomic {
+                self.held_ticks += edges - 1;
+            }
         }
         // The real-time clock's periodic interrupt is IRQ 8: line 0 of the slave PIC.
         if self.devices.cmos.update(clock.ticks(cycles, crate::cmos::RTC_HZ)) {

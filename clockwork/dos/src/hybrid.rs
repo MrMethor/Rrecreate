@@ -225,6 +225,8 @@ pub struct Stats {
     pub mismatches: u64,
     /// Distinct calls captured (kept in `captures`).
     pub captured: u64,
+    /// Calls captured past [`crate::capture::MAX_CAPTURES`], looking for code not reached yet.
+    pub searched: u64,
     /// Calls whose excluded registers were poisoned.
     pub poisoned: u64,
 }
@@ -271,6 +273,8 @@ pub struct Hybrid {
     /// Distinct captured calls ([`Mode::Capture`]).
     pub captures: Vec<crate::capture::Capture>,
     seen: BTreeSet<(u32, u64)>,
+    /// The code each override's kept captures ran (linear addresses).
+    reached: Vec<BTreeSet<u32>>,
     /// Dual-runs of one function, at most (then it runs as the original).
     pub dual_limit: u64,
     /// Inside a dual-run or a poisoned call: nested hooked functions run as the original.
@@ -305,6 +309,7 @@ impl Hybrid {
             findings: Vec::new(),
             captures: Vec::new(),
             seen: BTreeSet::new(),
+            reached: vec![BTreeSet::new(); n],
             signatures: BTreeMap::new(),
             code: BTreeMap::new(),
             dual_limit: 100,
@@ -898,15 +903,20 @@ impl Machine {
             Mode::Capture
                 if hybrid.in_dual
                     || hybrid.capturing >= crate::capture::MAX_CAPTURE_DEPTH
-                    || hybrid.stats[i].captured >= crate::capture::MAX_CAPTURES =>
+                    || hybrid.stats[i].captured >= crate::capture::MAX_CAPTURES + crate::capture::MORE_CAPTURES
+                    || hybrid.stats[i].searched >= crate::capture::SEARCH_CALLS =>
             {
                 Ok(false)
             }
             Mode::Capture => {
                 hybrid.skip = Some(linear);
-                if let Some(capture) = self.capture_call(o)? {
+                let searching = hybrid.stats[i].captured >= crate::capture::MAX_CAPTURES;
+                hybrid.stats[i].searched += u64::from(searching);
+                if let Some((capture, code)) = self.capture_call(o)? {
                     let hybrid = self.hybrid.as_mut().expect("hooked");
-                    if hybrid.seen.insert((capture.offset, capture.input_hash)) {
+                    let new_code = code.iter().any(|addr| !hybrid.reached[i].contains(addr));
+                    if (!searching || new_code) && hybrid.seen.insert((capture.offset, capture.input_hash)) {
+                        hybrid.reached[i].extend(code);
                         hybrid.stats[i].captured += 1;
                         hybrid.captures.push(capture);
                     }

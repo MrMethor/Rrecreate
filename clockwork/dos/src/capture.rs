@@ -22,6 +22,14 @@ use crate::{Config, Vfs};
 /// Most distinct captures kept per function.
 pub const MAX_CAPTURES: u64 = 64;
 
+/// Past [`MAX_CAPTURES`], calls are still captured, but kept only when they reach code no earlier
+/// capture of the function did (a rare path of a function called every frame: a wall that moves
+/// once): at most this many more...
+pub const MORE_CAPTURES: u64 = 64;
+
+/// ...among this many calls tried.
+pub const SEARCH_CALLS: u64 = 4096;
+
 /// Cycles a captured call may take (a quarter second at the default speed). A longer one (a wait
 /// for input, a main loop) isn't captured: the program carries on from where it is, and the
 /// calls it makes are hooked again, instead of all running nested in one capture.
@@ -35,6 +43,8 @@ pub const MAX_CAPTURE_DEPTH: usize = 16;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Access {
     Read(u32, u8),
+    /// An instruction byte's first fetch in a capture: an input, and code the call reached.
+    Fetch(u32, u8),
     Write(u32, u8),
     Port,
     /// An interrupt handler wrote this byte while the call ran.
@@ -157,7 +167,7 @@ impl Bus for TracingBus<'_, '_> {
         if let Some(fetched) = &mut self.fetched
             && fetched.insert(addr)
         {
-            self.log.push(Access::Read(addr, value));
+            self.log.push(Access::Fetch(addr, value));
         }
         value
     }
@@ -233,8 +243,9 @@ pub struct Capture {
 }
 
 impl Machine {
-    /// Captures a call of override `o` (its original runs, traced, until it returns).
-    pub(crate) fn capture_call(&mut self, o: Override) -> Result<Option<Capture>, crate::Stop> {
+    /// Captures a call of override `o` (its original runs, traced, until it returns), with the
+    /// code it ran (linear addresses).
+    pub(crate) fn capture_call(&mut self, o: Override) -> Result<Option<(Capture, Vec<u32>)>, crate::Stop> {
         let regs = self.cpu.regs;
         let (ss, sp) = (regs.ss(), regs.sp());
         // A placeholder's convention is unknown: its call may have been near, far or an interrupt.
@@ -268,7 +279,7 @@ impl Machine {
             tracer.reset();
             hybrid.spare_tracer = Some(tracer);
         }
-        let (inputs, mut written, ports, interrupted) = match (stop, accesses) {
+        let (inputs, mut written, ports, interrupted, code) = match (stop, accesses) {
             (_, Some(accesses)) => accesses,
             (crate::Stop::CycleLimit, None) => return Ok(None),
             (other, None) => return Err(other),
@@ -304,7 +315,7 @@ impl Machine {
             std::hash::Hasher::write(&mut h, &[*value]);
         }
         let input_hash = std::hash::Hasher::finish(&h);
-        Ok(Some(Capture {
+        let capture = Capture {
             offset: o.offset,
             name: o.name.to_string(),
             base,
@@ -315,23 +326,30 @@ impl Machine {
             writes: written,
             unreplayable,
             input_hash,
-        }))
+        };
+        Ok(Some((capture, code)))
     }
 }
 
 /// What a call's accesses come to: the bytes it read before writing them, the final values of
-/// the bytes it wrote, whether it used ports, and whether it read a byte an interrupt handler
-/// changed while it ran. `seen` is room for the bytes already read or written.
-fn sort_accesses(log: &[Access], seen: &mut ByteSet) -> (BTreeMap<u32, u8>, BTreeMap<u32, u8>, bool, bool) {
+/// the bytes it wrote, whether it used ports, whether it read a byte an interrupt handler
+/// changed while it ran, and the code it ran. `seen` is room for the bytes already read or
+/// written.
+type Sorted = (BTreeMap<u32, u8>, BTreeMap<u32, u8>, bool, bool, Vec<u32>);
+
+fn sort_accesses(log: &[Access], seen: &mut ByteSet) -> Sorted {
     seen.clear();
     let (mut inputs, mut written, mut ports) = (Vec::new(), BTreeMap::new(), false);
-    let (mut changed, mut interrupted) = (BTreeSet::new(), false);
+    let (mut changed, mut interrupted, mut code) = (BTreeSet::new(), false, Vec::new());
     for access in log {
         match *access {
-            Access::Read(addr, value) => {
+            Access::Read(addr, value) | Access::Fetch(addr, value) => {
                 interrupted |= changed.contains(&addr);
                 if seen.insert(addr) {
                     inputs.push((addr, value));
+                }
+                if let Access::Fetch(..) = access {
+                    code.push(addr);
                 }
             }
             Access::InterruptWrite(addr) => {
@@ -345,7 +363,7 @@ fn sort_accesses(log: &[Access], seen: &mut ByteSet) -> (BTreeMap<u32, u8>, BTre
         }
     }
     inputs.sort_unstable_by_key(|&(addr, _)| addr);
-    (inputs.into_iter().collect(), written, ports, interrupted)
+    (inputs.into_iter().collect(), written, ports, interrupted, code)
 }
 
 /// The bus while a captured call is interrupted: the handler's writes are logged (for

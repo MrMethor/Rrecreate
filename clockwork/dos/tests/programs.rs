@@ -3186,6 +3186,103 @@ fn tick_waiter() -> (Vec<u8>, u32) {
 }
 
 #[test]
+fn a_session_diff_keeps_the_ticks_of_long_calls() {
+    // `work` spins for several timer ticks with interrupts on; the program exits with the ticks
+    // counted meanwhile. Atomic in a session diff, its calls hold the ticks back, and they come
+    // after it: the program's clock keeps time as in a plain run (it lost all but one a call).
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        offsets.borrow_mut().insert("work", (a.addr("work") as u32).wrapping_sub(0x100));
+        a.xor(ax, ax)?;
+        a.mov(ds, ax)?;
+        a.mov(si, word_ptr(0x46C))?;
+        let work = a.l("work");
+        for _ in 0..5 {
+            a.call(work)?;
+        }
+        a.mov(ax, word_ptr(0x46C))?;
+        a.sub(ax, si)?;
+        a.mov(ah, 0x4C)?;
+        a.int(0x21)?;
+        a.here("work")?;
+        a.mov(bx, 40)?;
+        a.here("outer")?;
+        a.xor(cx, cx)?;
+        a.here("inner")?;
+        let inner = a.l("inner");
+        a.loop_(inner)?;
+        a.dec(bx)?;
+        let outer = a.l("outer");
+        a.jne(outer)?;
+        a.ret()
+    });
+    fn work(_: &mut dos::hybrid::Call) -> Result<(), String> {
+        Ok(())
+    }
+    use dos::hybrid::{Convention, Mode, Override};
+    let o = Override {
+        offset: offsets.into_inner()["work"],
+        name: "work",
+        conv: Convention::cdecl(false, 0, 0),
+        run: work,
+    };
+    let mut plain = boot(&[("P.COM", &program)], "P.COM");
+    let Stop::Exited(ticks) = plain.run(3 * SECOND) else { panic!("didn't exit") };
+    assert!(ticks >= 20, "{ticks} ticks: the calls span several each");
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Rust);
+    let (m, d) = dos::lockstep::diff(m, 3 * SECOND, 20_000);
+    assert_eq!(d.divergence, None, "{:#?}", m.hybrid.as_ref().unwrap().findings);
+    assert_eq!(d.stop, Stop::Exited(ticks));
+}
+
+#[test]
+fn captures_past_the_limit_keep_calls_that_reach_new_code() {
+    use dos::capture::{MAX_CAPTURES, SEARCH_CALLS};
+    use dos::hybrid::{Convention, Mode, Override};
+    // `step` runs 300 times, with CX 0 to 299 (each call distinct); only with CX = 250 does it
+    // take its rare branch, long after the first 64 calls filled the captures.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        offsets.borrow_mut().insert("step", (a.addr("step") as u32).wrapping_sub(0x100));
+        a.xor(cx, cx)?;
+        a.here("again")?;
+        let step = a.l("step");
+        a.call(step)?;
+        a.inc(cx)?;
+        a.cmp(cx, 300)?;
+        let again = a.l("again");
+        a.jb(again)?;
+        exit(a, 0)?;
+        a.here("step")?;
+        a.cmp(cx, 250)?;
+        let rare = a.l("rare");
+        a.je(rare)?;
+        a.ret()?;
+        a.here("rare")?;
+        a.inc(dx)?;
+        a.ret()
+    });
+    fn step(_: &mut dos::hybrid::Call) -> Result<(), String> {
+        Ok(())
+    }
+    let o = Override {
+        offset: offsets.into_inner()["step"],
+        name: "step",
+        conv: Convention::cdecl(false, 0, 0),
+        run: step,
+    };
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    m.start_hybrid("P.COM", vec![o]).set_all(Mode::Capture);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let hybrid = m.hybrid.take().unwrap();
+    assert_eq!(hybrid.stats[0].captured, MAX_CAPTURES + 1);
+    assert_eq!(hybrid.captures.last().unwrap().entry.gpr[1], 250, "the call that took the rare branch");
+    assert_eq!(hybrid.stats[0].searched, 300 - MAX_CAPTURES);
+    const { assert!(300 - MAX_CAPTURES < SEARCH_CALLS) };
+}
+
+#[test]
 fn a_captured_call_into_the_program_replays_with_its_code() {
     use dos::capture::{Capture, calls_program, replay};
     use dos::hybrid::{Call, Convention, Mode, Override, regs};
