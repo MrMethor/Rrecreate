@@ -245,8 +245,8 @@ pub(crate) const ROM_WAIT_RETRACE: u16 = 0x9230;
 const ROM_PM_INTERFACE: u16 = 0x9260;
 
 const OEM_STRING: &str = "S3 Incorporated. Trio64";
-const VENDOR_NAME: &str = "Recreate";
-const PRODUCT_NAME: &str = "Recreate";
+const VENDOR_NAME: &str = "Clockwork";
+const PRODUCT_NAME: &str = "Clockwork";
 const PRODUCT_REVISION: &str = env!("CARGO_PKG_VERSION");
 
 /// Waits until the next vertical retrace starts (DOSBox's `CB_VESA_WAIT` and `CB_VESA_PM`).

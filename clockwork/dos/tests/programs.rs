@@ -2270,7 +2270,7 @@ fn vbe_controller_and_mode_information() {
     assert_eq!(m.mem.read_bytes(buf, 4), b"VESA");
     assert_eq!(word(buf + 4), 0x0200, "VBE 2.0");
     assert_eq!(c_string(&m, far_to_linear(m.mem.read_u32(buf + 6))), "S3 Incorporated. Trio64");
-    assert_eq!(c_string(&m, far_to_linear(m.mem.read_u32(buf + 0x16))), "Recreate", "vendor");
+    assert_eq!(c_string(&m, far_to_linear(m.mem.read_u32(buf + 0x16))), "Clockwork", "vendor");
     assert_eq!(word(buf + 0x12), 64, "4 MB in 64 KB blocks");
     let list = far_to_linear(m.mem.read_u32(buf + 0x0E));
     let modes: Vec<u16> = (0..).map(|i| word(list + 2 * i)).take_while(|&mode| mode != 0xFFFF).collect();

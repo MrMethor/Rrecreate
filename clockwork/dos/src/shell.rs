@@ -556,7 +556,7 @@ impl Shell {
                 Next::Yield
             }
             "VER" => {
-                self.print(m, "\r\nMS-DOS Version 5.00 (Recreate)\r\n\r\n");
+                self.print(m, "\r\nMS-DOS Version 5.00 (Clockwork)\r\n\r\n");
                 Next::Yield
             }
             "EXIT" => {
