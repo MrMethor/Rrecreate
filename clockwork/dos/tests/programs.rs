@@ -3304,7 +3304,7 @@ fn a_watch_names_the_instruction_and_its_callers() {
     let mut m = boot(&[("W.COM", &program)], "W.COM");
     let base = u32::from(m.dos.psp) << 4;
     let value = base + o["value"];
-    m.start_watch(dos::watch::Watch::new(vec![value..value + 2], false));
+    m.start_watch(dos::watch::Watch::range(value..value + 2, false));
     assert_eq!(m.run(SECOND), Stop::Exited(0));
     let watch = m.take_watch().unwrap();
     let callers = vec![(o["setter"], o["after_setter"], false), (o["outer"], o["after_outer"], false)];
@@ -3341,7 +3341,7 @@ fn a_watch_names_the_service_that_wrote() {
     let mut m = boot(&[("W.COM", &program)], "W.COM");
     let base = u32::from(m.dos.psp) << 4;
     let buffer = base + o["buffer"];
-    m.start_watch(dos::watch::Watch::new(vec![buffer..buffer + 4], false));
+    m.start_watch(dos::watch::Watch::range(buffer..buffer + 4, false));
     assert_eq!(m.run(SECOND), Stop::Exited(0));
     let watch = m.take_watch().unwrap();
     let [hit] = &watch.hits[..] else { panic!("{:?}", watch.hits) };
@@ -3398,7 +3398,7 @@ fn a_watch_sees_an_interrupt_handler_and_reads() {
     let mut m = boot(&[("W.COM", &program)], "W.COM");
     let base = u32::from(m.dos.psp) << 4;
     let counter = base + o["counter"];
-    m.start_watch(dos::watch::Watch::new(vec![counter..counter + 2], true));
+    m.start_watch(dos::watch::Watch::range(counter..counter + 2, true));
     assert_eq!(m.run(SECOND), Stop::Exited(0));
     let watch = m.take_watch().unwrap();
     let writes: Vec<_> = watch.hits.iter().filter(|h| h.kind == dos::watch::Kind::Write).collect();

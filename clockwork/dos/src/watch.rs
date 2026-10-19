@@ -108,6 +108,11 @@ impl Watch {
         }
     }
 
+    /// Watches one range.
+    pub fn range(range: Range<u32>, reads: bool) -> Self {
+        Self::new(std::iter::once(range).collect(), reads)
+    }
+
     #[inline]
     fn watched(&self, address: u32) -> bool {
         self.bounds.contains(&address) && self.ranges.iter().any(|r| r.contains(&address))
