@@ -28,8 +28,7 @@ use iced_x86::{
 };
 use machine::memory::Memory;
 
-use crate::capture::Access;
-use crate::hybrid::{Convention, regs};
+use crate::memtrace::Access;
 
 /// Registers and flags as bits ("units"): for AX, CX, DX, BX, SP, BP, SI, DI (`cpu::Regs`
 /// order) the low byte, high byte and upper half (bits 3r, 3r+1, 3r+2); ES, CS, SS, DS, FS, GS
@@ -326,55 +325,9 @@ pub fn flag_names(mask: u64) -> Vec<&'static str> {
     FLAG_NAMES.iter().enumerate().filter(|&(f, _)| mask & units::flag(f) != 0).map(|(_, &n)| n).collect()
 }
 
-/// [`crate::hybrid::regs`] bits of the registers with any unit in `mask`.
-fn hybrid_regs(mask: u64) -> u16 {
-    let gpr = (0..8).filter(|&r| mask & (units::word(r) | units::upper(r)) != 0).fold(0, |m, r| m | 1 << r);
-    (0..4).filter(|&s| mask & units::seg(s) != 0).fold(gpr, |m, s| m | 1 << (8 + s))
-}
-
 fn return_names(returns: u8) -> String {
     let names = [(NEAR, "near"), (FAR, "far"), (IRET, "iret")];
     names.iter().filter(|&&(bit, _)| returns & bit != 0).map(|&(_, n)| n).collect::<Vec<_>>().join("/")
-}
-
-/// Where an inferred contract disagrees with an override's convention: what dual-run would miss
-/// or wrongly report.
-pub fn check(c: &Contract, conv: &Convention) -> Vec<String> {
-    let mut notes = Vec::new();
-    if c.calls == 0 {
-        return notes;
-    }
-    let declared = if conv.far { FAR } else { NEAR };
-    if c.returns & !declared != 0 {
-        notes.push(format!("returns {}, the convention says {}", return_names(c.returns), return_names(declared)));
-    }
-    if c.pops.iter().any(|&p| p != conv.pops) {
-        let pops: Vec<String> = c.pops.iter().map(u16::to_string).collect();
-        notes.push(format!("pops {} bytes, the convention says {}", pops.join(" or "), conv.pops));
-    }
-    let unread = hybrid_regs(c.outputs) & !(conv.outputs | conv.preserved);
-    if unread != 0 {
-        notes.push(format!("callers read {} after it returns; the convention doesn't compare it", reg_list(unread)));
-    }
-    let unread = (0..8)
-        .filter(|&f| c.outputs & units::flag(f) != 0 && conv.flags & 1 << FLAG_BITS[f] == 0)
-        .fold(0, |m, f| m | units::flag(f));
-    if unread != 0 {
-        let names = flag_names(unread).join(", ");
-        notes.push(format!("callers read {names} after it returns; the convention doesn't compare it"));
-    }
-    let changed = hybrid_regs(!c.preserved & !STRUCTURAL & !FLAGS) & conv.preserved;
-    if changed != 0 {
-        notes.push(format!("calls changed {}, which the convention says is preserved", reg_list(changed)));
-    }
-    if c.arg_bytes > conv.args {
-        notes.push(format!("reads {} bytes of stack arguments, the convention says {}", c.arg_bytes, conv.args));
-    }
-    notes
-}
-
-fn reg_list(bits: u16) -> String {
-    regs::NAMES.iter().enumerate().filter(|&(i, _)| bits & 1 << i != 0).map(|(_, n)| *n).collect::<Vec<_>>().join(", ")
 }
 
 /// What a frame closes over.
@@ -712,7 +665,6 @@ impl Contracts {
             let (addr, write) = match access {
                 Access::Read(addr, _) => (addr, false),
                 Access::Write(addr, _) => (addr, true),
-                Access::InterruptWrite(_) | Access::Fetch(..) => continue,
                 Access::Port => {
                     if let Some((offset, ..)) = frame {
                         self.functions.entry(offset).or_default().ports = true;
@@ -907,34 +859,5 @@ mod tests {
     fn names_of_partial_registers() {
         assert_eq!(register_names(units::high(0) | units::low(2) | units::word(6)), ["AH", "DL", "SI"]);
         assert_eq!(register_names(units::upper(1)), ["ECX:high"]);
-        assert_eq!(hybrid_regs(units::high(0) | units::seg(3)), regs::AX | regs::DS);
-    }
-
-    #[test]
-    fn a_convention_is_checked_against_a_contract() {
-        let c = Contract {
-            calls: 3,
-            outputs: units::word(0) | units::word(2) | units::flag(0),
-            preserved: !(units::word(0) | units::word(2) | units::word(6) | FLAGS),
-            pops: [4].into(),
-            returns: FAR,
-            arg_bytes: 6,
-            ..Contract::default()
-        };
-        let conv = Convention::pascal(true, 4, regs::AX);
-        assert_eq!(
-            check(&c, &conv),
-            [
-                "callers read DX after it returns; the convention doesn't compare it",
-                "callers read CF after it returns; the convention doesn't compare it",
-                "calls changed SI, which the convention says is preserved",
-                "reads 6 bytes of stack arguments, the convention says 4",
-            ]
-        );
-        let conv =
-            Convention::custom(false, 4, regs::AX | regs::DX, Convention::cdecl(false, 0, 0).preserved & !regs::SI, 1);
-        let mut c = c;
-        c.arg_bytes = 4;
-        assert_eq!(check(&c, &conv), ["returns far, the convention says near"]);
     }
 }

@@ -30,11 +30,6 @@ impl Pic {
         self.irr |= 1 << line;
     }
 
-    /// Whether `line` has no request waiting and none in service.
-    pub fn quiet(&self, line: u8) -> bool {
-        (self.irr | self.isr) & (1 << line) == 0
-    }
-
     /// Withdraws a request on `line` that hasn't been delivered yet (the device deasserted it).
     pub fn lower(&mut self, line: u8) {
         self.irr &= !(1 << line);

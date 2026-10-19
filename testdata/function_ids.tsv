@@ -1,0 +1,23 @@
+# Shared function-ID test vectors, read by both the Rust (host/machine) and Python (tools/rec) tests.
+# Columns (tab-separated): expect  text  module  overlay  offset_hex   ("-" = none / not applicable)
+# Canonical form: <MODULE>[#<overlay>]+<offset>, offset uppercase hex, at least 5 digits, at most 8.
+ok	GAME.EXE+0A4D2	GAME.EXE	-	0A4D2
+ok	GAME.EXE#3+00120	GAME.EXE	3	00120
+ok	KEEN1.EXE+00000	KEEN1.EXE	-	00000
+ok	DOOM.EXE+12ABCD	DOOM.EXE	-	12ABCD
+ok	A+FFFFFFFF	A	-	FFFFFFFF
+ok	SETUP_2.OVL#65535+FFFFF	SETUP_2.OVL	65535	FFFFF
+err	GAME.EXE+A4D2	-	-	-
+err	GAME.EXE+0a4d2	-	-	-
+err	GAME.EXE	-	-	-
+err	+0A4D2	-	-	-
+err	game.exe+0A4D2	-	-	-
+err	GAME.EXE#+00120	-	-	-
+err	GAME.EXE#03+00120	-	-	-
+err	GAME.EXE#65536+00120	-	-	-
+err	GAME EXE+0A4D2	-	-	-
+err	GAME.EXE+0A4D2+1	-	-	-
+err	GAME.EXE+123456789	-	-	-
+err	GAME.EXE+0012ABCD	-	-	-
+err	DIR/GAME.EXE+0A4D2	-	-	-
+err		-	-	-

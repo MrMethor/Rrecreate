@@ -5,7 +5,6 @@
 
 pub mod audio;
 pub mod bios;
-pub mod capture;
 pub mod cdrom;
 pub mod clock;
 pub mod cmos;
@@ -16,11 +15,10 @@ pub mod dos;
 pub mod dpmi;
 pub mod ems;
 pub mod fonts;
-pub mod hybrid;
 pub mod joystick;
 pub mod keyboard;
-pub mod lockstep;
 mod machine;
+mod memtrace;
 pub mod mouse;
 pub mod mpu401;
 mod mz;

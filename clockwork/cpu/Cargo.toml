@@ -1,11 +1,11 @@
 [package]
 name = "cpu"
-description = "Deterministic x86 CPU interpreter (real, protected and virtual-8086 mode) for the Recreate host"
+description = "Deterministic x86 CPU interpreter (real, protected and virtual-8086 mode) for Clockwork"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-license.workspace = true
+license = "GPL-2.0-or-later"
 
 [dependencies]
 # Transcendental functions that give the same bits on every host (x87 FSIN, FYL2X, ...).

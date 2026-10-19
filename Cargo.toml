@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["clockwork/cpu", "clockwork/machine", "clockwork/dos", "clockwork/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+# Clockwork's crates are GPL-2.0-or-later and say so themselves.
+license = "MIT"
+
+[workspace.dependencies]
+cpu = { path = "clockwork/cpu" }
+dos = { path = "clockwork/dos" }
+machine = { path = "clockwork/machine" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"

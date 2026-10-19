@@ -1,13 +1,10 @@
-//! `rec-host`: runs a DOS program on the Recreate host (PROJECT.md §5.2). The command line lives
-//! in this library so that `rec-host-py` (overrides written in Python) is the same program plus an
-//! [`Extension`].
+//! `clockwork`: runs a DOS program on Clockwork.
 //!
 //! `run` is headless and prints a short summary (or JSON) meant for tools and agents.
 //! `play` opens a window, takes keyboard input, and can record it as a session that `run
 //! --replay` reproduces bit for bit.
 
 mod gamepads;
-mod games;
 mod hotspots;
 mod input_script;
 mod listing;
@@ -27,17 +24,11 @@ use crate::session::Session;
 
 const USAGE: &str = "\
 usage:
-  rec-host run  <game-dir> <program> [options]   run headless and print a summary
-  rec-host play <game-dir> <program> [options]   run in a window with keyboard input
-  rec-host unpack <program> --out FILE [--json]  undo an executable packer (PKLITE, LZEXE, ...) by
+  clockwork run  <game-dir> <program> [options]  run headless and print a summary
+  clockwork play <game-dir> <program> [options]  run in a window with keyboard input
+  clockwork unpack <program> --out FILE [--json] undo an executable packer (PKLITE, LZEXE, ...) by
                                                  running it to its entry point; writes an MZ file
-  rec-host replay (--game NAME | --python FILE) --program MODULE FILE [--json]
-                                                 replay captured calls (one per line, from
-                                                 run --captures-out) against the game's overrides;
-                                                 exit code 3 when a call fails
-  rec-host overrides (--game NAME | --python FILE) --program MODULE [--json]
-                                                 the functions the game's overrides implement
-  rec-host listing <image> --entry OFFSET --segment SEG
+  clockwork listing <image> --entry OFFSET --segment SEG
                                                  a function's code from a load image (hex image
                                                  offset and link segment), following its control
                                                  flow and jump tables, in image offsets
@@ -58,28 +49,10 @@ options:
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final screen as a PNG (FILE.png) or a BMP
   --wav FILE         run: save the sound (OPL and Sound Blaster) as a WAV file
-  --game NAME        run: load the Rust overrides game crate NAME has for the program (testbins)
-  --python FILE      run: load the overrides a Python module registers instead (rec-host-py only)
-  --rust LIST        run: these overrides (names or image offsets, comma-separated, or all) run
-                     in Rust instead of the original
-  --dual LIST        run: these overrides are checked against the original at every call (up
-                     to 100 each): differences are reported as findings
-  --capture LIST     run: the calls to these functions (overrides, or any function by image
-                     offset, +1C3E0) are captured as test vectors
-  --captures-out FILE  run: write the captured calls there, one per line
-  --poison LIST      run: after each call to these functions' originals, put junk in the registers
-                     and result flags their conventions don't compare; compare the run's
-                     frames_hash, audio, console and files with a plain run's
-  --diff             run: with --rust, run in lockstep with the originals (each hooked call
-                     atomic on both sides, the overrides charged the originals' cycles) and
-                     compare the machines at checkpoints; the first divergence is traced to the
-                     call that caused it, reported as a finding (a session diff)
-  --diff-every MS    run: with --diff, emulated milliseconds between checkpoints (default 100)
   --coverage FILE    run: record which instructions of the program's image ran and the calls it
-                     made (JSON, for rec); with --diff, as the originals ran them
+                     made (JSON)
   --contracts FILE   run: infer each called function's contract (registers read and returned,
-                     registers preserved, stack arguments and pops, memory use; JSON, for rec);
-                     with --game, report where an override's convention disagrees
+                     registers preserved, stack arguments and pops, memory use; JSON)
   --save-changes DIR run: afterwards, write the files the program created or changed to DIR
                      (same paths as on C:; the game folder itself is never touched), e.g. what
                      an installer unpacked
@@ -139,15 +112,6 @@ struct Options {
     save_changes: Option<PathBuf>,
     coverage: Option<PathBuf>,
     contracts: Option<PathBuf>,
-    game: Option<String>,
-    python: Option<PathBuf>,
-    rust: Vec<String>,
-    dual: Vec<String>,
-    capture: Vec<String>,
-    poison: Vec<String>,
-    diff: bool,
-    diff_every_ms: u64,
-    captures_out: Option<PathBuf>,
     sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     json: bool,
     record: Option<PathBuf>,
@@ -191,85 +155,20 @@ fn save_changes(m: &Machine, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Overrides from outside the game crates: what `rec-host-py` adds (Python modules).
-pub trait Extension {
-    /// Loads the overrides the file at `path` registers for `module` (the program's file name).
-    fn load(&self, path: &Path, module: &str) -> Result<Loaded, String>;
-}
-
-/// Overrides an [`Extension`] loaded.
-pub struct Loaded {
-    pub overrides: Vec<dos::hybrid::Override>,
-    pub signatures: Vec<dos::hybrid::Signature>,
-    /// `<name>@<digest of the sources>`, for verification claims.
-    pub implementation: String,
-}
-
-/// A run's overrides, from a game crate or an extension.
-struct Source {
-    overrides: Vec<dos::hybrid::Override>,
-    signatures: Vec<dos::hybrid::Signature>,
-    crate_name: String,
-    implementation: String,
-}
-
-fn load_source(
-    game: Option<&str>,
-    python: Option<&Path>,
-    program: &str,
-    extension: Option<&dyn Extension>,
-) -> Result<Option<Source>, String> {
-    match (game, python) {
-        (Some(_), Some(_)) => Err("--game and --python exclude each other".into()),
-        (Some(game), None) => Ok(Some(Source {
-            overrides: games::overrides(game, program)?,
-            signatures: games::signatures(game, program).to_vec(),
-            crate_name: games::crate_of(game).to_string(),
-            implementation: games::implementation(game),
-        })),
-        (None, Some(path)) => {
-            let extension = extension.ok_or("--python needs rec-host-py (rec-host has no Python)")?;
-            let loaded = extension.load(path, &games::module_of(program))?;
-            Ok(Some(Source {
-                overrides: loaded.overrides,
-                signatures: loaded.signatures,
-                crate_name: "python".into(),
-                implementation: loaded.implementation,
-            }))
-        }
-        (None, None) => Ok(None),
-    }
-}
-
-/// The command line, for `rec-host` (no extension) and `rec-host-py`. It runs on a thread with a
-/// large stack: overrides, captures and dual-runs run the machine nested, a level per call.
-pub fn main_with(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(256 << 20)
-            .spawn_scoped(scope, || command_line(extension))
-            .expect("a thread for the command line")
-            .join()
-            .unwrap_or(ExitCode::from(101))
-    })
-}
-
-fn command_line(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
-    let extension = extension.map(|e| e as &dyn Extension);
+/// The command line.
+pub fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
     let result = match args.first().map(String::as_str) {
-        Some("run") => parse_options(&args[1..]).and_then(|o| cmd_run(&o, extension)),
+        Some("run") => parse_options(&args[1..]).and_then(|o| cmd_run(&o)),
         Some("play") => parse_options(&args[1..]).and_then(|o| play::run(&o)),
         Some("unpack") => cmd_unpack(&args[1..]),
         Some("listing") => listing::cmd_listing(&args[1..]),
-        Some("replay") => games::cmd_replay(&args[1..], extension),
-        Some("overrides") => games::cmd_overrides(&args[1..], extension),
         Some("--version") => {
-            println!("rec-host {}", env!("CARGO_PKG_VERSION"));
+            println!("clockwork {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
         _ => {
@@ -278,7 +177,7 @@ fn command_line(extension: Option<&(dyn Extension + Sync)>) -> ExitCode {
         }
     };
     result.unwrap_or_else(|message| {
-        eprintln!("rec-host: error: {message}");
+        eprintln!("clockwork: error: {message}");
         ExitCode::from(1)
     })
 }
@@ -337,7 +236,7 @@ fn cmd_unpack(args: &[String]) -> Result<ExitCode, String> {
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
-    let mut options = Options { type_at_ms: 500, scale: 2, diff_every_ms: 100, ..Options::default() };
+    let mut options = Options { type_at_ms: 500, scale: 2, ..Options::default() };
     let mut positional = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -362,17 +261,6 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--save-changes" => options.save_changes = Some(value(arg)?.into()),
             "--coverage" => options.coverage = Some(value(arg)?.into()),
             "--contracts" => options.contracts = Some(value(arg)?.into()),
-            "--game" => options.game = Some(value(arg)?),
-            "--python" => options.python = Some(value(arg)?.into()),
-            "--rust" => options.rust.push(value(arg)?),
-            "--dual" => options.dual.push(value(arg)?),
-            "--capture" => options.capture.push(value(arg)?),
-            "--poison" => options.poison.push(value(arg)?),
-            "--diff" => options.diff = true,
-            "--diff-every" => {
-                options.diff_every_ms = value(arg)?.parse().map_err(|_| "--diff-every needs milliseconds")?;
-            }
-            "--captures-out" => options.captures_out = Some(value(arg)?.into()),
             "--sb" => options.sound_blaster = Some(sound_blaster(&value(arg)?)?),
             "--json" => options.json = true,
             "--trace" => options.trace = Some(value(arg)?.into()),
@@ -533,7 +421,7 @@ fn boot(o: &Options, program: &str, args: &str, ips: u64) -> Result<Machine, Str
     Ok(m)
 }
 
-fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, String> {
+fn cmd_run(o: &Options) -> Result<ExitCode, String> {
     let session = o.replay.as_deref().map(Session::load).transpose()?;
     let (program, args, ips) = match &session {
         Some(s) => (s.program.clone(), s.args.clone(), o.ips.unwrap_or(s.instructions_per_second)),
@@ -546,27 +434,7 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
         m.start_coverage();
     }
     if o.contracts.is_some() {
-        if !o.rust.is_empty() || !o.dual.is_empty() || !o.capture.is_empty() {
-            return Err("--contracts watches the originals: not with --rust, --dual or --capture".into());
-        }
         m.start_contracts();
-    }
-    let source = load_source(o.game.as_deref(), o.python.as_deref(), &program, extension)?;
-    if source.is_none() && (!o.rust.is_empty() || !o.dual.is_empty() || !o.poison.is_empty()) {
-        return Err("--rust, --dual and --poison need --game or --python".into());
-    }
-    let (crate_name, implementation) =
-        source.as_ref().map(|s| (s.crate_name.clone(), s.implementation.clone())).unwrap_or_default();
-    if source.is_some() || !o.capture.is_empty() {
-        let (overrides, signatures) = source.map(|s| (s.overrides, s.signatures)).unwrap_or_default();
-        // Functions captured by offset that have no override yet.
-        let overrides = games::with_placeholders(overrides, &o.capture)?;
-        let hybrid = m.start_hybrid(&games::module_of(&program), overrides);
-        hybrid.expect(&signatures);
-        games::set_modes(hybrid, &o.rust, dos::hybrid::Mode::Rust)?;
-        games::set_modes(hybrid, &o.dual, dos::hybrid::Mode::Dual)?;
-        games::set_modes(hybrid, &o.capture, dos::hybrid::Mode::Capture)?;
-        games::set_modes(hybrid, &o.poison, dos::hybrid::Mode::Poison)?;
     }
     if let Some(session) = &session {
         for &(cycle, input) in &session.inputs {
@@ -595,21 +463,7 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
         m.exec_watch = Some(start..start.wrapping_add(length));
     }
     let limit = (o.seconds.unwrap_or(10.0) * ips as f64) as u64;
-    if o.diff && (o.rust.is_empty() || !o.dual.is_empty() || !o.capture.is_empty() || !o.poison.is_empty()) {
-        return Err(
-            "--diff compares overrides in Rust (--rust) with the originals: not with --dual, --capture or --poison"
-                .into(),
-        );
-    }
-    let mut diff = None;
-    let (stop, profile) = if o.diff {
-        let (until, interval) = (m.cpu.cycles + limit, m.cycle_at_ms(o.diff_every_ms));
-        let (after, found) = dos::lockstep::diff(m, until, interval);
-        m = after;
-        let stop = found.stop.clone();
-        diff = Some(found);
-        (stop, None)
-    } else if o.hotspots > 0 {
+    let (stop, profile) = if o.hotspots > 0 {
         let (stop, profile) = hotspots::run_sampled(&mut m, limit);
         (stop, Some(profile))
     } else {
@@ -629,23 +483,13 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
     if let Some(dir) = &o.save_changes {
         save_changes(&m, dir)?;
     }
-    if let (Some(path), Some(hybrid)) = (&o.captures_out, &m.hybrid) {
-        let text: String = hybrid.captures.iter().map(|c| c.to_line() + "\n").collect();
-        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-    }
     if let (Some(path), Some(coverage)) = (&o.coverage, &m.coverage) {
         std::fs::write(path, coverage.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if let (Some(path), Some(contracts)) = (&o.contracts, &m.contracts) {
         std::fs::write(path, contracts.to_json(&program)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    let mut summary = Summary::new(&m, &stop);
-    if let Some(d) = &diff {
-        summary.diff_json = diff_json(d);
-        summary.diff_line = Some(diff_line(d, &m));
-    }
-    summary.crate_name = crate_name;
-    summary.implementation = implementation;
+    let summary = Summary::new(&m, &stop);
     if let Some(profile) = &profile {
         profile.print(&m, o.hotspots);
     }
@@ -729,8 +573,8 @@ fn cmd_run(o: &Options, extension: Option<&dyn Extension>) -> Result<ExitCode, S
     } else {
         summary.print(&m);
     }
-    // A fault or a failed override (an error, a signature mismatch) stops the run: fail loud.
-    Ok(if matches!(stop, Stop::Fault(_) | Stop::Override(_)) { ExitCode::from(2) } else { ExitCode::SUCCESS })
+    // A fault stops the run: fail loud.
+    Ok(if matches!(stop, Stop::Fault(_)) { ExitCode::from(2) } else { ExitCode::SUCCESS })
 }
 
 struct Summary {
@@ -754,17 +598,7 @@ struct Summary {
     console_hash: u64,
     issues: Vec<String>,
     files_changed: Vec<String>,
-    hybrid_lines: Vec<String>,
-    stats_json: String,
-    findings_json: String,
     contract_lines: Vec<String>,
-    contract_notes: Vec<(String, String)>,
-    /// The game crate whose overrides were loaded (`--game`) and its source digest, empty if none.
-    crate_name: String,
-    implementation: String,
-    /// With `--diff`: what the session diff found.
-    diff_json: String,
-    diff_line: Option<String>,
 }
 
 impl Summary {
@@ -775,9 +609,6 @@ impl Summary {
             Stop::WaitingForInput => "waiting for keyboard input".into(),
             Stop::Halted => "halted with interrupts disabled".into(),
             Stop::Fault(exit) => format!("fault: {exit}"),
-            Stop::Override(message) => format!("override failed: {message}"),
-            Stop::Returned => "returned".into(),
-            Stop::Hooked(_) => "at a hooked entry".into(),
         };
         let mut issues: Vec<String> = m.diagnostics.iter().cloned().collect();
         if !m.devices.unknown_ports.is_empty() {
@@ -810,18 +641,7 @@ impl Summary {
             console_hash: fnv64(&m.console),
             issues,
             files_changed: m.drive.changed().map(String::from).collect(),
-            hybrid_lines: m.hybrid.as_deref().map(games::summary_lines).unwrap_or_default(),
-            stats_json: m.hybrid.as_deref().map_or("[]".into(), games::stats_json),
-            findings_json: m.hybrid.as_deref().map_or("[]".into(), games::findings_json),
-            contract_lines: m.contracts.as_deref().map(games::contract_lines).unwrap_or_default(),
-            crate_name: String::new(),
-            implementation: String::new(),
-            diff_json: "null".into(),
-            diff_line: None,
-            contract_notes: match (m.hybrid.as_deref(), m.contracts.as_deref()) {
-                (Some(hybrid), Some(contracts)) => games::contract_notes(hybrid, contracts),
-                _ => Vec::new(),
-            },
+            contract_lines: m.contracts.as_deref().map(contract_lines).unwrap_or_default(),
         }
     }
 
@@ -850,17 +670,8 @@ impl Summary {
         for issue in &self.issues {
             println!("issue     {issue}");
         }
-        if let Some(line) = &self.diff_line {
-            println!("diff      {line}");
-        }
-        for line in &self.hybrid_lines {
-            println!("{line}");
-        }
         for line in &self.contract_lines {
             println!("{line}");
-        }
-        for (name, note) in &self.contract_notes {
-            println!("contract  {name}: {note}");
         }
         if let Some(lines) = m.screen_text() {
             let last = lines.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1);
@@ -880,7 +691,7 @@ impl Summary {
             format!(r#"{{"number":{},"cycle":{},"mode":{},"hash":"{:016x}"}}"#, f.number, f.cycle, f.mode, f.hash)
         });
         format!(
-            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","frames_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{},"overrides":{},"override_stats":{},"findings":{},"contract_notes":[{}],"crate":{},"implementation":{},"diff":{}}}"#,
+            r#"{{"stop":{},"exit_code":{},"cycles":{},"elapsed_ms":{},"frames":{},"distinct_frames":{},"midi_bytes":{},"speaker_events":{},"opl_writes":{},"pcm_frames":{},"audio_hash":"{:016x}","frames_hash":"{:016x}","last_frame":{},"state_hash":"{:016x}","console_hash":"{:016x}","issues":{},"files_changed":{}}}"#,
             json_string(&self.stop),
             self.exit_code.map_or("null".into(), |c| c.to_string()),
             self.cycles,
@@ -898,47 +709,14 @@ impl Summary {
             self.console_hash,
             strings(&self.issues),
             strings(&self.files_changed),
-            strings(&self.hybrid_lines[..self.hybrid_lines.len().min(1)]),
-            self.stats_json,
-            self.findings_json,
-            self.contract_notes
-                .iter()
-                .map(|(name, note)| format!(r#"{{"name":{},"note":{}}}"#, json_string(name), json_string(note)))
-                .collect::<Vec<_>>()
-                .join(","),
-            json_string(&self.crate_name),
-            json_string(&self.implementation),
-            self.diff_json,
         )
     }
 }
 
-/// A session diff as JSON: checkpoints, calls and the divergence (null if none).
-fn diff_json(d: &dos::lockstep::Diff) -> String {
-    let divergence = d.divergence.as_ref().map_or("null".into(), |v| {
-        format!(
-            r#"{{"equal_at":{},"found_at":{},"what":{},"call":{}}}"#,
-            v.equal_at,
-            v.found_at,
-            json_string(&v.what),
-            v.call.map_or("null".into(), |c| c.to_string())
-        )
-    });
-    format!(r#"{{"checkpoints":{},"calls":{},"divergence":{divergence}}}"#, d.checkpoints, d.calls)
-}
-
-fn diff_line(d: &dos::lockstep::Diff, m: &Machine) -> String {
-    let ms = |cycle: u64| cycle * 1000 / m.config.instructions_per_second.max(1);
-    match &d.divergence {
-        None => format!("no divergence: {} checkpoints, {} hooked calls", d.checkpoints, d.calls),
-        Some(v) => format!(
-            "diverged between {} and {} ms ({}){}",
-            ms(v.equal_at),
-            ms(v.found_at),
-            v.what,
-            v.call.map_or(String::new(), |c| format!(", after hooked call {c}: see the last finding"))
-        ),
-    }
+/// What contract inference saw.
+fn contract_lines(contracts: &dos::contracts::Contracts) -> Vec<String> {
+    let calls: u64 = contracts.functions.values().map(|c| c.calls + c.abnormal).sum();
+    vec![format!("contracts {} functions called, {calls} calls", contracts.functions.len())]
 }
 
 /// PIT channel 0 rate and the owners of the timer vectors (INT 08h, INT 1Ch).

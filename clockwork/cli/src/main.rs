@@ -1,5 +1,5 @@
-//! `rec-host`: the command line of [`frontend`], without extensions.
+//! `clockwork`: Clockwork's command line.
 
 fn main() -> std::process::ExitCode {
-    frontend::main_with(None)
+    clockwork::main()
 }

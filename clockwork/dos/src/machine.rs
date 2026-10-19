@@ -134,45 +134,10 @@ pub enum Stop {
     /// The CPU met an instruction it doesn't implement, or one asking for something the host
     /// doesn't emulate (such as protected mode).
     Fault(cpu::Exit),
-    /// A Rust override failed (see [`crate::hybrid`]).
-    Override(String),
-    /// A nested run reached the return it was waiting for (internal to [`crate::hybrid`]).
-    Returned,
-    /// At the entry of hooked function number `n` (internal to [`crate::lockstep`]).
-    Hooked(usize),
 }
 
 /// Extended memory is limited to what a 24-bit (286/386SX) address bus reaches: 16 MB in all.
 pub const MAX_EXTENDED_KB: u32 = 15 * 1024;
-
-/// A session diff's call that takes interrupts: when it began, and the places interrupts
-/// interrupted (inside a handler while any). Its own port writes are logged at its start.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct CallWrites {
-    pub(crate) since: u64,
-    pub(crate) interrupted: Vec<(u16, u16, u16, u16)>,
-}
-
-impl CallWrites {
-    /// Whether a handler runs: an interrupted place the CPU isn't back at (an override's wait
-    /// returns there before an instruction would let [`CallWrites::step`] see it).
-    fn in_handler(&self, regs: &cpu::Regs) -> bool {
-        let here = (regs.cs(), regs.ip as u16, regs.ss(), regs.sp());
-        self.interrupted.iter().any(|&place| place != here)
-    }
-
-    /// Before each instruction: back from the handlers that interrupted this place?
-    fn step(&mut self, regs: &cpu::Regs) {
-        while let Some(&(cs, ip, ss, sp)) = self.interrupted.last()
-            && regs.cs() == cs
-            && regs.ip as u16 == ip
-            && regs.ss() == ss
-            && regs.sp() == sp
-        {
-            self.interrupted.pop();
-        }
-    }
-}
 
 /// One displayed frame, fingerprinted at the start of vertical retrace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -395,9 +360,6 @@ pub(crate) struct PcBus<'a> {
     mem: &'a mut Memory,
     dev: &'a mut Devices,
     now: u64,
-    /// The time port writes are logged at: `now`, or during an atomic call its start
-    /// ([`Machine::set_atomic`]).
-    write_now: u64,
 }
 
 /// Physical addresses from here up can't be RAM (16 MB at most); the linear frame buffer is
@@ -537,7 +499,7 @@ impl Bus for PcBus<'_> {
     }
 
     fn port_out_u8(&mut self, port: u16, value: u8) {
-        if let Some(ControllerEffect::SetA20(on)) = self.dev.port_out(port, value, self.write_now, self.mem) {
+        if let Some(ControllerEffect::SetA20(on)) = self.dev.port_out(port, value, self.now, self.mem) {
             self.mem.set_a20(on);
         }
     }
@@ -574,43 +536,9 @@ pub struct Machine {
     pub coverage: Option<crate::coverage::Coverage>,
     /// Contract inference ([`Machine::start_contracts`]).
     pub contracts: Option<Box<crate::contracts::Contracts>>,
-    /// Rust overrides of the started program's functions, once [`Machine::start_hybrid`] was
-    /// called (not part of the machine state).
-    pub hybrid: Option<Box<crate::hybrid::Hybrid>>,
     /// The CD drive's disc image, if it shows one (an input, like the drive's files: not part
     /// of the machine state). Without one the drive's folder is a disc with one data track.
     pub cd_image: Option<std::sync::Arc<crate::cdrom::CdImage>>,
-    /// Where a nested run (an override calling the program, a dual-run) stops.
-    pub(crate) return_trap: Option<crate::hybrid::ReturnTrap>,
-    /// While a dual-run's original runs: what interrupt handlers write.
-    pub(crate) isr_watch: Option<crate::hybrid::IsrWatch>,
-    /// While a captured call runs: its accesses.
-    pub(crate) tracer: Option<Box<crate::capture::Tracer>>,
-    /// While a session diff's reference runs a call that waits for interrupts: the cycles it took
-    /// them at, and the cycles it serviced device events at ([`crate::lockstep`]).
-    pub(crate) irq_log: Option<Vec<u64>>,
-    pub(crate) service_log: Option<Vec<u64>>,
-    /// While the test machine stands in for that call: interrupts are taken and device events
-    /// serviced only at these cycles, the reference's, so that handlers run, sound advances and
-    /// frames are captured at the same times on both machines.
-    pub(crate) irq_schedule: Option<VecDeque<u64>>,
-    pub(crate) service_schedule: Option<VecDeque<u64>>,
-    /// During such a call: its own port writes are logged at its start, as in an atomic call,
-    /// and the handlers' at their time.
-    pub(crate) call_writes: Option<CallWrites>,
-    /// While a captured call replays: the memory it holds ([`crate::capture::replay`]).
-    pub(crate) replay: Option<Box<crate::capture::Held>>,
-    /// A hooked call in a session diff ([`crate::lockstep`]) or a replayed captured call: no
-    /// device events are serviced and no interrupt is taken until it returns.
-    pub(crate) atomic: bool,
-    /// When it began: port writes during it are logged at this time ([`Machine::set_atomic`]).
-    atomic_since: u64,
-    /// An atomic call just ended: the next servicing of devices catches up with it.
-    after_atomic: bool,
-    /// Timer ticks an atomic call held back past the one the PIC latches, delivered one after
-    /// another as IRQ 0 goes quiet: the program's clock doesn't lose the call's time (it would
-    /// only with interrupts off that long, which the program didn't ask for).
-    held_ticks: u64,
     /// Stop with [`Stop::WaitingForInput`] when a blocking keyboard read has nothing left to read
     /// (headless runs). Interactive frontends clear it so time keeps passing while waiting.
     pub stop_on_input_wait: bool,
@@ -649,21 +577,7 @@ impl Machine {
             exec_hits: Vec::new(),
             coverage: None,
             contracts: None,
-            hybrid: None,
             cd_image: None,
-            return_trap: None,
-            isr_watch: None,
-            tracer: None,
-            irq_log: None,
-            service_log: None,
-            irq_schedule: None,
-            service_schedule: None,
-            call_writes: None,
-            replay: None,
-            atomic: false,
-            atomic_since: 0,
-            after_atomic: false,
-            held_ticks: 0,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
             halted: false,
@@ -702,55 +616,18 @@ impl Machine {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
             }
-            if let Some(watch) = &mut self.isr_watch {
-                watch.step(&self.cpu.regs, &self.mem);
-            }
-            if let Some(trap) = &mut self.return_trap
-                && trap.reached(&self.cpu.regs, &self.mem)
-            {
-                return Stop::Returned;
-            }
             if self.cpu.cycles >= limit {
                 return Stop::CycleLimit;
             }
-            if !self.atomic && self.service_due() {
-                self.scheduled_service();
-            }
-            if self.held_ticks > 0 && !self.atomic && self.devices.pic.quiet(0) {
-                self.held_ticks -= 1;
-                self.devices.pic.raise(0);
+            if self.cpu.cycles >= self.next_event {
+                self.service_events();
             }
             if self.cpu.interrupts_enabled()
-                && !self.atomic
-                && self.irq_scheduled()
                 && let Some(vector) = self.devices.acknowledge()
             {
-                if let Some(schedule) = &mut self.irq_schedule {
-                    schedule.pop_front();
-                }
-                if let Some(log) = &mut self.irq_log {
-                    log.push(self.cpu.cycles);
-                }
-                if let Some(writes) = &mut self.call_writes {
-                    writes.interrupted.push((
-                        self.cpu.regs.cs(),
-                        self.cpu.regs.ip as u16,
-                        self.cpu.regs.ss(),
-                        self.cpu.regs.sp(),
-                    ));
-                }
                 let vector = crate::dpmi::irq_vector(self, vector);
                 self.halted = false;
-                if let Some(trap) = &mut self.return_trap {
-                    trap.interrupt();
-                }
                 self.count_irq(vector);
-                if let Some(watch) = &mut self.isr_watch {
-                    watch.enter(&self.cpu.regs, &self.mem);
-                }
-                if let Some(tracer) = &mut self.tracer {
-                    tracer.interrupt(&self.cpu.regs);
-                }
                 // A DPMI client's protected-mode handler may take it, though it came in real mode.
                 if !crate::dpmi::real_mode_irq(self, vector) {
                     let (cpu, mut bus) = self.split();
@@ -771,13 +648,6 @@ impl Machine {
                 }
                 continue;
             }
-            if self.hybrid.is_some() {
-                match self.hybrid_entry() {
-                    Ok(true) => continue,
-                    Ok(false) => {}
-                    Err(stop) => return stop,
-                }
-            }
             if self.exec_watch.is_some() {
                 self.watch_exec();
             }
@@ -790,35 +660,13 @@ impl Machine {
                 let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 contracts.before(&self.cpu.regs, &self.mem, linear);
             }
-            if let Some(writes) = &mut self.call_writes {
-                writes.step(&self.cpu.regs);
-            }
-            let (now, write_now) = (self.cpu.cycles, self.write_time());
-            // A captured call runs (traced), or an interrupt handler interrupted it (its writes logged).
-            let tracing = self.tracer.as_deref_mut().map(|t| t.active(&self.cpu.regs));
-            let result = if let (Some(true), Some(tracer)) = (tracing, self.tracer.as_deref_mut()) {
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
-                let fetched = Some(&mut tracer.fetched);
-                let mut bus = crate::capture::TracingBus { inner, log: &mut tracer.log, fetched };
-                self.cpu.step(&mut bus)
-            } else if let (Some(false), Some(tracer)) = (tracing, self.tracer.as_deref_mut()) {
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
-                let mut bus = crate::capture::InterruptBus { inner, log: &mut tracer.log };
-                self.cpu.step(&mut bus)
-            } else if let Some(contracts) = self.contracts.as_deref_mut()
+            let now = self.cpu.cycles;
+            let result = if let Some(contracts) = self.contracts.as_deref_mut()
                 && contracts.tracing()
             {
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
-                let mut bus = crate::capture::TracingBus { inner, log: &mut contracts.log, fetched: None };
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let mut bus = crate::memtrace::TracingBus { inner, log: &mut contracts.log };
                 self.cpu.step(&mut bus)
-            } else if let Some(held) = self.replay.as_deref_mut() {
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now };
-                let mut bus = crate::capture::ReplayBus { inner, held };
-                let result = self.cpu.step(&mut bus);
-                if let Some(addr) = bus.held.missing {
-                    return Stop::Override(format!("{} ({addr:05X})", crate::capture::CALLS_PROGRAM));
-                }
-                result
             } else {
                 let (cpu, mut bus) = self.split();
                 cpu.step(&mut bus)
@@ -838,14 +686,7 @@ impl Machine {
             }
             match result {
                 Ok(()) => {}
-                Err(cpu::Exit::Callback(id)) => {
-                    if let Some(tracer) = self.tracer.as_deref_mut()
-                        && tracer.active(&self.cpu.regs)
-                    {
-                        tracer.services += 1;
-                    }
-                    self.callback(id);
-                }
+                Err(cpu::Exit::Callback(id)) => self.callback(id),
                 Err(cpu::Exit::Halt) => self.halted = true,
                 Err(fault) => return Stop::Fault(fault),
             }
@@ -853,7 +694,7 @@ impl Machine {
     }
 
     /// A byte read the way the CPU reads it: video memory at A0000-BFFFF, everything else from
-    /// RAM (for Rust overrides).
+    /// RAM.
     pub fn read_u8(&mut self, addr: u32) -> u8 {
         let (_, mut bus) = self.split();
         bus.read_u8(addr)
@@ -885,17 +726,6 @@ impl Machine {
             self.devices.dirty = false;
             self.next_event = self.cpu.cycles;
         }
-    }
-
-    /// Hooks Rust overrides into the program just loaded (all in [`crate::hybrid::Mode::Original`]
-    /// until set otherwise); its load image starts at its PSP's paragraph 10h.
-    pub fn start_hybrid(
-        &mut self,
-        module: &str,
-        overrides: Vec<crate::hybrid::Override>,
-    ) -> &mut crate::hybrid::Hybrid {
-        let base = (u32::from(self.dos.psp) + 0x10) << 4;
-        self.hybrid.insert(Box::new(crate::hybrid::Hybrid::new(module, base, overrides)))
     }
 
     /// Starts recording coverage of the program just loaded: its load image runs from its PSP's
@@ -1043,13 +873,6 @@ impl Machine {
 
     /// Fingerprint of the complete machine state (CPU, memory, devices, DOS, drive). Two runs
     /// with the same program and input must produce the same value at the same cycle.
-    /// After an atomic call: device events are due at once (both sides of a session diff service
-    /// them at the same instruction).
-    pub(crate) fn settle(&mut self) {
-        self.devices.dirty = false;
-        self.next_event = self.cpu.cycles;
-    }
-
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::default();
         self.cpu.regs.hash(&mut h);
@@ -1061,9 +884,6 @@ impl Machine {
         self.ems.hash(&mut h);
         self.mouse.hash(&mut h);
         self.drive.hash(&mut h);
-        if self.held_ticks != 0 {
-            self.held_ticks.hash(&mut h);
-        }
         h.finish()
     }
 
@@ -1134,31 +954,9 @@ impl Machine {
 
     // ---- internals shared by the BIOS and DOS modules ----
 
-    /// Starts or ends an atomic call. During one, devices see port writes at its start: what an
-    /// implementation writes, in order, decides the devices' logs, not how many instructions it
-    /// took to get there (an override and the original it stands for write the same ports at
-    /// different cycles). Reads keep the real time, so polling a port still sees it change.
-    pub(crate) fn set_atomic(&mut self, on: bool) {
-        if on && !self.atomic {
-            self.atomic_since = self.cpu.cycles;
-        }
-        if !on && self.atomic {
-            self.after_atomic = true;
-        }
-        self.atomic = on;
-    }
-
-    fn write_time(&self) -> u64 {
-        match &self.call_writes {
-            _ if self.atomic => self.atomic_since,
-            Some(writes) if !writes.in_handler(&self.cpu.regs) => writes.since,
-            _ => self.cpu.cycles,
-        }
-    }
-
     pub(crate) fn split(&mut self) -> (&mut Cpu, PcBus<'_>) {
-        let (now, write_now) = (self.cpu.cycles, self.write_time());
-        (&mut self.cpu, PcBus { mem: &mut self.mem, dev: &mut self.devices, now, write_now })
+        let now = self.cpu.cycles;
+        (&mut self.cpu, PcBus { mem: &mut self.mem, dev: &mut self.devices, now })
     }
 
     pub(crate) fn lin(segment: u16, offset: u16) -> u32 {
@@ -1226,59 +1024,9 @@ impl Machine {
         {
             return Some(Stop::WaitingForInput);
         }
-        self.cpu.cycles = self.cpu.cycles.max(self.next_wake(limit));
+        // To the next device event.
+        self.cpu.cycles = self.cpu.cycles.max(self.next_event.min(limit));
         None
-    }
-
-    /// When an idle CPU next has something to do: a device event, or with schedules, the next
-    /// scheduled service or interrupt (a device may raise an interrupt before its cycle).
-    fn next_wake(&self, limit: u64) -> u64 {
-        let mut until = match &self.service_schedule {
-            Some(s) => s.front().copied().unwrap_or(limit),
-            None => self.next_event,
-        }
-        .min(limit);
-        if let Some(&at) = self.irq_schedule.as_ref().and_then(|s| s.front())
-            && at > self.cpu.cycles
-        {
-            until = until.min(at);
-        }
-        until
-    }
-
-    /// Whether an interrupt may be taken now: always, unless a schedule says when.
-    fn irq_scheduled(&self) -> bool {
-        self.irq_schedule.as_ref().is_none_or(|s| s.front().is_some_and(|&at| self.cpu.cycles >= at))
-    }
-
-    /// Whether device events are due: by their time, or by the schedule if there is one.
-    fn service_due(&self) -> bool {
-        match &self.service_schedule {
-            Some(s) => s.front().is_some_and(|&at| self.cpu.cycles >= at),
-            None => self.cpu.cycles >= self.next_event,
-        }
-    }
-
-    fn scheduled_service(&mut self) {
-        if let Some(schedule) = &mut self.service_schedule {
-            schedule.pop_front();
-        }
-        if let Some(log) = &mut self.service_log {
-            log.push(self.cpu.cycles);
-        }
-        self.service_events();
-    }
-
-    /// Lets time pass to `until` as a halted CPU whose interrupts are held: device events are
-    /// serviced (when due, or at the scheduled cycles), no instruction runs, no interrupt is taken.
-    pub(crate) fn pass_time(&mut self, until: u64) {
-        while self.cpu.cycles < until {
-            if self.service_due() {
-                self.scheduled_service();
-            } else {
-                self.cpu.cycles = self.next_wake(until).max(self.cpu.cycles + 1).min(until);
-            }
-        }
     }
 
     fn service_events(&mut self) {
@@ -1303,13 +1051,8 @@ impl Machine {
         if self.devices.keyboard.pump() {
             self.devices.pic.raise(1);
         }
-        let after_atomic = std::mem::take(&mut self.after_atomic);
-        let edges = self.devices.pit.take_irq0(now);
-        if edges > 0 {
+        if self.devices.pit.take_irq0(now) > 0 {
             self.devices.pic.raise(0);
-            if after_atomic {
-                self.held_ticks += edges - 1;
-            }
         }
         // The real-time clock's periodic interrupt is IRQ 8: line 0 of the slave PIC.
         if self.devices.cmos.update(clock.ticks(cycles, crate::cmos::RTC_HZ)) {

@@ -1,22 +1,20 @@
 [package]
-name = "frontend"
-description = "Windowed and headless runners for the Recreate host"
+name = "clockwork"
+description = "Clockwork, a deterministic DOS PC: run headless, play in a window"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-license.workspace = true
+license = "GPL-2.0-or-later"
 
 [[bin]]
-name = "rec-host"
+name = "clockwork"
 path = "src/main.rs"
 
 [dependencies]
 cpu.workspace = true
 dos.workspace = true
 machine.workspace = true
-testbins.workspace = true
-wolf3d.workspace = true
 minifb = "0.29"
 tinyaudio = "2"
 midir = "0.11"
