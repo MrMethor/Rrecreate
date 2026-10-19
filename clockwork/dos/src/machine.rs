@@ -394,6 +394,11 @@ impl PcBus<'_> {
         peek_device_u8(self.mem, self.dev, addr)
     }
 
+    /// Whether memory tracking writes saw this byte written (true when nothing is tracked).
+    pub(crate) fn was_written(&self, addr: u32) -> bool {
+        self.mem.was_written(addr)
+    }
+
     // The video window and the frame buffer are kept out of line so the common RAM path stays
     // small enough to inline.
     #[inline(never)]
@@ -559,6 +564,10 @@ pub struct Machine {
     /// A memory watch ([`Machine::start_watch`]; not part of the machine state). It takes the
     /// accesses contract inference would see: don't run both.
     pub watch: Option<Box<crate::watch::Watch>>,
+    /// Bounds checks on declared data ([`Machine::start_bounds`]; not part of the machine state).
+    pub bounds: Option<Box<crate::bounds::Bounds>>,
+    /// Uninitialized reads ([`Machine::start_uninit`]; not part of the machine state).
+    pub uninit: Option<Box<crate::uninit::Uninit>>,
     /// Sync points and their hit counts ([`crate::sync`]; not part of the machine state, but a
     /// snapshot keeps them).
     pub syncs: crate::sync::Syncs,
@@ -604,6 +613,8 @@ impl Machine {
             coverage: None,
             contracts: None,
             watch: None,
+            bounds: None,
+            uninit: None,
             syncs: crate::sync::Syncs::default(),
             cd_image: None,
             stop_on_input_wait: true,
@@ -652,6 +663,9 @@ impl Machine {
     pub fn run_until(&mut self, limit: u64) -> Stop {
         // Memory may have changed since the last run (tools, tests, the frontend).
         self.cpu.flush_code_cache();
+        // Analyses are set up between runs: whether any is on is decided once.
+        let syncs = !self.syncs.is_empty();
+        let probes = self.contracts.is_some() || self.watch.is_some() || self.bounds.is_some() || self.uninit.is_some();
         loop {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
@@ -692,7 +706,7 @@ impl Machine {
                 }
                 continue;
             }
-            if !self.syncs.is_empty() {
+            if syncs {
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 if self.syncs.reached(at, self.cpu.cycles) {
                     let hit = self.syncs.get(at).map_or(0, |p| p.hits);
@@ -712,16 +726,21 @@ impl Machine {
                 contracts.before(&self.cpu.regs, &self.mem, linear);
             }
             let now = self.cpu.cycles;
-            let result = if let Some(watch) = self.watch.as_deref_mut() {
-                watch.before(&self.cpu);
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
-                let mut bus = crate::watch::WatchBus { inner, watch, now };
-                self.cpu.step(&mut bus)
-            } else if let Some(contracts) = self.contracts.as_deref_mut()
-                && contracts.tracing()
-            {
-                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
-                let mut bus = crate::memtrace::TracingBus { inner, log: &mut contracts.log };
+            let result = if probes {
+                let tracing = self.contracts.as_deref().is_some_and(|c| c.tracing());
+                let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+                if let Some(watch) = self.watch.as_deref_mut() {
+                    watch.before(&self.cpu);
+                }
+                let mut bus = crate::probe::ProbeBus {
+                    inner: PcBus { mem: &mut self.mem, dev: &mut self.devices, now },
+                    log: self.contracts.as_deref_mut().filter(|_| tracing).map(|c| &mut c.log),
+                    watch: self.watch.as_deref_mut(),
+                    bounds: self.bounds.as_deref_mut(),
+                    uninit: self.uninit.as_deref_mut(),
+                    at,
+                    now,
+                };
                 self.cpu.step(&mut bus)
             } else {
                 let (cpu, mut bus) = self.split();
@@ -1003,6 +1022,29 @@ impl Machine {
     /// Ends the watch and returns it, with its hits.
     pub fn take_watch(&mut self) -> Option<crate::watch::Watch> {
         self.watch.take().map(|w| *w)
+    }
+
+    /// Starts bounds checks on these objects (physical addresses; see [`crate::bounds`]).
+    pub fn start_bounds(&mut self, objects: &[crate::bounds::Object]) {
+        self.bounds = Some(Box::new(crate::bounds::Bounds::new(objects)));
+    }
+
+    pub fn take_bounds(&mut self) -> Option<crate::bounds::Bounds> {
+        self.bounds.take().map(|b| *b)
+    }
+
+    /// Starts tracking uninitialized reads (see [`crate::uninit`]): what the started program finds
+    /// uninitialized when it starts, plus `more` (physical ranges), counts as never written.
+    pub fn start_uninit(&mut self, more: &[std::ops::Range<u32>]) {
+        let mut ranges = crate::dos::uninitialized(self);
+        ranges.extend_from_slice(more);
+        self.mem.track_writes(&ranges);
+        self.uninit = Some(Box::default());
+    }
+
+    pub fn take_uninit(&mut self) -> Option<crate::uninit::Uninit> {
+        self.mem.untrack_writes();
+        self.uninit.take().map(|u| *u)
     }
 
     /// The text screen as lines, or `None` in graphics modes.

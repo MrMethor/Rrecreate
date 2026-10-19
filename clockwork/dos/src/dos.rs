@@ -2512,6 +2512,39 @@ fn create_process(
     Ok(entry)
 }
 
+/// What a program finds uninitialized when it starts (physical ranges): its own memory block past
+/// its load image (its BSS, heap and stack), the free memory blocks, and extended memory.
+pub(crate) fn uninitialized(m: &Machine) -> Vec<std::ops::Range<u32>> {
+    let psp = m.dos.psp;
+    // The load image's length, from the program file; an EXE asking for no extra memory is loaded
+    // at the top of its block.
+    let image = m.dos.process_paths.get(&psp).and_then(|path| m.drive.file(path)).map(|data| {
+        match mz::parse(data).ok().filter(|_| mz::is_mz(data)) {
+            Some(exe) => (exe.image.len() as u32, exe.min_alloc == 0 && exe.max_alloc == 0),
+            None => (data.len().min(0xFF00) as u32, false),
+        }
+    });
+    let mut ranges = Vec::new();
+    for mcb in mcb_chain(m).unwrap_or_default() {
+        let start = (u32::from(mcb.segment) + 1) << 4;
+        let end = start + (u32::from(mcb.size) << 4);
+        if mcb.owner == 0 {
+            ranges.push(start..end);
+        } else if mcb.segment + 1 == psp
+            && let Some((length, at_top)) = image
+        {
+            let image_start = start + 0x100;
+            if at_top {
+                ranges.push(image_start..end.saturating_sub(length.div_ceil(16) * 16));
+            } else {
+                ranges.push((image_start + length).min(end)..end);
+            }
+        }
+    }
+    ranges.push(0x11_0000..m.mem.size());
+    ranges
+}
+
 /// Copies a program image to `load` and applies its relocations with `relocation`.
 fn load_image(m: &mut Machine, data: &[u8], image: Option<&mz::MzImage<'_>>, load: u16, relocation: u16) {
     match image {

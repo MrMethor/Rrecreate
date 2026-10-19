@@ -28,7 +28,7 @@ use iced_x86::{
 };
 use machine::memory::Memory;
 
-use crate::memtrace::Access;
+use crate::probe::Access;
 
 /// Registers and flags as bits ("units"): for AX, CX, DX, BX, SP, BP, SI, DI (`cpu::Regs`
 /// order) the low byte, high byte and upper half (bits 3r, 3r+1, 3r+2); ES, CS, SS, DS, FS, GS

@@ -3470,3 +3470,75 @@ fn a_sync_point_logs_its_timeline() {
     assert_eq!(cycles.len(), 10);
     assert!(cycles.windows(2).all(|w| w[0] < w[1]), "{cycles:?}");
 }
+
+#[test]
+fn bounds_checks_report_an_index_past_a_table() {
+    // The loop reads table[0] to table[4] of a 4-byte table: one past its end. `after`, the byte
+    // following the table, is also read on its own, which isn't an index past the table.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["read", "table"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.xor(bx, bx)?;
+        let table = a.addr("table");
+        a.mov(si, table)?;
+        a.here("read")?;
+        a.mov(al, byte_ptr(bx + si))?;
+        a.inc(bx)?;
+        a.cmp(bx, 5)?;
+        let again = a.l("read");
+        a.jb(again)?;
+        let after = byte_at(a, "after");
+        a.mov(al, after)?;
+        exit(a, 0)?;
+        a.here("table")?;
+        a.db(&[1, 2, 3, 4])?;
+        a.here("after")?;
+        a.db(&[5])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("B.COM", &program)], "B.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    m.start_bounds(&[dos::bounds::Object { start: base + o["table"], size: 4 }]);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let findings = m.take_bounds().unwrap().findings();
+    let [finding] = &findings[..] else { panic!("{findings:?}") };
+    assert_eq!(
+        (finding.instruction - base, finding.object, finding.outside, &finding.offsets[..]),
+        (o["read"], 0, 1, &[4][..])
+    );
+}
+
+#[test]
+fn uninitialized_reads_are_the_bytes_nothing_wrote() {
+    // Past the end of the program file: `unset` is read without being written, `set` is written
+    // first, and `buffer` is filled by DOS (AH=47h, the current directory) before it is read.
+    const UNSET: u16 = 0x4000;
+    const SET: u16 = 0x4002;
+    const BUFFER: u16 = 0x4100;
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        offsets.borrow_mut().insert("read_unset", a.addr("read_unset") as u32);
+        a.here("read_unset")?;
+        a.mov(ax, word_ptr(u32::from(UNSET)))?;
+        a.mov(word_ptr(u32::from(SET)), 7)?;
+        a.mov(ax, word_ptr(u32::from(SET)))?;
+        a.mov(ah, 0x47)?;
+        a.mov(dl, 0)?;
+        a.mov(si, i32::from(BUFFER))?;
+        a.int(0x21)?;
+        a.mov(al, byte_ptr(u32::from(BUFFER)))?;
+        exit(a, 0)
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("U.COM", &program)], "U.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    m.start_uninit(&[]);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let reads = m.take_uninit().unwrap().reads;
+    let found: Vec<(u32, u32)> = reads.iter().map(|r| (r.address - base, r.instruction - base)).collect();
+    let unset = u32::from(UNSET);
+    assert_eq!(found, [(unset, o["read_unset"]), (unset + 1, o["read_unset"])]);
+    assert!(m.mem.was_written(0), "tracking ended");
+}

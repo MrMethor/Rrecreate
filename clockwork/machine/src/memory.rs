@@ -12,7 +12,7 @@ pub const ROM_START: u32 = 0xF_0000;
 const PAGE_SIZE: usize = 4096;
 
 /// `Clone` is a full snapshot: the 1.1 MB real-mode image plus the extended pages written so far.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub struct Memory {
     bytes: Box<[u8]>,
     a20: bool,
@@ -21,6 +21,40 @@ pub struct Memory {
     /// Extended memory pages that have been written, indexed by page number (a direct table, as
     /// every access in protected mode looks here); others read as zero.
     extended: Vec<Option<Box<[u8]>>>,
+    /// Which bytes have been written, when tracked ([`Memory::track_writes`]); not part of the
+    /// memory's contents.
+    written: Option<Box<Written>>,
+}
+
+/// A bit per byte of physical memory: written since tracking began (or initialized then).
+#[derive(Debug, Clone)]
+struct Written(Vec<u64>);
+
+impl Written {
+    #[inline]
+    fn set(&mut self, addr: u32) {
+        if let Some(word) = self.0.get_mut((addr / 64) as usize) {
+            *word |= 1 << (addr % 64);
+        }
+    }
+
+    fn get(&self, addr: u32) -> bool {
+        self.0.get((addr / 64) as usize).is_some_and(|word| word >> (addr % 64) & 1 != 0)
+    }
+}
+
+impl PartialEq for Memory {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.bytes, self.a20, self.size, &self.extended) == (&other.bytes, other.a20, other.size, &other.extended)
+    }
+}
+
+impl Eq for Memory {}
+
+impl std::hash::Hash for Memory {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (&self.bytes, self.a20, self.size, &self.extended).hash(state);
+    }
 }
 
 impl std::fmt::Debug for Memory {
@@ -54,6 +88,46 @@ impl Memory {
             a20: false,
             size,
             extended: vec![None; (size as usize).div_ceil(PAGE_SIZE)],
+            written: None,
+        }
+    }
+
+    /// Tracks which bytes are written from now on (by the CPU or the host), every byte counting as
+    /// initialized except those in `uninitialized` (physical ranges).
+    pub fn track_writes(&mut self, uninitialized: &[std::ops::Range<u32>]) {
+        let mut written = Written(vec![u64::MAX; (self.size as usize).div_ceil(64)]);
+        for range in uninitialized {
+            for addr in range.start..range.end.min(self.size) {
+                written.0[(addr / 64) as usize] &= !(1 << (addr % 64));
+            }
+        }
+        self.written = Some(Box::new(written));
+    }
+
+    /// Stops tracking writes.
+    pub fn untrack_writes(&mut self) {
+        self.written = None;
+    }
+
+    /// Whether the byte at physical address `addr` was written since tracking began (or counted as
+    /// initialized then); true when nothing is tracked.
+    pub fn was_written(&self, addr: u32) -> bool {
+        self.written.as_deref().is_none_or(|w| w.get(self.gate(addr)))
+    }
+
+    #[inline(always)]
+    fn mark(&mut self, addr: u32) {
+        if self.written.is_some() {
+            self.mark_written(addr);
+        }
+    }
+
+    /// Kept out of line: tracking is off in ordinary runs, and the write path stays small.
+    #[cold]
+    #[inline(never)]
+    fn mark_written(&mut self, addr: u32) {
+        if let Some(written) = self.written.as_deref_mut() {
+            written.set(addr);
         }
     }
 
@@ -106,6 +180,7 @@ impl Memory {
 
     /// A physical write. Writes to the BIOS ROM and beyond the end of memory are ignored.
     pub fn write_phys(&mut self, addr: u32, value: u8) {
+        self.mark(addr);
         if (addr as usize) < self.bytes.len() {
             if !(ROM_START as usize..CONVENTIONAL_SPACE).contains(&(addr as usize)) {
                 self.bytes[addr as usize] = value;
@@ -160,6 +235,7 @@ impl Memory {
     #[inline]
     pub fn write_u8(&mut self, addr: u32, value: u8) {
         let addr = self.gate(addr);
+        self.mark(addr);
         if (addr as usize) < self.bytes.len() {
             if !(ROM_START as usize..CONVENTIONAL_SPACE).contains(&(addr as usize)) {
                 self.bytes[addr as usize] = value;
@@ -243,8 +319,17 @@ impl Memory {
     #[inline]
     pub fn write_n<const N: usize>(&mut self, addr: u32, value: [u8; N]) {
         match self.block::<N>(addr, true) {
-            Some((None, at)) => self.bytes[at..at + N].copy_from_slice(&value),
+            Some((None, at)) => {
+                if self.written.is_some() {
+                    (0..N as u32).for_each(|i| self.mark(at as u32 + i));
+                }
+                self.bytes[at..at + N].copy_from_slice(&value)
+            }
             Some((Some(page), at)) => {
+                if self.written.is_some() {
+                    let start = (page * PAGE_SIZE + at) as u32;
+                    (0..N as u32).for_each(|i| self.mark(start + i));
+                }
                 let data = self.extended[page].get_or_insert_with(|| vec![0; PAGE_SIZE].into_boxed_slice());
                 data[at..at + N].copy_from_slice(&value);
             }
@@ -265,6 +350,7 @@ impl Memory {
     pub fn load(&mut self, addr: u32, data: &[u8]) {
         for (i, &b) in data.iter().enumerate() {
             let at = self.index(addr + i as u32);
+            self.mark(at as u32);
             self.bytes[at] = b;
         }
     }

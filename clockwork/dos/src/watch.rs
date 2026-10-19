@@ -13,9 +13,7 @@
 
 use std::ops::Range;
 
-use cpu::{Bus, Cpu, seg};
-
-use crate::machine::PcBus;
+use cpu::{Cpu, seg};
 
 /// Hits kept, at most; later ones are counted in [`Watch::dropped`].
 pub const DEFAULT_LIMIT: usize = 10_000;
@@ -137,6 +135,22 @@ impl Watch {
         By::Instruction { cs: c.cs, ip: c.ip, linear: c.code_base.wrapping_add(c.ip) }
     }
 
+    /// A read by the instruction running (the probe bus calls this).
+    pub(crate) fn on_read(&mut self, cycle: u64, addr: u32, value: u8) {
+        if self.reads && self.watched(addr) {
+            let by = self.by_instruction();
+            self.record(cycle, addr, Kind::Read, value, value, by);
+        }
+    }
+
+    /// A write by the instruction running, of `value` over `old`.
+    pub(crate) fn on_write(&mut self, cycle: u64, addr: u32, value: u8, old: u8) {
+        if self.watched(addr) {
+            let by = self.by_instruction();
+            self.record(cycle, addr, Kind::Write, value, old, by);
+        }
+    }
+
     /// Before an instruction runs.
     pub(crate) fn before(&mut self, cpu: &Cpu) {
         self.context = Context {
@@ -224,47 +238,4 @@ impl Watch {
 fn stack_top(cpu: &Cpu) -> u32 {
     let sp = if cpu.stack32() { cpu.regs.gpr[4] } else { cpu.regs.gpr[4] & 0xFFFF };
     cpu.segment_base(seg::SS).wrapping_add(sp)
-}
-
-/// The bus while a watch is on.
-pub(crate) struct WatchBus<'a, 'b> {
-    pub(crate) inner: PcBus<'a>,
-    pub(crate) watch: &'b mut Watch,
-    pub(crate) now: u64,
-}
-
-impl Bus for WatchBus<'_, '_> {
-    fn read_u8(&mut self, addr: u32) -> u8 {
-        let value = self.inner.read_u8(addr);
-        if self.watch.reads && self.watch.watched(addr) {
-            let by = self.watch.by_instruction();
-            self.watch.record(self.now, addr, Kind::Read, value, value, by);
-        }
-        value
-    }
-
-    fn write_u8(&mut self, addr: u32, value: u8) {
-        if self.watch.watched(addr) {
-            let old = self.inner.peek_u8(addr);
-            let by = self.watch.by_instruction();
-            self.watch.record(self.now, addr, Kind::Write, value, old, by);
-        }
-        self.inner.write_u8(addr, value);
-    }
-
-    fn fetch_u8(&mut self, addr: u32) -> u8 {
-        self.inner.read_u8(addr)
-    }
-
-    fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
-        self.inner.code_window(addr)
-    }
-
-    fn port_in_u8(&mut self, port: u16) -> u8 {
-        self.inner.port_in_u8(port)
-    }
-
-    fn port_out_u8(&mut self, port: u16, value: u8) {
-        self.inner.port_out_u8(port, value);
-    }
 }
