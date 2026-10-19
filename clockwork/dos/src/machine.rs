@@ -373,7 +373,24 @@ fn plain_ram(addr: u32, len: u32) -> bool {
     last < vga::GRAPHICS_BASE || (addr >= 0xC_0000 && last >= addr && last < ABOVE_RAM)
 }
 
+/// A byte at a physical address the way the CPU sees it (the video window, the linear frame
+/// buffer, RAM), without side effects.
+fn peek_device_u8(mem: &Memory, dev: &Devices, addr: u32) -> u8 {
+    let vga = &dev.vga;
+    let offset = addr.wrapping_sub(vga::GRAPHICS_BASE);
+    match (vga.window_size(), vga.lfb_range()) {
+        (Some(size), _) if offset < size => vga.peek(offset),
+        (_, Some(lfb)) if lfb.contains(&addr) => vga.lfb_read(addr - lfb.start),
+        _ => mem.read_u8(addr),
+    }
+}
+
 impl PcBus<'_> {
+    /// A byte the way the CPU would read it, without side effects (no VGA latches loaded).
+    pub(crate) fn peek_u8(&self, addr: u32) -> u8 {
+        peek_device_u8(self.mem, self.dev, addr)
+    }
+
     // The video window and the frame buffer are kept out of line so the common RAM path stays
     // small enough to inline.
     #[inline(never)]
@@ -536,6 +553,9 @@ pub struct Machine {
     pub coverage: Option<crate::coverage::Coverage>,
     /// Contract inference ([`Machine::start_contracts`]).
     pub contracts: Option<Box<crate::contracts::Contracts>>,
+    /// A memory watch ([`Machine::start_watch`]; not part of the machine state). It takes the
+    /// accesses contract inference would see: don't run both.
+    pub watch: Option<Box<crate::watch::Watch>>,
     /// The CD drive's disc image, if it shows one (an input, like the drive's files: not part
     /// of the machine state). Without one the drive's folder is a disc with one data track.
     pub cd_image: Option<std::sync::Arc<crate::cdrom::CdImage>>,
@@ -577,6 +597,7 @@ impl Machine {
             exec_hits: Vec::new(),
             coverage: None,
             contracts: None,
+            watch: None,
             cd_image: None,
             stop_on_input_wait: true,
             inputs: VecDeque::new(),
@@ -628,6 +649,7 @@ impl Machine {
                 let vector = crate::dpmi::irq_vector(self, vector);
                 self.halted = false;
                 self.count_irq(vector);
+                let from = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 // A DPMI client's protected-mode handler may take it, though it came in real mode.
                 if !crate::dpmi::real_mode_irq(self, vector) {
                     let (cpu, mut bus) = self.split();
@@ -639,6 +661,9 @@ impl Machine {
                     && !self.cpu.protected_mode()
                 {
                     contracts.hardware_interrupt(&self.cpu.regs);
+                }
+                if let Some(watch) = self.watch.as_deref_mut() {
+                    watch.interrupt(&self.cpu, from);
                 }
                 continue;
             }
@@ -661,7 +686,12 @@ impl Machine {
                 contracts.before(&self.cpu.regs, &self.mem, linear);
             }
             let now = self.cpu.cycles;
-            let result = if let Some(contracts) = self.contracts.as_deref_mut()
+            let result = if let Some(watch) = self.watch.as_deref_mut() {
+                watch.before(&self.cpu);
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let mut bus = crate::watch::WatchBus { inner, watch, now };
+                self.cpu.step(&mut bus)
+            } else if let Some(contracts) = self.contracts.as_deref_mut()
                 && contracts.tracing()
             {
                 let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
@@ -673,6 +703,10 @@ impl Machine {
             };
             if let Some(contracts) = self.contracts.as_deref_mut() {
                 contracts.after(&self.cpu.regs);
+            }
+            if let Some(mut watch) = self.watch.take() {
+                watch.after(&self.cpu, |at| self.peek_linear_u8(at));
+                self.watch = Some(watch);
             }
             if let Some(coverage) = &mut self.coverage {
                 match result {
@@ -920,18 +954,29 @@ impl Machine {
     }
 
     pub fn peek_bytes(&self, addr: u32, len: usize) -> Vec<u8> {
-        let vga = &self.devices.vga;
-        (0..len as u32)
-            .map(|i| {
-                let at = addr.wrapping_add(i);
-                let offset = at.wrapping_sub(vga::GRAPHICS_BASE);
-                match (vga.window_size(), vga.lfb_range()) {
-                    (Some(size), _) if offset < size => vga.peek(offset),
-                    (_, Some(lfb)) if lfb.contains(&at) => vga.lfb_read(at - lfb.start),
-                    _ => self.mem.read_u8(at),
-                }
-            })
-            .collect()
+        (0..len as u32).map(|i| self.peek_u8(addr.wrapping_add(i))).collect()
+    }
+
+    /// A byte at a physical address the way the CPU sees it, without side effects.
+    pub fn peek_u8(&self, addr: u32) -> u8 {
+        peek_device_u8(&self.mem, &self.devices, addr)
+    }
+
+    /// A byte at a linear address (through the page tables when paging is on), without side
+    /// effects; `None` on a page that isn't present.
+    pub fn peek_linear_u8(&self, linear: u32) -> Option<u8> {
+        let physical = self.cpu.peek_translate(|at| self.mem.read_u32(at), linear)?;
+        Some(self.peek_u8(physical))
+    }
+
+    /// Starts watching memory (see [`crate::watch`]); a watch already on is replaced.
+    pub fn start_watch(&mut self, watch: crate::watch::Watch) {
+        self.watch = Some(Box::new(watch));
+    }
+
+    /// Ends the watch and returns it, with its hits.
+    pub fn take_watch(&mut self) -> Option<crate::watch::Watch> {
+        self.watch.take().map(|w| *w)
     }
 
     /// The text screen as lines, or `None` in graphics modes.
@@ -1002,8 +1047,13 @@ impl Machine {
         let traced =
             self.service_trace.is_some() && !matches!(id, bios::callback::TIMER_IRQ | bios::callback::KEYBOARD_IRQ);
         let call = traced.then(|| crate::trace::ServiceCall::begin(self, id));
+        let watched = self.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
+        let ax = self.cpu.regs.ax();
         if !bios::dispatch(self, id) && !dos::dispatch(self, id) {
             self.diagnostic(format!("unknown host callback {id:#06x}"));
+        }
+        if let Some(before) = watched {
+            self.watch_changes(&before, crate::watch::By::Service { id, ax });
         }
         if let (Some(mut call), Some(trace)) = (call, self.service_trace.as_mut()) {
             call.after = self.cpu.regs;
@@ -1029,7 +1079,25 @@ impl Machine {
         None
     }
 
+    /// Records the watched bytes that changed since `before` as written by `by`.
+    fn watch_changes(&mut self, before: &[u8], by: crate::watch::By) {
+        if let Some(mut watch) = self.watch.take() {
+            if let Some(after) = watch.bytes(|at| self.peek_u8(at)) {
+                watch.changed(self.cpu.cycles, before, &after, by);
+            }
+            self.watch = Some(watch);
+        }
+    }
+
     fn service_events(&mut self) {
+        let watched = self.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
+        self.service_devices();
+        if let Some(before) = watched {
+            self.watch_changes(&before, crate::watch::By::Device);
+        }
+    }
+
+    fn service_devices(&mut self) {
         // Devices may write memory (Sound Blaster DMA, the mouse cursor drawn on input).
         self.cpu.flush_code_cache();
         let cycles = self.cpu.cycles;

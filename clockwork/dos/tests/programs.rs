@@ -3255,3 +3255,163 @@ fn without_dpmi_the_program_is_told_there_is_none() {
     assert_eq!(m.run(10 * SECOND), Stop::Exited(1));
     assert!(m.diagnostics.iter().any(|d| d.contains("--dpmi")), "{:?}", m.diagnostics);
 }
+
+/// A watch's hits as (byte, value, old, the instruction's PSP-relative offset, the chain as
+/// (entry, return, interrupt) offsets), for comparing.
+type HitSummary = (u32, u8, u8, u32, Vec<(u32, u32, bool)>);
+
+fn hit_summary(hits: &[dos::watch::Hit], base: u32, start: u32) -> Vec<HitSummary> {
+    hits.iter()
+        .map(|h| {
+            let at = match h.by {
+                dos::watch::By::Instruction { linear, .. } => linear - base,
+                _ => 0,
+            };
+            let chain = h.chain.iter().map(|f| (f.entry - base, f.from - base, f.interrupt)).collect();
+            (h.address - start, h.value, h.old, at, chain)
+        })
+        .collect()
+}
+
+#[test]
+fn a_watch_names_the_instruction_and_its_callers() {
+    // `value` is written by the main program, then two calls deep.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["main_write", "outer", "after_outer", "setter", "after_setter", "value"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.here("main_write")?;
+        let value = word_at(a, "value");
+        a.mov(value, 1)?;
+        let outer = a.l("outer");
+        a.call(outer)?;
+        a.here("after_outer")?;
+        exit(a, 0)?;
+        a.here("outer")?;
+        let setter = a.l("setter");
+        a.call(setter)?;
+        a.here("after_setter")?;
+        a.ret()?;
+        a.here("setter")?;
+        let value = word_at(a, "value");
+        a.mov(value, 0x0102)?;
+        a.ret()?;
+        a.here("value")?;
+        a.dw(&[0])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("W.COM", &program)], "W.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let value = base + o["value"];
+    m.start_watch(dos::watch::Watch::new(vec![value..value + 2], false));
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let watch = m.take_watch().unwrap();
+    let callers = vec![(o["setter"], o["after_setter"], false), (o["outer"], o["after_outer"], false)];
+    assert_eq!(
+        hit_summary(&watch.hits, base, value),
+        [
+            (0, 1, 0, o["main_write"], vec![]),
+            (1, 0, 0, o["main_write"], vec![]),
+            (0, 2, 1, o["setter"], callers.clone()),
+            (1, 1, 0, o["setter"], callers),
+        ]
+    );
+}
+
+#[test]
+fn a_watch_names_the_service_that_wrote() {
+    // INT 21h AH=47h writes the current directory ("" at the root) into the buffer.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["after_int", "buffer"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.mov(ah, 0x47)?;
+        a.mov(dl, 0)?;
+        let buffer = a.addr("buffer");
+        a.mov(si, buffer)?;
+        a.int(0x21)?;
+        a.here("after_int")?;
+        exit(a, 0)?;
+        a.here("buffer")?;
+        a.db(&[0xFF; 4])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("W.COM", &program)], "W.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let buffer = base + o["buffer"];
+    m.start_watch(dos::watch::Watch::new(vec![buffer..buffer + 4], false));
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let watch = m.take_watch().unwrap();
+    let [hit] = &watch.hits[..] else { panic!("{:?}", watch.hits) };
+    assert_eq!((hit.address, hit.value, hit.old), (buffer, 0, 0xFF));
+    assert!(
+        matches!(hit.by, dos::watch::By::Service { id: 0x21, ax: entry_ax } if entry_ax >> 8 == 0x47),
+        "{:?}",
+        hit.by
+    );
+    let [frame] = &hit.chain[..] else { panic!("{:?}", hit.chain) };
+    assert!(frame.interrupt && frame.from - base == o["after_int"], "{frame:?}");
+}
+
+#[test]
+fn a_watch_sees_an_interrupt_handler_and_reads() {
+    // The timer handler counts ticks; the main program reads the count until it reaches 20.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["compare", "handler", "increment", "counter"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.cli()?;
+        load_dx(a, "handler")?;
+        a.mov(ax, 0x2508)?;
+        a.int(0x21)?;
+        a.mov(al, 0x36)?;
+        a.out(0x43, al)?;
+        a.mov(ax, 1193)?;
+        a.out(0x40, al)?;
+        a.mov(al, ah)?;
+        a.out(0x40, al)?;
+        a.sti()?;
+        a.here("wait")?;
+        a.hlt()?;
+        a.here("compare")?;
+        let counter = word_at(a, "counter");
+        a.cmp(counter, 20)?;
+        let wait = a.l("wait");
+        a.jb(wait)?;
+        exit(a, 0)?;
+        a.here("handler")?;
+        a.push(ax)?;
+        a.here("increment")?;
+        let counter = word_at(a, "counter");
+        a.inc(counter)?;
+        a.mov(al, 0x20)?;
+        a.out(0x20, al)?;
+        a.pop(ax)?;
+        a.iret()?;
+        a.here("counter")?;
+        a.dw(&[0])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("W.COM", &program)], "W.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let counter = base + o["counter"];
+    m.start_watch(dos::watch::Watch::new(vec![counter..counter + 2], true));
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let watch = m.take_watch().unwrap();
+    let writes: Vec<_> = watch.hits.iter().filter(|h| h.kind == dos::watch::Kind::Write).collect();
+    assert_eq!(writes.len(), 40, "20 increments of a word");
+    for hit in &writes {
+        assert!(matches!(hit.by, dos::watch::By::Instruction { linear, .. } if linear - base == o["increment"]));
+        assert!(hit.chain[0].interrupt && hit.chain[0].entry - base == o["handler"], "{:?}", hit.chain);
+    }
+    let reads = watch.hits.iter().filter(|h| h.kind == dos::watch::Kind::Read);
+    assert!(
+        reads
+            .clone()
+            .any(|h| matches!(h.by, dos::watch::By::Instruction { linear, .. } if linear - base == o["compare"])
+                && h.chain.is_empty())
+    );
+}
