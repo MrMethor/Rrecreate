@@ -168,13 +168,13 @@ backend never reads the simulation's state directly and a modern one can ignore 
 ### 6.2 Time and inputs
 
 A step takes the state and the tick's inputs. Inputs are **boundary values read from the original's memory at
-each sync point**: the key-state array its logic reads, the elapsed time (Wolf3D's `tics`), the mouse. The port
+each sync point**: the key-state array its logic reads, the elapsed time, the mouse. The port
 therefore never models a keyboard controller or a timer chip to be comparable.
 
 - **Faithful mode** feeds the elapsed time the original measured, tick by tick, so state matches the original
   at every tick.
 - **Modern mode** steps at a fixed rate and renders at any frame rate with interpolation. It deliberately
-  differs from the original (moving three tics at once isn't moving one tic three times), so it is a
+  differs from the original (moving three timer counts at once isn't moving one three times), so it is a
   behaviour toggle (§6.4) with its own tests.
 
 ### 6.3 Determinism

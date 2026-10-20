@@ -255,9 +255,18 @@ Clockwork runs the session the same way on another machine.
 Recreate's Wolf3D knowledge (every function name transferred from id's released source, data named with it at
 hand) and its overrides stay out of the Wolf3D port; the port starts from Clockwork, Ghidra and the signature
 packs, and Recreate's knowledge grades the pilot afterwards, with id's source. The port repository is local for
-now.
+now; its rrc.toml refuses imports (`[port] imports = false`), Rrecreate's examples use a made-up program, and
+the pilot's agents follow the rules in docs/porting.md ("An honest pilot").
 **Why:** D3. Knowledge derived from the source would let the pilot take shortcuts, and it would prove nothing.
 **Supersedes:** the plan (DESIGN.md §11, M2) to give the Wolf3D port Recreate's knowledge as evidence.
+
+### D47. A tick ends where the wait is over. Accepted 2026-10-20.
+A sync point sits where the loop's timer wait has ended and the pass hasn't read its inputs yet (usually the
+waiting function's return), so a tick's inputs and state are what the pass starting there reads. A loop that
+ends its tick in two places (play, and demo playback with its own wait) gets a sync point for each.
+**Why:** the first blind test (the Wolf3D port's notes/toolkit-report.md) measured it: with the sync point at
+the wait's entry, the elapsed time was the previous pass's and a key changing during the wait reached the pass
+but not the tick; at the wait's exit neither happens, and the run is the same.
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Accepted 2026-10-19.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the

@@ -71,6 +71,10 @@ fn a_session_is_traced_tick_by_tick() {
     let (taken, ok) = rrc.run(&["data", "T.COM+00011", "count", "--size", "2"]);
     assert!(!ok && taken.contains("count names T.COM+0000F already"), "{taken}");
     std::fs::write(repo.join("knowledge/ticks.toml"), "[[sync]]\nname = \"loop\"\nat = \"T.COM+0000E\"\n").unwrap();
+    let settings = std::fs::read_to_string(repo.join("rrc.toml")).unwrap();
+    std::fs::write(repo.join("rrc.toml"), format!("{settings}\n[port]\nimports = false\n")).unwrap();
+    let (refused, ok) = rrc.run(&["import", "recreate", "."]);
+    assert!(!ok && refused.contains("takes no imports"), "{refused}");
     let check = rrc.ok(&["check"]);
     assert!(check.contains("1 functions, 1 data, 0 types, 1 sync points"), "{check}");
     assert!(rrc.ok(&["show", "count"]).contains("count (agent)"));

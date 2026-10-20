@@ -13,6 +13,8 @@ pub const STATE: &str = ".rrc";
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub game: Game,
+    #[serde(default, skip_serializing_if = "Port::is_default")]
+    pub port: Port,
     pub original: Original,
     /// The versions of the game the port supports.
     #[serde(default, rename = "version", skip_serializing_if = "Vec::is_empty")]
@@ -25,6 +27,30 @@ pub struct Game {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
+}
+
+/// The port's own rules.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Port {
+    /// Whether `rrc import` may bring in knowledge from elsewhere: not for an honest pilot (D46).
+    #[serde(default = "yes")]
+    pub imports: bool,
+}
+
+impl Default for Port {
+    fn default() -> Self {
+        Port { imports: true }
+    }
+}
+
+impl Port {
+    fn is_default(&self) -> bool {
+        *self == Port::default()
+    }
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// How Clockwork runs the original.
@@ -160,6 +186,7 @@ mod tests {
     fn settings_read_back_as_written() {
         let settings = Settings {
             game: Game { name: "wolf3d".into(), title: "Wolfenstein 3-D".into() },
+            port: Port { imports: false },
             original: Original { program: "WOLF3D.EXE".into(), options: vec!["--ems".into(), "0".into()] },
             versions: vec![Version {
                 name: "shareware 1.4".into(),
@@ -177,6 +204,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let settings = Settings {
             game: Game { name: "dagger".into(), title: String::new() },
+            port: Port::default(),
             original: Original { program: "dagger\\dagger.exe".into(), options: vec![] },
             versions: vec![],
         };

@@ -72,11 +72,11 @@ watched bytes comes back with its instruction, cycle and call chain. Bounds chec
 work the same way. Addresses are `+OFF` (image offsets), `SEG:OFF` or `@LINEAR`. The operations are listed in
 `cli/src/serve.rs`. A request that makes Clockwork panic gets an error and drops the machine; the server goes on.
 
-`tools/who_wrote.py` is an example: who wrote a variable, and in which tick. Wolfenstein 3D's `pwallstate`
-(`+3C174`) in the pushwall walkthrough, with `CalcTics` (`+0F280`) marking the ticks:
+`tools/who_wrote.py` is an example: who wrote a variable, and in which tick. With the instruction where a
+game's tick ends at `+0A31C` and a two-byte variable at `+21C40`:
 
 ```bash
-python clockwork/tools/who_wrote.py "<Wolf3D folder>" WOLF3D.EXE --sync +0F280 --var +3C174:2 --tick 2268 -- --input-file testdata/inputs/wolf3d-pushwall.inputs
+python clockwork/tools/who_wrote.py "<game folder>" GAME.EXE --sync +0A31C --var +21C40:2 --tick 120 -- --input-file walk.inputs
 ```
 
 ```text

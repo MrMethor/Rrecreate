@@ -52,8 +52,16 @@ rrc calls first-level
 lists the functions the session calls, grouped by how often. A loop calls its functions once a pass, so the
 large groups are loops; in a group, the function that waits for the timer (it reads a counter the timer
 interrupt advances, in a loop, until it changes) is where a tick of that loop ends. Check with
-`rrc show <ID> --c`; `rrc show 4783:991C` finds the ID of an address Ghidra's code names (`DAT_4783_991c`). A game
-has a loop per mode (menus, play, demo playback): each gets a sync point.
+`rrc show <ID> --c`; `rrc show 2A40:13C2` finds the ID of an address Ghidra's code names (`DAT_2a40_13c2`).
+
+**Where the tick ends (D47):** put the sync point where the wait is over and the pass hasn't read its inputs
+yet, usually where the waiting function returns (its last instruction), not its entry: a tick's inputs and
+state are what memory holds at the sync point, which is what the pass starting there reads. At the entry,
+the elapsed time is the previous pass's, and a key that changes during the wait reaches the pass but not the
+tick. A game has a loop per mode (play, demo playback, menus); one loop may also end its tick in two places
+(demo playback skipping the usual wait for one of its own): each gets a sync point. Loops that poll as fast
+as the CPU runs, with no timer wait (menus, title screens), don't fit a sync point yet: leave them without
+one and say so in the notes.
 
 Declare them in `knowledge/ticks.toml`, with the tick's **boundary values**: what the loop reads that comes
 from outside it (the elapsed time the waiting function measures, the key-state array, the mouse). To find them:
@@ -93,10 +101,25 @@ whether it did.
 ## Naming
 
 ```bash
-rrc name WOLF3D.EXE+0F280 <name> --evidence "what shows it" --confidence 0.8 --by agent:<model>
-rrc data WOLF3D.EXE+4114C <name> --size 2 --type u16 --evidence "..."
+rrc name GAME.EXE+0A2F0 <name> --evidence "what shows it" --confidence 0.8 --by agent:<model>
+rrc data GAME.EXE+21C40 <name> --size 2 --type u16 --evidence "..."
 rrc check
 ```
 
+Longer evidence (how a loop works, why a sync point sits where it does, what couldn't be declared) goes in
+`notes/*.md` in the port repository, one file per subject, referred to from the knowledge's evidence and notes.
+
 Every decision carries its provenance and evidence; `rrc check` keeps the knowledge consistent (unique names,
 data that doesn't overlap, IDs inside the image). Set `RRC_BY` once instead of passing `--by` each time.
+
+## An honest pilot
+
+A pilot whose source is released (Wolf3D, D3) proves the approach only if nothing from that source helps.
+For such a port:
+
+- don't read the game's source release, reimplementations, wikis or anything derived from them, nor the web
+  about the game's code;
+- keep the game's copy in a folder of its own, away from projects that hold derived knowledge;
+- don't read Rrecreate's git history: its commit messages carry names from the project before it;
+- set `[port] imports = false` in `rrc.toml`, so `rrc import` refuses;
+- name things after what the code does, with evidence from this toolkit only.

@@ -367,7 +367,7 @@ mod tests {
             program: "GAME.EXE".into(),
             clockwork: "0.1.0".into(),
             syncs: vec![SyncPoint { name: "play".into(), at: "GAME.EXE+00100".into() }],
-            inputs: vec![item("tics", "GAME.EXE+20000")],
+            inputs: vec![item("elapsed", "GAME.EXE+20000")],
             state: vec![item("x", "GAME.EXE+20002"), item("y", "GAME.EXE+20004")],
         };
         let tick = |n: u64, state: Vec<(usize, Option<String>)>| Tick {

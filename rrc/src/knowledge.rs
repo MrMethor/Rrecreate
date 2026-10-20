@@ -333,10 +333,10 @@ mod tests {
         k.functions
             .insert(id("GAME.EXE+00120"), Decision { evidence: "GAME.EXE+00200 calls it".into(), ..decision("Play") });
         k.functions.insert(id("GAME.EXE+0001A"), decision("main"));
-        k.data.insert(id("GAME.EXE+20000"), Datum { decision: decision("tics"), size: Some(2), ty: "u16".into() });
+        k.data.insert(id("GAME.EXE+20000"), Datum { decision: decision("elapsed"), size: Some(2), ty: "u16".into() });
         k.data.insert(id("GAME.EXE+20002"), Datum { decision: decision("map"), size: None, ty: String::new() });
         k.ticks.syncs.push(Sync { name: "play".into(), at: "GAME.EXE+00120".into(), note: String::new() });
-        k.ticks.inputs.push(Input { name: "tics".into(), at: "GAME.EXE+20000".into(), size: 2, note: "x".into() });
+        k.ticks.inputs.push(Input { name: "elapsed".into(), at: "GAME.EXE+20000".into(), size: 2, note: "x".into() });
         k.types.structs.push(Struct {
             name: "actor".into(),
             size: 4,
@@ -348,7 +348,7 @@ mod tests {
         assert!(text.find("main").unwrap() < text.find("Play").unwrap(), "sorted by ID:\n{text}");
         assert_eq!(Knowledge::load(&dir).unwrap(), k);
         std::fs::remove_dir_all(&dir).ok();
-        assert_eq!(k.named("tics"), Some(&id("GAME.EXE+20000")));
+        assert_eq!(k.named("elapsed"), Some(&id("GAME.EXE+20000")));
         assert!(k.problems("GAME.EXE", Some(0x30000)).is_empty(), "{:?}", k.problems("GAME.EXE", Some(0x30000)));
     }
 

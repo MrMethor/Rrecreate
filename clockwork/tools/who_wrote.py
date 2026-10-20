@@ -1,10 +1,10 @@
 """Who wrote a variable, and when: an example of driving `clockwork serve`.
 
-    python clockwork/tools/who_wrote.py <dir> <program> --sync +0F280 --var +3C174:2 [--tick N]
+    python clockwork/tools/who_wrote.py <dir> <program> --sync +0A31C --var +21C40:2 [--tick N]
         [--seconds 90] [--clockwork target/release/clockwork] [-- run options...]
 
-The sync point marks the game's ticks (an instruction run once per frame, such as Wolf3D's
-CalcTics); the variable is ADDRESS:SIZE. Without --tick, every write in the run is listed with the tick
+The sync point marks the game's ticks (an instruction run once per frame, such as where the main
+loop's timer wait returns); the variable is ADDRESS:SIZE. Without --tick, every write in the run is listed with the tick
 it happened in. With --tick N, the run stops at tick N, watches the variable through that tick only,
 and says who wrote it: the instruction, the bytes, and the call chain. Options after `--` go to the
 program's start as `clockwork run` takes them (an --input-file walkthrough, a CD drive...).

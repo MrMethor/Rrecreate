@@ -279,7 +279,7 @@ impl Analysis {
 }
 
 impl Analysis {
-    /// The ID of Ghidra's `SEG:OFF` (hex, as in its names: `DAT_4783_991c` is `4783:991C`), if the
+    /// The ID of Ghidra's `SEG:OFF` (hex, as in its names: `DAT_2a40_13c2` is `2A40:13C2`), if the
     /// address is in the image.
     /// `text` (Ghidra's code) with the knowledge's names for Ghidra's `FUN_SSSS_OOOO` and
     /// `DAT_SSSS_OOOO`: a function's name, a data item's, or `name[+N]` for the byte N into one.

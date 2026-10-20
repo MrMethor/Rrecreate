@@ -27,6 +27,9 @@ its file name, uppercase (`WOLF3D.EXE`).
 A port repository also has `.gitignore` (`rrc.local.toml`, `.rrc/`, `target/`) and `.gitattributes` (text with
 LF line ends on every platform).
 
+`[port] imports = false` makes `rrc import` refuse: an honest pilot's knowledge comes from its own analysis
+only (D46).
+
 ## `rrc.local.toml`: this machine (not committed)
 
 ```toml
@@ -72,12 +75,12 @@ Tab-separated, a header line starting `#`, then one item per line sorted by ID (
 
 ```
 # id	name	provenance	confidence	evidence
-WOLF3D.EXE+0F280	CalcTics	agent:claude-opus-5-5	0.8	called once per frame from PlayLoop
+GAME.EXE+0A2F0	wait_for_tick	agent:claude-opus-5-5	0.8	called once a pass of the main loop; waits for the timer
 ```
 
 ```
 # id	name	size	type	provenance	confidence	evidence
-WOLF3D.EXE+4114C	tics	2	u16	human
+GAME.EXE+21C40	tick_elapsed	2	u16	human
 ```
 
 - **id:** `<MODULE>[#<n>]+<offset>` (D29), the offset in the loaded image, uppercase hex, 5 to 8 digits.
@@ -95,40 +98,42 @@ Trailing empty columns may be left out. Lines starting `#` and blank lines are i
 
 ```toml
 [[struct]]
-name = "objstruct"
-size = 60
+name = "actor"
+size = 12
 provenance = "agent:claude-opus-5-5"
 fields = [
-    { offset = 0, size = 2, name = "active", type = "u16" },
-    { offset = 2, size = 2, name = "ticcount", type = "i16" },
+    { offset = 0, size = 2, name = "x", type = "i16" },
+    { offset = 2, size = 2, name = "y", type = "i16" },
 ]
 
 [[enum]]
-name = "dirtype"
+name = "direction"
 size = 2
-values = { east = 0, northeast = 1 }
+values = { north = 0, east = 1 }
 ```
 
 ## `knowledge/ticks.toml`: where ticks end and what they read
 
 ```toml
-[[sync]]                        # a sync point: the instruction where a tick ends (one per loop)
+[[sync]]                        # a sync point: where a tick ends (D47)
 name = "play"
-at = "WOLF3D.EXE+0F280"
-note = "CalcTics: once per frame of play"
+at = "GAME.EXE+0A31C"
+note = "where wait_for_tick returns: the wait is over and the pass hasn't read its inputs yet"
 
 [[input]]                       # a boundary value: what the original's logic reads at each tick (D15)
-name = "tics"
-at = "WOLF3D.EXE+4114C"
+name = "tick_elapsed"
+at = "GAME.EXE+21C40"
 size = 2
-note = "time since the last frame, in 70 Hz tics"
+note = "timer counts since the last pass (70 Hz)"
 ```
+
+A tick's inputs and state are what the memory holds at the sync point: what the pass starting there reads.
 
 ## `sessions/<name>.toml`: a session
 
 ```toml
-description = "E1M1 up the main corridor, the pushwall pushed"
-inputs = "pushwall.inputs"      # an input script (clockwork run --input-file), beside it; or
+description = "the first level, up the main corridor"
+inputs = "walk.inputs"          # an input script (clockwork run --input-file), beside it; or
 # replay = "play.session"       # play recorded by clockwork play --record
 seconds = 86.0                  # emulated seconds it runs
 options = []                    # optional: more `clockwork run` options
@@ -146,10 +151,10 @@ Recording a session again must give the same hash (D44): `rrc record` says wheth
 JSON lines (D45): a header, a line per tick, and an end line.
 
 ```
-{"format":"rrc-trace","version":1,"game":"wolf3d","session":"pushwall","program":"WOLF3D.EXE","clockwork":"0.1.0",
- "syncs":[{"name":"play","at":"WOLF3D.EXE+0F280"}],
- "inputs":[{"name":"tics","at":"WOLF3D.EXE+4114C","size":2}],
- "state":[{"name":"pwallstate","at":"WOLF3D.EXE+3C174","size":2}, …]}
+{"format":"rrc-trace","version":1,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
+ "syncs":[{"name":"play","at":"GAME.EXE+0A31C"}],
+ "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2}],
+ "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":["0100"],"state":[[0,"0000"], …],"frames":[[284,20380102,19,"61f5…"]],
  "sound":{"opl":[[2549120000,176,49]]}}
 {"end":"the session's end","cycles":688003448}

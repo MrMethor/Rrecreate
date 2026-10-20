@@ -20,6 +20,11 @@ pub(crate) fn import(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if source != "recreate" {
         return Err(format!("usage: rrc {usage}"));
     }
+    if !repo.settings.port.imports {
+        return Err("this port takes no imports ([port] imports = false in rrc.toml): an honest pilot's knowledge \
+                    comes from its own analysis (D46)"
+            .into());
+    }
     let without: BTreeSet<&str> = a.value("--without").map(|w| w.split(',').collect()).unwrap_or_default();
     let mut k = Knowledge::load(&repo.knowledge())?;
     let report = from_recreate(&mut k, Path::new(dir), &repo.module(), &without)?;
@@ -170,7 +175,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.join("globals.tsv"),
-            "# offset\tname\tsize\ttype\tprovenance\tconfidence\n209F0\ttics\t2\t\thuman\t\n",
+            "# offset\tname\tsize\ttype\tprovenance\tconfidence\n209F0\telapsed\t2\t\thuman\t\n",
         )
         .unwrap();
         let mut k = Knowledge::default();
@@ -183,7 +188,7 @@ mod tests {
         assert_eq!(report.conflicts, ["GAME.EXE+00400: the port's Mine over Taken"]);
         let think = &k.functions[&"GAME.EXE+00300".parse().unwrap()];
         assert_eq!(think.provenance, "recreate:agent:x");
-        let tics = &k.data[&"GAME.EXE+209F0".parse().unwrap()];
-        assert_eq!((tics.decision.name.as_str(), tics.size), ("tics", Some(2)));
+        let elapsed = &k.data[&"GAME.EXE+209F0".parse().unwrap()];
+        assert_eq!((elapsed.decision.name.as_str(), elapsed.size), ("elapsed", Some(2)));
     }
 }

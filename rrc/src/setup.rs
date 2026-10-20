@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use crate::args::Args;
 use crate::cache::Cache;
-use crate::repo::{self, Game, Original, Repo, Settings, Version};
+use crate::repo::{self, Game, Original, Port, Repo, Settings, Version};
 use crate::{clockwork, game, knowledge, say, tools};
 
 pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
@@ -27,6 +27,7 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
     let title = a.value("--title").unwrap_or_default().to_owned();
     let settings = Settings {
         game: Game { name: name.clone(), title },
+        port: Port::default(),
         original: Original { program, options: vec![] },
         versions: vec![],
     };
