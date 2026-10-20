@@ -62,8 +62,12 @@ impl Names<'_> {
 }
 
 pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--len", "--tick", "--ticks"], &["--reads"])?;
-    let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads]";
+    let a = Args::parse(args, &["--len", "--tick", "--ticks", "--limit", "--lines"], &["--reads", "--cycles"])?;
+    let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles] [--limit N] \
+                 [--lines N]";
+    let limit: u64 = a.value("--limit").map_or(Ok(10_000), str::parse).map_err(|_| "--limit is a count")?;
+    let lines_shown: usize =
+        a.value("--lines").map_or(Ok(ACCESSES_SHOWN), str::parse).map_err(|_| "--lines is a count")?;
     let [name, what] = a.positionals(2, 2, usage)? else { unreachable!() };
     let session = Session::load(repo, name)?;
     let k = Knowledge::load(&repo.knowledge())?;
@@ -84,7 +88,7 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     clockwork.ask("calls", json!({"on": true}))?;
     let mut ms = to_tick(&mut clockwork, first, length_ms)?;
     let at = image_address(&repo.module(), &id.to_string())?;
-    clockwork.ask("watch", json!({"ranges": [{"at": at, "len": len}], "reads": a.has("--reads")}))?;
+    clockwork.ask("watch", json!({"ranges": [{"at": at, "len": len}], "reads": a.has("--reads"), "limit": limit}))?;
     // Tick by tick, keeping where each ends.
     let mut ends = Vec::new();
     if syncs.is_empty() {
@@ -103,24 +107,29 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let names = Names { k: &k, module: repo.module() };
     let span = if syncs.is_empty() { "the whole session".to_owned() } else { ticks_text(first, ends.len() as u64) };
     say("watch", format!("{} ({id}, {len} bytes), {span}", names.data(&at)));
-    // Each tick's accesses, those alike counted once.
+    // Each tick's accesses, those alike counted once (with --cycles, each on its own line). What runs
+    // before the first sync point hit (loading, unpacking, the first screens) is "start".
     let mut lines: Vec<(String, String, usize)> = Vec::new();
     for access in group(watched["hits"].as_array().cloned().unwrap_or_default()) {
-        let tick = ends
-            .iter()
-            .position(|&end| access.cycle <= end)
-            .map_or_else(|| "-".into(), |i| (first + i as u64).to_string());
-        let text = access.describe(&names);
+        let tick = match ends.iter().position(|&end| access.cycle <= end) {
+            Some(0) if first == 1 => "start".to_owned(),
+            Some(i) => (first + i as u64).to_string(),
+            None => "-".to_owned(),
+        };
+        let mut text = access.describe(&names);
+        if a.has("--cycles") {
+            text = format!("{text}, cycle {}", access.cycle);
+        }
         match lines.iter_mut().find(|(t, line, _)| *t == tick && *line == text) {
             Some((_, _, n)) => *n += 1,
             None => lines.push((tick, text, 1)),
         }
     }
-    for (tick, text, n) in lines.iter().take(ACCESSES_SHOWN) {
+    for (tick, text, n) in lines.iter().take(lines_shown) {
         say(tick, if *n > 1 { format!("{text} ({n} times)") } else { text.clone() });
     }
-    if lines.len() > ACCESSES_SHOWN {
-        say("...", format!("{} more lines", lines.len() - ACCESSES_SHOWN));
+    if lines.len() > lines_shown {
+        say("...", format!("{} more lines (--lines N shows more)", lines.len() - lines_shown));
     }
     if lines.is_empty() {
         say(
@@ -128,8 +137,12 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             if a.has("--reads") { "nothing read or wrote it" } else { "nothing wrote it (--reads for reads too)" },
         );
     }
-    if watched["dropped"].as_u64().unwrap_or(0) > 0 {
-        say("dropped", format!("{} accesses past the watch's limit: watch fewer ticks", watched["dropped"]));
+    let dropped = watched["dropped"].as_u64().unwrap_or(0);
+    if dropped > 0 {
+        say(
+            "dropped",
+            format!("{dropped} accesses past the limit of {limit} (--limit N): the counts above stop there"),
+        );
     }
     Ok(ExitCode::SUCCESS)
 }

@@ -45,26 +45,33 @@ usage: rrc <command> [arguments]     (inside a port repository)
   show ID|NAME|SEG:OFF [--asm] [--c]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
                          its DAT_SEG_OFF names): its name and evidence, what Ghidra found (size,
-                         calls, callers), its disassembly (--asm) or decompiled code (--c), with
-                         the knowledge's names for Ghidra's FUN_ and DAT_ names
+                         calls, callers; the function an address is inside), its disassembly
+                         (--asm, lines as IDs) or decompiled code (--c), with the knowledge's names
+                         for Ghidra's FUN_ and DAT_ names
   session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]]
                          the sessions, or a new one: an input script (clockwork run --input-file) or
                          play recorded by clockwork play --record, and how many emulated seconds
+  session set NAME [--seconds N] [--description TEXT]
+                         change a session
   record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound
-  calls SESSION [--min N]
+  calls SESSION [--min N] [--top N]
                          how often the session calls each function, grouped by count (at least N,
                          default 100): a loop calls its functions equally often, and the one in a
                          group that waits for the timer is where a tick ends
-  watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads]
+  watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles]
+        [--limit N] [--lines N]
                          who writes (and with --reads, reads) it during the session, or from tick N
-                         for N ticks: the instruction, the value, and the call chain
+                         for N ticks: the instruction, the value, and the call chain (start: before
+                         the first sync point hit); at most --limit accesses (10000), --lines lines
   inputs SESSION [--tick N] [--ticks N] [--at ID|SEG:OFF --len N]
                          boundary value candidates: memory the program reads that only interrupt
                          handlers or host services write (the key states, the timer counts), in the
                          data segment from tick N (default 2) on, or in the range given
-  trace SESSION [--tick N] [--item NAME]
-                         a recorded trace: a summary, one tick, or one item over the ticks
+  trace SESSION [--tick N] [--item NAME [--lines N]] [--path]
+                         a recorded trace: a summary, one tick, or one item over the ticks, values
+                         read as data.tsv's types (an array as its elements that aren't zero);
+                         --path: where the trace file is, to read it whole
   import recreate DIR [--without PROVENANCE,...]
                          Recreate's knowledge files (its games/<game>/knowledge), leaving out the
                          items of the provenances named

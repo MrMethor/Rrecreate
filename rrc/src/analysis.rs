@@ -202,6 +202,8 @@ pub struct Function {
     /// Ghidra's name (`FUN_…` when it has none).
     pub name: String,
     pub size: u32,
+    /// Its code: (image offset, length) ranges.
+    pub body: Vec<(u32, u32)>,
     /// The library function a signature pack recognizes: (name, pack).
     pub library: Option<(String, String)>,
 }
@@ -250,11 +252,16 @@ impl Analysis {
             match r["record"].as_str() {
                 Some("function") => {
                     let Some(at) = id(&r["address"]) else { continue };
-                    let size =
-                        r["body"].as_array().into_iter().flatten().filter_map(|range| range[1].as_u64()).sum::<u64>();
+                    let body: Vec<(u32, u32)> = r["body"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|range| Some((id(&range[0])?.offset(), range[1].as_u64()? as u32)))
+                        .collect();
                     let function = Function {
                         name: r["name"].as_str().unwrap_or_default().to_owned(),
-                        size: size as u32,
+                        size: body.iter().map(|r| r.1).sum(),
+                        body,
                         library: packs.matching(&r["fid"]),
                     };
                     analysis.functions.insert(at, function);
@@ -335,6 +342,29 @@ impl Analysis {
         }
     }
 
+    /// The function whose code holds `id`, and how far into it (from its entry).
+    pub fn containing(&self, id: &Id) -> Option<(&Id, u32)> {
+        let at = id.offset();
+        self.functions
+            .iter()
+            .find(|(_, f)| f.body.iter().any(|&(start, len)| (start..start + len).contains(&at)))
+            .map(|(entry, _)| (entry, at.wrapping_sub(entry.offset())))
+    }
+
+    /// Ghidra's disassembly with each line's `SSSS:OOOO` as an ID.
+    pub fn with_ids(&self, asm: &str, module: &str) -> String {
+        let mut out = String::with_capacity(asm.len());
+        for line in asm.lines() {
+            let (address, rest) = line.split_at(line.find(' ').unwrap_or(line.len()));
+            match self.id_of(module, address) {
+                Some(id) => out.push_str(&format!("{id}{rest}")),
+                None => out.push_str(line),
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     pub fn id_of(&self, module: &str, address: &str) -> Option<Id> {
         let (segment, offset) = address.split_once(':')?;
         let linear = u64::from_str_radix(segment, 16).ok()? * 16 + u64::from_str_radix(offset, 16).ok()?;
@@ -405,6 +435,10 @@ mod tests {
         let id = |t: &str| t.parse::<Id>().unwrap();
         assert_eq!(a.functions.len(), 2);
         assert_eq!(a.functions[&id("GAME.EXE+00010")].size, 20);
+        assert_eq!(a.containing(&id("GAME.EXE+00015")), Some((&id("GAME.EXE+00010"), 5)));
+        assert_eq!(a.containing(&id("GAME.EXE+00042")).map(|f| f.0), Some(&id("GAME.EXE+00010")), "its second range");
+        assert_eq!(a.containing(&id("GAME.EXE+00030")), None);
+        assert_eq!(a.with_ids("1000:0040  RETF\n", "GAME.EXE"), "GAME.EXE+00040  RETF\n");
         let ftol = &a.functions[&id("GAME.EXE+00040")];
         assert_eq!(ftol.library, Some(("F_FTOL@".into(), "borland-c++-1991-medium".into())));
         assert_eq!(a.calls, [(id("GAME.EXE+00010"), id("GAME.EXE+00018"), id("GAME.EXE+00040"))]);

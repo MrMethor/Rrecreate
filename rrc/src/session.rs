@@ -85,7 +85,8 @@ pub fn names(repo: &Repo) -> Result<Vec<String>, String> {
 
 pub(crate) fn session(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &["--inputs", "--replay", "--seconds", "--description"], &[])?;
-    let usage = "session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]]";
+    let usage = "session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT] | \
+                 set NAME [--seconds N] [--description TEXT]]";
     match a.positionals(0, 2, usage)? {
         [] => {
             for name in names(repo)? {
@@ -96,6 +97,18 @@ pub(crate) fn session(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             Ok(ExitCode::SUCCESS)
         }
         [add, name] if add == "add" => add_session(repo, &a, name),
+        [set, name] if set == "set" => {
+            let mut s = Session::load(repo, name)?;
+            if let Some(seconds) = a.value("--seconds") {
+                s.seconds = seconds.parse().ok().filter(|s: &f64| *s > 0.0).ok_or("--seconds is a number")?;
+            }
+            if let Some(description) = a.value("--description") {
+                s.description = description.to_owned();
+            }
+            s.save(repo, name)?;
+            say("session", format!("{name}: {} s (rrc record {name} to trace it so)", s.seconds));
+            Ok(ExitCode::SUCCESS)
+        }
         _ => Err(format!("usage: rrc {usage}")),
     }
 }
@@ -113,7 +126,12 @@ fn add_session(repo: &Repo, a: &Args, name: &str) -> Result<ExitCode, String> {
     // The input goes beside the session, named after it.
     let keep = |source: &str, extension: &str| -> Result<String, String> {
         let file = format!("{name}.{extension}");
-        std::fs::copy(source, repo.sessions().join(&file)).map_err(|e| format!("{source}: {e}"))?;
+        let target = repo.sessions().join(&file);
+        // The file may be there already (written in sessions/ first).
+        let same = std::fs::canonicalize(source).ok().is_some_and(|s| std::fs::canonicalize(&target).ok() == Some(s));
+        if !same {
+            std::fs::copy(source, &target).map_err(|e| format!("{source}: {e}"))?;
+        }
         Ok(file)
     };
     let (inputs, replay) = match (a.value("--inputs"), a.value("--replay")) {

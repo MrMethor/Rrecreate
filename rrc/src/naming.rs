@@ -141,6 +141,11 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
     } else {
         say("unnamed", &id);
+        if let Some((function, offset)) = analysis.as_ref().and_then(|a| a.containing(&id)) {
+            let name =
+                k.functions.get(function).map_or_else(|| function.to_string(), |d| format!("{} ({function})", d.name));
+            say("inside", format!("{name}, {offset:#X} bytes in"));
+        }
     }
     let text = id.to_string();
     for s in k.ticks.syncs.iter().filter(|s| s.at == text) {
@@ -181,7 +186,7 @@ fn show_analysis(k: &Knowledge, analysis: &Analysis, id: &Id, asm: bool, c: bool
     }
     if let Some((disassembly, decompiled)) = analysis.code.get(id) {
         if asm {
-            print!("{}", analysis.with_names(disassembly, k, id.module()));
+            print!("{}", analysis.with_ids(&analysis.with_names(disassembly, k, id.module()), id.module()));
         }
         if c {
             let decompiled = decompiled.as_deref().unwrap_or("(Ghidra didn't decompile it)");

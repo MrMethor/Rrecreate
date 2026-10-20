@@ -96,6 +96,6 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(inputs.contains("none"), "no interrupt handler writes anything it reads: {inputs}");
     let counts = rrc.ok(&["trace", "short", "--item", "count"]);
     let lines: Vec<&str> = counts.lines().take(3).collect();
-    assert_eq!(lines, ["1         0100", "2         0200", "3         0300"], "the count at each tick");
+    assert_eq!(lines, ["1         1", "2         2", "3         3"], "the count at each tick, as a u16");
     std::fs::remove_dir_all(&dir).ok();
 }

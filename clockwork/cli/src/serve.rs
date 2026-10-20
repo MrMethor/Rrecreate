@@ -27,7 +27,8 @@
 //! - `read` `{"ranges": [{"at", "len"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
 //! - `watch` `{"ranges": [{"at", "len"}], "reads": false}` … `watch_end`: who wrote (or read) each
-//!   byte, with the instruction, the cycle and the call chain. With `"summary": true`, who touched
+//!   byte, with the instruction, the cycle and the call chain (at most `"limit"` accesses, 10000 by
+//!   default). With `"summary": true`, who touched
 //!   each byte instead, as runs of bytes touched alike: `{"at", "len", "read", "read_in_interrupt",
 //!   "written", "interrupt_writer" (the handler's entry, or null), "host" (a service or device wrote)}`. `calls` `{"on": true}` tracks calls
 //!   from now on, so a watch started later sees the whole chain.
@@ -273,11 +274,14 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             }
             let reads = r.get("reads").and_then(Value::as_bool).unwrap_or(false);
             let summary = r.get("summary").and_then(Value::as_bool).unwrap_or(false);
-            let watch = if summary {
+            let mut watch = if summary {
                 dos::watch::Watch::summary(physical_ranges, reads)
             } else {
                 dos::watch::Watch::new(physical_ranges, reads)
             };
+            if let Some(limit) = r.get("limit").and_then(Value::as_u64) {
+                watch.limit = limit as usize;
+            }
             m.start_watch(watch);
             Ok(json!({}))
         }

@@ -15,8 +15,9 @@ use crate::say;
 use crate::session::Session;
 
 pub(crate) fn calls(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--min"], &[])?;
-    let [name] = a.positionals(1, 1, "calls SESSION [--min N]")? else { unreachable!() };
+    let a = Args::parse(args, &["--min", "--top"], &[])?;
+    let [name] = a.positionals(1, 1, "calls SESSION [--min N] [--top N]")? else { unreachable!() };
+    let top: usize = a.value("--top").map_or(Ok(10), str::parse).map_err(|_| "--top is a count")?;
     let min: u64 = a.value("--min").map_or(Ok(100), str::parse).map_err(|_| "--min is a count")?;
     let session = Session::load(repo, name)?;
     let counts = count_calls(repo, &session)?;
@@ -29,7 +30,7 @@ pub(crate) fn calls(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let mut groups: Vec<(u64, Vec<u32>)> = groups.into_iter().filter(|(n, _)| *n >= min).collect();
     groups.sort_by_key(|(n, fs)| (std::cmp::Reverse(fs.len()), std::cmp::Reverse(*n)));
     say("called", format!("{} functions in {name}", counts.len()));
-    for (n, functions) in groups.iter().take(6) {
+    for (n, functions) in groups.iter().take(top) {
         let names: Vec<String> = functions
             .iter()
             .map(|&offset| match Id::new(&module, None, offset) {
@@ -38,6 +39,9 @@ pub(crate) fn calls(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             })
             .collect();
         say(&format!("{n}x"), format!("{} functions: {}", functions.len(), names.join(", ")));
+    }
+    if groups.len() > top {
+        say("...", format!("{} more groups (--top N shows more)", groups.len() - top));
     }
     Ok(ExitCode::SUCCESS)
 }

@@ -264,15 +264,25 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
 }
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--tick", "--item"], &[])?;
-    let [name] = a.positionals(1, 1, "trace SESSION [--tick N] [--item NAME]")? else { unreachable!() };
+    let a = Args::parse(args, &["--tick", "--item", "--lines"], &["--path"])?;
+    let usage = "trace SESSION [--tick N] [--item NAME [--lines N]] [--path]";
+    let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     let session = Session::load(repo, name)?;
     let recorded = session.trace.ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
-    let bytes = Cache::open(&repo.local)?.get(&recorded.hash)?;
-    let trace = Trace::parse(&String::from_utf8_lossy(&bytes))?;
+    let cache = Cache::open(&repo.local)?;
+    if a.has("--path") {
+        say("path", cache.path(&recorded.hash).display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
     let h = &trace.header;
+    // The types data.tsv gives the items, by ID.
+    let k = Knowledge::load(&repo.knowledge())?;
+    let types: BTreeMap<String, String> = k.data.iter().map(|(id, d)| (id.to_string(), d.ty.clone())).collect();
+    let ty = |item: &Item| types.get(&item.at).cloned().unwrap_or_default();
     if let Some(item) = a.value("--item") {
-        return show_item(&trace, item);
+        let lines: usize = a.value("--lines").map_or(Ok(40), str::parse).map_err(|_| "--lines is a count")?;
+        return show_item(&trace, item, &ty, lines);
     }
     if let Some(n) = a.value("--tick") {
         let n: u64 = n.parse().map_err(|_| "--tick is a number")?;
@@ -283,10 +293,10 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .ok_or_else(|| format!("no tick {n} (1 to {})", trace.ticks.len()))?;
         say("tick", format!("{} at cycle {}, sync point {}", tick.tick, tick.cycle, tick.sync));
         for (item, value) in h.inputs.iter().zip(&tick.inputs) {
-            say("input", format!("{} = {}", item.name, short(value.as_deref().unwrap_or("unmapped"))));
+            say("input", format!("{} = {}", item.name, value_text(value.as_deref(), &ty(item))));
         }
         for (i, value) in &tick.state {
-            say("changed", format!("{} = {}", h.state[*i].name, short(value.as_deref().unwrap_or("unmapped"))));
+            say("changed", format!("{} = {}", h.state[*i].name, value_text(value.as_deref(), &ty(&h.state[*i]))));
         }
         say("frames", tick.frames.len());
         for (device, events) in &tick.sound {
@@ -319,16 +329,17 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// An item's value over the ticks: each tick it changed (an input: each tick).
-fn show_item(trace: &Trace, name: &str) -> Result<ExitCode, String> {
+/// An item's value over the ticks: each tick it changed (an input: each tick), as its type reads.
+fn show_item(trace: &Trace, name: &str, ty: &dyn Fn(&Item) -> String, lines: usize) -> Result<ExitCode, String> {
     let h = &trace.header;
-    let values: Vec<Option<String>> = if let Some(i) = h.inputs.iter().position(|i| i.name == name) {
-        trace.ticks.iter().map(|t| t.inputs.get(i).cloned().flatten()).collect()
+    let (values, item): (Vec<Option<String>>, &Item) = if let Some(i) = h.inputs.iter().position(|i| i.name == name) {
+        (trace.ticks.iter().map(|t| t.inputs.get(i).cloned().flatten()).collect(), &h.inputs[i])
     } else if let Some(i) = h.state.iter().position(|i| i.name == name) {
-        trace.values(i)
+        (trace.values(i), &h.state[i])
     } else {
         return Err(format!("the trace has no {name}"));
     };
+    let ty = ty(item);
     let mut shown = 0;
     let mut last: Option<&Option<String>> = None;
     for (tick, value) in trace.ticks.iter().zip(&values) {
@@ -337,14 +348,45 @@ fn show_item(trace: &Trace, name: &str) -> Result<ExitCode, String> {
         }
         last = Some(value);
         shown += 1;
-        if shown <= 40 {
-            say(&tick.tick.to_string(), short(value.as_deref().unwrap_or("unmapped")));
+        if shown <= lines {
+            say(&tick.tick.to_string(), value_text(value.as_deref(), &ty));
         }
     }
-    if shown > 40 {
-        say("...", format!("{} more changes", shown - 40));
+    if shown > lines {
+        say("...", format!("{} more changes (--lines N shows more)", shown - lines));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A value as its type reads (`u16`, `i16`, `u8[256]`, ...): a number in decimal, an array as its
+/// elements that aren't zero (`[index]=value`); hex when the type isn't one of these.
+pub fn value_text(hex: Option<&str>, ty: &str) -> String {
+    let Some(hex) = hex else { return "unmapped".into() };
+    let bytes: Vec<u8> =
+        (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect();
+    let (element, array) = match ty.split_once('[') {
+        Some((element, _)) => (element, true),
+        None => (ty, false),
+    };
+    let width = match element {
+        "u8" | "i8" => 1,
+        "u16" | "i16" => 2,
+        "u32" | "i32" => 4,
+        _ => return short(hex),
+    };
+    let signed = element.starts_with('i');
+    let number = |chunk: &[u8]| -> i64 {
+        let raw = chunk.iter().rev().fold(0u64, |v, &b| (v << 8) | u64::from(b));
+        let shift = 64 - 8 * width as u32;
+        if signed { ((raw << shift) as i64) >> shift } else { raw as i64 }
+    };
+    let values: Vec<i64> = bytes.chunks_exact(width).map(number).collect();
+    if !array && values.len() == 1 {
+        return values[0].to_string();
+    }
+    let set: Vec<String> =
+        values.iter().enumerate().filter(|(_, v)| **v != 0).map(|(i, v)| format!("[{i:#X}]={v}")).collect();
+    if set.is_empty() { format!("all {} zero", values.len()) } else { set.join(" ") }
 }
 
 /// A value, shortened for a line of output.
@@ -396,5 +438,9 @@ mod tests {
         assert_eq!(x, [Some("0000".into()), Some("0100".into()), Some("0100".into())]);
         assert_eq!(image_address("GAME.EXE", "GAME.EXE+20002").unwrap(), "+20002");
         assert!(image_address("GAME.EXE", "OTHER.EXE+20002").is_err());
+        assert_eq!((value_text(Some("FEFF"), "i16"), value_text(Some("FEFF"), "u16")), ("-2".into(), "65534".into()));
+        assert_eq!(value_text(Some("00000100"), "u16[2]"), "[0x1]=1");
+        assert_eq!(value_text(Some("0000"), "u8[2]"), "all 2 zero");
+        assert_eq!((value_text(Some("0A0B"), ""), value_text(None, "u8")), ("0A0B".into(), "unmapped".into()));
     }
 }
