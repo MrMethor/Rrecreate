@@ -16,6 +16,7 @@ pub mod session;
 mod setup;
 pub mod tools;
 pub mod trace;
+mod watch;
 
 use std::process::ExitCode;
 
@@ -55,6 +56,13 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          how often the session calls each function, grouped by count (at least N,
                          default 100): a loop calls its functions equally often, and the one in a
                          group that waits for the timer is where a tick ends
+  watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads]
+                         who writes (and with --reads, reads) it during the session, or from tick N
+                         for N ticks: the instruction, the value, and the call chain
+  inputs SESSION [--tick N] [--ticks N] [--at ID|SEG:OFF --len N]
+                         boundary value candidates: memory the program reads that only interrupt
+                         handlers or host services write (the key states, the timer counts), in the
+                         data segment from tick N (default 2) on, or in the range given
   trace SESSION [--tick N] [--item NAME]
                          a recorded trace: a summary, one tick, or one item over the ticks
   import recreate DIR [--without PROVENANCE,...]
@@ -90,6 +98,8 @@ pub fn main() -> ExitCode {
         Some("session") => here().and_then(|repo| session::session(&repo, rest)),
         Some("calls") => here().and_then(|repo| calls::calls(&repo, rest)),
         Some("record") => here().and_then(|repo| trace::record(&repo, rest)),
+        Some("watch") => here().and_then(|repo| watch::watch(&repo, rest)),
+        Some("inputs") => here().and_then(|repo| watch::inputs(&repo, rest)),
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("import") => here().and_then(|repo| import::import(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),

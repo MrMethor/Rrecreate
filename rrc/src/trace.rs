@@ -132,7 +132,7 @@ impl Trace {
 }
 
 /// `+OFF` for an ID in the program (Clockwork's address for an image offset).
-fn image_address(module: &str, id: &str) -> Result<String, String> {
+pub(crate) fn image_address(module: &str, id: &str) -> Result<String, String> {
     let id = parse_id(id)?;
     if id.module() != module || id.part().is_some() {
         return Err(format!("{id}: only the program's own image ({module}) can be traced so far"));
@@ -165,7 +165,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         session: name.clone(),
         program: module.clone(),
         clockwork: clockwork::version(&exe).unwrap_or_default(),
-        syncs: k.ticks.syncs.iter().map(|s| SyncPoint { name: s.name.clone(), at: s.at.clone() }).collect(),
+        syncs: sync_points(&k),
         inputs,
         state,
     };
@@ -188,21 +188,39 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 }
 
 /// Runs the session to its end, taking a tick at each sync point hit.
-fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<Trace, String> {
+/// The session's original in a fresh Clockwork with the sync points set: Clockwork, what `load`
+/// answered (the cycle it starts at, where the image is), and the sync points' names by Clockwork's
+/// address (`+OFF`).
+pub(crate) fn begin(
+    repo: &Repo,
+    session: &Session,
+    syncs: &[SyncPoint],
+) -> Result<(Clockwork, Value, BTreeMap<String, String>), String> {
     let (mut clockwork, loaded) = Clockwork::original(repo, &session.options(repo))?;
-    let mut syncs = BTreeMap::new();
-    for s in &header.syncs {
-        let at = image_address(module, &s.at)?;
+    let mut names = BTreeMap::new();
+    for s in syncs {
+        let at = image_address(&repo.module(), &s.at)?;
         clockwork.ask("sync", json!({ "at": at }))?;
-        syncs.insert(at, s.name.clone());
+        names.insert(at, s.name.clone());
     }
+    Ok((clockwork, loaded, names))
+}
+
+/// The knowledge's sync points as a trace names them.
+pub(crate) fn sync_points(k: &Knowledge) -> Vec<SyncPoint> {
+    k.ticks.syncs.iter().map(|s| SyncPoint { name: s.name.clone(), at: s.at.clone() }).collect()
+}
+
+fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<Trace, String> {
+    let (mut clockwork, loaded, syncs) = begin(repo, session, &header.syncs)?;
+    let start = loaded["cycles"].as_u64().unwrap_or(0);
     let mut ranges = Vec::new();
     for item in header.inputs.iter().chain(&header.state) {
         ranges.push(json!({"at": image_address(module, &item.at)?, "len": item.size}));
     }
     let ranges = json!({ "ranges": ranges });
     let length_ms = (session.seconds * 1000.0) as u64;
-    let (mut ms, mut last_cycle) = (0, loaded["cycles"].as_u64().unwrap_or(0));
+    let (mut ms, mut last_cycle) = (0, start);
     let mut previous: Vec<Option<String>> = vec![None; header.state.len()];
     let mut ticks = Vec::new();
     let end = loop {

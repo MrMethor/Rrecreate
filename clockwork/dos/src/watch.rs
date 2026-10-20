@@ -11,7 +11,8 @@
 //! A summary watch ([`Watch::summary`]) keeps, instead of each access, who touched each byte: code
 //! or interrupt handlers, host services or devices. It scans large ranges: the memory a game's loop
 //! reads that only interrupt handlers write (its key states, its timer counts) is what the loop
-//! takes from outside.
+//! takes from outside. It doesn't look for writes by devices (DMA, the mouse cursor), which program
+//! data rarely sees.
 
 use std::collections::BTreeMap;
 use std::ops::Range;

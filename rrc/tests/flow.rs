@@ -85,6 +85,11 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["record", "short"]).contains("same      as the trace recorded before"), "deterministic");
     let summary = rrc.ok(&["trace", "short"]);
     assert!(summary.contains("syncs     loop "), "{summary}");
+    let watched = rrc.ok(&["watch", "short", "count", "--tick", "2", "--ticks", "1"]);
+    assert!(watched.contains("watch     count (T.COM+0000F, 2 bytes), tick 2"), "{watched}");
+    assert!(watched.contains("write count = 0200 (was 0100) by T.COM+00000"), "{watched}");
+    let inputs = rrc.ok(&["inputs", "short"]);
+    assert!(inputs.contains("none"), "no interrupt handler writes anything it reads: {inputs}");
     let counts = rrc.ok(&["trace", "short", "--item", "count"]);
     let lines: Vec<&str> = counts.lines().take(3).collect();
     assert_eq!(lines, ["1         0100", "2         0200", "3         0300"], "the count at each tick");

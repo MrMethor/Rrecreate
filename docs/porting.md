@@ -29,7 +29,8 @@ rrc analyze
 Clockwork unpacks the program if it was packed, Ghidra analyses it (minutes), and the runtime library's
 functions get their names from the signature packs. `rrc show <ID or name>` then tells what is known about a
 function: its name and evidence, its size, calls and callers, and with `--c` or `--asm` its decompiled code or
-disassembly. Decompiled code is a hint, not a source (D2): it is partly wrong.
+disassembly, in which Ghidra's `FUN_` and `DAT_` names become the names you gave (`name[+N]` for a byte inside
+a data item). Decompiled code is a hint, not a source (D2): it is partly wrong.
 
 Look for prior art (D32): source releases, reimplementations, format documentation, bug lists. For a pilot
 whose source is released, the source stays out of reach (D3, D46).
@@ -55,8 +56,19 @@ interrupt advances, in a loop, until it changes) is where a tick of that loop en
 has a loop per mode (menus, play, demo playback): each gets a sync point.
 
 Declare them in `knowledge/ticks.toml`, with the tick's **boundary values**: what the loop reads that comes
-from outside it (the elapsed time the waiting function measures, the key-state array, the mouse). Record
-evidence in the notes.
+from outside it (the elapsed time the waiting function measures, the key-state array, the mouse). To find them:
+
+```bash
+rrc inputs first-level
+```
+
+scans the data segment the loop runs with and lists what the program reads that an interrupt handler or a
+host service writes, by handler: the keyboard's (INT 09h) writes the key states, the timer's (INT 08h) the
+timer counts and whatever runs at the timer's rate (music), the sound card's its own state. Which of these are
+inputs and which belong to an interrupt-driven subsystem of the simulation (D22) is your call: inputs come
+from the player and the clock. A session must press the keys for their bytes to show up. Values that come
+back from a service in registers (the mouse driver's) don't show here: look for where the program stores them.
+Record the evidence in the notes.
 
 ## 4. Record
 
@@ -68,7 +80,13 @@ rrc trace first-level --tick 120
 ```
 
 Each tick of the trace has the boundary values, the named data that changed, the frames shown and the sound
-events. Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and record again: the trace
+events. To see who writes a value, and from where:
+
+```bash
+rrc watch first-level <ID or name> --tick 120 --ticks 2 --reads
+```
+
+lists each access in those ticks (or the whole session) with the instruction, the value and the call chain. Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and record again: the trace
 follows every named data item. Recording the same session again must give the same hash: `rrc record` says
 whether it did.
 

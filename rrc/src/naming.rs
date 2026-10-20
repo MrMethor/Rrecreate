@@ -122,11 +122,7 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let [what] = a.positionals(1, 1, "show ID|NAME|SEG:OFF [--asm] [--c]")? else { unreachable!() };
     let k = Knowledge::load(&repo.knowledge())?;
     let analysis = Analysis::load(repo)?;
-    let ghidra = || analysis.as_ref().and_then(|a| a.id_of(&repo.module(), what));
-    let id = match parse_id(what) {
-        Ok(id) => id,
-        Err(_) => k.named(what).cloned().or_else(ghidra).ok_or_else(|| format!("nothing is named {what:?}"))?,
-    };
+    let id = resolve(repo, &k, analysis.as_ref(), what)?;
     let about = |d: &Decision| {
         let confidence = d.confidence.map(|c| format!(", {c}")).unwrap_or_default();
         format!("{id} {} ({}{confidence})", d.name, d.provenance)
@@ -157,6 +153,15 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         show_analysis(&k, analysis, &id, a.has("--asm"), a.has("--c"));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The ID `what` stands for: an ID, a name, or Ghidra's `SEG:OFF`.
+pub(crate) fn resolve(repo: &Repo, k: &Knowledge, analysis: Option<&Analysis>, what: &str) -> Result<Id, String> {
+    if let Ok(id) = parse_id(what) {
+        return Ok(id);
+    }
+    let ghidra = || analysis.and_then(|a| a.id_of(&repo.module(), what));
+    k.named(what).cloned().or_else(ghidra).ok_or_else(|| format!("nothing is named {what:?}"))
 }
 
 /// What Ghidra found about `id`: the function there, its calls and callers, its code.

@@ -272,7 +272,9 @@ sessions/           a TOML file per session (its inputs, its length, its recorde
 **The toolkit, `rrc`**, is one Rust program run inside a port repository. It drives Clockwork as a child
 process through `clockwork serve`. Its commands are short and print little: `init`, `doctor`, `status` (the
 next step), `game` (the game's folder and its version), `check`, `name`, `show`, `analyze`, `import`,
-`session`, `calls` (how often a session calls each function: loops and their ticks), `record`, `trace`.
+`session`, `calls` (how often a session calls each function: loops and their ticks), `inputs` (what the
+program reads that interrupt handlers or services write: boundary value candidates), `watch` (who writes or
+reads a value, with the call chain), `record`, `trace`.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees

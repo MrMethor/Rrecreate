@@ -1189,7 +1189,10 @@ impl Machine {
     }
 
     fn service_events(&mut self) {
-        let watched = self.probes.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
+        // A summary watch scans large ranges, which devices rarely write and which comparing at
+        // every device event (each millisecond of Sound Blaster DMA) would make slow.
+        let compared = self.probes.watch.as_deref().filter(|w| w.touches.is_none());
+        let watched = compared.and_then(|w| w.bytes(|at| self.peek_u8(at)));
         self.service_devices();
         if let Some(before) = watched {
             self.watch_changes(&before, crate::watch::By::Device);
