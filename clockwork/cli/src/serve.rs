@@ -16,7 +16,9 @@
 //!   snapshot on disk.
 //! - `snapshot` / `restore` / `forget` `{"name"}`: copies of the machine in memory.
 //! - `run` `{"ms"}` or `{"cycles"}`, or `{"sync": addr, "n": 1, "max_ms": 60000}`: runs on; says why it
-//!   stopped and when. `{"sync": "next"}` stops at the next hit of any sync point: the next tick.
+//!   stopped and when. `{"sync": "next", "n": 1}` stops at the n-th next hit of any sync point: the next
+//!   tick. `tick` `{"from", "ranges", "max_ms"}`: a tick in one request: runs to the next tick, then
+//!   answers as `read` (`data`), `frames` and `sound` (since cycle `from`) would.
 //! - `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as their number,
 //!   cycle, video mode and hash. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
 //!   register, value]`), PC speaker waveforms (`[pit_tick, wave]`), digitized sound starts (`[ns, rate,
@@ -25,7 +27,9 @@
 //! - `read` `{"ranges": [{"at", "len"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
 //! - `watch` `{"ranges": [{"at", "len"}], "reads": false}` … `watch_end`: who wrote (or read) each
-//!   byte, with the instruction, the cycle and the call chain. `calls` `{"on": true}` tracks calls
+//!   byte, with the instruction, the cycle and the call chain. With `"summary": true`, who touched
+//!   each byte instead, as runs of bytes touched alike: `{"at", "len", "read", "read_in_interrupt",
+//!   "written", "interrupt_writer" (the handler's entry, or null), "host" (a service or device wrote)}`. `calls` `{"on": true}` tracks calls
 //!   from now on, so a watch started later sees the whole chain.
 //! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
 //!   `uninit_end`.
@@ -145,6 +149,21 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             st.m = Some(copy.clone());
             return Ok(json!({"cycles": copy.cpu.cycles}));
         }
+        "tick" => {
+            let mut run = r.clone();
+            run["sync"] = json!("next");
+            run["n"] = json!(1);
+            let mut reply = handle(st, "run", &run)?;
+            if reply.get("sync").is_some() {
+                let span = json!({"from": r.get("from").ok_or("missing \"from\" (cycles)")?, "to": reply["cycles"]});
+                if r.get("ranges").is_some() {
+                    reply["data"] = handle(st, "read", r)?["data"].take();
+                }
+                reply["frames"] = handle(st, "frames", &span)?["frames"].take();
+                reply["sound"] = handle(st, "sound", &span)?;
+            }
+            return Ok(reply);
+        }
         _ => {}
     }
     let image = st.image.clone();
@@ -172,7 +191,15 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let ips = m.config.instructions_per_second;
             let max = r.get("max_ms").and_then(Value::as_u64).unwrap_or(60_000) * ips / 1000;
             let stop = if r.get("sync").and_then(Value::as_str) == Some("next") {
-                m.run_to_next_sync(max)
+                let end = m.cpu.cycles + max;
+                let mut stop = m.run_to_next_sync(max);
+                for _ in 1..r.get("n").and_then(Value::as_u64).unwrap_or(1) {
+                    if !matches!(stop, dos::Stop::Sync { .. }) {
+                        break;
+                    }
+                    stop = m.run_to_next_sync(end.saturating_sub(m.cpu.cycles));
+                }
+                stop
             } else if let Some(at) = r.get("sync").and_then(Value::as_str) {
                 let at = addr(m, at)?;
                 let n = r.get("n").and_then(Value::as_u64).unwrap_or(1);
@@ -245,11 +272,20 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 physical_ranges.extend(physical_spans(m, addr(m, &at)?, len)?);
             }
             let reads = r.get("reads").and_then(Value::as_bool).unwrap_or(false);
-            m.start_watch(dos::watch::Watch::new(physical_ranges, reads));
+            let summary = r.get("summary").and_then(Value::as_bool).unwrap_or(false);
+            let watch = if summary {
+                dos::watch::Watch::summary(physical_ranges, reads)
+            } else {
+                dos::watch::Watch::new(physical_ranges, reads)
+            };
+            m.start_watch(watch);
             Ok(json!({}))
         }
         "watch_end" => {
             let watch = m.take_watch().ok_or("no watch on")?;
+            if let Some(touches) = &watch.touches {
+                return Ok(json!({ "bytes": touch_runs(touches, &name, &name_physical) }));
+            }
             let hits: Vec<Value> = watch.hits.iter().map(|h| hit(h, &name, &name_physical)).collect();
             Ok(json!({"hits": hits, "dropped": watch.dropped}))
         }
@@ -395,6 +431,29 @@ fn span(m: &Machine, r: &Value) -> Result<(u64, u64), String> {
     let from = r.get("from").and_then(Value::as_u64).ok_or("missing \"from\" (cycles)")?;
     let to = r.get("to").and_then(Value::as_u64).unwrap_or(m.cpu.cycles);
     Ok((from, to))
+}
+
+/// A summary watch's bytes as runs of consecutive bytes touched alike.
+fn touch_runs(
+    touches: &BTreeMap<u32, dos::watch::Touch>,
+    name: &impl Fn(u32) -> String,
+    name_physical: &impl Fn(u32) -> String,
+) -> Vec<Value> {
+    let mut runs: Vec<(u32, u32, dos::watch::Touch)> = Vec::new();
+    for (&at, &touch) in touches {
+        match runs.last_mut() {
+            Some((start, len, t)) if *start + *len == at && *t == touch => *len += 1,
+            _ => runs.push((at, 1, touch)),
+        }
+    }
+    runs.iter()
+        .map(|(at, len, t)| {
+            json!({
+                "at": name_physical(*at), "len": len, "read": t.read, "read_in_interrupt": t.read_in_interrupt,
+                "written": t.written, "interrupt_writer": t.interrupt_writer.map(name), "host": t.written_by_host,
+            })
+        })
+        .collect()
 }
 
 fn text<'a>(r: &'a Value, key: &str) -> Result<&'a str, String> {

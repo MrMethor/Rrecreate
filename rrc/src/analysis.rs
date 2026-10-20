@@ -281,6 +281,60 @@ impl Analysis {
 impl Analysis {
     /// The ID of Ghidra's `SEG:OFF` (hex, as in its names: `DAT_4783_991c` is `4783:991C`), if the
     /// address is in the image.
+    /// `text` (Ghidra's code) with the knowledge's names for Ghidra's `FUN_SSSS_OOOO` and
+    /// `DAT_SSSS_OOOO`: a function's name, a data item's, or `name[+N]` for the byte N into one.
+    pub fn with_names(&self, text: &str, k: &Knowledge, module: &str) -> String {
+        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        let mut out = String::with_capacity(text.len());
+        let mut at = 0;
+        while let Some(found) = text[at..].find(['F', 'D']).map(|i| at + i) {
+            out.push_str(&text[at..found]);
+            at = found;
+            let token = text.get(found..found + 13).unwrap_or_default();
+            let before = text[..found].chars().next_back();
+            let after = text[found + token.len()..].chars().next();
+            let named = (token.len() == 13 && before.is_none_or(|c| !is_word(c)) && after.is_none_or(|c| !is_word(c)))
+                .then(|| self.name_for(token, k, module))
+                .flatten();
+            match named {
+                Some(name) => {
+                    out.push_str(&name);
+                    at += token.len();
+                }
+                None => {
+                    out.push(text[at..].chars().next().expect("a character"));
+                    at += 1;
+                }
+            }
+        }
+        out.push_str(&text[at..]);
+        out
+    }
+
+    /// The knowledge's name for Ghidra's `FUN_SSSS_OOOO` or `DAT_SSSS_OOOO`, if it has one.
+    fn name_for(&self, token: &str, k: &Knowledge, module: &str) -> Option<String> {
+        let (kind, rest) = token.split_at(4);
+        let (segment, offset) = rest.split_once('_')?;
+        if segment.len() != 4 || offset.len() != 4 {
+            return None;
+        }
+        let id = self.id_of(module, &format!("{segment}:{offset}"))?;
+        match kind {
+            "FUN_" => k.functions.get(&id).map(|d| d.name.clone()),
+            "DAT_" => {
+                let (start, datum) = k.data.range(..=id.clone()).next_back()?;
+                let inside = id.offset() - start.offset();
+                match (inside, datum.size) {
+                    _ if start.module() != id.module() || start.part() != id.part() => None,
+                    (0, _) => Some(datum.decision.name.clone()),
+                    (n, Some(size)) if n < size => Some(format!("{}[+{n}]", datum.decision.name)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn id_of(&self, module: &str, address: &str) -> Option<Id> {
         let (segment, offset) = address.split_once(':')?;
         let linear = u64::from_str_radix(segment, 16).ok()? * 16 + u64::from_str_radix(offset, 16).ok()?;
@@ -357,6 +411,24 @@ mod tests {
         assert_eq!(a.code[&id("GAME.EXE+00040")].0, "1000:0040  RETF\n");
         assert_eq!(a.id_of("GAME.EXE", "2000:0010"), Some(id("GAME.EXE+10010")));
         assert_eq!(a.id_of("GAME.EXE", "0FFF:0000"), None, "before the image");
+        let mut k = Knowledge::default();
+        let d = |name: &str| Decision {
+            name: name.into(),
+            provenance: "human".into(),
+            confidence: None,
+            evidence: String::new(),
+        };
+        k.functions.insert(id("GAME.EXE+00040"), d("ftol"));
+        k.data.insert(
+            id("GAME.EXE+10010"),
+            crate::knowledge::Datum { decision: d("count"), size: Some(4), ty: String::new() },
+        );
+        let code = "x = FUN_1000_0040(DAT_2000_0010, DAT_2000_0012, DAT_2000_0014, FUN_1000_0010); yDAT_2000_0010;";
+        assert_eq!(
+            a.with_names(code, &k, "GAME.EXE"),
+            "x = ftol(count, count[+2], DAT_2000_0014, FUN_1000_0010); yDAT_2000_0010;",
+            "named functions and data, a byte inside an item; not past it, not part of another word"
+        );
         let mut k = Knowledge::default();
         assert_eq!(name_library_functions(&mut k, &a), 1);
         assert_eq!(k.functions[&id("GAME.EXE+00040")].provenance, "library:borland-c++-1991-medium");

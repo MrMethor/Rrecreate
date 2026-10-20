@@ -46,6 +46,11 @@ impl Calls {
         self.stack.iter().rev().copied().collect()
     }
 
+    /// The entry of the innermost interrupt handler running, if one is.
+    pub fn interrupt_entry(&self) -> Option<u32> {
+        self.stack.iter().rev().find(|f| f.interrupt).map(|f| f.entry)
+    }
+
     /// Before an instruction runs.
     pub(crate) fn before(&mut self, cpu: &Cpu) {
         self.context = Context {

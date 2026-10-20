@@ -3455,6 +3455,55 @@ fn a_watch_sees_an_interrupt_handler_and_reads() {
     );
 }
 
+#[test]
+fn a_summary_watch_tells_what_only_an_interrupt_handler_writes() {
+    // The timer handler counts ticks; the main program copies the count until it reaches 20.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["handler", "counter", "copy"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        load_dx(a, "handler")?;
+        a.mov(ax, 0x251C)?;
+        a.int(0x21)?;
+        a.here("wait")?;
+        a.hlt()?;
+        let counter = word_at(a, "counter");
+        a.mov(ax, counter)?;
+        let copy = word_at(a, "copy");
+        a.mov(copy, ax)?;
+        a.cmp(ax, 20)?;
+        let wait = a.l("wait");
+        a.jb(wait)?;
+        exit(a, 0)?;
+        a.here("handler")?;
+        let counter = word_at(a, "counter");
+        a.inc(counter)?;
+        a.iret()?;
+        a.here("counter")?;
+        a.dw(&[0])?;
+        a.here("copy")?;
+        a.dw(&[0])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let (counter, copy) = (base + o["counter"], base + o["copy"]);
+    m.start_watch(dos::watch::Watch::summary(std::iter::once(counter..copy + 2).collect(), true));
+    assert_eq!(m.run(SECOND * 2), Stop::Exited(0));
+    let touches = m.take_watch().unwrap().touches.unwrap();
+    // The handler's INC reads it too.
+    let only_interrupt = dos::watch::Touch {
+        read: true,
+        read_in_interrupt: true,
+        interrupt_writer: Some(base + o["handler"]),
+        ..Default::default()
+    };
+    assert_eq!((touches[&counter], touches[&(counter + 1)]), (only_interrupt, only_interrupt), "the program reads it");
+    let main = dos::watch::Touch { written: true, ..Default::default() };
+    assert_eq!((touches[&copy], touches[&(copy + 1)]), (main, main));
+}
+
 /// A program that calls `step` ten times (from `again`); `step` counts its calls in `count`.
 fn ten_steps() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
     let offsets = std::cell::RefCell::new(BTreeMap::new());

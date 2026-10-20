@@ -176,10 +176,11 @@ fn show_analysis(k: &Knowledge, analysis: &Analysis, id: &Id, asm: bool, c: bool
     }
     if let Some((disassembly, decompiled)) = analysis.code.get(id) {
         if asm {
-            print!("{disassembly}");
+            print!("{}", analysis.with_names(disassembly, k, id.module()));
         }
         if c {
-            println!("{}", decompiled.as_deref().unwrap_or("(Ghidra didn't decompile it)"));
+            let decompiled = decompiled.as_deref().unwrap_or("(Ghidra didn't decompile it)");
+            println!("{}", analysis.with_names(decompiled, k, id.module()));
         }
     }
 }

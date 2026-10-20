@@ -209,7 +209,8 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
         if ms >= length_ms {
             break End { end: "the session's end".into(), cycles: last_cycle };
         }
-        let ran = clockwork.ask("run", json!({"sync": "next", "max_ms": length_ms - ms}))?;
+        let request = json!({"from": last_cycle, "ranges": ranges["ranges"], "max_ms": length_ms - ms});
+        let ran = clockwork.ask("tick", request)?;
         ms = ran["ms"].as_u64().unwrap_or(length_ms);
         let cycle = ran["cycles"].as_u64().unwrap_or(0);
         let Some(at) = ran["sync"]["at"].as_str() else {
@@ -217,9 +218,8 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
             let stop = if stop == "time limit reached" { "the session's end" } else { stop };
             break End { end: stop.into(), cycles: cycle };
         };
-        let read = clockwork.ask("read", ranges.clone())?;
         let values: Vec<Option<String>> =
-            read["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
+            ran["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
         let (inputs, state) = values.split_at(header.inputs.len().min(values.len()));
         let changed = state
             .iter()
@@ -228,10 +228,9 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
             .map(|(i, v)| (i, v.clone()))
             .collect();
         previous = state.to_vec();
-        let span = json!({"from": last_cycle, "to": cycle});
-        let frames = clockwork.ask("frames", span.clone())?["frames"].as_array().cloned().unwrap_or_default();
-        let mut sound = clockwork.ask("sound", span)?.as_object().cloned().unwrap_or_default();
-        sound.retain(|key, v| !matches!(key.as_str(), "id" | "ok") && v.as_array().is_some_and(|a| !a.is_empty()));
+        let frames = ran["frames"].as_array().cloned().unwrap_or_default();
+        let mut sound = ran["sound"].as_object().cloned().unwrap_or_default();
+        sound.retain(|_, v| v.as_array().is_some_and(|a| !a.is_empty()));
         ticks.push(Tick {
             tick: ticks.len() as u64 + 1,
             sync: syncs.get(at).cloned().unwrap_or_else(|| at.to_owned()),

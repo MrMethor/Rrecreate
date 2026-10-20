@@ -44,7 +44,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   show ID|NAME|SEG:OFF [--asm] [--c]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
                          its DAT_SEG_OFF names): its name and evidence, what Ghidra found (size,
-                         calls, callers), its disassembly (--asm) or decompiled code (--c)
+                         calls, callers), its disassembly (--asm) or decompiled code (--c), with
+                         the knowledge's names for Ghidra's FUN_ and DAT_ names
   session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]]
                          the sessions, or a new one: an input script (clockwork run --input-file) or
                          play recorded by clockwork play --record, and how many emulated seconds

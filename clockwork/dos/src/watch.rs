@@ -7,7 +7,13 @@
 //!
 //! The call chain comes from call tracking ([`crate::calls`]), which a watch turns on if nothing
 //! did before.
+//!
+//! A summary watch ([`Watch::summary`]) keeps, instead of each access, who touched each byte: code
+//! or interrupt handlers, host services or devices. It scans large ranges: the memory a game's loop
+//! reads that only interrupt handlers write (its key states, its timer counts) is what the loop
+//! takes from outside.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use crate::calls::Calls;
@@ -51,6 +57,21 @@ pub struct Hit {
     pub chain: Vec<Frame>,
 }
 
+/// Who touched a byte, in a summary watch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Touch {
+    /// Read by code outside interrupt handlers.
+    pub read: bool,
+    /// Read inside an interrupt handler.
+    pub read_in_interrupt: bool,
+    /// Written by code outside interrupt handlers.
+    pub written: bool,
+    /// Written inside an interrupt handler: the first such handler's entry (linear).
+    pub interrupt_writer: Option<u32>,
+    /// Written by a host service or a device.
+    pub written_by_host: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Watch {
     ranges: Vec<Range<u32>>,
@@ -60,13 +81,20 @@ pub struct Watch {
     pub hits: Vec<Hit>,
     /// Hits past `limit`.
     pub dropped: u64,
+    /// For a summary watch: who touched each byte (physical address), instead of `hits`.
+    pub touches: Option<BTreeMap<u32, Touch>>,
 }
 
 impl Watch {
     /// Watches writes to `ranges` (physical addresses), and reads too if `reads`.
     pub fn new(ranges: Vec<Range<u32>>, reads: bool) -> Self {
         let bounds = ranges.iter().map(|r| r.start).min().unwrap_or(0)..ranges.iter().map(|r| r.end).max().unwrap_or(0);
-        Self { ranges, bounds, reads, limit: DEFAULT_LIMIT, hits: Vec::new(), dropped: 0 }
+        Self { ranges, bounds, reads, limit: DEFAULT_LIMIT, hits: Vec::new(), dropped: 0, touches: None }
+    }
+
+    /// A summary watch: who touched each byte of `ranges`, not each access.
+    pub fn summary(ranges: Vec<Range<u32>>, reads: bool) -> Self {
+        Self { touches: Some(BTreeMap::new()), ..Self::new(ranges, reads) }
     }
 
     /// Watches one range.
@@ -79,8 +107,20 @@ impl Watch {
         self.bounds.contains(&address) && self.ranges.iter().any(|r| r.contains(&address))
     }
 
-    /// Keeps `hit`, with the call chain now.
+    /// Keeps `hit`, with the call chain now (in a summary watch, who touched its byte).
     fn record(&mut self, mut hit: Hit, calls: Option<&Calls>) {
+        if let Some(touches) = &mut self.touches {
+            let interrupt = calls.and_then(Calls::interrupt_entry);
+            let touch = touches.entry(hit.address).or_default();
+            match (hit.kind, hit.by, interrupt) {
+                (Kind::Read, _, None) => touch.read = true,
+                (Kind::Read, _, Some(_)) => touch.read_in_interrupt = true,
+                (Kind::Write, By::Instruction { .. }, None) => touch.written = true,
+                (Kind::Write, By::Instruction { .. }, Some(entry)) => _ = touch.interrupt_writer.get_or_insert(entry),
+                (Kind::Write, _, _) => touch.written_by_host = true,
+            }
+            return;
+        }
         if self.hits.len() >= self.limit {
             self.dropped += 1;
             return;
