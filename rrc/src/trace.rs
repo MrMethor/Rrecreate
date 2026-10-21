@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
+use ids::Id;
 use serde_json::{Value, json};
 
 use crate::args::Args;
@@ -54,9 +55,9 @@ impl Item {
     }
 
     /// What Clockwork's `read` and a gate take for it.
-    fn request(&self, module: &str) -> Result<Value, String> {
+    fn request(&self, places: &Places) -> Result<Value, String> {
         if self.device.is_empty() {
-            Ok(json!({"at": image_address(module, &self.at)?, "len": self.size}))
+            Ok(json!({"at": places.address(&self.at)?, "len": self.size}))
         } else {
             Ok(json!({ "device": self.device }))
         }
@@ -215,17 +216,59 @@ fn carried(
         .collect()
 }
 
-/// Clockwork's address for an ID: `+OFF` in the program's image, `@LINEAR` for memory outside it
-/// (`MEM+...`).
-pub(crate) fn image_address(module: &str, id: &str) -> Result<String, String> {
-    let id = parse_id(id)?;
+/// Clockwork's addresses for IDs in a session: `+OFF` in the program's image, `@LINEAR` in one of
+/// its LE objects (where the session's run places them, found once: `crate::snapshots::objects`) or
+/// outside the images (`MEM+...`).
+pub(crate) struct Places<'a> {
+    repo: &'a Repo,
+    session: &'a Session,
+    module: String,
+    objects: std::cell::OnceCell<Vec<(u32, u32, u32)>>,
+}
+
+impl<'a> Places<'a> {
+    pub(crate) fn new(repo: &'a Repo, session: &'a Session) -> Places<'a> {
+        Places { repo, session, module: repo.module(), objects: std::cell::OnceCell::new() }
+    }
+
+    pub(crate) fn address(&self, id: &str) -> Result<String, String> {
+        let id = parse_id(id)?;
+        let in_object = id.part().is_some() && id.module() == self.module && !id.is_memory();
+        let objects = if in_object {
+            Some(self.objects()?.iter().map(|&(base, size, _)| (base, size)).collect::<Vec<_>>())
+        } else {
+            None
+        };
+        address(&self.module, &id, objects.as_deref())
+    }
+
+    /// The program's LE objects in the session: (linear base, size, LE flags).
+    pub(crate) fn objects(&self) -> Result<&[(u32, u32, u32)], String> {
+        if self.objects.get().is_none() {
+            let found = crate::snapshots::objects(self.repo, self.session)?;
+            let _ = self.objects.set(found);
+        }
+        Ok(self.objects.get().expect("just set"))
+    }
+}
+
+/// Clockwork's address for `id` in `module`, given its LE objects (base, size) if it has them.
+pub(crate) fn address(module: &str, id: &Id, objects: Option<&[(u32, u32)]>) -> Result<String, String> {
     if id.is_memory() {
         return Ok(format!("@{:X}", id.offset()));
     }
-    if id.module() != module || id.part().is_some() {
-        return Err(format!("{id}: only the program's own image ({module}) can be traced so far"));
+    if id.module() != module {
+        return Err(format!("{id}: not in {module}, the program traced"));
     }
-    Ok(format!("+{:05X}", id.offset()))
+    match (id.part(), objects) {
+        (None, _) => Ok(format!("+{:05X}", id.offset())),
+        (Some(n), Some(objects)) => match usize::from(n).checked_sub(1).and_then(|i| objects.get(i)) {
+            Some(&(base, size)) if id.offset() < size => Ok(format!("@{:X}", base.wrapping_add(id.offset()))),
+            Some(&(_, size)) => Err(format!("{id}: past object {n}'s end ({size:X}h bytes)")),
+            None => Err(format!("{id}: the program has {} objects", objects.len())),
+        },
+        (Some(_), None) => Err(format!("{id}: {module} has no objects")),
+    }
 }
 
 pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
@@ -250,7 +293,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         inputs,
         state,
     };
-    let (trace, snapshots) = run(repo, &session, header, &module)?;
+    let (trace, snapshots) = run(repo, &session, header)?;
     let cache = Cache::open(&repo.local)?;
     let text = trace.to_text();
     let hash = cache.put(text.as_bytes())?;
@@ -305,7 +348,7 @@ pub(crate) fn items(k: &Knowledge, module: &str) -> Result<Items, String> {
     let state: Vec<Item> = k
         .data
         .iter()
-        .filter(|(id, d)| (id.module() == module || id.is_memory()) && id.part().is_none() && d.size.is_some())
+        .filter(|(id, d)| (id.module() == module || id.is_memory()) && d.size.is_some())
         .filter(|(id, d)| !is_input(&id.to_string(), d.size))
         .map(|(id, d)| Item {
             name: d.decision.name.clone(),
@@ -332,18 +375,23 @@ pub(crate) fn begin(
     session: &Session,
     syncs: &[SyncPoint],
 ) -> Result<(Clockwork, Value, BTreeMap<String, String>), String> {
-    let (mut clockwork, loaded) = Clockwork::original(repo, &session.options(repo))?;
+    let places = Places::new(repo, session);
     let mut names = BTreeMap::new();
-    let module = repo.module();
+    let mut requests = Vec::new();
     for s in syncs {
-        let at = image_address(&module, &s.at)?;
+        let at = places.address(&s.at)?;
         let mut request = json!({ "at": at });
         if !s.when_changed.is_empty() {
-            let gate: Vec<Value> = s.when_changed.iter().map(|item| item.request(&module)).collect::<Result<_, _>>()?;
+            let gate: Vec<Value> = s.when_changed.iter().map(|item| item.request(&places)).collect::<Result<_, _>>()?;
             request["gate"] = json!(gate);
         }
-        clockwork.ask("sync", request)?;
+        requests.push(request);
         names.insert(at, s.name.clone());
+    }
+    // The places first: finding where an LE program's objects go takes a run of its own.
+    let (mut clockwork, loaded) = Clockwork::original(repo, &session.options(repo))?;
+    for request in requests {
+        clockwork.ask("sync", request)?;
     }
     Ok((clockwork, loaded, names))
 }
@@ -365,8 +413,9 @@ pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
 }
 
 /// The session run to its end, a tick at each sync point hit; and how many snapshots it kept.
-fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<(Trace, usize), String> {
+fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize), String> {
     let (mut clockwork, loaded, syncs) = begin(repo, session, &header.syncs)?;
+    let places = Places::new(repo, session);
     let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
     // Tracked from power-on, so the snapshots give a watch from them whole call chains.
     clockwork.ask("calls", json!({"on": true}))?;
@@ -377,7 +426,7 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<(
     let start = loaded["cycles"].as_u64().unwrap_or(0);
     let mut ranges = Vec::new();
     for item in header.inputs.iter().chain(&header.state) {
-        ranges.push(item.request(module)?);
+        ranges.push(item.request(&places)?);
     }
     let ranges = json!({ "ranges": ranges });
     let length_ms = (session.seconds * 1000.0) as u64;
@@ -718,8 +767,14 @@ mod tests {
         assert_eq!(renamed.run_hash(), trace.run_hash());
         renamed.end.frames.clear();
         assert_ne!(renamed.run_hash(), trace.run_hash());
-        assert_eq!(image_address("GAME.EXE", "GAME.EXE+20002").unwrap(), "+20002");
-        assert!(image_address("GAME.EXE", "OTHER.EXE+20002").is_err());
+        let at = |id: &str, objects: Option<&[(u32, u32)]>| address("GAME.EXE", &id.parse().unwrap(), objects);
+        assert_eq!(at("GAME.EXE+20002", None).unwrap(), "+20002");
+        assert_eq!(at("MEM+0046C", None).unwrap(), "@46C");
+        let objects = [(0x435000, 0x3181), (0x439000, 0x10590)];
+        assert_eq!(at("GAME.EXE#2+00010", Some(&objects)).unwrap(), "@439010", "in object 2");
+        assert!(at("GAME.EXE#1+03181", Some(&objects)).is_err(), "past its end");
+        assert!(at("GAME.EXE#3+00010", Some(&objects)).is_err() && at("GAME.EXE#1+00010", None).is_err());
+        assert!(at("OTHER.EXE+20002", None).is_err());
         assert_eq!((value_text(Some("FEFF"), "i16"), value_text(Some("FEFF"), "u16")), ("-2".into(), "65534".into()));
         assert_eq!(value_text(Some("00000100"), "u16[2]"), "[0x1]=1");
         assert_eq!(value_text(Some("0000"), "u8[2]"), "all 2 zero");

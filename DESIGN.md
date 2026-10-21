@@ -293,9 +293,10 @@ reads a value, with the call chain), `record`, `trace`.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees
-the segments); under an extender, the image dump. Ghidra imports it headless, applies the signature packs and
-exports functions, calls, disassembly and decompiled code (`ghidra/RecExport.java`) into the cache; `rrc show`
-puts that next to the knowledge. Two analyses with the same options find the same functions, but the options
+the segments); for a flat program under an extender, its LE objects where the extender's loader put them, at
+the entry point (an ELF file, D55), whose IDs name the objects. Ghidra imports it headless, applies the
+signature packs and exports functions, calls, disassembly and decompiled code (`ghidra/RecExport.java`) into
+the cache; `rrc show` puts that next to the knowledge. Two analyses with the same options find the same functions, but the options
 change them (decompiling adds one on Wolf3D: 778 functions against 777), so the cache keeps the analysis of a
 program by its hash, the export script and the options, and later runs reuse it. Its Ghidra project is kept
 too: functions the knowledge names that Ghidra missed are added to it without analysing the program again.

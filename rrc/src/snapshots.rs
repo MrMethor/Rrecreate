@@ -131,6 +131,61 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     Ok((clockwork, loaded))
 }
 
+/// Whether the game's program is an LE executable (a flat program under a DOS extender), whose IDs
+/// name its objects (`GAME.EXE#2+00010`).
+pub fn is_le(repo: &Repo) -> bool {
+    let Ok(dir) = repo.game_dir() else { return false };
+    let Ok(file) = std::fs::read(dir.join(&repo.settings.original.program)) else { return false };
+    let header = file.get(0x3C..0x40).map_or(0, |h| u32::from_le_bytes([h[0], h[1], h[2], h[3]]) as usize);
+    file.starts_with(b"MZ") && file.get(header..header + 2) == Some(b"LE")
+}
+
+/// Where the session's run places the program's LE objects (linear base, size and LE flags: 4
+/// executable; in the LE's order): found once, by running the session until its extender has placed
+/// them, and kept by the run (`index/objects/<run>`). Clockwork is deterministic, so every run of the
+/// session places them there.
+pub fn objects(repo: &Repo, session: &Session) -> Result<Vec<(u32, u32, u32)>, String> {
+    let cache = Cache::open(&repo.local)?;
+    let key = run_identity(repo, session)?;
+    let parse = |text: &str| -> Option<Vec<(u32, u32, u32)>> {
+        let hex = |t: &str| u32::from_str_radix(t, 16).ok();
+        let object = |o: &str| {
+            let mut fields = o.split(':').map(hex);
+            Some((fields.next()??, fields.next()??, fields.next()??))
+        };
+        text.split_whitespace().map(object).collect()
+    };
+    if let Some(bases) = cache.recall("objects", &key).as_deref().and_then(parse) {
+        return Ok(bases);
+    }
+    let (mut clockwork, _) = Clockwork::original(repo, &session.options(repo))?;
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let mut ms = 0;
+    loop {
+        ms = (ms + 50).min(length_ms);
+        let ran = clockwork.ask("run", json!({ "until_ms": ms }))?;
+        let answer = clockwork.ask("objects", Value::Null)?;
+        if let Some(objects) = answer["objects"].as_array() {
+            let text: Vec<String> = objects
+                .iter()
+                .map(|o| {
+                    let at = o["at"].as_str().unwrap_or("").trim_start_matches('@');
+                    format!("{at}:{:X}:{:X}", o["size"].as_u64().unwrap_or(0), o["flags"].as_u64().unwrap_or(0))
+                })
+                .collect();
+            let text = text.join(" ");
+            cache.remember("objects", &key, &text)?;
+            return parse(&text).ok_or_else(|| "Clockwork's objects can't be read".into());
+        }
+        if ms >= length_ms || ran["stop"].as_str() != Some("time limit reached") {
+            return Err(format!(
+                "{} places no LE objects in this session: IDs with #N are an LE program's objects",
+                repo.module()
+            ));
+        }
+    }
+}
+
 thread_local! {
     /// What `say` printed while a result is being kept.
     static CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };

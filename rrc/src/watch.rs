@@ -19,7 +19,7 @@ use crate::repo::Repo;
 use crate::say;
 use crate::session::Session;
 use crate::snapshots::{self, Taken};
-use crate::trace::{SyncPoint, begin, image_address, sync_points};
+use crate::trace::{Places, SyncPoint, begin, sync_points};
 
 /// Calls shown of a chain, innermost first.
 const CHAIN_SHOWN: usize = 3;
@@ -30,12 +30,26 @@ const ACCESSES_SHOWN: usize = 40;
 struct Names<'a> {
     k: &'a Knowledge,
     module: String,
+    /// An LE program's objects in the session: (linear base, size).
+    objects: Vec<(u32, u32)>,
 }
 
-impl Names<'_> {
+impl<'a> Names<'a> {
+    fn new(k: &'a Knowledge, repo: &Repo, session: &Session) -> Result<Names<'a>, String> {
+        let objects =
+            if crate::snapshots::is_le(repo) { crate::snapshots::objects(repo, session)? } else { Vec::new() };
+        let objects = objects.iter().map(|&(base, size, _)| (base, size)).collect();
+        Ok(Names { k, module: repo.module(), objects })
+    }
+
     fn id(&self, address: &str) -> Option<Id> {
         if let Some(linear) = address.strip_prefix('@') {
-            return Some(Id::memory(u32::from_str_radix(linear, 16).ok()?));
+            let linear = u32::from_str_radix(linear, 16).ok()?;
+            let object = self.objects.iter().position(|&(base, size)| linear.wrapping_sub(base) < size);
+            return Some(match object {
+                Some(i) => Id::new(&self.module, Some(i as u16 + 1), linear - self.objects[i].0).ok()?,
+                None => Id::memory(linear),
+            });
         }
         let offset = u32::from_str_radix(address.strip_prefix('+')?, 16).ok()?;
         Id::new(&self.module, None, offset).ok()
@@ -91,7 +105,7 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     // Tracked from the start (or the snapshot), so each access has its call chain from there.
     clockwork.ask("calls", json!({"on": true}))?;
     let mut ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
-    let at = image_address(&repo.module(), &id.to_string())?;
+    let at = Places::new(repo, &session).address(&id.to_string())?;
     clockwork.ask("watch", json!({"ranges": [{"at": at, "len": len}], "reads": a.has("--reads"), "limit": limit}))?;
     // Tick by tick, keeping where each ends.
     let mut ends = Vec::new();
@@ -108,7 +122,7 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
     }
     let watched = clockwork.ask("watch_end", Value::Null)?;
-    let names = Names { k: &k, module: repo.module() };
+    let names = Names::new(&k, repo, &session)?;
     let span = if syncs.is_empty() { "the whole session".to_owned() } else { ticks_text(first, ends.len() as u64) };
     say("watch", format!("{} ({id}, {len} bytes), {span}", names.data(&at)));
     // Each tick's accesses, those alike counted once (with --cycles, each on its own line). What runs
@@ -291,13 +305,19 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     let length_ms = (session.seconds * 1000.0) as u64;
     let (mut clockwork, loaded, from) = open(repo, session, &syncs, first)?;
     let ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
-    // The data segment the loop runs with, unless asked for another range.
-    let (at, len) = match a.value("--at") {
+    // The data segment the loop runs with (an LE program's data objects), unless asked for another
+    // range.
+    let ranges: Vec<(String, u32)> = match a.value("--at") {
         Some(at) => {
             let analysis = Analysis::load(repo)?;
             let id = crate::naming::resolve(repo, &k, analysis.as_ref(), at)?;
             let len: u32 = a.required("--len")?.parse().map_err(|_| "--len is a number of bytes")?;
-            (image_address(&repo.module(), &id.to_string())?, len)
+            vec![(Places::new(repo, session).address(&id.to_string())?, len)]
+        }
+        None if crate::snapshots::is_le(repo) => {
+            let objects = crate::snapshots::objects(repo, session)?;
+            let data = objects.iter().filter(|&&(_, _, flags)| flags & 4 == 0);
+            data.map(|&(base, size, _)| (format!("@{base:X}"), size)).collect()
         }
         None => {
             // DS's segment, as an offset in the image when it is in it (so the output names it by ID).
@@ -305,12 +325,13 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
             let ds = regs["ds"].as_u64().unwrap_or(0) as u32;
             let base = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
             match base.and_then(|base| (ds * 16).checked_sub(base)) {
-                Some(offset) => (format!("+{offset:05X}"), 0x1_0000),
-                None => (format!("{ds:04X}:0000"), 0x1_0000),
+                Some(offset) => vec![(format!("+{offset:05X}"), 0x1_0000)],
+                None => vec![(format!("{ds:04X}:0000"), 0x1_0000)],
             }
         }
     };
-    clockwork.ask("watch", json!({"ranges": [{"at": at, "len": len}], "reads": true, "summary": true}))?;
+    let request: Vec<Value> = ranges.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
+    clockwork.ask("watch", json!({"ranges": request, "reads": true, "summary": true}))?;
     let ran = match count {
         Some(n) => clockwork.ask("run", json!({"sync": "next", "n": n, "max_ms": length_ms - ms}))?,
         None => clockwork.ask("run", json!({"ms": length_ms - ms}))?,
@@ -321,8 +342,9 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     let vectors = interrupt_vectors(&mut clockwork)?;
     let analysis = Analysis::load(repo)?;
     let image = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
-    let names = Names { k: &k, module: repo.module() };
-    say("scanned", format!("{}, {len} bytes, from tick {first} to {last}", names.plain(&at)));
+    let names = Names::new(&k, repo, session)?;
+    let scanned: Vec<String> = ranges.iter().map(|(at, len)| format!("{}, {len} bytes", names.plain(at))).collect();
+    say("scanned", format!("{}, from tick {first} to {last}", scanned.join("; ")));
     let candidates = candidates(&bytes);
     let mut writers: Vec<&Option<String>> = candidates.iter().map(|c| &c.writer).collect();
     writers.dedup();

@@ -226,6 +226,9 @@ fn clockwork_listing(repo: &Repo, k: &Knowledge, analysis: &Analysis, id: &Id) -
         std::fs::write(&path, image).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let offset = id.offset();
+    if !analysis.objects.is_empty() {
+        return Err("Clockwork's listing reads 16-bit code: this program is 32-bit (--asm has Ghidra's)".into());
+    }
     let segment = analysis.segment_of(offset).unwrap_or(offset >> 4);
     let output = std::process::Command::new(crate::clockwork::find(&repo.local)?)
         .arg("listing")
@@ -329,7 +332,9 @@ fn annotated(lines: &str, k: &Knowledge, analysis: &Analysis, module: &str) -> S
         while let Some(start) = rest.find("0x") {
             let token: String = rest[start + 2..].chars().take_while(|c| c.is_ascii_hexdigit() || *c == ':').collect();
             text.push_str(&rest[..start]);
-            match token.contains(':').then(|| analysis.id_of(module, &token)).flatten() {
+            // Real mode's `SSSS:OOOO`, or a flat program's address in one of its objects.
+            let id = analysis.id_of(module, &token).filter(|id| token.contains(':') || id.part().is_some());
+            match id {
                 Some(target) => text.push_str(&name(&target)),
                 None => text.push_str(&rest[start..start + 2 + token.len()]),
             }

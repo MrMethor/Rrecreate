@@ -75,11 +75,16 @@ impl Rrc {
 
 /// A folder for a test (`name`) with the game (`program` as T.COM) and an empty port repository.
 fn setup(name: &str, program: &[u8]) -> (PathBuf, Rrc) {
+    setup_file(name, "T.COM", program)
+}
+
+/// The same, with the program as `file`.
+fn setup_file(name: &str, file: &str, program: &[u8]) -> (PathBuf, Rrc) {
     let dir = std::env::temp_dir().join(format!("rrc-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let (game, repo) = (dir.join("game"), dir.join("port"));
     std::fs::create_dir_all(&game).unwrap();
-    std::fs::write(game.join("T.COM"), program).unwrap();
+    std::fs::write(game.join(file), program).unwrap();
     std::fs::create_dir_all(&repo).unwrap();
     let rrc = Rrc { repo, cache: dir.join("cache"), clockwork: clockwork() };
     (dir, rrc)
@@ -280,5 +285,27 @@ fn a_scripted_joystick_is_an_input() {
         "{stick}"
     );
     assert!(rrc.ok(&["inputs", "stick"]).contains("unseen    port 201h (the joystick) read"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_flat_program_s_objects_have_ids() {
+    let program = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../testbins/bin/FLAT32.EXE")).unwrap();
+    let (dir, rrc) = setup_file("flat", "FLAT32.EXE", &program);
+    rrc.ok(&["init", ".", "--program", "FLAT32.EXE", "--name", "flat"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    // FLAT32.MAP: _squares at 0002:0000041C (16 ints); square, the first function, at 0001:00000010.
+    rrc.ok(&["data", "FLAT32.EXE#2+0041C", "squares", "--size", "64", "--type", "i32[16]"]);
+    rrc.ok(&["sync", "FLAT32.EXE#1+00010", "square"]);
+    rrc.ok(&["session", "add", "run", "--seconds", "0.5"]);
+    let recorded = rrc.ok(&["record", "run"]);
+    assert!(recorded.contains("trace     16 ticks"), "a tick a call: {recorded}");
+    let squares = rrc.ok(&["trace", "run", "--item", "squares"]);
+    let last = squares.lines().last().unwrap_or("");
+    assert!(last.starts_with("16        [0x1]=1 [0x2]=4 [0x3]=9") && last.ends_with("[0xE]=196"), "{squares}");
+    let watched = rrc.ok(&["watch", "run", "squares", "--tick", "3", "--ticks", "1"]);
+    assert!(watched.contains("write squares[+4] = 01000000 (was 00000000) by FLAT32.EXE#1+"), "{watched}");
+    let inputs = rrc.ok(&["inputs", "run"]);
+    assert!(inputs.contains("scanned   FLAT32.EXE#2+00000, 66960 bytes"), "its data object: {inputs}");
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -355,6 +355,20 @@ session's input isn't given again. `rrc record` tracks calls from power-on and a
 tracker's stack (beside the machine's state, not in its hash), so a watch from it sees whole call chains;
 recording takes about 10% longer for it.
 
+### D55. An LE program's objects: found by their fixups, named by number, placed per session. Accepted 2026-10-21.
+A flat program under a DOS extender is analysed and traced by its LE objects. Clockwork finds where the
+extender's loader put them: the code object's bytes match the file's except at fixup sites (and a few the
+program writes), and its fixups to itself hold its own base, which tells it from a copy of the file left in a
+buffer; the other objects' bases are what its fixups to them hold. `clockwork unpack` writes the objects at
+their linear addresses, at the entry point, as an ELF file, which Ghidra loads at those addresses. IDs name an
+object by its number (`GAME.EXE#2+0041C`, D53). A session finds where its run places the objects once (a run
+until they are placed) and keeps that by the run, as snapshots are kept (D51).
+**Why:** extenders choose where objects go, and a session's options and memory change it, so neither the
+file nor the analysis's run can give a session's addresses; Clockwork is deterministic, so one run of the
+session can. Searching memory for the object without its fixups would find copies of the file; requiring the
+fixups to hold the base doesn't. Measured: Open Watcom's FLAT32 under CauseWay (testbins) and Daggerfall's
+FALL.EXE (three objects, placed in 1.7 s).
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the

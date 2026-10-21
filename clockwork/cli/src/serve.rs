@@ -6,8 +6,9 @@
 //!
 //! Addresses are `+OFF` (an offset in the program's load image, hex), `SEG:OFF` (as the CPU sees it
 //! now) or `@LINEAR` (hex); answers name addresses the same way, `+OFF` where they fall in the image.
-//! Memory a watch or an uninitialized read reports is physical: named the same way while paging is
-//! off (physical is linear then), `%PHYS` while it is on.
+//! Memory a watch reports is named by the linear address it was watched at; other physical memory
+//! (an uninitialized read) the same way while paging is off (physical is linear then), `%PHYS` while
+//! it is on.
 //!
 //! Operations:
 //! - `load` `{"argv": [dir, program, options…]}`: a machine as `clockwork run` would start it (the
@@ -31,7 +32,8 @@
 //!   says how many hits it passed over before (`skipped`). `syncs`: each point's hits (and their
 //!   cycles).
 //! - `read` `{"ranges": [{"at", "len"} or {"device"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`,
-//!   `hash` (the machine's state hash, as `clockwork run` prints it).
+//!   `hash` (the machine's state hash, as `clockwork run` prints it), `objects` (the running LE program's
+//!   objects, `[{"at", "size", "flags"}]` where its extender put them, or null; `dos::le`).
 //!   A device (D49) is `mouse` (what INT 33h would report: `dos::mouse::Mouse::reported_state`) or
 //!   `joystick` (the game port's sticks); a gate takes them too.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
@@ -63,11 +65,14 @@ struct State {
     copies: BTreeMap<String, Machine>,
     /// The program's load image: where `+OFF` addresses count from, and its extent.
     image: Range<u32>,
+    /// The watch's physical spans with the linear address each was watched at, to name what it
+    /// reports as it was asked for when paging is on.
+    watched: Vec<(Range<u32>, u32)>,
 }
 
 /// Serves requests from `input` until it ends or a `quit`.
 pub fn session(input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-    let mut state = State { m: None, copies: BTreeMap::new(), image: 0..0 };
+    let mut state = State { m: None, copies: BTreeMap::new(), image: 0..0, watched: Vec::new() };
     for line in input.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -184,11 +189,17 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         _ => {}
     }
     let image = st.image.clone();
+    let watched = st.watched.clone();
     let m = st.m.as_mut().ok_or("no machine: load one first")?;
     let addr = |m: &Machine, s: &str| address(m, image.start, s);
     let name = |linear: u32| describe(&image, linear);
     let paging = m.cpu.cr0 & 0x8000_0000 != 0;
-    let name_physical = |p: u32| if paging { format!("%{p:X}") } else { describe(&image, p) };
+    // A watched byte by the linear address it was watched at; other physical memory as `%PHYS`.
+    let name_physical = |p: u32| match watched.iter().find(|(span, _)| span.contains(&p)) {
+        Some((span, linear)) => describe(&image, linear + (p - span.start)),
+        None if paging => format!("%{p:X}"),
+        None => describe(&image, p),
+    };
     match op {
         "save" => {
             let path = text(r, "file")?;
@@ -287,6 +298,21 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             Ok(json!({}))
         }
         "hash" => Ok(json!({"state_hash": format!("{:016x}", m.state_hash())})),
+        "objects" => {
+            // The running program's LE objects, where its extender put them: null until then, or for
+            // a program that isn't LE.
+            let le = m.drive.file(&m.dos.program).and_then(|file| dos::le::Le::parse(file).ok().flatten());
+            let objects = le.and_then(|le| {
+                let bases = le.bases(m)?;
+                let objects = le
+                    .objects
+                    .iter()
+                    .zip(bases)
+                    .map(|(o, base)| json!({"at": format!("@{base:X}"), "size": o.size, "flags": o.flags}));
+                Some(objects.collect::<Vec<_>>())
+            });
+            Ok(json!({"program": m.dos.program, "objects": objects}))
+        }
         "regs" => {
             let g = &m.cpu.regs;
             Ok(json!({
@@ -331,8 +357,15 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "watch" => {
             let mut physical_ranges = Vec::new();
+            st.watched.clear();
             for (at, len) in ranges(r, "ranges", "len")? {
-                physical_ranges.extend(physical_spans(m, addr(m, &at)?, len)?);
+                let linear = addr(m, &at)?;
+                let mut offset = 0;
+                for span in physical_spans(m, linear, len)? {
+                    st.watched.push((span.clone(), linear + offset));
+                    offset += span.end - span.start;
+                    physical_ranges.push(span);
+                }
             }
             let reads = r.get("reads").and_then(Value::as_bool).unwrap_or(false);
             let summary = r.get("summary").and_then(Value::as_bool).unwrap_or(false);
@@ -598,7 +631,7 @@ mod tests {
 
     #[test]
     fn a_panic_is_an_error_and_the_machine_goes() {
-        let mut st = State { m: None, copies: BTreeMap::new(), image: 0..0 };
+        let mut st = State { m: None, copies: BTreeMap::new(), image: 0..0, watched: Vec::new() };
         st.m = Some(Machine::new(dos::Config::default(), dos::Vfs::new()));
         let reply = guarded(&mut st, |_| panic!("an invariant broke"));
         assert!(reply.is_err_and(|e| e.contains("an invariant broke")));

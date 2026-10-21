@@ -28,6 +28,8 @@ use crate::{say, tools};
 const EXPORT_SCRIPT: &str = include_str!("../../ghidra/RecExport.java");
 const PACKS: &[&str] = &[include_str!("../../sigs/borland-c++-1991-medium.json")];
 const PROCESSOR: &str = "x86:LE:16:Real Mode";
+/// A flat program under a DOS extender (its LE objects as Clockwork placed them, an ELF file).
+const FLAT_PROCESSOR: &str = "x86:LE:32:default";
 /// Short functions hash alike too easily: only this many code units or more are matched.
 const MIN_UNITS: u64 = 6;
 const INDEX: &str = "analysis.toml";
@@ -47,6 +49,10 @@ pub struct Index {
     pub additions: Option<String>,
     /// The load image's offset of the entry point, which places Ghidra's addresses in the image.
     pub entry: u32,
+    /// An LE program's objects as Clockwork placed them, in the LE's order: (linear address, size).
+    /// Ghidra's addresses are these linear addresses, and IDs name the objects (`GAME.EXE#2+0041C`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<(u32, u32)>,
     pub ghidra: String,
 }
 
@@ -82,17 +88,17 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let project = cache.dir().join("ghidra").join(&key);
     let analyse = || run_ghidra(repo, &cache, &original, &original_hash, decompile, &project);
     let mut index = kept_or_run(repo, &cache, &key, again, analyse)?;
-    let mut analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry)?;
+    let mut analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
     // Then the functions the knowledge names that Ghidra didn't find, added to it.
     let mut k = Knowledge::load(&repo.knowledge())?;
-    let missing: Vec<u32> = k
+    let missing: Vec<Id> = k
         .functions
         .keys()
-        .filter(|id| id.module() == module && id.part().is_none() && !analysis.functions.contains_key(*id))
-        .map(|id| id.offset())
+        .filter(|id| id.module() == module && !analysis.functions.contains_key(*id))
+        .cloned()
         .collect();
     if !missing.is_empty() {
-        let entries: Vec<String> = missing.iter().map(|offset| format!("{offset:05X}")).collect();
+        let entries: Vec<String> = missing.iter().map(ToString::to_string).collect();
         say("adding", format!("{} functions the knowledge names that Ghidra didn't find", missing.len()));
         let added = sha256(format!("{key}\n{}", entries.join("\n")).as_bytes());
         let additions = match cache.recall("additions", &added).filter(|hash| !again && cache.has(hash)) {
@@ -105,19 +111,19 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                     );
                     index = analyse()?;
                     cache.remember("analysis", &key, &toml::to_string(&index).map_err(|e| e.to_string())?)?;
-                    analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry)?;
+                    analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
                 }
-                let linear: Vec<u64> = missing.iter().map(|&offset| analysis.base + u64::from(offset)).collect();
+                let layout = analysis.layout();
+                let linear: Vec<u64> = missing.iter().filter_map(|id| layout.linear(id)).collect();
                 let hash = add_functions(repo, &cache, &project, &linear, decompile)?;
                 cache.remember("additions", &added, &hash)?;
                 hash
             }
         };
         index.additions = Some(additions);
-        analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry)?;
-        let still = missing.iter().filter(|&&offset| !analysis.functions.keys().any(|id| id.offset() == offset));
-        for offset in still {
-            say("missing", format!("{module}+{offset:05X}: Ghidra made no function there"));
+        analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
+        for id in missing.iter().filter(|id| !analysis.functions.contains_key(*id)) {
+            say("missing", format!("{id}: Ghidra made no function there"));
         }
     }
     write_toml(&repo.state()?.join(INDEX), &index)?;
@@ -177,7 +183,14 @@ fn run_ghidra(
         std::fs::copy(original, &program).map_err(|e| format!("{}: {e}", original.display()))?;
     }
     let bytes = std::fs::read(&program).map_err(|e| format!("{}: {e}", program.display()))?;
-    let entry = mz_entry(&bytes).ok_or_else(|| format!("{module}: only MZ programs can be analyzed so far"))?;
+    // An LE program comes out of Clockwork as its objects placed, in an ELF file.
+    let (entry, objects, processor) = match elf_objects(&bytes) {
+        Some(objects) => (0, objects, FLAT_PROCESSOR),
+        None => {
+            let entry = mz_entry(&bytes).ok_or_else(|| format!("{module}: only MZ and LE programs can be analyzed"))?;
+            (entry, Vec::new(), PROCESSOR)
+        }
+    };
     say("program", format!("{module}{}; Ghidra takes minutes", if unpacked { ", unpacked by Clockwork" } else { "" }));
 
     let export = work.join("export.jsonl");
@@ -195,7 +208,7 @@ fn run_ghidra(
         .arg(&repo.settings.game.name)
         .args(["-import"])
         .arg(&program)
-        .args(["-overwrite", "-processor", PROCESSOR, "-scriptPath"])
+        .args(["-overwrite", "-processor", processor, "-scriptPath"])
         .arg(work.join("scripts"))
         .args(["-postScript", "RecExport.java"])
         .arg(&export);
@@ -209,7 +222,7 @@ fn run_ghidra(
         return Err(format!("Ghidra's analysis failed (its log: {})", log.display()));
     }
     let records = std::fs::read(&export).map_err(|e| format!("{}: {e}", export.display()))?;
-    let ghidra_version = Analysis::parse(&String::from_utf8_lossy(&records), &module, entry)?.ghidra;
+    let ghidra_version = Analysis::parse(&String::from_utf8_lossy(&records), &module, entry, &objects)?.ghidra;
     Ok(Index {
         original: original_hash.to_owned(),
         program: cache.put(&bytes)?,
@@ -217,8 +230,21 @@ fn run_ghidra(
         export: cache.put(&records)?,
         additions: None,
         entry,
+        objects,
         ghidra: ghidra_version,
     })
+}
+
+/// The loadable segments of an ELF executable (an LE program's objects as `clockwork unpack` writes
+/// them): (address, size), in order; `None` if it isn't one.
+fn elf_objects(bytes: &[u8]) -> Option<Vec<(u32, u32)>> {
+    if !bytes.starts_with(b"\x7FELF") {
+        return None;
+    }
+    let half = |at: usize| Some(usize::from(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?)));
+    let word = |at: usize| Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let (table, size, count) = (word(28)? as usize, half(42)?, half(44)?);
+    (0..count).map(|i| Some((word(table + i * size + 8)?, word(table + i * size + 20)?))).collect()
 }
 
 /// Functions created at `functions` (Ghidra's linear addresses) in the analysis kept at `project`,
@@ -323,6 +349,8 @@ pub struct Analysis {
     pub ghidra: String,
     /// The linear address (in Ghidra's address space) of the load image's start.
     pub base: u64,
+    /// An LE program's objects (linear address, size): `Index::objects`.
+    pub objects: Vec<(u32, u32)>,
     pub functions: BTreeMap<Id, Function>,
     /// (caller, call site, callee).
     pub calls: Vec<(Id, Id, Id)>,
@@ -339,11 +367,12 @@ impl Analysis {
     pub fn load(repo: &Repo) -> Result<Option<Analysis>, String> {
         let Some(index) = Index::load(repo)? else { return Ok(None) };
         let cache = Cache::open(&repo.local)?;
-        Analysis::parse(&index.records(&cache)?, &repo.module(), index.entry).map(Some)
+        Analysis::parse(&index.records(&cache)?, &repo.module(), index.entry, &index.objects).map(Some)
     }
 
-    /// Reads an export of `module` whose entry point is at image offset `entry`.
-    pub fn parse(records: &str, module: &str, entry: u32) -> Result<Analysis, String> {
+    /// Reads an export of `module` whose entry point is at image offset `entry`, or, for an LE
+    /// program, whose `objects` are at these linear addresses.
+    pub fn parse(records: &str, module: &str, entry: u32, objects: &[(u32, u32)]) -> Result<Analysis, String> {
         let records: Vec<Value> = records
             .lines()
             .filter(|l| !l.is_empty())
@@ -352,18 +381,16 @@ impl Analysis {
             .map_err(|e| e.to_string())?;
         let program = records.iter().find(|r| r["record"] == "program").ok_or("the export has no program record")?;
         let entry_linear = program["entry"]["linear"].as_u64().ok_or("the export has no entry point")?;
-        let base = entry_linear.checked_sub(u64::from(entry)).ok_or("the export's entry point is below its image")?;
-        // Below the image is memory of the PC's (vectors, the BIOS's data): `MEM`.
-        let id = |address: &Value| -> Option<Id> {
-            let linear = address["linear"].as_u64()?;
-            match linear.checked_sub(base) {
-                Some(offset) => Id::new(module, None, u32::try_from(offset).ok()?).ok(),
-                None => Some(Id::memory(u32::try_from(linear).ok()?)),
-            }
+        let base = if objects.is_empty() {
+            entry_linear.checked_sub(u64::from(entry)).ok_or("the export's entry point is below its image")?
+        } else {
+            0
         };
-        let packs = Packs::load()?;
         let ghidra = program["ghidra"].as_str().unwrap_or("?").to_owned();
-        let mut analysis = Analysis { ghidra, base, ..Analysis::default() };
+        let mut analysis = Analysis { ghidra, base, objects: objects.to_vec(), ..Analysis::default() };
+        let layout = analysis.layout();
+        let id = |address: &Value| layout.id_at(module, address["linear"].as_u64()?);
+        let packs = Packs::load()?;
         for r in &records {
             match r["record"].as_str() {
                 Some("function") => {
@@ -411,11 +438,53 @@ impl Analysis {
     }
 }
 
+/// Where Ghidra's addresses are: an image from `base`, or LE objects.
+#[derive(Debug, Clone, Default)]
+pub struct Layout {
+    base: u64,
+    objects: Vec<(u32, u32)>,
+}
+
+impl Layout {
+    /// The ID of a linear address in Ghidra's address space: in the image (or an object), else
+    /// memory of the PC's (`MEM`: below a real-mode image, the vectors and the BIOS's data).
+    pub fn id_at(&self, module: &str, linear: u64) -> Option<Id> {
+        let linear32 = u32::try_from(linear).ok()?;
+        if !self.objects.is_empty() {
+            let object = self.objects.iter().position(|&(base, size)| linear32.wrapping_sub(base) < size);
+            return match object {
+                Some(i) => Id::new(module, Some(i as u16 + 1), linear32 - self.objects[i].0).ok(),
+                None => Some(Id::memory(linear32)),
+            };
+        }
+        match linear.checked_sub(self.base) {
+            Some(offset) => Id::new(module, None, u32::try_from(offset).ok()?).ok(),
+            None => Some(Id::memory(linear32)),
+        }
+    }
+
+    /// The linear address (Ghidra's) of an ID in the image or an object.
+    pub fn linear(&self, id: &Id) -> Option<u64> {
+        match id.part() {
+            Some(n) => self
+                .objects
+                .get(usize::from(n).checked_sub(1)?)
+                .map(|&(base, _)| u64::from(base) + u64::from(id.offset())),
+            None if self.objects.is_empty() => Some(self.base + u64::from(id.offset())),
+            None => None,
+        }
+    }
+}
+
 impl Analysis {
-    /// The ID of Ghidra's `SEG:OFF` (hex, as in its names: `DAT_2a40_13c2` is `2A40:13C2`), if the
-    /// address is in the image.
-    /// `text` (Ghidra's code) with the knowledge's names for Ghidra's `FUN_SSSS_OOOO` and
-    /// `DAT_SSSS_OOOO`: a function's name, a data item's, or `name[+N]` for the byte N into one.
+    /// Where Ghidra's addresses are.
+    pub fn layout(&self) -> Layout {
+        Layout { base: self.base, objects: self.objects.clone() }
+    }
+
+    /// `text` (Ghidra's code) with the knowledge's names for Ghidra's `FUN_` and `DAT_` names
+    /// (`FUN_SSSS_OOOO` in real mode, `FUN_LLLLLLLL` in a flat program): a function's name, a data
+    /// item's, or `name[+N]` for the byte N into one.
     pub fn with_names(&self, text: &str, k: &Knowledge, module: &str) -> String {
         let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
         let mut out = String::with_capacity(text.len());
@@ -423,16 +492,18 @@ impl Analysis {
         while let Some(found) = text[at..].find(['F', 'D']).map(|i| at + i) {
             out.push_str(&text[at..found]);
             at = found;
-            let token = text.get(found..found + 13).unwrap_or_default();
             let before = text[..found].chars().next_back();
-            let after = text[found + token.len()..].chars().next();
-            let named = (token.len() == 13 && before.is_none_or(|c| !is_word(c)) && after.is_none_or(|c| !is_word(c)))
-                .then(|| self.name_for(token, k, module))
-                .flatten();
+            let named = [13, 12].into_iter().find_map(|len| {
+                let token = text.get(found..found + len)?;
+                let after = text[found + len..].chars().next();
+                (before.is_none_or(|c| !is_word(c)) && after.is_none_or(|c| !is_word(c)))
+                    .then(|| self.name_for(token, k, module).map(|name| (name, len)))
+                    .flatten()
+            });
             match named {
-                Some(name) => {
+                Some((name, len)) => {
                     out.push_str(&name);
-                    at += token.len();
+                    at += len;
                 }
                 None => {
                     out.push(text[at..].chars().next().expect("a character"));
@@ -444,14 +515,16 @@ impl Analysis {
         out
     }
 
-    /// The knowledge's name for Ghidra's `FUN_SSSS_OOOO` or `DAT_SSSS_OOOO`, if it has one.
+    /// The knowledge's name for Ghidra's `FUN_SSSS_OOOO`, `DAT_SSSS_OOOO` (real mode) or
+    /// `FUN_LLLLLLLL`, `DAT_LLLLLLLL` (flat), if it has one.
     fn name_for(&self, token: &str, k: &Knowledge, module: &str) -> Option<String> {
-        let (kind, rest) = token.split_at(4);
-        let (segment, offset) = rest.split_once('_')?;
-        if segment.len() != 4 || offset.len() != 4 {
-            return None;
-        }
-        let id = self.id_of(module, &format!("{segment}:{offset}"))?;
+        let (kind, rest) = token.split_at_checked(4)?;
+        let address = match rest.split_once('_') {
+            Some((segment, offset)) if segment.len() == 4 && offset.len() == 4 => format!("{segment}:{offset}"),
+            None if rest.len() == 8 && !self.objects.is_empty() => rest.to_owned(),
+            _ => return None,
+        };
+        let id = self.id_of(module, &address)?;
         match kind {
             "FUN_" => k.functions.get(&id).map(|d| d.name.clone()),
             "DAT_" => {
@@ -473,6 +546,7 @@ impl Analysis {
         let at = id.offset();
         self.functions
             .iter()
+            .filter(|(entry, _)| entry.part() == id.part() && entry.module() == id.module())
             .find(|(_, f)| f.body.iter().any(|&(start, len)| (start..start + len).contains(&at)))
             .map(|(entry, _)| (entry, at.wrapping_sub(entry.offset())))
     }
@@ -496,14 +570,17 @@ impl Analysis {
         out
     }
 
+    /// The ID of one of Ghidra's addresses: `SSSS:OOOO` in real mode, a linear `LLLLLLLL` in a flat
+    /// program.
     pub fn id_of(&self, module: &str, address: &str) -> Option<Id> {
-        let (segment, offset) = address.split_once(':')?;
-        let linear = u64::from_str_radix(segment, 16).ok()? * 16 + u64::from_str_radix(offset, 16).ok()?;
-        match linear.checked_sub(self.base) {
-            Some(offset) => Id::new(module, None, u32::try_from(offset).ok()?).ok(),
-            // Below the image: memory of the PC's (Ghidra's segments are real mode's there).
-            None => Some(Id::memory(u32::try_from(linear).ok()?)),
-        }
+        let linear = match address.split_once(':') {
+            Some((segment, offset)) => {
+                u64::from_str_radix(segment, 16).ok()? * 16 + u64::from_str_radix(offset, 16).ok()?
+            }
+            None if !self.objects.is_empty() => u64::from_str_radix(address, 16).ok()?,
+            None => return None,
+        };
+        self.layout().id_at(module, linear)
     }
 }
 
@@ -569,7 +646,7 @@ mod tests {
     #[test]
     fn an_export_reads_as_ids_and_library_names() {
         // The entry point is at image offset 410h, so Ghidra's 1000:0000 is the image's start.
-        let a = Analysis::parse(EXPORT, "GAME.EXE", 0x410).unwrap();
+        let a = Analysis::parse(EXPORT, "GAME.EXE", 0x410, &[]).unwrap();
         let id = |t: &str| t.parse::<Id>().unwrap();
         assert_eq!(a.functions.len(), 2);
         assert_eq!(a.functions[&id("GAME.EXE+00010")].size, 20);
@@ -607,6 +684,46 @@ mod tests {
         let mut k = Knowledge::default();
         assert_eq!(name_library_functions(&mut k, &a), 1);
         assert_eq!(k.functions[&id("GAME.EXE+00040")].provenance, "library:borland-c++-1991-medium");
+    }
+
+    /// A flat program's export: Ghidra's addresses are the objects' linear addresses.
+    const FLAT_EXPORT: &str = r#"{"record":"program","name":"FLAT.ELF","entry":{"linear":4411640,"text":"004350f8"},"ghidra":"12.1.4"}
+{"record":"function","address":{"linear":4411408,"text":"00435010"},"name":"FUN_00435010","source":"DEFAULT","fid":null,"body":[[{"linear":4411408},20]]}
+{"record":"ref","from":{"linear":4411412,"text":"00435014"},"to":{"linear":4428828,"text":"0043941c"},"kind":"write"}
+"#;
+
+    #[test]
+    fn a_flat_program_s_addresses_are_ids_of_its_objects() {
+        let objects = [(0x435000, 0x3181), (0x439000, 0x10590)];
+        let a = Analysis::parse(FLAT_EXPORT, "FLAT.EXE", 0, &objects).unwrap();
+        let id = |t: &str| t.parse::<Id>().unwrap();
+        assert!(a.functions.contains_key(&id("FLAT.EXE#1+00010")));
+        assert_eq!(a.refs, [(id("FLAT.EXE#1+00014"), id("FLAT.EXE#2+0041C"), "write".into())]);
+        assert_eq!(a.containing(&id("FLAT.EXE#1+00012")).map(|f| f.0), Some(&id("FLAT.EXE#1+00010")));
+        assert_eq!(a.containing(&id("FLAT.EXE#2+00012")), None, "another object");
+        assert_eq!(a.id_of("FLAT.EXE", "0043941c"), Some(id("FLAT.EXE#2+0041C")));
+        assert_eq!(a.id_of("FLAT.EXE", "0000046c"), Some(id("MEM+0046C")));
+        assert_eq!(a.layout().linear(&id("FLAT.EXE#2+0041C")), Some(0x43941C));
+        let mut k = Knowledge::default();
+        let d =
+            Decision { name: "squares".into(), provenance: "human".into(), confidence: None, evidence: String::new() };
+        k.data
+            .insert(id("FLAT.EXE#2+0041C"), crate::knowledge::Datum { decision: d, size: Some(64), ty: String::new() });
+        assert_eq!(
+            a.with_names("x = DAT_00439420; FUN_00435010();", &k, "FLAT.EXE"),
+            "x = squares[+4]; FUN_00435010();"
+        );
+        let mut elf = vec![0x7F, b'E', b'L', b'F'];
+        elf.resize(52 + 2 * 32, 0);
+        elf[28..32].copy_from_slice(&52u32.to_le_bytes());
+        elf[42..44].copy_from_slice(&32u16.to_le_bytes());
+        elf[44..46].copy_from_slice(&2u16.to_le_bytes());
+        for (i, (base, size)) in objects.iter().enumerate() {
+            elf[52 + 32 * i + 8..][..4].copy_from_slice(&base.to_le_bytes());
+            elf[52 + 32 * i + 20..][..4].copy_from_slice(&size.to_le_bytes());
+        }
+        assert_eq!(elf_objects(&elf), Some(objects.to_vec()));
+        assert_eq!(elf_objects(b"MZ"), None);
     }
 
     #[test]

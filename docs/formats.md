@@ -49,8 +49,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 - `analysis.toml`: what `rrc analyze` left: the hash of the game's program it analyzed (`original`), what Ghidra
   imported (`program`, in the cache: unpacked by Clockwork when `unpacked`), Ghidra's export (`export`, in the
   cache), the records of the functions added to it (`additions`, in the cache, read after the export's), the
-  entry point's offset in the load image (`entry`, which places Ghidra's addresses in the image) and Ghidra's
-  version.
+  entry point's offset in the load image (`entry`, which places Ghidra's addresses in the image), for an LE
+  program its objects as Clockwork placed them (`objects`, `[linear address, size]` in the LE's order: Ghidra's
+  addresses are these, and IDs name object `n` as `#n`) and Ghidra's version.
 - `ghidra/`: the last analysis's working files: the program Ghidra imported, the export script, Ghidra's log.
 
 ## Ghidra's export
@@ -78,7 +79,9 @@ what an earlier run made from given inputs:
   program (its hash), the game's files, the program and its options, the session's options and input (its
   file's hash), and the sync points (D51);
 - `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, keyed by the command, its arguments,
-  the session's run (as above, without the sync points), the knowledge files and the analysis.
+  the session's run (as above, without the sync points), the knowledge files and the analysis;
+- `index/objects/<key>`: where a session's run places an LE program's objects (`BASE:SIZE:FLAGS` in hex, a
+  line), keyed by the session's run (D55).
 
 It is `RRC_CACHE`,
 else `cache` in `rrc.local.toml`, else `%LOCALAPPDATA%\rrecreate\cache` on Windows and `$XDG_CACHE_HOME/rrecreate`
