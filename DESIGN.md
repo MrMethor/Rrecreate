@@ -5,10 +5,12 @@
 > superseded decision.
 
 **Status (2026-10-21):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
-serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. The Wolf3D
-port (local for now) has its version, its own analysis, its play tick and two traced sessions. M3, the runtime
-and the comparison, is next. Rrecreate succeeds Recreate (private), whose emulator and parts of whose
-tooling it takes over (§11).
+serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. A fresh
+agent tested the toolkit on the Wolf3D port with the playbook alone, and what it found is in (D46-D51). The
+Wolf3D port (local for now) has its version, its own analysis, two ticks (play, demo playback), its boundary
+values and three traced sessions. Next: a second such test (the menus' tick, the mouse), then M3, the runtime
+and the comparison. Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
+over (§11).
 
 ## 1. The product
 
