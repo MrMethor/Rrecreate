@@ -78,7 +78,7 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         None => k.data.get(&id).and_then(|d| d.size).unwrap_or(2),
     };
     let (first, count) = tick_span(&a)?;
-    let syncs = sync_points(&k);
+    let syncs = sync_points(&k)?;
     if syncs.is_empty() && a.value("--tick").is_some() {
         return Err("--tick needs sync points (knowledge/ticks.toml)".into());
     }
@@ -251,7 +251,7 @@ pub(crate) fn inputs(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     let session = Session::load(repo, name)?;
     let k = Knowledge::load(&repo.knowledge())?;
-    let syncs = sync_points(&k);
+    let syncs = sync_points(&k)?;
     if syncs.is_empty() {
         return Err("rrc inputs scans from a tick on: declare a sync point first (knowledge/ticks.toml)".into());
     }

@@ -23,7 +23,10 @@
 //!   cycle, video mode and hash. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
 //!   register, value]`), PC speaker waveforms (`[pit_tick, wave]`), digitized sound starts (`[ns, rate,
 //!   stereo]`), MIDI bytes (`[pit_tick, byte]`) and CD audio plays (`[ns, sector, sectors]`).
-//! - `sync` `{"at", "log": false}`: a sync point; `syncs`: each point's hits (and their cycles).
+//! - `sync` `{"at", "log": false, "gate": [{"at", "len"}]}`: a sync point; with a gate (D48), a hit
+//!   counts only when the gate's bytes changed since the point's last counted hit, and a stop there
+//!   says how many hits it passed over before (`skipped`). `syncs`: each point's hits (and their
+//!   cycles).
 //! - `read` `{"ranges": [{"at", "len"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
 //! - `watch` `{"ranges": [{"at", "len"}], "reads": false}` … `watch_end`: who wrote (or read) each
@@ -216,12 +219,22 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 json!({"stop": crate::summary::stop_text(&stop), "cycles": m.cpu.cycles, "ms": m.elapsed_ms()});
             if let dos::Stop::Sync { address, hit } = stop {
                 reply["sync"] = json!({"at": name(address), "hit": hit});
+                if let Some(point) = m.syncs.get(address).filter(|p| p.gate.is_some()) {
+                    reply["sync"]["skipped"] = json!(point.skipped);
+                }
             }
             Ok(reply)
         }
         "sync" => {
             let at = addr(m, text(r, "at")?)?;
             m.syncs.add(at, r.get("log").and_then(Value::as_bool).unwrap_or(false));
+            if r.get("gate").is_some() {
+                let mut sources = Vec::new();
+                for (from, len) in ranges(r, "gate", "len")? {
+                    sources.push(dos::sync::Source::Memory { at: addr(m, &from)?, len });
+                }
+                m.syncs.gate(at, sources);
+            }
             Ok(json!({"at": name(at)}))
         }
         "syncs" => {

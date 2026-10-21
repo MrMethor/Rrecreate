@@ -89,6 +89,11 @@ pub struct Sync {
     pub name: String,
     /// The instruction's ID.
     pub at: String,
+    /// A gate (D48): inputs or named data, by name. A hit is a tick only when one of them differs
+    /// from what it was at this point's last tick: a loop that polls as fast as the CPU runs ticks
+    /// when what it reads changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub when_changed: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -201,6 +206,19 @@ impl Knowledge {
         function.map(|(id, _)| id).or_else(|| self.data.iter().find(|(_, d)| d.decision.name == name).map(|(id, _)| id))
     }
 
+    /// What a sync point's `when_changed` names: an input, else named data with a size, as (ID,
+    /// size).
+    pub fn gate_item(&self, name: &str) -> Result<(String, u32), String> {
+        if let Some(input) = self.ticks.inputs.iter().find(|i| i.name == name) {
+            return Ok((input.at.clone(), input.size));
+        }
+        match self.data.iter().find(|(_, d)| d.decision.name == name) {
+            Some((id, Datum { size: Some(size), .. })) => Ok((id.to_string(), *size)),
+            Some(_) => Err(format!("when_changed: {name} has no size")),
+            None => Err(format!("when_changed: {name} is neither an input nor named data")),
+        }
+    }
+
     /// What is wrong with the knowledge: names used twice, overlapping data, data outside the
     /// image (`image_size` bytes, when known), bad tick declarations, malformed types.
     pub fn problems(&self, module: &str, image_size: Option<u32>) -> Vec<String> {
@@ -241,6 +259,11 @@ impl Knowledge {
         for s in &self.ticks.syncs {
             if let Err(e) = parse_id(&s.at) {
                 problems.push(format!("sync {}: {e}", s.name));
+            }
+            for name in &s.when_changed {
+                if let Err(e) = self.gate_item(name) {
+                    problems.push(format!("sync {}: {e}", s.name));
+                }
             }
         }
         for i in &self.ticks.inputs {
@@ -335,7 +358,12 @@ mod tests {
         k.functions.insert(id("GAME.EXE+0001A"), decision("main"));
         k.data.insert(id("GAME.EXE+20000"), Datum { decision: decision("elapsed"), size: Some(2), ty: "u16".into() });
         k.data.insert(id("GAME.EXE+20002"), Datum { decision: decision("map"), size: None, ty: String::new() });
-        k.ticks.syncs.push(Sync { name: "play".into(), at: "GAME.EXE+00120".into(), note: String::new() });
+        k.ticks.syncs.push(Sync {
+            name: "play".into(),
+            at: "GAME.EXE+00120".into(),
+            when_changed: vec!["elapsed".into()],
+            note: String::new(),
+        });
         k.ticks.inputs.push(Input { name: "elapsed".into(), at: "GAME.EXE+20000".into(), size: 2, note: "x".into() });
         k.types.structs.push(Struct {
             name: "actor".into(),
@@ -359,7 +387,14 @@ mod tests {
         k.data.insert(id("GAME.EXE+00200"), Datum { decision: decision("twice"), size: Some(4), ty: String::new() });
         k.data.insert(id("GAME.EXE+00202"), Datum { decision: decision("inside"), size: Some(2), ty: String::new() });
         k.data.insert(id("OTHER.EXE+00000"), Datum { decision: decision("bad name"), size: None, ty: String::new() });
+        k.ticks.syncs.push(Sync {
+            name: "menu".into(),
+            at: "GAME.EXE+00100".into(),
+            when_changed: vec!["nothing".into()],
+            note: String::new(),
+        });
         let problems = k.problems("GAME.EXE", Some(0x201));
+        assert!(problems.iter().any(|p| p.contains("nothing is neither")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("twice names both")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("overlaps GAME.EXE+00200")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("isn't a name")), "{problems:?}");

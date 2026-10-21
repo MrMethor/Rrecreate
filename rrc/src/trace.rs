@@ -34,6 +34,9 @@ pub struct Item {
 pub struct SyncPoint {
     pub name: String,
     pub at: String,
+    /// Its gate (D48): a hit is a tick only when one of these changed since its last tick.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub when_changed: Vec<Item>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -58,6 +61,9 @@ pub struct Tick {
     /// The sync point that ended it.
     pub sync: String,
     pub cycle: u64,
+    /// At a gated sync point: the hits its gate passed over since its last tick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<u64>,
     /// Each input's value (null where memory isn't mapped).
     pub inputs: Vec<Option<String>>,
     /// (index in the header's `state`, value) for each item that changed.
@@ -165,7 +171,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         session: name.clone(),
         program: module.clone(),
         clockwork: clockwork::version(&exe).unwrap_or_default(),
-        syncs: sync_points(&k),
+        syncs: sync_points(&k)?,
         inputs,
         state,
     };
@@ -198,17 +204,41 @@ pub(crate) fn begin(
 ) -> Result<(Clockwork, Value, BTreeMap<String, String>), String> {
     let (mut clockwork, loaded) = Clockwork::original(repo, &session.options(repo))?;
     let mut names = BTreeMap::new();
+    let module = repo.module();
     for s in syncs {
-        let at = image_address(&repo.module(), &s.at)?;
-        clockwork.ask("sync", json!({ "at": at }))?;
+        let at = image_address(&module, &s.at)?;
+        let mut request = json!({ "at": at });
+        if !s.when_changed.is_empty() {
+            let gate: Vec<Value> = s
+                .when_changed
+                .iter()
+                .map(|item| Ok(json!({"at": image_address(&module, &item.at)?, "len": item.size})))
+                .collect::<Result<_, String>>()?;
+            request["gate"] = json!(gate);
+        }
+        clockwork.ask("sync", request)?;
         names.insert(at, s.name.clone());
     }
     Ok((clockwork, loaded, names))
 }
 
-/// The knowledge's sync points as a trace names them.
-pub(crate) fn sync_points(k: &Knowledge) -> Vec<SyncPoint> {
-    k.ticks.syncs.iter().map(|s| SyncPoint { name: s.name.clone(), at: s.at.clone() }).collect()
+/// The knowledge's sync points as a trace names them, their gates' names resolved.
+pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
+    k.ticks
+        .syncs
+        .iter()
+        .map(|s| {
+            let when_changed = s
+                .when_changed
+                .iter()
+                .map(|name| {
+                    let (at, size) = k.gate_item(name).map_err(|e| format!("sync {}: {e}", s.name))?;
+                    Ok(Item { name: name.clone(), at, size })
+                })
+                .collect::<Result<_, String>>()?;
+            Ok(SyncPoint { name: s.name.clone(), at: s.at.clone(), when_changed })
+        })
+        .collect()
 }
 
 fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<Trace, String> {
@@ -253,6 +283,7 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
             tick: ticks.len() as u64 + 1,
             sync: syncs.get(at).cloned().unwrap_or_else(|| at.to_owned()),
             cycle,
+            skipped: ran["sync"]["skipped"].as_u64(),
             inputs: inputs.to_vec(),
             state: changed,
             frames,
@@ -291,7 +322,8 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .find(|t| t.tick == n)
             .ok_or_else(|| format!("no tick {n} (1 to {})", trace.ticks.len()))?;
-        say("tick", format!("{} at cycle {}, sync point {}", tick.tick, tick.cycle, tick.sync));
+        let skipped = tick.skipped.map(|n| format!(", {n} hits skipped before it")).unwrap_or_default();
+        say("tick", format!("{} at cycle {}, sync point {}{skipped}", tick.tick, tick.cycle, tick.sync));
         for (item, value) in h.inputs.iter().zip(&tick.inputs) {
             say("input", format!("{} = {}", item.name, value_text(value.as_deref(), &ty(item))));
         }
@@ -308,11 +340,22 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         "trace",
         format!("{} ticks of {}, then {} (cycle {})", trace.ticks.len(), h.session, trace.end.end, trace.end.cycles),
     );
-    let mut by_sync: BTreeMap<&str, usize> = BTreeMap::new();
+    // Ticks and, at gated sync points, the hits skipped, by sync point.
+    let mut by_sync: BTreeMap<&str, (usize, Option<u64>)> = BTreeMap::new();
     for tick in &trace.ticks {
-        *by_sync.entry(&tick.sync).or_default() += 1;
+        let (ticks, skipped) = by_sync.entry(&tick.sync).or_default();
+        *ticks += 1;
+        if let Some(n) = tick.skipped {
+            *skipped = Some(skipped.unwrap_or(0) + n);
+        }
     }
-    let syncs: Vec<String> = by_sync.iter().map(|(s, n)| format!("{s} {n}")).collect();
+    let syncs: Vec<String> = by_sync
+        .iter()
+        .map(|(s, (n, skipped))| match skipped {
+            Some(skipped) => format!("{s} {n} ({skipped} hits skipped)"),
+            None => format!("{s} {n}"),
+        })
+        .collect();
     say("syncs", syncs.join(", "));
     let mut changes = vec![0usize; h.state.len()];
     for tick in trace.ticks.iter().skip(1) {
@@ -408,7 +451,7 @@ mod tests {
             session: "walk".into(),
             program: "GAME.EXE".into(),
             clockwork: "0.1.0".into(),
-            syncs: vec![SyncPoint { name: "play".into(), at: "GAME.EXE+00100".into() }],
+            syncs: vec![SyncPoint { name: "play".into(), at: "GAME.EXE+00100".into(), when_changed: vec![] }],
             inputs: vec![item("elapsed", "GAME.EXE+20000")],
             state: vec![item("x", "GAME.EXE+20002"), item("y", "GAME.EXE+20004")],
         };
@@ -416,6 +459,7 @@ mod tests {
             tick: n,
             sync: "play".into(),
             cycle: n * 1000,
+            skipped: None,
             inputs: vec![Some("0100".into())],
             state,
             frames: vec![],

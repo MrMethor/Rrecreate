@@ -256,7 +256,10 @@ Recreate's Wolf3D knowledge (every function name transferred from id's released 
 hand) and its overrides stay out of the Wolf3D port; the port starts from Clockwork, Ghidra and the signature
 packs, and Recreate's knowledge grades the pilot afterwards, with id's source. The port repository is local for
 now; its rrc.toml refuses imports (`[port] imports = false`), Rrecreate's examples use a made-up program, and
-the pilot's agents follow the rules in docs/porting.md ("An honest pilot").
+the pilot's agents follow the rules in docs/porting.md ("An honest pilot"). The pilot's copy of the game is
+in a folder of its own, outside Recreate's tree (2026-10-21). Rrecreate's public history, whose commit messages
+carry names from Recreate, stays as it is: the pilot doesn't read it (2026-10-21, with the person: a rewrite
+would need a force-push).
 **Why:** D3. Knowledge derived from the source would let the pilot take shortcuts, and it would prove nothing.
 **Supersedes:** the plan (DESIGN.md §11, M2) to give the Wolf3D port Recreate's knowledge as evidence.
 
@@ -267,6 +270,17 @@ ends its tick in two places (play, and demo playback with its own wait) gets a s
 **Why:** the first blind test (the Wolf3D port's notes/toolkit-report.md) measured it: with the sync point at
 the wait's entry, the elapsed time was the previous pass's and a key changing during the wait reached the pass
 but not the tick; at the wait's exit neither happens, and the run is the same.
+
+### D48. Loops that poll as fast as the CPU runs get gated sync points. Accepted 2026-10-21, with the person.
+A sync point may name what its loop reads (`when_changed`: inputs or named data, the counter its timing reads
+among them); a hit is a tick only when one of them differs from what it was at that point's last tick. The
+hits passed over are counted (`skipped`), so a pass count that matters stays visible.
+**Why:** the first blind test found menus and title screens polling about 19000 times a second with no timer
+wait: a sync point at the poll gave about 253000 ticks for 13 s of menus, which measure the emulated CPU's
+speed, not the game, and recording didn't finish. Such a loop's behaviour depends only on what it reads, so a
+tick when that changed keeps every tick that matters. Measured on the Wolf3D port's first-level: 518 menu ticks
+instead of 253000, recorded in 21 s, the frames identical. The alternative, no ticks for menus (compared some
+other way), would have left menus outside the comparison.
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Accepted 2026-10-19.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the

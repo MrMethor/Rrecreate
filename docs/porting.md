@@ -59,9 +59,16 @@ yet, usually where the waiting function returns (its last instruction), not its 
 state are what memory holds at the sync point, which is what the pass starting there reads. At the entry,
 the elapsed time is the previous pass's, and a key that changes during the wait reaches the pass but not the
 tick. A game has a loop per mode (play, demo playback, menus); one loop may also end its tick in two places
-(demo playback skipping the usual wait for one of its own): each gets a sync point. Loops that poll as fast
-as the CPU runs, with no timer wait (menus, title screens), don't fit a sync point yet: leave them without
-one and say so in the notes.
+(demo playback skipping the usual wait for one of its own): each gets a sync point.
+
+**Loops that poll (D48):** menus and title screens often poll the controls as fast as the CPU runs, with no
+timer wait: `rrc calls` shows them as huge counts (thousands a second). A sync point at their poll would tick
+once a poll, which measures the emulated CPU, not the game. Gate it instead: `when_changed` lists what the
+loop reads (its inputs, and the counter its timing reads, such as the timer count a blinking cursor follows),
+and a hit is a tick only when one of them changed since that point's last tick. Put the sync point where the
+loop reads its controls. `rrc trace` says how many hits each gated sync point skipped; if the loop does work
+per poll that changes state (a random number drawn each pass), the trace shows it, and the notes should say
+so.
 
 Declare them in `knowledge/ticks.toml`, with the tick's **boundary values**: what the loop reads that comes
 from outside it (the elapsed time the waiting function measures, the key-state array, the mouse). To find them:

@@ -3564,6 +3564,78 @@ fn a_run_stops_at_the_next_hit_of_any_sync_point() {
     assert_eq!(m.exit_code(), Some(0));
 }
 
+/// A busy-polling loop: 1000 calls of `poll`; every 128th pass changes the byte at `input`.
+fn busy_poll() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["poll", "input"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.mov(cx, 1000)?;
+        a.here("again")?;
+        let poll = a.l("poll");
+        a.call(poll)?;
+        a.test(cl, 0x7F)?;
+        let next = a.l("next");
+        a.jnz(next)?;
+        let input = byte_at(a, "input");
+        a.inc(input)?;
+        a.here("next")?;
+        let again = a.l("again");
+        a.loop_(again)?;
+        exit(a, 0)?;
+        a.here("poll")?;
+        a.ret()?;
+        a.here("input")?;
+        a.db(&[0])
+    });
+    (program, offsets.into_inner())
+}
+
+#[test]
+fn a_gated_sync_point_counts_a_hit_when_what_it_reads_changed() {
+    let (program, o) = busy_poll();
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let poll = base + o["poll"];
+    m.syncs.gate(poll, vec![dos::sync::Source::Memory { at: base + o["input"], len: 1 }]);
+    let mut timeline = Vec::new();
+    while let Stop::Sync { hit, .. } = m.run_to_next_sync(SECOND) {
+        timeline.push((hit, m.syncs.get(poll).unwrap().skipped, m.mem.read_u8(base + o["input"])));
+    }
+    assert_eq!(m.exit_code(), Some(0));
+    // The first poll, then the poll after each of the 7 changes (CX = 896, 768, ... 128).
+    let expected: Vec<_> = [(1, 0, 0), (2, 104, 1)].into_iter().chain((3..=8).map(|n| (n, 127, n as u8 - 1))).collect();
+    assert_eq!(timeline, expected);
+    assert_eq!(m.syncs.get(poll).unwrap().skipped, 127);
+}
+
+#[test]
+fn a_sync_point_gated_on_a_timer_count_ticks_with_time() {
+    // poll: call it forever; the gate is the BIOS's timer count (0040:006C), 18.2 a second.
+    let poll_offset = std::cell::Cell::new(0);
+    let program = com(|a| {
+        poll_offset.set(a.addr("poll") as u32);
+        a.here("again")?;
+        let poll = a.l("poll");
+        a.call(poll)?;
+        let again = a.l("again");
+        a.jmp(again)?;
+        a.here("poll")?;
+        a.ret()
+    });
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    let poll = (u32::from(m.dos.psp) << 4) + poll_offset.get();
+    m.syncs.gate(poll, vec![dos::sync::Source::Memory { at: 0x46C, len: 4 }]);
+    let end = m.cpu.cycles + SECOND;
+    let mut ticks = 0;
+    while let Stop::Sync { .. } = m.run_to_next_sync(end - m.cpu.cycles) {
+        ticks += 1;
+    }
+    assert!((18..=20).contains(&ticks), "{ticks} ticks in a second");
+    assert!(m.syncs.get(poll).unwrap().skipped > 1000, "the loop polls far more often");
+}
+
 #[test]
 fn a_sync_point_logs_its_timeline() {
     let (program, o) = ten_steps();

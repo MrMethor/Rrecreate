@@ -700,7 +700,9 @@ impl Machine {
             }
             if syncs {
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-                if self.syncs.reached(at, self.cpu.cycles) {
+                if self.syncs.is_point(at)
+                    && self.syncs.reached(at, self.cpu.cycles, self.syncs.gate_sources(at).map(|s| self.gate_state(s)))
+                {
                     let hit = self.syncs.get(at).map_or(0, |p| p.hits);
                     return Stop::Sync { address: at, hit };
                 }
@@ -1028,6 +1030,19 @@ impl Machine {
     pub fn peek_linear_u8(&self, linear: u32) -> Option<u8> {
         let physical = self.cpu.peek_translate(|at| self.mem.read_u32(at), linear)?;
         Some(self.peek_u8(physical))
+    }
+
+    /// What a sync point's gate compares, now ([`crate::sync`]).
+    fn gate_state(&self, sources: &[crate::sync::Source]) -> Vec<Option<u8>> {
+        let mut state = Vec::new();
+        for source in sources {
+            match *source {
+                crate::sync::Source::Memory { at, len } => {
+                    state.extend((0..len).map(|i| self.peek_linear_u8(at.wrapping_add(i))));
+                }
+            }
+        }
+        state
     }
 
     /// Starts watching memory (see [`crate::watch`]); a watch already on is replaced. It turns call

@@ -120,6 +120,11 @@ name = "play"
 at = "GAME.EXE+0A31C"
 note = "where wait_for_tick returns: the wait is over and the pass hasn't read its inputs yet"
 
+[[sync]]                        # a loop that polls with no wait (D48)
+name = "menu"
+at = "GAME.EXE+0B1F0"
+when_changed = ["keys", "timer_count"]  # inputs or named data (with a size), by name
+
 [[input]]                       # a boundary value: what the original's logic reads at each tick (D15)
 name = "tick_elapsed"
 at = "GAME.EXE+21C40"
@@ -128,6 +133,8 @@ note = "timer counts since the last pass (70 Hz)"
 ```
 
 A tick's inputs and state are what the memory holds at the sync point: what the pass starting there reads.
+With `when_changed`, a hit is a tick only when one of those items differs from what it was at this sync
+point's last tick (the first hit is always one): list what the loop reads, and the counter its timing reads.
 
 ## `sessions/<name>.toml`: a session
 
@@ -152,7 +159,8 @@ JSON lines (D45): a header, a line per tick, and an end line.
 
 ```
 {"format":"rrc-trace","version":1,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
- "syncs":[{"name":"play","at":"GAME.EXE+0A31C"}],
+ "syncs":[{"name":"play","at":"GAME.EXE+0A31C"},
+          {"name":"menu","at":"GAME.EXE+0B1F0","when_changed":[{"name":"timer_count","at":"GAME.EXE+21C50","size":4}]}],
  "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2}],
  "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":["0100"],"state":[[0,"0000"], …],"frames":[[284,20380102,19,"61f5…"]],
@@ -161,7 +169,8 @@ JSON lines (D45): a header, a line per tick, and an end line.
 ```
 
 - A tick ends when the original reaches one of the sync points (`knowledge/ticks.toml`), before that instruction
-  runs; `sync` names which, `cycle` is Clockwork's instruction count then.
+  runs; `sync` names which, `cycle` is Clockwork's instruction count then. At a gated sync point (its
+  `when_changed` items in the header), `skipped` is how many hits it passed over since its last tick.
 - `inputs`: every boundary value at every tick, in the header's order. `state`: `[index, value]` for each named
   data item (`knowledge/data.tsv`, those with a size) that changed since the tick before; the first tick has
   them all. Values are the bytes memory holds, in hex (so little-endian); `null` where memory isn't mapped.

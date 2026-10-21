@@ -4,7 +4,7 @@
 > status). When a decision changes, both files change in the same commit, and nothing here may describe a
 > superseded decision.
 
-**Status (2026-10-19):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
+**Status (2026-10-21):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
 serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. The Wolf3D
 port (local for now) has its version, its own analysis, its play tick and two traced sessions. M3, the runtime
 and the comparison, is next. Rrecreate succeeds Recreate (private), whose emulator and parts of whose
@@ -109,10 +109,10 @@ TCP socket; requests can be batched ("run to the 500th sync point, then return t
 A GDB remote-protocol face lets gdb and Ghidra's debugger attach to the running original.
 
 **Built:** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on disk,
-runs for a time, to a sync point's next hit or to the next tick (any sync point's next hit), memory and
-registers, input, the frames and sound events of a span of time, watches with call chains, bounds checks,
-uninitialized reads and image dumps (real mode in full; protected mode as the selector map and the segments it
-bounds). **Still to come:** coverage through the protocol; frames as indexed pixels and palette (M5); image
+runs for a time, to a sync point's next hit or to the next tick (any sync point's next hit), gated sync points
+(D48), memory and registers, input, the frames and sound events of a span of time, watches with call chains,
+bounds checks, uninitialized reads and image dumps (real mode in full; protected mode as the selector map and
+the segments it bounds). **Still to come:** coverage through the protocol; frames as indexed pixels and palette (M5); image
 dumps of flat-model programs under an extender, which need where its loader put the LE objects; the GDB face.
 
 `clockwork run` and `clockwork play` stay for people: run headless, or play in a window with sound and record
@@ -215,8 +215,10 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
 ## 7. Comparison
 
 - **Sessions:** input scripts, recorded play (`clockwork play --record`), and the game's own demo recordings.
-- **Sync points:** addresses in the original where a tick ends (one per loop: menus, play, demo playback);
-  a session's timeline is its sequence of sync hits.
+- **Sync points:** addresses in the original where a tick ends (one per loop: menus, play, demo playback),
+  where the loop's wait is over and the pass hasn't read its inputs yet (D47); a session's timeline is its
+  sequence of sync hits. A loop that polls as fast as the CPU runs, with no wait, has a gated sync point: a
+  hit is a tick only when what the loop reads changed since its last tick (D48).
 - **State mapping** (`mapping.toml` in the port): port field to original location and encoding (sizes,
   signedness, fixed point, packed bits, arrays); pointers in the original become indices or references in the
   port and are translated both ways; fields that may differ (padding, caches, driver internals) are declared

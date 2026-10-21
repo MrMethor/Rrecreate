@@ -10,6 +10,13 @@ use std::process::Command;
 const PROGRAM: [u8; 17] =
     [0xFF, 0x06, 0x0F, 0x01, 0xB9, 0xE8, 0x03, 0xE2, 0xFE, 0xE8, 0x02, 0x00, 0xEB, 0xF2, 0xC3, 0x00, 0x00];
 
+/// A COM program that polls: 1000 times `call poll` (+00016, a `ret`); every 128th pass (CX = 896,
+/// 768, ... 128) adds 1 to the byte `input` (+00017); then it exits.
+const POLLING: [u8; 24] = [
+    0xB9, 0xE8, 0x03, 0xE8, 0x10, 0x00, 0xF6, 0xC1, 0x7F, 0x75, 0x04, 0xFE, 0x06, 0x17, 0x01, 0xE2, 0xF2, 0xB8, 0x00,
+    0x4C, 0xCD, 0x21, 0xC3, 0x00,
+];
+
 /// The workspace's `clockwork`, built if it isn't.
 fn clockwork() -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
@@ -52,15 +59,22 @@ impl Rrc {
     }
 }
 
-#[test]
-fn a_session_is_traced_tick_by_tick() {
-    let dir = std::env::temp_dir().join(format!("rrc-flow-{}", std::process::id()));
+/// A folder for a test (`name`) with the game (`program` as T.COM) and an empty port repository.
+fn setup(name: &str, program: &[u8]) -> (PathBuf, Rrc) {
+    let dir = std::env::temp_dir().join(format!("rrc-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let (game, repo) = (dir.join("game"), dir.join("port"));
     std::fs::create_dir_all(&game).unwrap();
-    std::fs::write(game.join("T.COM"), PROGRAM).unwrap();
+    std::fs::write(game.join("T.COM"), program).unwrap();
     std::fs::create_dir_all(&repo).unwrap();
-    let rrc = Rrc { repo: repo.clone(), cache: dir.join("cache"), clockwork: clockwork() };
+    let rrc = Rrc { repo, cache: dir.join("cache"), clockwork: clockwork() };
+    (dir, rrc)
+}
+
+#[test]
+fn a_session_is_traced_tick_by_tick() {
+    let (dir, rrc) = setup("flow", &PROGRAM);
+    let (game, repo) = (dir.join("game"), rrc.repo.clone());
 
     assert!(rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]).contains("next      rrc game"));
     assert!(repo.join(".gitattributes").is_file() && repo.join(".gitignore").is_file());
@@ -97,5 +111,31 @@ fn a_session_is_traced_tick_by_tick() {
     let counts = rrc.ok(&["trace", "short", "--item", "count"]);
     let lines: Vec<&str> = counts.lines().take(3).collect();
     assert_eq!(lines, ["1         1", "2         2", "3         3"], "the count at each tick, as a u16");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_busy_polling_loop_ticks_when_what_it_reads_changed() {
+    let (dir, rrc) = setup("polling", &POLLING);
+    rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    rrc.ok(&["data", "T.COM+00017", "input", "--size", "1", "--type", "u8"]);
+    let ticks = "[[sync]]\nname = \"poll\"\nat = \"T.COM+00016\"\nwhen_changed = [\"input\"]\n";
+    std::fs::write(rrc.repo.join("knowledge/ticks.toml"), ticks).unwrap();
+    rrc.ok(&["check"]);
+    rrc.ok(&["session", "add", "polls", "--seconds", "0.1"]);
+    let recorded = rrc.ok(&["record", "polls"]);
+    // The first poll, then the poll after each of the 7 changes: not 1000.
+    assert!(recorded.contains("trace     8 ticks"), "{recorded}");
+    let summary = rrc.ok(&["trace", "polls"]);
+    assert!(summary.contains("syncs     poll 8 (866 hits skipped)"), "{summary}");
+    let tick = rrc.ok(&["trace", "polls", "--tick", "3"]);
+    assert!(tick.contains(", 127 hits skipped before it"), "{tick}");
+    let inputs = rrc.ok(&["trace", "polls", "--item", "input"]);
+    let lines: Vec<&str> = inputs.lines().take(3).collect();
+    assert_eq!(lines, ["1         0", "2         1", "3         2"], "a change a tick");
+    std::fs::write(rrc.repo.join("knowledge/ticks.toml"), ticks.replace("[\"input\"]", "[\"other\"]")).unwrap();
+    let (refused, ok) = rrc.run(&["check"]);
+    assert!(!ok && refused.contains("sync poll: when_changed: other is neither"), "{refused}");
     std::fs::remove_dir_all(&dir).ok();
 }
