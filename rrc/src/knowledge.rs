@@ -16,6 +16,8 @@ pub const DATA_HEADER: &str = "# id\tname\tsize\ttype\tprovenance\tconfidence\te
 pub const TYPES: &str = "types.toml";
 /// Sync points and boundary values.
 pub const TICKS: &str = "ticks.toml";
+/// The input devices a boundary value can be (D49), with the bytes of their state (docs/formats.md).
+pub const DEVICES: [(&str, u32); 2] = [("mouse", 46), ("joystick", 12)];
 
 /// What every named item carries: who decided it and from what.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,14 +100,31 @@ pub struct Sync {
     pub note: String,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Input {
     pub name: String,
-    /// The value's ID.
+    /// The value's ID; or
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub at: String,
+    /// an input device's state (D49): `mouse` or `joystick` (`DEVICES`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device: String,
+    /// Bytes (a device's are known).
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub size: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+}
+
+impl Input {
+    /// Its size: a device's state, or the declared one.
+    pub fn bytes(&self) -> u32 {
+        DEVICES.iter().find(|(d, _)| *d == self.device).map_or(self.size, |(_, size)| *size)
+    }
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -206,14 +225,16 @@ impl Knowledge {
         function.map(|(id, _)| id).or_else(|| self.data.iter().find(|(_, d)| d.decision.name == name).map(|(id, _)| id))
     }
 
-    /// What a sync point's `when_changed` names: an input, else named data with a size, as (ID,
-    /// size).
-    pub fn gate_item(&self, name: &str) -> Result<(String, u32), String> {
+    /// What a sync point's `when_changed` names: an input, else named data with a size (as an
+    /// input).
+    pub fn gate_item(&self, name: &str) -> Result<Input, String> {
         if let Some(input) = self.ticks.inputs.iter().find(|i| i.name == name) {
-            return Ok((input.at.clone(), input.size));
+            return Ok(input.clone());
         }
         match self.data.iter().find(|(_, d)| d.decision.name == name) {
-            Some((id, Datum { size: Some(size), .. })) => Ok((id.to_string(), *size)),
+            Some((id, Datum { size: Some(size), .. })) => {
+                Ok(Input { name: name.into(), at: id.to_string(), size: *size, ..Input::default() })
+            }
             Some(_) => Err(format!("when_changed: {name} has no size")),
             None => Err(format!("when_changed: {name} is neither an input nor named data")),
         }
@@ -267,11 +288,19 @@ impl Knowledge {
             }
         }
         for i in &self.ticks.inputs {
-            if let Err(e) = parse_id(&i.at) {
-                problems.push(format!("input {}: {e}", i.name));
-            }
-            if i.size == 0 {
-                problems.push(format!("input {}: size 0", i.name));
+            if i.device.is_empty() {
+                if let Err(e) = parse_id(&i.at) {
+                    problems.push(format!("input {}: {e}", i.name));
+                }
+                if i.size == 0 {
+                    problems.push(format!("input {}: size 0", i.name));
+                }
+            } else if !i.at.is_empty() {
+                problems.push(format!("input {}: an ID or a device, not both", i.name));
+            } else if !DEVICES.iter().any(|(d, _)| *d == i.device) {
+                problems.push(format!("input {}: no device {:?} (mouse or joystick)", i.name, i.device));
+            } else if i.size != 0 && i.size != i.bytes() {
+                problems.push(format!("input {}: a {} is {} bytes", i.name, i.device, i.bytes()));
             }
         }
         for s in &self.types.structs {
@@ -364,7 +393,14 @@ mod tests {
             when_changed: vec!["elapsed".into()],
             note: String::new(),
         });
-        k.ticks.inputs.push(Input { name: "elapsed".into(), at: "GAME.EXE+20000".into(), size: 2, note: "x".into() });
+        k.ticks.inputs.push(Input {
+            name: "elapsed".into(),
+            at: "GAME.EXE+20000".into(),
+            size: 2,
+            note: "x".into(),
+            ..Input::default()
+        });
+        k.ticks.inputs.push(Input { name: "mouse".into(), device: "mouse".into(), ..Input::default() });
         k.types.structs.push(Struct {
             name: "actor".into(),
             size: 4,
@@ -393,8 +429,10 @@ mod tests {
             when_changed: vec!["nothing".into()],
             note: String::new(),
         });
+        k.ticks.inputs.push(Input { name: "pad".into(), device: "gamepad".into(), ..Input::default() });
         let problems = k.problems("GAME.EXE", Some(0x201));
         assert!(problems.iter().any(|p| p.contains("nothing is neither")), "{problems:?}");
+        assert!(problems.iter().any(|p| p.contains("no device \"gamepad\"")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("twice names both")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("overlaps GAME.EXE+00200")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("isn't a name")), "{problems:?}");

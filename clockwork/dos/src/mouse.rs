@@ -121,6 +121,31 @@ impl Mouse {
     }
 }
 
+/// Bytes of [`Mouse::reported_state`].
+pub const STATE_SIZE: usize = 46;
+
+impl Mouse {
+    /// What the driver would answer now, as little-endian words (D49: a boundary value that never
+    /// reaches memory): the buttons, X and Y as function 03h reports them; the motion in mickeys
+    /// function 0Bh would return; then for each button (left, right, middle) the press count and
+    /// the position of the last press as 05h would return them, and the same for releases (06h).
+    pub fn reported_state(&self) -> [u8; STATE_SIZE] {
+        let at = |x: i32, y: i32| [x as u16 & self.granularity.0, y as u16 & self.granularity.1];
+        let mut words = vec![u16::from(self.buttons)];
+        words.extend(at(self.x, self.y));
+        words.extend([self.mickeys.0 as u16, self.mickeys.1 as u16]);
+        for &(count, x, y) in self.presses.iter().chain(&self.releases) {
+            words.push(count);
+            words.extend(at(x, y));
+        }
+        let mut bytes = [0; STATE_SIZE];
+        for (chunk, word) in bytes.chunks_exact_mut(2).zip(words) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        bytes
+    }
+}
+
 pub(crate) fn install(m: &mut Machine) {
     if !m.mouse.enabled {
         return;

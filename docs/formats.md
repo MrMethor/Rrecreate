@@ -130,11 +130,23 @@ name = "tick_elapsed"
 at = "GAME.EXE+21C40"
 size = 2
 note = "timer counts since the last pass (70 Hz)"
+
+[[input]]                       # a device's state instead of memory (D49)
+name = "mouse"
+device = "mouse"                # or "joystick"; the size is the device's
 ```
 
 A tick's inputs and state are what the memory holds at the sync point: what the pass starting there reads.
 With `when_changed`, a hit is a tick only when one of those items differs from what it was at this sync
 point's last tick (the first hit is always one): list what the loop reads, and the counter its timing reads.
+
+A device's state is bytes, like memory (little-endian):
+- `mouse`, 46 bytes, what the mouse driver would report at the sync point, as 16-bit words: the buttons
+  (INT 33h 03h's BX: bit 0 left, 1 right, 2 middle), X and Y (03h's CX and DX), the motion in mickeys since
+  the last 0Bh call (0Bh's CX and DX, signed), then for the left, right and middle button its press count
+  and the position of its last press (05h's BX, CX, DX), then the same for releases (06h).
+- `joystick`, 12 bytes: for stick A, then B, whether it is connected (a byte, 1 or 0), its buttons (a byte:
+  bit 0 button 1, bit 1 button 2, set while pressed), X and Y (signed 16-bit, -32767 to 32767).
 
 ## `sessions/<name>.toml`: a session
 
@@ -161,7 +173,7 @@ JSON lines (D45): a header, a line per tick, and an end line.
 {"format":"rrc-trace","version":1,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
  "syncs":[{"name":"play","at":"GAME.EXE+0A31C"},
           {"name":"menu","at":"GAME.EXE+0B1F0","when_changed":[{"name":"timer_count","at":"GAME.EXE+21C50","size":4}]}],
- "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2}],
+ "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2},{"name":"mouse","device":"mouse","size":46}],
  "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":["0100"],"state":[[0,"0000"], …],"frames":[[284,20380102,19,"61f5…"]],
  "sound":{"opl":[[2549120000,176,49]]}}
@@ -171,7 +183,7 @@ JSON lines (D45): a header, a line per tick, and an end line.
 - A tick ends when the original reaches one of the sync points (`knowledge/ticks.toml`), before that instruction
   runs; `sync` names which, `cycle` is Clockwork's instruction count then. At a gated sync point (its
   `when_changed` items in the header), `skipped` is how many hits it passed over since its last tick.
-- `inputs`: every boundary value at every tick, in the header's order. `state`: `[index, value]` for each named
+- `inputs`: every boundary value at every tick, in the header's order (a device's as its bytes). `state`: `[index, value]` for each named
   data item (`knowledge/data.tsv`, those with a size) that changed since the tick before; the first tick has
   them all. Values are the bytes memory holds, in hex (so little-endian); `null` where memory isn't mapped.
 - `frames`: the frames Clockwork showed since the tick before: `[number, cycle, BIOS video mode, hash]`.

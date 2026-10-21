@@ -21,6 +21,8 @@ const BITS_END: u32 = 0x11_0000;
 pub enum Source {
     /// `len` bytes of memory at linear address `at`.
     Memory { at: u32, len: u32 },
+    /// An input device's state (D49).
+    Device(crate::Device),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

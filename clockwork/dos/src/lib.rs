@@ -48,7 +48,7 @@ pub mod xms;
 
 pub use cpu::Model as CpuModel;
 pub use dos::LoadError;
-pub use machine::{Config, Devices, ExecHit, Frame, Input, MAX_EXEC_HITS, Machine, Stop, cp437_to_char};
+pub use machine::{Config, Device, Devices, ExecHit, Frame, Input, MAX_EXEC_HITS, Machine, Stop, cp437_to_char};
 pub use probe::Probes;
 pub use time::DateTime;
 pub use vfs::Vfs;

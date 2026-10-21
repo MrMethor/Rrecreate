@@ -1279,6 +1279,77 @@ fn mouse_polling_reports_positions_with_text_mode_granularity() {
 }
 
 #[test]
+fn the_mouse_state_is_what_int_33h_reports() {
+    // Forever: a wait (where the input arrives), then at `read` functions 03h, 0Bh, 05h and 06h (left
+    // button) into `got` (11 words), then `done`.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["read", "done", "got"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.here("wait")?;
+        a.mov(cx, 5000)?;
+        a.here("delay")?;
+        let delay = a.l("delay");
+        a.loop_(delay)?;
+        a.here("read")?;
+        let got = a.addr("got");
+        a.mov(di, got)?;
+        a.mov(ax, 3)?;
+        a.int(0x33)?;
+        for reg in [bx, cx, dx] {
+            a.mov(ax, reg)?;
+            a.stosw()?;
+        }
+        a.mov(ax, 0xB)?;
+        a.int(0x33)?;
+        for reg in [cx, dx] {
+            a.mov(ax, reg)?;
+            a.stosw()?;
+        }
+        for function in [5, 6] {
+            a.mov(ax, function)?;
+            a.xor(bx, bx)?;
+            a.int(0x33)?;
+            for reg in [bx, cx, dx] {
+                a.mov(ax, reg)?;
+                a.stosw()?;
+            }
+        }
+        a.here("done")?;
+        let wait = a.l("wait");
+        a.jmp(wait)?;
+        a.here("got")?;
+        a.dw(&[0; 11])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("M.COM", &program)], "M.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let (read, done, got) = (base + o["read"], base + o["done"], base + o["got"]);
+    m.syncs.gate(read, vec![dos::sync::Source::Device(dos::Device::Mouse)]);
+    m.queue_mouse(SECOND / 10, 100, 50, 0);
+    m.queue_mouse(SECOND / 5, 123, 61, 1);
+    m.queue_mouse(SECOND * 3 / 10, 123, 61, 0);
+    let (mut ticks, mut most_skipped) = (0, 0);
+    while m.cpu.cycles < SECOND / 2 && m.run_to_sync(read, 1, SECOND / 2) != Stop::CycleLimit {
+        let state = m.device_state(dos::Device::Mouse);
+        most_skipped = most_skipped.max(m.syncs.get(read).unwrap().skipped);
+        let words: Vec<u16> = state.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        assert!(matches!(m.run_to_sync(done, 1, SECOND), Stop::Sync { .. }));
+        let answered: Vec<u16> = (0..11).map(|i| m.mem.read_u16(got + 2 * i)).collect();
+        let expected: Vec<u16> = [0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16].iter().map(|&i| words[i]).collect();
+        assert_eq!(answered, expected, "tick {ticks}: the state words of 03h, 0Bh, 05h and 06h");
+        ticks += 1;
+    }
+    // The first hit; then each event, and the hit after it, which sees what the reads cleared (the
+    // motion, the press count, the release count).
+    assert_eq!(ticks, 7, "a tick when the mouse changed, not once a poll");
+    assert!(most_skipped > 100, "the loop polled {most_skipped} times between two ticks");
+}
+
+#[test]
 fn mouse_event_handler_runs_from_irq_12() {
     // Install a handler for left-button presses that stores CX and sets a flag; HLT until set.
     let program = com(|a| {

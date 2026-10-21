@@ -81,9 +81,13 @@ scans the data segment the loop runs with and lists what the program reads that 
 host service writes, by handler: the keyboard's (INT 09h) writes the key states, the timer's (INT 08h) the
 timer counts and whatever runs at the timer's rate (music), the sound card's its own state. Which of these are
 inputs and which belong to an interrupt-driven subsystem of the simulation (D22) is your call: inputs come
-from the player and the clock. A session must press the keys for their bytes to show up. Values that come
-back from a service in registers (the mouse driver's) don't show here: look for where the program stores them.
-Record the evidence in the notes.
+from the player and the clock. A session must press the keys for their bytes to show up.
+
+Values that come back from a driver or a port in registers don't show here: a program often reads the mouse
+(INT 33h) or the joystick (port 201h) and uses the answer at once. Declare those as the device
+(`device = "mouse"` or `"joystick"` in an `[[input]]`, D49): the trace then has the driver's state at each tick,
+which is what the pass starting there reads, and `rrc trace --item mouse` shows it. A gated sync point can name
+it too, so a menu ticks when the mouse moves. Record the evidence in the notes.
 
 ## 4. Record
 

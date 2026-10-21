@@ -21,13 +21,32 @@ use crate::session::{Recorded, Session};
 pub const FORMAT: &str = "rrc-trace";
 pub const VERSION: u32 = 1;
 
-/// A memory item a trace follows.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// A memory item a trace follows, or an input device's state.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Item {
     pub name: String,
-    /// Its ID.
+    /// Its ID; or
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub at: String,
+    /// the device (D49): `mouse` or `joystick`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device: String,
     pub size: u32,
+}
+
+impl Item {
+    fn from_input(i: &crate::knowledge::Input) -> Item {
+        Item { name: i.name.clone(), at: i.at.clone(), device: i.device.clone(), size: i.bytes() }
+    }
+
+    /// What Clockwork's `read` and a gate take for it.
+    fn request(&self, module: &str) -> Result<Value, String> {
+        if self.device.is_empty() {
+            Ok(json!({"at": image_address(module, &self.at)?, "len": self.size}))
+        } else {
+            Ok(json!({ "device": self.device }))
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -155,13 +174,17 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Err("no sync points in knowledge/ticks.toml: find where a tick ends first (docs/formats.md)".into());
     }
     let module = repo.module();
-    let inputs: Vec<Item> =
-        k.ticks.inputs.iter().map(|i| Item { name: i.name.clone(), at: i.at.clone(), size: i.size }).collect();
+    let inputs: Vec<Item> = k.ticks.inputs.iter().map(Item::from_input).collect();
     let state: Vec<Item> = k
         .data
         .iter()
         .filter(|(id, d)| id.module() == module && id.part().is_none() && d.size.is_some())
-        .map(|(id, d)| Item { name: d.decision.name.clone(), at: id.to_string(), size: d.size.unwrap_or(0) })
+        .map(|(id, d)| Item {
+            name: d.decision.name.clone(),
+            at: id.to_string(),
+            size: d.size.unwrap_or(0),
+            ..Item::default()
+        })
         .collect();
     let exe = clockwork::find(&repo.local)?;
     let header = Header {
@@ -209,11 +232,7 @@ pub(crate) fn begin(
         let at = image_address(&module, &s.at)?;
         let mut request = json!({ "at": at });
         if !s.when_changed.is_empty() {
-            let gate: Vec<Value> = s
-                .when_changed
-                .iter()
-                .map(|item| Ok(json!({"at": image_address(&module, &item.at)?, "len": item.size})))
-                .collect::<Result<_, String>>()?;
+            let gate: Vec<Value> = s.when_changed.iter().map(|item| item.request(&module)).collect::<Result<_, _>>()?;
             request["gate"] = json!(gate);
         }
         clockwork.ask("sync", request)?;
@@ -231,10 +250,7 @@ pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
             let when_changed = s
                 .when_changed
                 .iter()
-                .map(|name| {
-                    let (at, size) = k.gate_item(name).map_err(|e| format!("sync {}: {e}", s.name))?;
-                    Ok(Item { name: name.clone(), at, size })
-                })
+                .map(|name| Ok(Item::from_input(&k.gate_item(name).map_err(|e| format!("sync {}: {e}", s.name))?)))
                 .collect::<Result<_, String>>()?;
             Ok(SyncPoint { name: s.name.clone(), at: s.at.clone(), when_changed })
         })
@@ -246,7 +262,7 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
     let start = loaded["cycles"].as_u64().unwrap_or(0);
     let mut ranges = Vec::new();
     for item in header.inputs.iter().chain(&header.state) {
-        ranges.push(json!({"at": image_address(module, &item.at)?, "len": item.size}));
+        ranges.push(item.request(module)?);
     }
     let ranges = json!({ "ranges": ranges });
     let length_ms = (session.seconds * 1000.0) as u64;
@@ -310,7 +326,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     // The types data.tsv gives the items, by ID.
     let k = Knowledge::load(&repo.knowledge())?;
     let types: BTreeMap<String, String> = k.data.iter().map(|(id, d)| (id.to_string(), d.ty.clone())).collect();
-    let ty = |item: &Item| types.get(&item.at).cloned().unwrap_or_default();
+    let ty = |item: &Item| {
+        if item.device.is_empty() { types.get(&item.at).cloned().unwrap_or_default() } else { item.device.clone() }
+    };
     if let Some(item) = a.value("--item") {
         let lines: usize = a.value("--lines").map_or(Ok(40), str::parse).map_err(|_| "--lines is a count")?;
         return show_item(&trace, item, &ty, lines);
@@ -407,6 +425,11 @@ pub fn value_text(hex: Option<&str>, ty: &str) -> String {
     let Some(hex) = hex else { return "unmapped".into() };
     let bytes: Vec<u8> =
         (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect();
+    match (ty, bytes.len()) {
+        ("mouse", 46) => return mouse_text(&bytes),
+        ("joystick", 12) => return joystick_text(&bytes),
+        _ => {}
+    }
     let (element, array) = match ty.split_once('[') {
         Some((element, _)) => (element, true),
         None => (ty, false),
@@ -432,6 +455,37 @@ pub fn value_text(hex: Option<&str>, ty: &str) -> String {
     if set.is_empty() { format!("all {} zero", values.len()) } else { set.join(" ") }
 }
 
+/// The mouse's state (docs/formats.md): the buttons, the position and the motion, and the press
+/// and release counts that aren't zero.
+fn mouse_text(bytes: &[u8]) -> String {
+    let w: Vec<i16> = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+    let mut text = format!("buttons {}, at ({}, {}), motion ({}, {})", w[0], w[1] as u16, w[2] as u16, w[3], w[4]);
+    for (i, kind) in [(5, "pressed"), (14, "released")] {
+        for (button, name) in ["left", "right", "middle"].iter().enumerate() {
+            let at = i + 3 * button;
+            if w[at] != 0 {
+                text +=
+                    &format!(", {name} {kind} {} (last at {}, {})", w[at] as u16, w[at + 1] as u16, w[at + 2] as u16);
+            }
+        }
+    }
+    text
+}
+
+/// The game port's sticks (docs/formats.md).
+fn joystick_text(bytes: &[u8]) -> String {
+    let sticks: Vec<String> = bytes
+        .chunks_exact(6)
+        .zip(["A", "B"])
+        .filter(|(s, _)| s[0] != 0)
+        .map(|(s, name)| {
+            let (x, y) = (i16::from_le_bytes([s[2], s[3]]), i16::from_le_bytes([s[4], s[5]]));
+            format!("{name}: buttons {}, at ({x}, {y})", s[1])
+        })
+        .collect();
+    if sticks.is_empty() { "no stick".into() } else { sticks.join("; ") }
+}
+
 /// A value, shortened for a line of output.
 fn short(hex: &str) -> String {
     if hex.len() <= 64 { hex.to_owned() } else { format!("{}… ({} bytes)", &hex[..64], hex.len() / 2) }
@@ -443,7 +497,7 @@ mod tests {
 
     #[test]
     fn a_trace_reads_back_as_written() {
-        let item = |name: &str, at: &str| Item { name: name.into(), at: at.into(), size: 2 };
+        let item = |name: &str, at: &str| Item { name: name.into(), at: at.into(), size: 2, ..Item::default() };
         let header = Header {
             format: FORMAT.into(),
             version: VERSION,
@@ -486,5 +540,12 @@ mod tests {
         assert_eq!(value_text(Some("00000100"), "u16[2]"), "[0x1]=1");
         assert_eq!(value_text(Some("0000"), "u8[2]"), "all 2 zero");
         assert_eq!((value_text(Some("0A0B"), ""), value_text(None, "u8")), ("0A0B".into(), "unmapped".into()));
+        let mut mouse = "01007800380024FF9CFF".to_owned() + &"0".repeat(72);
+        mouse.replace_range(20..32, "010078003800");
+        assert_eq!(
+            value_text(Some(&mouse), "mouse"),
+            "buttons 1, at (120, 56), motion (-220, -100), left pressed 1 (last at 120, 56)"
+        );
+        assert_eq!(value_text(Some("0101FEFF2C01000000000000"), "joystick"), "A: buttons 1, at (-2, 300)");
     }
 }

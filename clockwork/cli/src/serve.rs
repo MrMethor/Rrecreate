@@ -27,7 +27,9 @@
 //!   counts only when the gate's bytes changed since the point's last counted hit, and a stop there
 //!   says how many hits it passed over before (`skipped`). `syncs`: each point's hits (and their
 //!   cycles).
-//! - `read` `{"ranges": [{"at", "len"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
+//! - `read` `{"ranges": [{"at", "len"} or {"device"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
+//!   A device (D49) is `mouse` (what INT 33h would report: `dos::mouse::Mouse::reported_state`) or
+//!   `joystick` (the game port's sticks); a gate takes them too.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
 //! - `watch` `{"ranges": [{"at", "len"}], "reads": false}` … `watch_end`: who wrote (or read) each
 //!   byte, with the instruction, the cycle and the call chain (at most `"limit"` accesses, 10000 by
@@ -230,8 +232,11 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             m.syncs.add(at, r.get("log").and_then(Value::as_bool).unwrap_or(false));
             if r.get("gate").is_some() {
                 let mut sources = Vec::new();
-                for (from, len) in ranges(r, "gate", "len")? {
-                    sources.push(dos::sync::Source::Memory { at: addr(m, &from)?, len });
+                for spec in specs(r, "gate")? {
+                    sources.push(match spec {
+                        Spec::Memory(from, len) => dos::sync::Source::Memory { at: addr(m, &from)?, len },
+                        Spec::Device(device) => dos::sync::Source::Device(device),
+                    });
                 }
                 m.syncs.gate(at, sources);
             }
@@ -244,9 +249,14 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "read" => {
             let mut data = Vec::new();
-            for range in ranges(r, "ranges", "len")? {
-                let linear = addr(m, &range.0)?;
-                let bytes: Option<Vec<u8>> = (0..range.1).map(|i| m.peek_linear_u8(linear.wrapping_add(i))).collect();
+            for spec in specs(r, "ranges")? {
+                let bytes: Option<Vec<u8>> = match spec {
+                    Spec::Memory(at, len) => {
+                        let linear = addr(m, &at)?;
+                        (0..len).map(|i| m.peek_linear_u8(linear.wrapping_add(i))).collect()
+                    }
+                    Spec::Device(device) => Some(m.device_state(device)),
+                };
                 data.push(bytes.map_or(Value::Null, |b| json!(hex(&b))));
             }
             Ok(json!({"data": data}))
@@ -480,6 +490,29 @@ fn text<'a>(r: &'a Value, key: &str) -> Result<&'a str, String> {
 fn strings(r: &Value, key: &str) -> Result<Vec<String>, String> {
     let items = r.get(key).and_then(Value::as_array).ok_or_else(|| format!("missing {key:?}"))?;
     items.iter().map(|v| v.as_str().map(String::from).ok_or_else(|| format!("{key}: strings only"))).collect()
+}
+
+/// What `read` and a gate take: memory, or an input device's state.
+enum Spec {
+    Memory(String, u32),
+    Device(dos::Device),
+}
+
+/// `[{"at": …, "len": n} or {"device": "mouse" | "joystick"}]`.
+fn specs(r: &Value, key: &str) -> Result<Vec<Spec>, String> {
+    let items = r.get(key).and_then(Value::as_array).ok_or_else(|| format!("missing {key:?}"))?;
+    items
+        .iter()
+        .map(|item| match item.get("device").and_then(Value::as_str) {
+            Some(name) => dos::Device::parse(name).map(Spec::Device).ok_or_else(|| format!("no device {name:?}")),
+            None => {
+                let at = item.get("at").and_then(Value::as_str).ok_or_else(|| format!("{key}: each needs \"at\""))?;
+                let len =
+                    item.get("len").and_then(Value::as_u64).ok_or_else(|| format!("{key}: each needs \"len\""))?;
+                Ok(Spec::Memory(at.to_owned(), len as u32))
+            }
+        })
+        .collect()
 }
 
 /// `[{"at": …, <size>: n}]` as (address, n) pairs.

@@ -17,6 +17,10 @@ const POLLING: [u8; 24] = [
     0x4C, 0xCD, 0x21, 0xC3, 0x00,
 ];
 
+/// A COM program that resets the mouse driver, then polls it forever: `poll` (+00004) is
+/// `mov ax, 3; int 33h; jmp poll`.
+const MOUSE_POLLING: [u8; 11] = [0x31, 0xC0, 0xCD, 0x33, 0xB8, 0x03, 0x00, 0xCD, 0x33, 0xEB, 0xF9];
+
 /// The workspace's `clockwork`, built if it isn't.
 fn clockwork() -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
@@ -137,5 +141,35 @@ fn a_busy_polling_loop_ticks_when_what_it_reads_changed() {
     std::fs::write(rrc.repo.join("knowledge/ticks.toml"), ticks.replace("[\"input\"]", "[\"other\"]")).unwrap();
     let (refused, ok) = rrc.run(&["check"]);
     assert!(!ok && refused.contains("sync poll: when_changed: other is neither"), "{refused}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_mouse_is_an_input_and_a_gate() {
+    let (dir, rrc) = setup("mouse", &MOUSE_POLLING);
+    rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    let ticks = "[[sync]]\nname = \"poll\"\nat = \"T.COM+00004\"\nwhen_changed = [\"mouse\"]\n\n\
+                 [[input]]\nname = \"mouse\"\ndevice = \"mouse\"\n";
+    std::fs::write(rrc.repo.join("knowledge/ticks.toml"), ticks).unwrap();
+    assert!(rrc.ok(&["check"]).contains("1 sync points, 1 inputs"));
+    let script = dir.join("click.inputs");
+    std::fs::write(&script, "100:{click 160 100}\n").unwrap();
+    rrc.ok(&["session", "add", "click", "--seconds", "0.6", "--inputs", script.to_str().unwrap()]);
+    // The first poll, then the move, the press and the release.
+    assert!(rrc.ok(&["record", "click"]).contains("trace     4 ticks"));
+    let mouse = rrc.ok(&["trace", "click", "--item", "mouse"]);
+    let lines: Vec<&str> = mouse.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "1         buttons 0, at (320, 96), motion (0, 0)",
+            "2         buttons 0, at (160, 96), motion (-160, 0)",
+            "3         buttons 1, at (160, 96), motion (-160, 0), left pressed 1 (last at 160, 96)",
+            "4         buttons 0, at (160, 96), motion (-160, 0), left pressed 1 (last at 160, 96), left released 1 \
+             (last at 160, 96)",
+        ],
+        "{mouse}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

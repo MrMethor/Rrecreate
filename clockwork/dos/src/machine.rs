@@ -120,6 +120,27 @@ pub enum Input {
     Joystick { stick: u8, x: i16, y: i16, buttons: u8 },
 }
 
+/// An input device whose state a program reads through a service or a port, never from memory of
+/// its own (D49): [`Machine::device_state`] gives it as bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Device {
+    /// The mouse driver: [`crate::mouse::Mouse::reported_state`].
+    Mouse,
+    /// The game port's sticks: [`crate::joystick::GamePort::reported_state`].
+    Joystick,
+}
+
+impl Device {
+    /// `mouse` or `joystick`.
+    pub fn parse(name: &str) -> Option<Device> {
+        match name {
+            "mouse" => Some(Device::Mouse),
+            "joystick" => Some(Device::Joystick),
+            _ => None,
+        }
+    }
+}
+
 /// Why [`Machine::run`] returned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stop {
@@ -1032,6 +1053,14 @@ impl Machine {
         Some(self.peek_u8(physical))
     }
 
+    /// An input device's state now, as bytes ([`Device`]).
+    pub fn device_state(&self, device: Device) -> Vec<u8> {
+        match device {
+            Device::Mouse => self.mouse.reported_state().to_vec(),
+            Device::Joystick => self.devices.game_port.reported_state().to_vec(),
+        }
+    }
+
     /// What a sync point's gate compares, now ([`crate::sync`]).
     fn gate_state(&self, sources: &[crate::sync::Source]) -> Vec<Option<u8>> {
         let mut state = Vec::new();
@@ -1040,6 +1069,7 @@ impl Machine {
                 crate::sync::Source::Memory { at, len } => {
                     state.extend((0..len).map(|i| self.peek_linear_u8(at.wrapping_add(i))));
                 }
+                crate::sync::Source::Device(device) => state.extend(self.device_state(device).into_iter().map(Some)),
             }
         }
         state

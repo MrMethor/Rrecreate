@@ -282,6 +282,19 @@ tick when that changed keeps every tick that matters. Measured on the Wolf3D por
 instead of 253000, recorded in 21 s, the frames identical. The alternative, no ticks for menus (compared some
 other way), would have left menus outside the comparison.
 
+### D49. The mouse and the joystick are boundary values as their devices hold them. Accepted 2026-10-21.
+An input may be a device instead of an address: `mouse` is what the mouse driver would report at the sync
+point (buttons and position as INT 33h 03h gives them, the motion 0Bh would return, the press and release
+counts and positions of 05h and 06h); `joystick` is the game port's sticks (buttons and positions). Clockwork
+gives them as bytes in a documented layout, so the trace stores them like any other input, and a gate can
+name them.
+**Why:** the first blind test found that Wolf3D never stores the mouse or the joystick: INT 33h answers in
+registers kept in stack locals, port 201h is timed by the program, and Clockwork's mouse driver keeps its state
+outside emulated memory. `[[input]]` could only name memory, so a pushwall tick that turned the player by the
+mouse had no input that explained it. The driver's state at the sync point is what the pass starting there
+reads, as with memory inputs (D47). Recording each service call's registers per tick, the alternative, would
+belong to the pass after the tick and tie the format to INT 33h's functions.
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Accepted 2026-10-19.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the

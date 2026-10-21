@@ -110,10 +110,11 @@ A GDB remote-protocol face lets gdb and Ghidra's debugger attach to the running 
 
 **Built:** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on disk,
 runs for a time, to a sync point's next hit or to the next tick (any sync point's next hit), gated sync points
-(D48), memory and registers, input, the frames and sound events of a span of time, watches with call chains,
-bounds checks, uninitialized reads and image dumps (real mode in full; protected mode as the selector map and
-the segments it bounds). **Still to come:** coverage through the protocol; frames as indexed pixels and palette (M5); image
-dumps of flat-model programs under an extender, which need where its loader put the LE objects; the GDB face.
+(D48), memory and registers, the input devices' state (D49), input, the frames and sound events of a span of
+time, watches with call chains, bounds checks, uninitialized reads and image dumps (real mode in full;
+protected mode as the selector map and the segments it bounds). **Still to come:** coverage through the
+protocol; frames as indexed pixels and palette (M5); image dumps of flat-model programs under an extender,
+which need where its loader put the LE objects; the GDB face.
 
 `clockwork run` and `clockwork play` stay for people: run headless, or play in a window with sound and record
 the session.
@@ -168,8 +169,9 @@ backend never reads the simulation's state directly and a modern one can ignore 
 ### 6.2 Time and inputs
 
 A step takes the state and the tick's inputs. Inputs are **boundary values read from the original's memory at
-each sync point**: the key-state array its logic reads, the elapsed time, the mouse. The port
-therefore never models a keyboard controller or a timer chip to be comparable.
+each sync point**: the key-state array its logic reads, the elapsed time; and what a program reads from a
+device's driver or port without storing it, as the device holds it then: the mouse driver's state, the
+joystick's (D49). The port therefore never models a keyboard controller or a timer chip to be comparable.
 
 - **Faithful mode** feeds the elapsed time the original measured, tick by tick, so state matches the original
   at every tick.

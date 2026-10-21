@@ -17,6 +17,9 @@ const OFFSET_NS: u64 = 20_000;
 /// Positions are -32767 (left, up) ..= 32767 (right, down).
 pub const AXIS_MAX: i16 = 32767;
 
+/// Bytes of [`GamePort::reported_state`].
+pub const STATE_SIZE: usize = 12;
+
 /// One joystick: its position and buttons (bit 0: button 1, bit 1: button 2).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Stick {
@@ -95,6 +98,22 @@ impl GamePort {
         value
     }
 
+    /// The sticks as bytes (D49: a boundary value that never reaches memory): for stick A, then B,
+    /// whether it is connected (1 or 0), its buttons (bit 0 button 1, bit 1 button 2, set while
+    /// pressed), and X and Y (-32767..=32767, little-endian).
+    pub fn reported_state(&self) -> [u8; STATE_SIZE] {
+        let mut bytes = [0; STATE_SIZE];
+        for (chunk, stick) in bytes.chunks_exact_mut(6).zip(&self.sticks) {
+            if let Some(s) = stick {
+                chunk[0] = 1;
+                chunk[1] = s.buttons & 3;
+                chunk[2..4].copy_from_slice(&s.x.to_le_bytes());
+                chunk[4..6].copy_from_slice(&s.y.to_le_bytes());
+            }
+        }
+        bytes
+    }
+
     /// INT 15h AH=84h, DX=0001h: the positions as AX, BX (stick A) and CX, DX (stick B), 0-255,
     /// or `None` when no stick is connected.
     pub fn bios_positions(&self) -> Option<[u16; 4]> {
@@ -130,6 +149,13 @@ mod tests {
         assert_eq!(port.read(1_000_000 + 1_000_000), 0xDE, "full down: 1.13 ms");
         assert_eq!(port.read(1_000_000 + 1_131_000), 0xDC);
         assert_eq!(port.bios_positions(), Some([1, 255, 0, 0]));
+    }
+
+    #[test]
+    fn the_state_is_each_stick_s_buttons_and_position() {
+        let mut port = GamePort::new(1);
+        port.set(0, Stick { x: -2, y: 300, buttons: 0b01 });
+        assert_eq!(port.reported_state(), [1, 1, 0xFE, 0xFF, 0x2C, 0x01, 0, 0, 0, 0, 0, 0], "stick B isn't connected");
     }
 
     #[test]
