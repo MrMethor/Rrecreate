@@ -44,5 +44,6 @@ Reference checkout: DOSBox Staging, commit `0fdf977d9c4e41908700d7eb2255142044f8
 | Dependency `tinyaudio` (crates.io, used by `clockwork/cli/src/live_audio.rs`) | Sound output library by Dmitry Stepanov (mrDIMAS) | MIT | Live sound in `clockwork play` (DirectSound on Windows) |
 | Dependency `midir` (crates.io, used by `clockwork/cli/src/live_audio.rs`) | MIDI library by Patrick Reisert | MIT | Live MIDI output in `clockwork play` |
 | Dependency `nuked-opl3` (crates.io, used by `clockwork/dos/src/audio.rs`) | Pure-Rust port of Nuked OPL3 by Nuke.YKT, Tony Gies | LGPL-2.1-or-later | OPL3 synthesis when rendering audio |
+| `clockwork/cli/src/gdb.rs` | MAME `src/osd/modules/debugger/debuggdbstub.cpp` | BSD-3-Clause | The GDB remote stub's design: the i386 core register set and its target description, the packets answered (qSupported's reply, qXfer, ?, g, p, m, M, c, s, Z0/z0, H, k, D), Ctrl-C |
 | `sigs/borland-c++-1991-medium.json` | Function ID hashes (computed by Ghidra) of Borland C++ 3.0 runtime functions in id Software's Wolfenstein 3D build, with the names from its linker map | — (names and hashes only, no code) | Library identification |
 | `clockwork/LICENSE` | GNU GPL version 2 text (via DOSBox Staging `licenses/GPL-2.0.txt`) | — | License text |

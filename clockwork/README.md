@@ -73,6 +73,11 @@ watched bytes comes back with its instruction, cycle and call chain. Bounds chec
 work the same way. Addresses are `+OFF` (image offsets), `SEG:OFF` or `@LINEAR`. The operations are listed in
 `cli/src/serve.rs`. A request that makes Clockwork panic gets an error and drops the machine; the server goes on.
 
+`clockwork gdb [--port N] <dir> <program> [run's options]` starts the program stopped at its entry and waits
+for a debugger speaking GDB's remote protocol (`target remote 127.0.0.1:1234` in gdb, or Ghidra's debugger):
+registers, memory by linear address, breakpoints, stepping, Ctrl-C. In real mode `$eip` is the offset in CS
+(`set architecture i8086`, then `x/10i $cs*16+$eip`).
+
 `tools/who_wrote.py` is an example: who wrote a variable, and in which tick. With the instruction where a
 game's tick ends at `+0A31C` and a two-byte variable at `+21C40`:
 

@@ -12,6 +12,9 @@ usage:
                                                  running it to its entry point; writes an MZ file
   clockwork serve [--port N]                     be driven by a tool: JSON requests, one per line,
                                                  on stdin or a local TCP port (see serve.rs)
+  clockwork gdb [--port N] <game-dir> <program> [options]
+                                                 the program stopped at its entry, for gdb or
+                                                 Ghidra's debugger on 127.0.0.1:N (1234; gdb.rs)
   clockwork listing <image> --entry OFFSET --segment SEG
                                                  a function's code from a load image (hex image
                                                  offset and link segment), following its control

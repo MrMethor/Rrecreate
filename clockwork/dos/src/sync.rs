@@ -84,6 +84,13 @@ impl Syncs {
         point.gate = (!sources.is_empty()).then_some(Gate { sources, last: None });
     }
 
+    /// Stops counting the instruction at `at`.
+    pub fn remove(&mut self, at: u32) {
+        if self.points.remove(&at).is_some() && at < BITS_END {
+            self.bits[(at / 64) as usize] &= !(1 << (at % 64));
+        }
+    }
+
     pub fn get(&self, at: u32) -> Option<&Point> {
         self.points.get(&at)
     }
