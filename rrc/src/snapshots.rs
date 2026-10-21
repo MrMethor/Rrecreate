@@ -135,7 +135,7 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
 /// name its objects (`GAME.EXE#2+00010`).
 pub fn is_le(repo: &Repo) -> bool {
     let Ok(dir) = repo.game_dir() else { return false };
-    let Ok(file) = std::fs::read(dir.join(&repo.settings.original.program)) else { return false };
+    let Ok(file) = std::fs::read(dir.join(repo.module_file())) else { return false };
     let header = file.get(0x3C..0x40).map_or(0, |h| u32::from_le_bytes([h[0], h[1], h[2], h[3]]) as usize);
     file.starts_with(b"MZ") && file.get(header..header + 2) == Some(b"LE")
 }
@@ -143,10 +143,11 @@ pub fn is_le(repo: &Repo) -> bool {
 /// Where the session's run places the program's LE objects (linear base, size and LE flags: 4
 /// executable; in the LE's order): found once, by running the session until its extender has placed
 /// them, and kept by the run (`index/objects/<run>`). Clockwork is deterministic, so every run of the
-/// session places them there.
+/// session places them there. Only the module's own count: a launcher may run other LE programs first
+/// (Daggerfall's runs REPORT.EXE before FALL.EXE).
 pub fn objects(repo: &Repo, session: &Session) -> Result<Vec<(u32, u32, u32)>, String> {
     let cache = Cache::open(&repo.local)?;
-    let key = run_identity(repo, session)?;
+    let key = sha256(format!("{}\n{}", run_identity(repo, session)?, repo.module_file()).as_bytes());
     let parse = |text: &str| -> Option<Vec<(u32, u32, u32)>> {
         let hex = |t: &str| u32::from_str_radix(t, 16).ok();
         let object = |o: &str| {
@@ -159,13 +160,16 @@ pub fn objects(repo: &Repo, session: &Session) -> Result<Vec<(u32, u32, u32)>, S
         return Ok(bases);
     }
     let (mut clockwork, _) = Clockwork::original(repo, &session.options(repo))?;
+    let module = repo.module();
     let length_ms = (session.seconds * 1000.0) as u64;
     let mut ms = 0;
     loop {
         ms = (ms + 50).min(length_ms);
         let ran = clockwork.ask("run", json!({ "until_ms": ms }))?;
         let answer = clockwork.ask("objects", Value::Null)?;
-        if let Some(objects) = answer["objects"].as_array() {
+        let program = answer["program"].as_str().unwrap_or("");
+        let running = program.rsplit(['/', '\\']).next().is_some_and(|name| name.eq_ignore_ascii_case(&module));
+        if let Some(objects) = answer["objects"].as_array().filter(|_| running) {
             let text: Vec<String> = objects
                 .iter()
                 .map(|o| {

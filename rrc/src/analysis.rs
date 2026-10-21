@@ -76,7 +76,7 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let a = Args::parse(args, &[], &["--no-decompile", "--again"])?;
     a.positionals(0, 0, "analyze [--no-decompile] [--again]")?;
     let cache = Cache::open(&repo.local)?;
-    let original = repo.game_dir()?.join(&repo.settings.original.program);
+    let original = repo.game_dir()?.join(repo.module_file());
     let original_hash = sha256_file(&original)?;
     let decompile = !a.has("--no-decompile");
     let module = repo.module();

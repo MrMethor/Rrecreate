@@ -10,6 +10,9 @@
 //! point's last counted hit, so a loop that polls as fast as the CPU runs ticks when something it
 //! reads changed, not once a poll. The first hit always counts; the hits a gate passed over are
 //! counted apart (`skipped`).
+//!
+//! A point may belong to a program (D56): it counts only while that program runs, or a program it
+//! started (an extender it runs). A launcher's other programs may run code at the same address.
 
 use std::collections::BTreeMap;
 
@@ -41,6 +44,8 @@ pub struct Point {
     /// The hits a gate passed over just before the last counted one.
     pub skipped: u64,
     pub gate: Option<Gate>,
+    /// The program whose hits count (a file name), if not every program's.
+    pub program: Option<String>,
     /// The hits a gate passed over since the last counted one.
     passed: u64,
 }
@@ -82,6 +87,18 @@ impl Syncs {
         self.add(at, false);
         let point = self.points.get_mut(&at).expect("just added");
         point.gate = (!sources.is_empty()).then_some(Gate { sources, last: None });
+    }
+
+    /// Gives the point at `at` (added if it isn't one) a program (a file name, `GAME.EXE`): its hits
+    /// count only while that program runs, or a program it started. `None`: every program's count.
+    pub fn set_program(&mut self, at: u32, program: Option<String>) {
+        self.add(at, false);
+        self.points.get_mut(&at).expect("just added").program = program;
+    }
+
+    /// The program of the point at `at`, if it has one.
+    pub(crate) fn program(&self, at: u32) -> Option<&str> {
+        self.points.get(&at)?.program.as_deref()
     }
 
     /// Stops counting the instruction at `at`.

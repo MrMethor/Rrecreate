@@ -30,6 +30,8 @@ const ACCESSES_SHOWN: usize = 40;
 struct Names<'a> {
     k: &'a Knowledge,
     module: String,
+    /// The module of `+OFF`: the program started (a launcher, when it starts the module).
+    image_module: String,
     /// An LE program's objects in the session: (linear base, size).
     objects: Vec<(u32, u32)>,
 }
@@ -39,7 +41,7 @@ impl<'a> Names<'a> {
         let objects =
             if crate::snapshots::is_le(repo) { crate::snapshots::objects(repo, session)? } else { Vec::new() };
         let objects = objects.iter().map(|&(base, size, _)| (base, size)).collect();
-        Ok(Names { k, module: repo.module(), objects })
+        Ok(Names { k, module: repo.module(), image_module: repo.program_module(), objects })
     }
 
     fn id(&self, address: &str) -> Option<Id> {
@@ -52,7 +54,7 @@ impl<'a> Names<'a> {
             });
         }
         let offset = u32::from_str_radix(address.strip_prefix('+')?, 16).ok()?;
-        Id::new(&self.module, None, offset).ok()
+        Id::new(&self.image_module, None, offset).ok()
     }
 
     /// A function's name, or its address.

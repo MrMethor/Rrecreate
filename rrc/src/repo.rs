@@ -56,11 +56,15 @@ fn yes() -> bool {
 /// How Clockwork runs the original.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Original {
-    /// The program, as `clockwork run` takes it (in the game's folder).
+    /// The program, as `clockwork run` takes it (in the game's folder, or the folder `--cwd` names).
     pub program: String,
     /// `clockwork run` options: the CD drive, the current folder, the environment, memory…
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
+    /// The program analysed and named, when the one started is a launcher that starts it (a path like
+    /// the program's): Daggerfall's DAGGER.EXE starts FALL.EXE.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
 }
 
 /// A version of the game: its files (`/`-separated paths in the game's folder) by SHA-256.
@@ -139,8 +143,39 @@ impl Repo {
 
     /// The module part of the program's IDs: its file name, uppercase.
     pub fn module(&self) -> String {
-        let program = &self.settings.original.program;
-        program.rsplit(['/', '\\']).next().unwrap_or(program).to_ascii_uppercase()
+        let file = self.module_file();
+        file.rsplit('/').next().unwrap_or(&file).to_ascii_uppercase()
+    }
+
+    /// The program started's file name, uppercase: the module of IDs in its image (`+OFF` in Clockwork's
+    /// answers), the module's own unless a launcher starts it.
+    pub fn program_module(&self) -> String {
+        let file = self.program_file();
+        file.rsplit('/').next().unwrap_or(&file).to_ascii_uppercase()
+    }
+
+    /// The program started, as a `/`-separated path in the game's folder.
+    pub fn program_file(&self) -> String {
+        self.in_start_dir(&self.settings.original.program)
+    }
+
+    /// The program analysed and named (`[original] module`, else the program started), as a
+    /// `/`-separated path in the game's folder.
+    pub fn module_file(&self) -> String {
+        let original = &self.settings.original;
+        self.in_start_dir(original.module.as_deref().unwrap_or(&original.program))
+    }
+
+    /// Where a program path of `rrc.toml` is in the game's folder: in the folder `--cwd` names, as
+    /// Clockwork starts it, unless it starts at the root.
+    fn in_start_dir(&self, program: &str) -> String {
+        let program = program.replace('\\', "/");
+        let options = &self.settings.original.options;
+        let dir = options.windows(2).rfind(|o| o[0] == "--cwd").map(|o| o[1].replace('\\', "/"));
+        match dir.as_deref().map(|d| d.trim_matches('/')) {
+            Some(dir) if !dir.is_empty() && !program.starts_with('/') => format!("{dir}/{program}"),
+            _ => program.trim_start_matches('/').to_owned(),
+        }
     }
 
     /// The person's copy of the game.
@@ -187,7 +222,11 @@ mod tests {
         let settings = Settings {
             game: Game { name: "wolf3d".into(), title: "Wolfenstein 3-D".into() },
             port: Port { imports: false },
-            original: Original { program: "WOLF3D.EXE".into(), options: vec!["--ems".into(), "0".into()] },
+            original: Original {
+                program: "WOLF3D.EXE".into(),
+                options: vec!["--ems".into(), "0".into()],
+                module: None,
+            },
             versions: vec![Version {
                 name: "shareware 1.4".into(),
                 files: BTreeMap::from([("WOLF3D.EXE".into(), "ab".repeat(32))]),
@@ -205,13 +244,25 @@ mod tests {
         let settings = Settings {
             game: Game { name: "dagger".into(), title: String::new() },
             port: Port::default(),
-            original: Original { program: "dagger\\dagger.exe".into(), options: vec![] },
+            original: Original { program: "dagger\\dagger.exe".into(), options: vec![], module: None },
             versions: vec![],
         };
         write_toml(&dir.join(SETTINGS), &settings).unwrap();
-        let repo = Repo::find(&dir.join("sub")).unwrap();
+        let mut repo = Repo::find(&dir.join("sub")).unwrap();
         std::fs::remove_dir_all(&dir).ok();
-        assert_eq!(repo.module(), "DAGGER.EXE");
+        assert_eq!((repo.module(), repo.module_file()), ("DAGGER.EXE".into(), "dagger/dagger.exe".into()));
+        let original = &mut repo.settings.original;
+        original.program = "dagger.exe".into();
+        original.options = vec!["--cwd".into(), "\\dagger\\".into()];
+        original.module = Some("fall.exe".into());
+        assert_eq!(repo.program_file(), "dagger/dagger.exe", "started in the folder --cwd names");
+        assert_eq!(
+            (repo.module(), repo.module_file()),
+            ("FALL.EXE".into(), "dagger/fall.exe".into()),
+            "the launcher's"
+        );
+        repo.settings.original.module = Some("\\other\\fall.exe".into());
+        assert_eq!(repo.module_file(), "other/fall.exe", "from the root");
         assert!(repo.game_dir().is_err());
     }
 }

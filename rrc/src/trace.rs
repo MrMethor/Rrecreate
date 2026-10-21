@@ -380,7 +380,8 @@ pub(crate) fn begin(
     let mut requests = Vec::new();
     for s in syncs {
         let at = places.address(&s.at)?;
-        let mut request = json!({ "at": at });
+        // Hits count in the module only: a launcher's other programs may run code there (D56).
+        let mut request = json!({ "at": at, "program": repo.module() });
         if !s.when_changed.is_empty() {
             let gate: Vec<Value> = s.when_changed.iter().map(|item| item.request(&places)).collect::<Result<_, _>>()?;
             request["gate"] = json!(gate);

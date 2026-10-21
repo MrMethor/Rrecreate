@@ -726,6 +726,7 @@ impl Machine {
             if syncs {
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 if self.syncs.is_point(at)
+                    && self.syncs.program(at).is_none_or(|program| self.running_in(program))
                     && self.syncs.reached(at, self.cpu.cycles, self.syncs.gate_sources(at).map(|s| self.gate_state(s)))
                 {
                     let hit = self.syncs.get(at).map_or(0, |p| p.hits);
@@ -836,6 +837,28 @@ impl Machine {
         let paragraphs = u32::from(self.mem.read_u16((psp.wrapping_sub(1) << 4) + 3));
         let start = (psp + 0x10) << 4;
         start..((psp + paragraphs) << 4).max(start)
+    }
+
+    /// Whether the program running now is `program` (a file name, without case), or one it started
+    /// (its PSP's parents, up to the first process, its own parent).
+    pub fn running_in(&self, program: &str) -> bool {
+        let named = |path: &str| path.rsplit(['\\', '/']).next().is_some_and(|name| name.eq_ignore_ascii_case(program));
+        if named(&self.dos.program) {
+            return true;
+        }
+        let mut psp = self.dos.psp;
+        // A broken chain of parents ends the walk too.
+        for _ in 0..32 {
+            let parent = self.mem.read_u16(Self::lin(psp, 0x16));
+            if parent == psp {
+                return false;
+            }
+            psp = parent;
+            if self.dos.process_paths.get(&psp).is_some_and(|path| named(path)) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Starts recording coverage of the program just loaded ([`Machine::image_range`]).

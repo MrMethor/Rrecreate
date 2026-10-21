@@ -2295,6 +2295,59 @@ fn exec_runs_a_child_that_returns_to_its_parent() {
 }
 
 #[test]
+fn a_sync_point_counts_in_its_program_and_the_programs_it_started() {
+    // PARENT.COM runs ONE.COM, then TWO.COM: the same program, loaded at the same place, which notes
+    // its segment at 0000:04F0.
+    let child = com(|a| {
+        a.mov(ax, cs)?;
+        a.xor(bx, bx)?;
+        a.mov(ds, bx)?;
+        a.mov(word_ptr(0x4F0), ax)?;
+        exit(a, 0)
+    });
+    let parent = com(|a| {
+        a.mov(ah, 0x4A)?; // keep 64 KB
+        a.mov(bx, 0x1000)?;
+        a.int(0x21)?;
+        for name in ["one", "two"] {
+            a.push(cs)?;
+            a.pop(ds)?;
+            a.push(cs)?;
+            a.pop(es)?;
+            let block = a.addr("block") as u32;
+            a.mov(word_ptr(block + 4), ds)?;
+            a.mov(word_ptr(block + 8), ds)?;
+            a.mov(word_ptr(block + 12), ds)?;
+            let at = a.addr("block");
+            a.mov(bx, at)?;
+            load_dx(a, name)?;
+            a.mov(ax, 0x4B00)?;
+            a.int(0x21)?;
+        }
+        exit(a, 0)?;
+        a.here("one")?;
+        a.db(b"ONE.COM\0")?;
+        a.here("two")?;
+        a.db(b"TWO.COM\0")?;
+        a.here("tail")?;
+        a.db(b"\x00\r")?;
+        let tail = a.addr("tail") as u16;
+        a.here("block")?;
+        a.dw(&[0, tail, 0, 0x5C, 0, 0x6C, 0])
+    });
+    let files: [(&str, &[u8]); 3] = [("PARENT.COM", &parent), ("ONE.COM", &child), ("TWO.COM", &child)];
+    let mut m = boot(&files, "PARENT.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let at = (u32::from(m.mem.read_u16(0x4F0)) << 4) + 0x100;
+    for (program, hits) in [(None, 2), (Some("two.com"), 1), (Some("PARENT.COM"), 2), (Some("THREE.COM"), 0)] {
+        let mut m = boot(&files, "PARENT.COM");
+        m.syncs.set_program(at, program.map(str::to_owned));
+        assert_eq!(m.run(SECOND), Stop::Exited(0));
+        assert_eq!(m.syncs.get(at).unwrap().hits, hits, "{program:?}");
+    }
+}
+
+#[test]
 fn exec_loads_an_overlay() {
     let overlay = com(|a| {
         a.mov(ax, 0x1234)?;

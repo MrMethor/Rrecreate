@@ -369,6 +369,19 @@ session can. Searching memory for the object without its fixups would find copie
 fixups to hold the base doesn't. Measured: Open Watcom's FLAT32 under CauseWay (testbins) and Daggerfall's
 FALL.EXE (three objects, placed in 1.7 s).
 
+### D56. A launcher's game: `module` names it, and sync points count in it only. Accepted 2026-10-21.
+A game whose program refuses to start alone (it checks it was started by its launcher) is started through the
+launcher, and `[original] module` in `rrc.toml` names the program the launcher starts: it is the one analysed,
+and its file name is the module of IDs. A sync point belongs to a program: Clockwork counts its hits only
+while that program runs, or a program it started (an extender's loader), found by walking the PSPs' parents.
+rrc gives each sync point the module. Only an LE program under a launcher is supported: its objects are found
+by run (D55) and the module's must be the one running then; a 16-bit program's IDs count from the image of the
+program started, so rrc refuses a 16-bit module under a launcher until its image is placed the same way.
+**Why:** Daggerfall's DAGGER.EXE runs REPORT.EXE, then FALL.EXE, both CauseWay programs whose code object
+the extender puts at the same address, so a sync point in FALL.EXE was hit in REPORT.EXE too, and REPORT.EXE's
+objects were taken for FALL.EXE's. Measured on Daggerfall: one tick at FALL.EXE's entry, after the launcher.
+Parents count too because an unbound DOS/4GW game runs DOS4GW.EXE, which runs the game's code.
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the

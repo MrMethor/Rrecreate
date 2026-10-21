@@ -28,7 +28,7 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
     let settings = Settings {
         game: Game { name: name.clone(), title },
         port: Port::default(),
-        original: Original { program, options: vec![] },
+        original: Original { program, options: vec![], module: None },
         versions: vec![],
     };
     repo::write_toml(&dir.join(repo::SETTINGS), &settings)?;
@@ -138,9 +138,10 @@ pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String>
     }
     let dir = repo.game_dir()?.to_path_buf();
     let files = game::hash_folder(&dir, &repo.state()?)?;
-    let program = repo.settings.original.program.replace('\\', "/");
-    if !files.keys().any(|path| path.eq_ignore_ascii_case(&program)) {
-        return Err(format!("{}: no {program} there", dir.display()));
+    for program in [repo.program_file(), repo.module_file()] {
+        if !files.keys().any(|path| path.eq_ignore_ascii_case(&program)) {
+            return Err(format!("{}: no {program} there", dir.display()));
+        }
     }
     if let Some(name) = a.value("--add-version") {
         if repo.settings.versions.iter().any(|v| v.name == name) {

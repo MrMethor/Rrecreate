@@ -83,7 +83,7 @@ fn setup_file(name: &str, file: &str, program: &[u8]) -> (PathBuf, Rrc) {
     let dir = std::env::temp_dir().join(format!("rrc-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let (game, repo) = (dir.join("game"), dir.join("port"));
-    std::fs::create_dir_all(&game).unwrap();
+    std::fs::create_dir_all(game.join(file).parent().unwrap()).unwrap();
     std::fs::write(game.join(file), program).unwrap();
     std::fs::create_dir_all(&repo).unwrap();
     let rrc = Rrc { repo, cache: dir.join("cache"), clockwork: clockwork() };
@@ -307,5 +307,46 @@ fn a_flat_program_s_objects_have_ids() {
     assert!(watched.contains("write squares[+4] = 01000000 (was 00000000) by FLAT32.EXE#1+"), "{watched}");
     let inputs = rrc.ok(&["inputs", "run"]);
     assert!(inputs.contains("scanned   FLAT32.EXE#2+00000, 66960 bytes"), "its data object: {inputs}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_launcher_s_program_is_the_module() {
+    // GAME\GO.BAT runs OTHER.EXE, then FLAT32.EXE: the module. OTHER.EXE is FLAT32.EXE with a data object
+    // 4 KB larger, another LE program whose objects aren't the module's.
+    let program = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../testbins/bin/FLAT32.EXE")).unwrap();
+    let (dir, rrc) = setup_file("launcher", "GAME/FLAT32.EXE", &program);
+    let mut other = program.clone();
+    let le = u32::from_le_bytes(other[0x3C..0x40].try_into().unwrap()) as usize;
+    let objects = le + u32::from_le_bytes(other[le + 0x40..le + 0x44].try_into().unwrap()) as usize;
+    let size = u32::from_le_bytes(other[objects + 24..objects + 28].try_into().unwrap());
+    other[objects + 24..objects + 28].copy_from_slice(&(size + 0x1000).to_le_bytes());
+    let game = dir.join("game");
+    std::fs::write(game.join("GAME/OTHER.EXE"), other).unwrap();
+    std::fs::write(game.join("GAME/GO.BAT"), "OTHER\r\nFLAT32\r\n").unwrap();
+    rrc.ok(&["init", ".", "--program", "GO.BAT", "--name", "launcher"]);
+    let settings = std::fs::read_to_string(rrc.repo.join("rrc.toml")).unwrap().replace(
+        "program = \"GO.BAT\"",
+        "program = \"GO.BAT\"\noptions = [\"--cwd\", \"GAME\"]\nmodule = \"FLAT32.EXE\"",
+    );
+    std::fs::write(rrc.repo.join("rrc.toml"), settings).unwrap();
+    rrc.ok(&["game", game.to_str().unwrap(), "--add-version", "1.0"]);
+    rrc.ok(&["data", "FLAT32.EXE#2+0041C", "squares", "--size", "64", "--type", "i32[16]"]);
+    rrc.ok(&["sync", "FLAT32.EXE#1+00010", "square"]);
+    rrc.ok(&["session", "add", "run", "--seconds", "1"]);
+    let recorded = rrc.ok(&["record", "run"]);
+    assert!(recorded.contains("trace     16 ticks"), "OTHER.EXE runs the same code at the same place: {recorded}");
+    let inputs = rrc.ok(&["inputs", "run"]);
+    assert!(inputs.contains("scanned   FLAT32.EXE#2+00000, 66960 bytes"), "the module's data object: {inputs}");
+
+    // A 16-bit program under a launcher: its image isn't where the IDs' +OFF counts from.
+    std::fs::write(game.join("GAME/T.COM"), PROGRAM).unwrap();
+    let settings = std::fs::read_to_string(rrc.repo.join("rrc.toml")).unwrap();
+    std::fs::write(rrc.repo.join("rrc.toml"), settings.replace("module = \"FLAT32.EXE\"", "module = \"T.COM\""))
+        .unwrap();
+    std::fs::write(rrc.repo.join("knowledge/ticks.toml"), "").unwrap();
+    rrc.ok(&["sync", "T.COM+0000E", "step"]);
+    let (text, ok) = rrc.run(&["record", "run"]);
+    assert!(!ok && text.contains("GO.BAT starts T.COM: a 16-bit program a launcher starts isn't supported"), "{text}");
     std::fs::remove_dir_all(&dir).ok();
 }

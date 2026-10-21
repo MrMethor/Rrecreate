@@ -22,7 +22,7 @@ use crate::vfs::Vfs;
 const MAGIC: &[u8; 8] = b"CLOCKWRK";
 
 /// The format's number: changed whenever what a snapshot holds changes shape.
-pub const FORMAT: u32 = 3;
+pub const FORMAT: u32 = 4;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 

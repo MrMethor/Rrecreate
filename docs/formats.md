@@ -11,8 +11,9 @@ name = "wolf3d"                 # short, for file names and reports
 title = "Wolfenstein 3-D"       # optional
 
 [original]
-program = "WOLF3D.EXE"          # as `clockwork run` takes it, in the game's folder
+program = "WOLF3D.EXE"          # as `clockwork run` takes it: in the game's folder, or the one --cwd names
 options = ["--ems", "0"]        # optional: more `clockwork run` options (CD drive, current folder, ...)
+# module = "GAME.EXE"           # optional: the program a launcher starts, analysed and named instead
 
 [[version]]                     # one per version the port supports (D30)
 name = "shareware 1.4"
@@ -22,7 +23,9 @@ name = "shareware 1.4"
 
 A copy of the game is a version when it holds every file the version lists with that hash (paths compare
 without case, as DOS's do); other files in the folder don't matter. The module part of the program's IDs is
-its file name, uppercase (`WOLF3D.EXE`).
+its file name, uppercase (`WOLF3D.EXE`). When the program is a launcher that starts the game's program (a
+setup check, then the game), `module` names the game's program, a path like `program`'s: it is the one
+analysed, and its file name is the module of IDs (`FALL.EXE#1+8DEB4`); the sessions still start the launcher.
 
 A port repository also has `.gitignore` (`rrc.local.toml`, `.rrc/`, `target/`) and `.gitattributes` (text with
 LF line ends on every platform).
@@ -81,7 +84,7 @@ what an earlier run made from given inputs:
 - `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, keyed by the command, its arguments,
   the session's run (as above, without the sync points), the knowledge files and the analysis;
 - `index/objects/<key>`: where a session's run places an LE program's objects (`BASE:SIZE:FLAGS` in hex, a
-  line), keyed by the session's run (D55).
+  line), keyed by the session's run and the module (D55, D56).
 
 It is `RRC_CACHE`,
 else `cache` in `rrc.local.toml`, else `%LOCALAPPDATA%\rrecreate\cache` on Windows and `$XDG_CACHE_HOME/rrecreate`

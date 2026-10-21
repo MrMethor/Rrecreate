@@ -55,6 +55,13 @@ impl Clockwork {
     /// port's own (`clockwork run` options); also returns what `load` answered (where the image is,
     /// its size).
     pub fn original(repo: &Repo, options: &[String]) -> Result<(Clockwork, Value), String> {
+        if repo.module() != repo.program_module() && !crate::snapshots::is_le(repo) {
+            return Err(format!(
+                "{} starts {}: a 16-bit program a launcher starts isn't supported yet, only an LE program",
+                repo.program_module(),
+                repo.module()
+            ));
+        }
         let mut clockwork = Clockwork::start(&find(&repo.local)?)?;
         let original = &repo.settings.original;
         let mut argv = vec![repo.game_dir()?.to_string_lossy().into_owned(), original.program.clone()];

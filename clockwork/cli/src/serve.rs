@@ -27,10 +27,10 @@
 //!   hex]]`) or by `take_frame_images`. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
 //!   register, value]`), PC speaker waveforms (`[pit_tick, wave]`), digitized sound starts (`[ns, rate,
 //!   stereo]`), MIDI bytes (`[pit_tick, byte]`) and CD audio plays (`[ns, sector, sectors]`).
-//! - `sync` `{"at", "log": false, "gate": [{"at", "len"}]}`: a sync point; with a gate (D48), a hit
-//!   counts only when the gate's bytes changed since the point's last counted hit, and a stop there
-//!   says how many hits it passed over before (`skipped`). `syncs`: each point's hits (and their
-//!   cycles).
+//! - `sync` `{"at", "log": false, "gate": [{"at", "len"}], "program"}`: a sync point; with a gate (D48),
+//!   a hit counts only when the gate's bytes changed since the point's last counted hit, and a stop
+//!   there says how many hits it passed over before (`skipped`); with a program (a file name, D56),
+//!   only while it runs or a program it started does. `syncs`: each point's hits (and their cycles).
 //! - `read` `{"ranges": [{"at", "len"} or {"device"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`,
 //!   `hash` (the machine's state hash, as `clockwork run` prints it), `objects` (the running LE program's
 //!   objects, `[{"at", "size", "flags"}]` where its extender put them, or null; `dos::le`).
@@ -266,6 +266,9 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                     });
                 }
                 m.syncs.gate(at, sources);
+            }
+            if let Some(program) = r.get("program").and_then(Value::as_str) {
+                m.syncs.set_program(at, Some(program.to_owned()));
             }
             Ok(json!({"at": name(at)}))
         }
