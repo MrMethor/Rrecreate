@@ -245,7 +245,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         inputs,
         state,
     };
-    let trace = run(repo, &session, header, &module)?;
+    let (trace, snapshots) = run(repo, &session, header, &module)?;
     let cache = Cache::open(&repo.local)?;
     let text = trace.to_text();
     let hash = cache.put(text.as_bytes())?;
@@ -255,6 +255,13 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let before = session.trace.replace(recorded);
     session.save(repo, name)?;
     say("trace", format!("{ticks} ticks, {} KB: {}", text.len() / 1024, trace.end.end));
+    say(
+        "snapshots",
+        format!(
+            "{snapshots}, one every {} s, for rrc watch and rrc inputs",
+            crate::snapshots::spacing_ms() as f64 / 1000.0
+        ),
+    );
     match before {
         Some(b) if b.hash == hash => say("same", "as the trace recorded before"),
         Some(b) if b.run == run => say(
@@ -348,8 +355,10 @@ pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
         .collect()
 }
 
-fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<Trace, String> {
+/// The session run to its end, a tick at each sync point hit; and how many snapshots it kept.
+fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<(Trace, usize), String> {
     let (mut clockwork, loaded, syncs) = begin(repo, session, &header.syncs)?;
+    let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
     let start = loaded["cycles"].as_u64().unwrap_or(0);
     let mut ranges = Vec::new();
     for item in header.inputs.iter().chain(&header.state) {
@@ -399,6 +408,7 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
             frames,
             sound,
         });
+        saver.tick(&mut clockwork, ticks.len() as u64, cycle, ran["ms"].as_u64().unwrap_or(0))?;
         last_cycle = cycle;
     };
     // What the run did after the last tick, and the machine's state at the end.
@@ -408,7 +418,7 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
     let sound = sound_events(&clockwork.ask("sound", span)?);
     let state_hash = clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
     let end = if stop == "time limit reached" { "the session's end".to_owned() } else { stop };
-    Ok(Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } })
+    Ok((Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } }, saver.finish()?))
 }
 
 /// Clockwork's `sound` answer as a trace has it: the devices with events.

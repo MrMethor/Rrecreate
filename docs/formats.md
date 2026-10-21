@@ -66,8 +66,17 @@ script's `functions FILE` arguments), so they are in the export like the others.
 ## The cache
 
 A folder of files named by their SHA-256: `objects/<first 2 hex digits>/<the other 62>`; and `index/<kind>/<key>`,
-what an earlier run made from given inputs (`index/analysis/<key>`: the `analysis.toml` of a program analysed by
-the same export script, keyed by the program's hash, the script and whether it decompiled). It is `RRC_CACHE`,
+what an earlier run made from given inputs:
+- `index/analysis/<key>`: the `analysis.toml` of a program analysed by the same export script, keyed by the
+  program's hash, the script and whether it decompiled (and the functions added to Ghidra's);
+- `index/snapshots/<key>`: the Clockwork snapshots `rrc record` kept of a session (`[[snapshot]]` with `tick`,
+  `cycle`, `ms` and the snapshot's `hash`), keyed by what makes the run and its ticks the same: Clockwork's
+  program (its hash), the game's files, the program and its options, the session's options and input (its
+  file's hash), and the sync points (D51);
+- `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, keyed by the command, its arguments,
+  the session's run (as above, without the sync points), the knowledge files and the analysis.
+
+It is `RRC_CACHE`,
 else `cache` in `rrc.local.toml`, else `%LOCALAPPDATA%\rrecreate\cache` on Windows and `$XDG_CACHE_HOME/rrecreate`
 or `~/.cache/rrecreate` elsewhere. Anything in it can be deleted; what refers to it is rebuilt or recorded again.
 

@@ -18,7 +18,8 @@ use crate::knowledge::Knowledge;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::Session;
-use crate::trace::{begin, image_address, sync_points};
+use crate::snapshots::{self, Taken};
+use crate::trace::{SyncPoint, begin, image_address, sync_points};
 
 /// Calls shown of a chain, innermost first.
 const CHAIN_SHOWN: usize = 3;
@@ -82,11 +83,11 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if syncs.is_empty() && a.value("--tick").is_some() {
         return Err("--tick needs sync points (knowledge/ticks.toml)".into());
     }
-    let (mut clockwork, _, _) = begin(repo, &session, &syncs)?;
     let length_ms = (session.seconds * 1000.0) as u64;
-    // Tracked from the start, so each access has its whole call chain.
+    let (mut clockwork, _, from) = open(repo, &session, &syncs, first)?;
+    // Tracked from the start (or the snapshot), so each access has its call chain from there.
     clockwork.ask("calls", json!({"on": true}))?;
-    let mut ms = to_tick(&mut clockwork, first, length_ms)?;
+    let mut ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
     let at = image_address(&repo.module(), &id.to_string())?;
     clockwork.ask("watch", json!({"ranges": [{"at": at, "len": len}], "reads": a.has("--reads"), "limit": limit}))?;
     // Tick by tick, keeping where each ends.
@@ -166,11 +167,33 @@ fn ticks_text(first: u64, count: u64) -> String {
 }
 
 /// Runs to where tick `n` starts (the end of tick n-1); returns the session's milliseconds then.
-fn to_tick(clockwork: &mut Clockwork, n: u64, length_ms: u64) -> Result<u64, String> {
-    if n <= 1 {
-        return Ok(0);
+/// Clockwork with the session and its sync points: from the last snapshot `rrc record` kept before
+/// tick `first`, if there is one (which it says), else from the start; what loading answered.
+fn open(
+    repo: &Repo,
+    session: &Session,
+    syncs: &[SyncPoint],
+    first: u64,
+) -> Result<(Clockwork, Value, Option<Taken>), String> {
+    if first > 1
+        && let Some(taken) = snapshots::before(repo, session, syncs, first)?
+    {
+        let (clockwork, loaded) = snapshots::load(repo, session, &taken)?;
+        say("start", format!("from the snapshot at tick {} ({:.1} s)", taken.tick, taken.ms as f64 / 1000.0));
+        return Ok((clockwork, loaded, Some(taken)));
     }
-    let ran = clockwork.ask("run", json!({"sync": "next", "n": n - 1, "max_ms": length_ms}))?;
+    let (clockwork, loaded, _) = begin(repo, session, syncs)?;
+    Ok((clockwork, loaded, None))
+}
+
+/// Runs to the end of tick `n - 1`, where tick `n` begins (from the snapshot `from`, if one was
+/// loaded); the ms then.
+fn to_tick(clockwork: &mut Clockwork, n: u64, from: Option<&Taken>, length_ms: u64) -> Result<u64, String> {
+    let (done, ms) = from.map_or((0, 0), |t| (t.tick, t.ms));
+    if n <= done + 1 {
+        return Ok(ms);
+    }
+    let ran = clockwork.ask("run", json!({"sync": "next", "n": n - 1 - done, "until_ms": length_ms}))?;
     if ran.get("sync").is_none() {
         return Err(format!("the session ends before tick {n}"));
     }
@@ -250,16 +273,21 @@ pub(crate) fn inputs(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let usage = "inputs SESSION [--tick N] [--ticks N] [--at ID|SEG:OFF --len N]";
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     let session = Session::load(repo, name)?;
+    let key = snapshots::result_key(repo, &session, &[&["inputs".to_owned()], args].concat())?;
+    snapshots::kept(repo, &key, || scan_inputs(repo, &a, &session))
+}
+
+fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, String> {
     let k = Knowledge::load(&repo.knowledge())?;
     let syncs = sync_points(&k)?;
     if syncs.is_empty() {
         return Err("rrc inputs scans from a tick on: declare a sync point first (knowledge/ticks.toml)".into());
     }
-    let (first, count) = tick_span(&a)?;
+    let (first, count) = tick_span(a)?;
     let first = first.max(2);
-    let (mut clockwork, loaded, _) = begin(repo, &session, &syncs)?;
     let length_ms = (session.seconds * 1000.0) as u64;
-    let ms = to_tick(&mut clockwork, first, length_ms)?;
+    let (mut clockwork, loaded, from) = open(repo, session, &syncs, first)?;
+    let ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
     // The data segment the loop runs with, unless asked for another range.
     let (at, len) = match a.value("--at") {
         Some(at) => {

@@ -309,6 +309,18 @@ port's first-level: traces half the size, and the same run hash with and without
 ticks); the end state hash is `clockwork run`'s for the same input.
 **Supersedes:** D45.
 
+### D51. Questions start from the session's snapshots; whole-session answers are kept. Accepted 2026-10-21.
+`rrc record` keeps a Clockwork snapshot at the first tick after every 10 emulated seconds, in the cache, keyed
+by Clockwork's program (its hash, not its version: builds share one), the game's files, the program, the
+session's options and input, and the sync points (which number the ticks and are in the snapshot, with their
+counts and gates). `rrc watch` and `rrc inputs` start from the last one before their first tick. `rrc calls` and
+`rrc inputs` keep their output under the same run, the command and the knowledge and analysis they read.
+**Why:** the first blind test spent most of its time waiting: every question was a run from power-on (inputs
+56 s, watch 20-40 s, calls 20 s), most of them about play, which starts 44 s into the session. Measured on the
+Wolf3D port's pushwall: a watch at tick 2700 in 3 s instead of 40, `rrc calls` asked again in 0.1 s, and the
+run hash unchanged by the snapshots. A snapshot (about 2 MB) loads the input still to come with it, so the
+session's input isn't given again.
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the

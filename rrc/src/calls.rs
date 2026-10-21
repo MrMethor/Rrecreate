@@ -30,10 +30,15 @@ struct Phase {
 pub(crate) fn calls(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &["--min", "--top"], &[])?;
     let positionals = a.positionals(1, 2, "calls SESSION [ID|NAME] [--min N] [--top N]")?;
+    let session = Session::load(repo, &positionals[0])?;
+    let key = crate::snapshots::result_key(repo, &session, &[&["calls".to_owned()], args].concat())?;
+    crate::snapshots::kept(repo, &key, || count_calls(repo, &a, positionals, &session))
+}
+
+fn count_calls(repo: &Repo, a: &Args, positionals: &[String], session: &Session) -> Result<ExitCode, String> {
     let top: usize = a.value("--top").map_or(Ok(5), str::parse).map_err(|_| "--top is a count")?;
     let min: u64 = a.value("--min").map_or(Ok(100), str::parse).map_err(|_| "--min is a count")?;
     let name = &positionals[0];
-    let session = Session::load(repo, name)?;
     let k = Knowledge::load(&repo.knowledge())?;
     let module = repo.module();
     let function_name = |target: &str| -> String {
@@ -44,7 +49,7 @@ pub(crate) fn calls(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             _ => target.to_owned(),
         }
     };
-    let phases = phases(repo, &session, &k)?;
+    let phases = phases(repo, session, &k)?;
     if let Some(what) = positionals.get(1) {
         let analysis = Analysis::load(repo)?;
         let id = crate::naming::resolve(repo, &k, analysis.as_ref(), what)?;

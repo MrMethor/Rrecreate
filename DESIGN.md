@@ -246,6 +246,10 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
 - Uses: resume a comparison anywhere instead of from the start; bisect between checkpoints; scenario tests
   (a checkpoint plus seconds of input); start the port mid-game before menus and loading are ported; explore
   from many points; save anywhere for players.
+- **Session snapshots** (D51): `rrc record` keeps a snapshot every 10 emulated seconds in the cache, keyed by
+  what makes the run and its ticks the same; questions about a tick (`rrc watch`, `rrc inputs`) start from
+  the last one before it. Answers about a whole session (`rrc calls`, `rrc inputs`) are kept by the run and the
+  knowledge they read.
 
 ## 9. Knowledge and the port repository
 

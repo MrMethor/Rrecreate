@@ -136,6 +136,12 @@ the trace differs and `rrc record` says the run is the same (`same run as before
 that differs is a Clockwork bug, or the session, the game or Clockwork changed: say so in the notes. Commit the
 session's file with the new hashes.
 
+`rrc record` also keeps a snapshot of the machine every 10 emulated seconds (on this machine, in the cache):
+`rrc watch` and `rrc inputs` then start from the last one before the tick they look at, in seconds instead of
+a run from power-on (a watch's call chains begin there). Record a session before asking about its late ticks.
+`rrc calls` and `rrc inputs` keep their answers: asked again with the same session and knowledge, they answer at
+once (`kept`).
+
 ## Naming
 
 ```bash

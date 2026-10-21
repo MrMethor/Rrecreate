@@ -50,6 +50,7 @@ impl Rrc {
             .current_dir(&self.repo)
             .env("RRC_CACHE", &self.cache)
             .env("RRC_CLOCKWORK", &self.clockwork)
+            .env("RRC_SNAPSHOT_MS", "1")
             .env_remove("RRC_BY")
             .output()
             .expect("rrc");
@@ -131,8 +132,14 @@ fn a_session_is_traced_tick_by_tick() {
     let watched = rrc.ok(&["watch", "short", "count", "--tick", "2", "--ticks", "1"]);
     assert!(watched.contains("watch     count (T.COM+0000F, 2 bytes), tick 2"), "{watched}");
     assert!(watched.contains("write count = 0200 (was 0100) by T.COM+00000"), "{watched}");
+    // From the snapshot record kept, the same answer.
+    let later = rrc.ok(&["watch", "short", "count", "--tick", "30", "--ticks", "1"]);
+    assert!(later.contains("start     from the snapshot at tick 2"), "{later}");
+    assert!(later.contains("write count = 1E00 (was 1D00) by T.COM+00000"), "{later}");
     let inputs = rrc.ok(&["inputs", "short"]);
     assert!(inputs.contains("none"), "no interrupt handler writes anything it reads: {inputs}");
+    let again = rrc.ok(&["inputs", "short"]);
+    assert!(again.starts_with(&inputs) && again.contains("kept      this answer"), "{again}");
     let counts = rrc.ok(&["trace", "short", "--item", "count"]);
     let lines: Vec<&str> = counts.lines().take(3).collect();
     assert_eq!(lines, ["1         1", "2         2", "3         3"], "the count at each tick, as a u16");

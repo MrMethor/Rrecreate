@@ -14,6 +14,7 @@ mod naming;
 pub mod repo;
 pub mod session;
 mod setup;
+pub mod snapshots;
 mod ticks;
 pub mod tools;
 pub mod trace;
@@ -63,7 +64,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   session set NAME [--seconds N] [--description TEXT]
                          change a session
   record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
-                         hit) the boundary values, the named data that changed, frames and sound
+                         hit) the boundary values, the named data that changed, frames and sound;
+                         keeps snapshots for rrc watch and rrc inputs to start from
   calls SESSION [ID|NAME] [--min N] [--top N]
                          how often the session calls each function, grouped by count (at least N,
                          default 100), in phases (before the first tick, each run of ticks at one
@@ -139,5 +141,7 @@ fn here() -> Result<Repo, String> {
 
 /// One line of output: a label and what it says.
 fn say(label: &str, text: impl std::fmt::Display) {
-    println!("{label:<10}{text}");
+    let line = format!("{label:<10}{text}");
+    snapshots::captured(&line);
+    println!("{line}");
 }
