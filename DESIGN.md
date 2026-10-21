@@ -115,10 +115,10 @@ A GDB remote-protocol face lets gdb and Ghidra's debugger attach to the running 
 
 **Built:** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on disk,
 runs for a time, to a sync point's next hit or to the next tick (any sync point's next hit), gated sync points
-(D48), memory and registers, the input devices' state (D49), input, the frames and sound events of a span of
-time, watches with call chains, bounds checks, uninitialized reads and image dumps (real mode in full;
-protected mode as the selector map and the segments it bounds), coverage (the calls made, by target).
-**Still to come:** frames as indexed pixels and palette (M5); image dumps of flat-model programs under an
+(D48), memory and registers, the input devices' state (D49), input, the frames (with their pictures as
+indexed pixels and palette) and sound events of a span of time, watches with call chains, bounds checks,
+uninitialized reads and image dumps (real mode in full; protected mode as the selector map and the segments it
+bounds), coverage (the calls made, by target). **Still to come:** image dumps of flat-model programs under an
 extender, which need where its loader put the LE objects; the GDB face.
 
 `clockwork run` and `clockwork play` stay for people: run headless, or play in a window with sound and record
@@ -302,10 +302,10 @@ too: functions the knowledge names that Ghidra missed are added to it without an
 **Traces** (`rrc record <session>`): Clockwork runs the session and stops at every sync point hit, a tick;
 at each it reads the boundary values and the named data, and takes the frames and sound events since the last
 tick. The trace is a file of JSON lines in the cache (`docs/formats.md`): a header naming the items, then one
-line per tick with the inputs and the data that changed, the frames and the sound events, then an end line
-with what the run did after the last tick and the machine's state hash. Besides the trace's hash, the session
-commits the run's (D50): of the frames, the sound and the end, whatever the knowledge reads, so a re-recording
-tells a knowledge change from a different run.
+line per tick with the inputs and the data that changed, the frames (each with its picture, kept in the
+cache) and the sound events, then an end line with what the run did after the last tick and the machine's
+state hash. Besides the trace's hash, the session commits the run's (D54): of the frames, the sound and the
+end, whatever the knowledge reads, so a re-recording tells a knowledge change from a different run.
 
 ## 10. The agent's workflow
 

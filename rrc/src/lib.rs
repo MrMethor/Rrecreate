@@ -7,6 +7,7 @@ mod args;
 pub mod cache;
 mod calls;
 pub mod clockwork;
+pub mod frames;
 pub mod game;
 pub mod import;
 pub mod knowledge;
@@ -85,6 +86,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          handlers or host services write (the key states, the timer counts), in the
                          data segment from tick N (default 2) on, or in the range given, by the
                          instruction that wrote it; and the mouse and joystick calls it can't see
+  frame SESSION --tick N [--out FILE]
+                         the picture the original showed by the end of tick N, as a PNG (in
+                         .rrc/frames/ unless --out says where)
   trace SESSION [--tick N] [--item NAME [--lines N]] [--path]
                          a recorded trace: a summary, one tick, or one item over the ticks, values
                          read as data.tsv's types (an array as its elements that aren't zero);
@@ -127,6 +131,7 @@ pub fn main() -> ExitCode {
         Some("watch") => here().and_then(|repo| watch::watch(&repo, rest)),
         Some("inputs") => here().and_then(|repo| watch::inputs(&repo, rest)),
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
+        Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
         Some("import") => here().and_then(|repo| import::import(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

@@ -314,7 +314,7 @@ mouse had no input that explained it. The driver's state at the sync point is wh
 reads, as with memory inputs (D47). Recording each service call's registers per tick, the alternative, would
 belong to the pass after the tick and tie the format to INT 33h's functions.
 
-### D50. Traces, version 2: inputs when they change, and a run hash apart from the trace's. Accepted 2026-10-21.
+### D50. Traces, version 2: inputs when they change, and a run hash apart from the trace's. Superseded by D54.
 A trace writes an input when its value differs from when it was last read, as it does state, and an input may
 be read only at some sync points. An item that is an input at every tick isn't written again as state. The
 run ends at exactly the session's length, and the end line has the frames and sound after the last tick and
@@ -327,6 +327,19 @@ changed" and checked determinism only between machines with the same knowledge (
 port's first-level: traces half the size, and the same run hash with and without a menu tick (671 or 1189
 ticks); the end state hash is `clockwork run`'s for the same input.
 **Supersedes:** D45.
+
+### D54. Traces, version 3: D50's, and every frame's picture. Accepted 2026-10-21, with the person.
+A trace writes an input when its value differs from when it was last read, as it does state, and an input may
+be read only at some sync points. An item that is an input at every tick isn't written again as state. The
+run ends at exactly the session's length, and the end line has the frames and sound after the last tick and
+Clockwork's state hash then. The session commits a second hash, of the run (every frame and sound event, how
+and when it ended, the state hash), which doesn't depend on what the knowledge reads. Each frame also names its
+picture: the indexed pixels and palette (RGB in direct-colour modes) Clockwork renders when the picture
+changed, kept in the cache at every recording.
+**Why:** D50's reasons stand. Frames compare as indexed pixels and palette (D25), and a comparison needs no
+emulator (D26), so the original's pictures must be kept; the person chose to keep them always rather than on
+request. Measured on the Wolf3D port's pushwall: 1860 pictures, about 16 MB, recording 48 s instead of 44.
+**Supersedes:** D50.
 
 ### D51. Questions start from the session's snapshots; whole-session answers are kept. Accepted 2026-10-21.
 `rrc record` keeps a Clockwork snapshot at the first tick after every 10 emulated seconds, in the cache, keyed

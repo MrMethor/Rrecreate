@@ -183,29 +183,29 @@ options = []                    # optional: more `clockwork run` options (rrc se
 
 [trace]                         # written by rrc record
 hash = "6e7f…"                  # the trace, in the cache
-run = "31ff…"                   # the run: what the machine did, whatever the knowledge read (D50)
+run = "31ff…"                   # the run: what the machine did, whatever the knowledge read (D54)
 ticks = 2770
 clockwork = "0.1.0"             # the Clockwork that recorded it
 ```
 
-Recording a session again must give the same run (D44, D50), and with the same knowledge the same trace:
+Recording a session again must give the same run (D44, D54), and with the same knowledge the same trace:
 `rrc record` says which of the two changed.
 
 ## Traces
 
-JSON lines (D50): a header, a line per tick, and an end line.
+JSON lines (D54): a header, a line per tick, and an end line.
 
 ```
-{"format":"rrc-trace","version":2,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
+{"format":"rrc-trace","version":3,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
  "syncs":[{"name":"play","at":"GAME.EXE+0A31C"},
           {"name":"menu","at":"GAME.EXE+0B1F0","when_changed":[{"name":"timer_count","at":"GAME.EXE+21C50","size":4}]}],
  "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2},
            {"name":"mouse","device":"mouse","size":46,"sync":["menu"]}],
  "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":[[0,"0100"]],"state":[[0,"0000"], …],
- "frames":[[284,20380102,19,"61f5…"]],"sound":{"opl":[[2549120000,176,49]]}}
-{"tick":2,"sync":"play","cycle":20504101,"frames":[[285,20496230,19,"61f5…"]]}
-{"end":"the session's end","cycles":688000000,"frames":[[6020,687990122,19,"0e3a…"]],"state_hash":"9c2c680ec5356ad6"}
+ "frames":[[284,20380102,19,"61f5…","a3c0…"]],"sound":{"opl":[[2549120000,176,49]]}}
+{"tick":2,"sync":"play","cycle":20504101,"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
+{"end":"the session's end","cycles":688000000,"frames":[[6020,687990122,19,"0e3a…","77d1…"]],"state_hash":"9c2c680ec5356ad6"}
 ```
 
 - A tick ends when the original reaches one of the sync points (`knowledge/ticks.toml`), before that instruction
@@ -217,7 +217,8 @@ JSON lines (D50): a header, a line per tick, and an end line.
   size, but those that are inputs at every tick) that changed since the tick before; the first tick has them
   all. Values are the bytes memory holds, in hex (so little-endian; a device's state as its bytes); `null`
   where memory isn't mapped. Empty lists are left out.
-- `frames`: the frames Clockwork showed since the tick before: `[number, cycle, BIOS video mode, hash]`.
+- `frames`: the frames Clockwork showed since the tick before (a display refresh each, 70 a second):
+  `[number, cycle, BIOS video mode, fingerprint, picture]`, the picture's hash in the cache (below).
 - `sound`: the sound events since the tick before, by device, only those with events: `opl` `[ns, register,
   value]`, `speaker` `[pit_tick, waveform]`, `pcm` (digitized sound starts) `[ns, rate, stereo]`, `midi`
   `[pit_tick, byte]`, `cd` `[ns, sector, sectors]`.
@@ -228,3 +229,14 @@ JSON lines (D50): a header, a line per tick, and an end line.
   "sound", "state_hash"}` with keys sorted and no spaces: every frame and the sound events of each device
   from the start to the end, in order, and the end line's fields. It doesn't depend on what the knowledge
   reads or where ticks end.
+
+## Frame pictures
+
+What a frame showed (D25), in the cache by SHA-256: raw deflate (RFC 1951) of
+- `FRM1`, the width and the height (16-bit little-endian), the kind: 0 indexed, 1 RGB;
+- indexed: the palette, 256 × R, G, B as the VGA's DAC holds them (0 to 63; entry `i` is the DAC's `i & pel
+  mask`), then a byte a pixel;
+- RGB (direct-colour modes): 3 bytes a pixel.
+
+Pixels go row by row from the top left; text modes are drawn with their font, as the screen shows them.
+`rrc frame SESSION --tick N` writes the picture shown by the end of a tick as a PNG.

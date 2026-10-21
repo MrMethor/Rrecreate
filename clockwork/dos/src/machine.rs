@@ -567,6 +567,9 @@ pub struct Machine {
     pub frames: crate::record::Record<crate::record::Log<Frame>>,
     /// Things the emulation doesn't support that the program used; each message appears once.
     pub diagnostics: crate::record::Record<BTreeSet<String>>,
+    /// The frames' pictures, when asked for ([`Machine::record_frame_images`]): a record, not state.
+    #[serde(skip)]
+    pub frame_images: Option<crate::frame_image::FrameImages>,
     /// When the records start: 0, or when the machine was loaded from a snapshot.
     #[serde(skip)]
     pub records_since_ns: u64,
@@ -613,6 +616,7 @@ impl Machine {
             console: Default::default(),
             frames: Default::default(),
             diagnostics: Default::default(),
+            frame_images: None,
             records_since_ns: 0,
             probes: Default::default(),
             syncs: crate::sync::Syncs::default(),
@@ -1310,6 +1314,20 @@ impl Machine {
         let hash = self.devices.vga.fingerprint(low_ram);
         let mode = self.devices.vga.mode;
         self.frames.push(Frame { number: self.next_frame, cycle: self.cpu.cycles, mode, hash });
+        if let Some(images) = &mut self.frame_images {
+            images.frame(self.next_frame, hash, &self.devices.vga, low_ram);
+        }
+    }
+
+    /// Renders the picture of each frame shown from now on whose picture changed (or stops), to be
+    /// taken with [`Machine::take_frame_images`] ([`crate::frame_image`]).
+    pub fn record_frame_images(&mut self, on: bool) {
+        self.frame_images = on.then(|| self.frame_images.take().unwrap_or_default());
+    }
+
+    /// The pictures rendered since they were last taken: (frame number, picture).
+    pub fn take_frame_images(&mut self) -> Vec<(u64, Vec<u8>)> {
+        self.frame_images.as_mut().map(|images| std::mem::take(&mut images.pending)).unwrap_or_default()
     }
 }
 

@@ -138,9 +138,11 @@ events. To see who writes a value, and from where:
 
 ```bash
 rrc watch first-level <ID or name> --tick 120 --ticks 2 --reads
+rrc frame first-level --tick 120
 ```
 
-lists each access in those ticks (or the whole session) with the instruction, the value and the call chain.
+lists each access in those ticks (or the whole session) with the instruction, the value and the call chain;
+`rrc frame` writes what the screen showed by the end of a tick as a PNG, to look at.
 Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and record again: the trace follows
 every named data item. Recording a session again must give the same run (`same`); after a knowledge change
 the trace differs and `rrc record` says the run is the same (`same run as before; the trace differs`). A run

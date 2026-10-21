@@ -1,6 +1,6 @@
 //! Sessions (DESIGN.md §7): what to reproduce. A session is a TOML file in `sessions/` naming its input
 //! (an input script, or play recorded by `clockwork play --record`, kept beside it) and its length;
-//! `rrc record` adds the hashes of its trace and its run (D44, D50).
+//! `rrc record` adds the hashes of its trace and its run (D44, D54).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -33,7 +33,7 @@ pub struct Session {
 pub struct Recorded {
     /// The trace, in the cache.
     pub hash: String,
-    /// The run's hash: what the machine did, whatever the knowledge read (D50).
+    /// The run's hash: what the machine did, whatever the knowledge read (D54).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub run: String,
     pub ticks: u64,

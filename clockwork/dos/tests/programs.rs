@@ -1562,6 +1562,40 @@ fn hold(a: &mut Asm) -> Result<(), IcedError> {
 }
 
 #[test]
+fn a_frame_s_picture_is_its_indexed_pixels_and_palette() {
+    // Mode 13h; DAC entry 1 = (63, 0, 0); pixel (10, 5) in colour 1; then halt.
+    let program = com(|a| {
+        a.mov(ax, 0x0013)?;
+        a.int(0x10)?;
+        a.mov(dx, 0x3C8)?;
+        a.mov(al, 1)?;
+        a.out(dx, al)?;
+        a.mov(dx, 0x3C9)?;
+        for value in [63, 0, 0] {
+            a.mov(al, value)?;
+            a.out(dx, al)?;
+        }
+        a.mov(ax, 0xA000)?;
+        a.mov(es, ax)?;
+        a.mov(byte_ptr(5 * 320 + 10).es(), 1)?;
+        hold(a)
+    });
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    m.run(SECOND / 10);
+    m.record_frame_images(true);
+    m.run(SECOND / 10);
+    let images = m.take_frame_images();
+    assert_eq!(images.len(), 1, "the same picture is rendered once");
+    let mut raw = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::DeflateDecoder::new(&images[0].1[..]), &mut raw).unwrap();
+    assert_eq!(&raw[..9], b"FRM1\x40\x01\xC8\x00\x00", "320 × 200, indexed");
+    let (palette, pixels) = raw[9..].split_at(768);
+    assert_eq!(&palette[3..6], [63, 0, 0]);
+    assert_eq!(pixels.len(), 320 * 200);
+    assert_eq!((pixels[5 * 320 + 10], pixels[5 * 320 + 11]), (1, 0));
+}
+
+#[test]
 fn planar_mode_12h_pixels_text_and_scrolling() {
     let program = com(|a| {
         a.mov(ax, 0x0012)?;

@@ -21,7 +21,9 @@
 //!   `tick` `{"from", "ranges", "max_ms"}`: a tick in one request: runs to the next tick, then
 //!   answers as `read` (`data`), `frames` and `sound` (since cycle `from`) would.
 //! - `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as their number,
-//!   cycle, video mode and hash. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
+//!   cycle, video mode and hash. `frame_images` `{"on": true}`: from now on, the picture of each frame
+//!   whose picture changed (`dos::frame_image`), handed over with each `tick` (`images`: `[[number,
+//!   hex]]`) or by `take_frame_images`. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
 //!   register, value]`), PC speaker waveforms (`[pit_tick, wave]`), digitized sound starts (`[ns, rate,
 //!   stereo]`), MIDI bytes (`[pit_tick, byte]`) and CD audio plays (`[ns, sector, sectors]`).
 //! - `sync` `{"at", "log": false, "gate": [{"at", "len"}]}`: a sync point; with a gate (D48), a hit
@@ -173,6 +175,9 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 }
                 reply["frames"] = handle(st, "frames", &span)?["frames"].take();
                 reply["sound"] = handle(st, "sound", &span)?;
+                if let Some(m) = st.m.as_mut().filter(|m| m.frame_images.is_some()) {
+                    reply["images"] = images(m);
+                }
             }
             return Ok(reply);
         }
@@ -302,6 +307,11 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             m.track_calls(r.get("on").and_then(Value::as_bool).unwrap_or(true));
             Ok(json!({}))
         }
+        "frame_images" => {
+            m.record_frame_images(r.get("on").and_then(Value::as_bool).unwrap_or(true));
+            Ok(json!({}))
+        }
+        "take_frame_images" => Ok(json!({ "images": images(m) })),
         "coverage" => {
             if r.get("on").and_then(Value::as_bool).unwrap_or(true) {
                 m.start_coverage();
@@ -429,6 +439,11 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         _ => Err(format!("unknown op {op:?}")),
     }
+}
+
+/// The frames' pictures rendered since they were last taken, as `[[number, hex]]`.
+fn images(m: &mut Machine) -> Value {
+    json!(m.take_frame_images().iter().map(|(number, image)| json!([number, hex(image)])).collect::<Vec<_>>())
 }
 
 /// A linear address from `+OFF`, `SEG:OFF` or `@LINEAR`.

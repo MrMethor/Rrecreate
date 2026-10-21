@@ -49,6 +49,18 @@ impl Cache {
         Ok(hash)
     }
 
+    /// A writer that puts objects on a thread of its own, for many objects in a row (a recording's
+    /// frames) while the caller goes on.
+    pub fn writer(&self) -> Writer {
+        let (sender, receiver) = std::sync::mpsc::channel::<Vec<u8>>();
+        let dir = self.dir.clone();
+        let thread = std::thread::spawn(move || {
+            let cache = Cache::at(&dir)?;
+            receiver.iter().try_for_each(|bytes| cache.put(&bytes).map(|_| ()))
+        });
+        Writer { sender, thread }
+    }
+
     pub fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
         let path = self.path(hash);
         std::fs::read(&path).map_err(|_| format!("{hash} isn't in the cache ({})", self.dir.display()))
@@ -96,6 +108,28 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Puts objects into the cache on a thread of its own ([`Cache::writer`]).
+pub struct Writer {
+    sender: std::sync::mpsc::Sender<Vec<u8>>,
+    thread: std::thread::JoinHandle<Result<(), String>>,
+}
+
+impl Writer {
+    /// Stores `bytes` (soon); returns their hash.
+    pub fn put(&self, bytes: Vec<u8>) -> String {
+        let hash = sha256(&bytes);
+        // A writer that stopped says why at `finish`.
+        let _ = self.sender.send(bytes);
+        hash
+    }
+
+    /// Waits until everything is stored.
+    pub fn finish(self) -> Result<(), String> {
+        drop(self.sender);
+        self.thread.join().map_err(|_| "the cache's writer failed".to_owned())?
+    }
 }
 
 fn default_dir() -> Option<PathBuf> {

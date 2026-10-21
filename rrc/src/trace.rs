@@ -1,4 +1,4 @@
-//! Traces (DESIGN.md §9, D50): a session run through Clockwork, read at every tick. A tick ends when
+//! Traces (DESIGN.md §9, D54): a session run through Clockwork, read at every tick. A tick ends when
 //! the original reaches a sync point; there the trace takes the boundary values and the named data
 //! that changed since they were last read, and the frames and sound events of the tick.
 //!
@@ -24,7 +24,7 @@ use crate::say;
 use crate::session::{Recorded, Session};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// A memory item a trace follows, or an input device's state.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -105,7 +105,8 @@ pub struct Tick {
     /// (index in the header's `state`, value) for each item that changed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub state: Vec<(usize, Option<String>)>,
-    /// The frames shown during the tick: [number, cycle, video mode, hash].
+    /// The frames shown during the tick: [number, cycle, video mode, fingerprint, picture (its hash in
+    /// the cache)].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<Value>,
     /// Sound events during the tick, by device (only those with events).
@@ -273,6 +274,10 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             format!("run as before; the trace differs ({}, {} ticks): the knowledge changed", b.hash, b.ticks),
         ),
         Some(b) if b.run.is_empty() => say("differs", "from the trace recorded before, which has no run hash"),
+        Some(b) if recorded_header(&cache, &b.hash).is_some_and(|h| h.version != VERSION) => say(
+            "differs",
+            format!("from the trace recorded before, in an older format: its run hash isn't comparable ({})", b.run),
+        ),
         Some(b) => say(
             "differs",
             format!(
@@ -365,6 +370,10 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<(
     let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
     // Tracked from power-on, so the snapshots give a watch from them whole call chains.
     clockwork.ask("calls", json!({"on": true}))?;
+    // Each frame's picture, kept in the cache (D25).
+    clockwork.ask("frame_images", json!({"on": true}))?;
+    let writer = Cache::open(&repo.local)?.writer();
+    let mut picture = Value::Null;
     let start = loaded["cycles"].as_u64().unwrap_or(0);
     let mut ranges = Vec::new();
     for item in header.inputs.iter().chain(&header.state) {
@@ -402,7 +411,8 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<(
             .map(|(i, v)| (i, v.clone()))
             .collect();
         previous = state.to_vec();
-        let (frames, sound) = (ran["frames"].as_array().cloned().unwrap_or_default(), sound_events(&ran["sound"]));
+        let frames = pictures(&writer, &ran["frames"], &ran["images"], &mut picture);
+        let sound = sound_events(&ran["sound"]);
         let skipped = ran["sync"]["skipped"].as_u64();
         ticks.push(Tick {
             tick: ticks.len() as u64 + 1,
@@ -420,11 +430,37 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<(
     // What the run did after the last tick, and the machine's state at the end.
     let (stop, cycles) = stop;
     let span = json!({ "from": last_cycle });
-    let frames = clockwork.ask("frames", span.clone())?["frames"].as_array().cloned().unwrap_or_default();
+    let shown = clockwork.ask("frames", span.clone())?;
+    let taken = clockwork.ask("take_frame_images", Value::Null)?;
+    let frames = pictures(&writer, &shown["frames"], &taken["images"], &mut picture);
+    writer.finish()?;
     let sound = sound_events(&clockwork.ask("sound", span)?);
     let state_hash = clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
     let end = if stop == "time limit reached" { "the session's end".to_owned() } else { stop };
     Ok((Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } }, saver.finish()?))
+}
+
+/// Clockwork's frames (`[number, cycle, mode, fingerprint]`) with their pictures' hashes: `images`,
+/// the pictures rendered for some of them (`[[number, hex]]`), go into the cache; a frame without one
+/// shows the picture before it (`last`).
+fn pictures(cache: &crate::cache::Writer, frames: &Value, images: &Value, last: &mut Value) -> Vec<Value> {
+    let mut rendered = BTreeMap::new();
+    for image in images.as_array().into_iter().flatten() {
+        let (Some(number), Some(hex)) = (image[0].as_u64(), image[1].as_str()) else { continue };
+        let bytes: Vec<u8> =
+            (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect();
+        rendered.insert(number, cache.put(bytes));
+    }
+    let mut out = Vec::new();
+    for frame in frames.as_array().into_iter().flatten() {
+        if let Some(hash) = frame[0].as_u64().and_then(|number| rendered.get(&number)) {
+            *last = json!(hash);
+        }
+        let mut frame = frame.as_array().cloned().unwrap_or_default();
+        frame.push(last.clone());
+        out.push(Value::Array(frame));
+    }
+    out
 }
 
 /// Clockwork's `sound` answer as a trace has it: the devices with events.

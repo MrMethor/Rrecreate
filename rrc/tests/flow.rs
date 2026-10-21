@@ -244,6 +244,11 @@ fn memory_outside_the_image_is_mem() {
     assert!(recorded.contains("trace     10 ticks"), "{recorded}");
     let ticks = rrc.ok(&["trace", "wait", "--item", "bios_ticks"]);
     assert_eq!(ticks.lines().count(), 10, "a new count each tick: {ticks}");
+    // The screen at a tick, from the pictures the trace keeps: DOS's text screen.
+    let frame = rrc.ok(&["frame", "wait", "--tick", "5"]);
+    assert!(frame.contains("video mode 3h, 720 × 400"), "{frame}");
+    let png = std::fs::read(rrc.repo.join(".rrc/frames/wait-5.png")).unwrap();
+    assert!(png.starts_with(b"\x89PNG"));
     let scanned = rrc.ok(&["inputs", "wait", "--at", "MEM+00400", "--len", "256"]);
     assert!(scanned.contains("scanned   MEM+00400, 256 bytes"), "{scanned}");
     assert!(scanned.contains("MEM+0046C bios_ticks (an input, 4 bytes)"), "{scanned}");
