@@ -17,7 +17,8 @@
 //! - `snapshot` / `restore` / `forget` `{"name"}`: copies of the machine in memory.
 //! - `run` `{"ms"}` or `{"cycles"}`, or `{"sync": addr, "n": 1, "max_ms": 60000}`: runs on; says why it
 //!   stopped and when. `{"sync": "next", "n": 1}` stops at the n-th next hit of any sync point: the next
-//!   tick. `tick` `{"from", "ranges", "max_ms"}`: a tick in one request: runs to the next tick, then
+//!   tick. `"until_ms"` instead of `"max_ms"` stops at that time from power-on, wherever the run is.
+//!   `tick` `{"from", "ranges", "max_ms"}`: a tick in one request: runs to the next tick, then
 //!   answers as `read` (`data`), `frames` and `sound` (since cycle `from`) would.
 //! - `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as their number,
 //!   cycle, video mode and hash. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
@@ -27,7 +28,8 @@
 //!   counts only when the gate's bytes changed since the point's last counted hit, and a stop there
 //!   says how many hits it passed over before (`skipped`). `syncs`: each point's hits (and their
 //!   cycles).
-//! - `read` `{"ranges": [{"at", "len"} or {"device"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`.
+//! - `read` `{"ranges": [{"at", "len"} or {"device"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`,
+//!   `hash` (the machine's state hash, as `clockwork run` prints it).
 //!   A device (D49) is `mouse` (what INT 33h would report: `dos::mouse::Mouse::reported_state`) or
 //!   `joystick` (the game port's sticks); a gate takes them too.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
@@ -195,7 +197,10 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "run" => {
             let ips = m.config.instructions_per_second;
-            let max = r.get("max_ms").and_then(Value::as_u64).unwrap_or(60_000) * ips / 1000;
+            let max = match r.get("until_ms").and_then(Value::as_u64) {
+                Some(ms) => m.cycle_at_ms(ms).saturating_sub(m.cpu.cycles),
+                None => r.get("max_ms").and_then(Value::as_u64).unwrap_or(60_000) * ips / 1000,
+            };
             let stop = if r.get("sync").and_then(Value::as_str) == Some("next") {
                 let end = m.cpu.cycles + max;
                 let mut stop = m.run_to_next_sync(max);
@@ -270,6 +275,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             }
             Ok(json!({}))
         }
+        "hash" => Ok(json!({"state_hash": format!("{:016x}", m.state_hash())})),
         "regs" => {
             let g = &m.cpu.regs;
             Ok(json!({

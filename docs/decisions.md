@@ -295,7 +295,21 @@ mouse had no input that explained it. The driver's state at the sync point is wh
 reads, as with memory inputs (D47). Recording each service call's registers per tick, the alternative, would
 belong to the pass after the tick and tie the format to INT 33h's functions.
 
-### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Accepted 2026-10-19.
+### D50. Traces, version 2: inputs when they change, and a run hash apart from the trace's. Accepted 2026-10-21.
+A trace writes an input when its value differs from when it was last read, as it does state, and an input may
+be read only at some sync points. An item that is an input at every tick isn't written again as state. The
+run ends at exactly the session's length, and the end line has the frames and sound after the last tick and
+Clockwork's state hash then. The session commits a second hash, of the run (every frame and sound event, how
+and when it ended, the state hash), which doesn't depend on what the knowledge reads.
+**Why:** the first blind test found every input written in full at every tick (512 hex digits a tick for the
+key states), items written twice, nothing recorded after the last tick (how a demo ended), and the committed
+hash changing with every name or item added, so it couldn't tell "the knowledge changed" from "the run
+changed" and checked determinism only between machines with the same knowledge (D44). Measured on the Wolf3D
+port's first-level: traces half the size, and the same run hash with and without a menu tick (671 or 1189
+ticks); the end state hash is `clockwork run`'s for the same input.
+**Supersedes:** D45.
+
+### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the
 frames shown and the sound events. Values are little-endian bytes in hex.

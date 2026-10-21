@@ -270,8 +270,8 @@ sessions/           a TOML file per session (its inputs, its length, its recorde
   `prior-art:<source>`, `import:<source>`. A tool's name never replaces a decision someone made.
 - The formats are in `docs/formats.md`. `rrc check` validates the files: IDs well formed and inside the
   program, names unique, sizes consistent.
-- **The cache** is per user, outside git, addressed by SHA-256. A recorded trace's hash is committed with its
-  session, so re-recording it on another machine checks that the run is the same there.
+- **The cache** is per user, outside git, addressed by SHA-256. A recorded trace's hash and its run's are
+  committed with its session, so re-recording it on another machine checks that the run is the same there.
 
 **The toolkit, `rrc`**, is one Rust program run inside a port repository. It drives Clockwork as a child
 process through `clockwork serve`. Its commands are short and print little: `init`, `doctor`, `status` (the
@@ -290,7 +290,10 @@ functions), so the cache keeps the analysis of a program by its hash and later r
 **Traces** (`rrc record <session>`): Clockwork runs the session and stops at every sync point hit, a tick;
 at each it reads the boundary values and the named data, and takes the frames and sound events since the last
 tick. The trace is a file of JSON lines in the cache (`docs/formats.md`): a header naming the items, then one
-line per tick with the inputs, the data that changed, the frames and the sound events.
+line per tick with the inputs and the data that changed, the frames and the sound events, then an end line
+with what the run did after the last tick and the machine's state hash. Besides the trace's hash, the session
+commits the run's (D50): of the frames, the sound and the end, whatever the knowledge reads, so a re-recording
+tells a knowledge change from a different run.
 
 ## 10. The agent's workflow
 

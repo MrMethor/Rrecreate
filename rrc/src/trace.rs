@@ -1,9 +1,14 @@
-//! Traces (DESIGN.md §9, D45): a session run through Clockwork, read at every tick. A tick ends when
-//! the original reaches a sync point; there the trace takes the boundary values, the named data
-//! that changed since the last tick, and the frames and sound events of the tick.
+//! Traces (DESIGN.md §9, D50): a session run through Clockwork, read at every tick. A tick ends when
+//! the original reaches a sync point; there the trace takes the boundary values and the named data
+//! that changed since they were last read, and the frames and sound events of the tick.
 //!
 //! The file is JSON lines (`docs/formats.md`): a header naming the items, a line per tick, and a
-//! last line saying how the run ended. Values are the original's bytes in hex, as memory holds them.
+//! last line saying how the run ended, with what it did after the last tick. Values are the
+//! original's bytes in hex, as memory holds them.
+//!
+//! The run's hash covers what the machine did (frames, sound, how and when it ended, its state
+//! then), not what the knowledge asked to read: the same run traced with other names, items or sync
+//! points has the same run hash and another trace hash.
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -19,7 +24,7 @@ use crate::say;
 use crate::session::{Recorded, Session};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// A memory item a trace follows, or an input device's state.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -32,11 +37,20 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub device: String,
     pub size: u32,
+    /// An input read only at these sync points (else at all).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sync: Vec<String>,
 }
 
 impl Item {
     fn from_input(i: &crate::knowledge::Input) -> Item {
-        Item { name: i.name.clone(), at: i.at.clone(), device: i.device.clone(), size: i.bytes() }
+        let (name, at, device) = (i.name.clone(), i.at.clone(), i.device.clone());
+        Item { name, at, device, size: i.bytes(), sync: i.sync.clone() }
+    }
+
+    /// Whether an input is read at sync point `sync`.
+    pub fn read_at(&self, sync: &str) -> bool {
+        self.sync.is_empty() || self.sync.iter().any(|s| s == sync)
     }
 
     /// What Clockwork's `read` and a gate take for it.
@@ -67,9 +81,10 @@ pub struct Header {
     pub program: String,
     pub clockwork: String,
     pub syncs: Vec<SyncPoint>,
-    /// Boundary values: every tick has all of them.
+    /// Boundary values: a tick has those it reads that changed since they were last read.
     pub inputs: Vec<Item>,
-    /// Named data: a tick has those that changed since the tick before (the first, all).
+    /// Named data (but the inputs): a tick has those that changed since the tick before (the first,
+    /// all).
     pub state: Vec<Item>,
 }
 
@@ -83,9 +98,12 @@ pub struct Tick {
     /// At a gated sync point: the hits its gate passed over since its last tick.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<u64>,
-    /// Each input's value (null where memory isn't mapped).
-    pub inputs: Vec<Option<String>>,
+    /// (index in the header's `inputs`, value) for each input the tick reads whose value changed
+    /// since it was last read (null where memory isn't mapped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<(usize, Option<String>)>,
     /// (index in the header's `state`, value) for each item that changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub state: Vec<(usize, Option<String>)>,
     /// The frames shown during the tick: [number, cycle, video mode, hash].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -100,6 +118,13 @@ pub struct End {
     /// Why the run stopped.
     pub end: String,
     pub cycles: u64,
+    /// The frames and sound after the last tick, as a tick has them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<Value>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub sound: serde_json::Map<String, Value>,
+    /// Clockwork's hash of the machine's state then.
+    pub state_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,17 +168,50 @@ impl Trace {
 
     /// The value of state item `index` at each tick, from the changes.
     pub fn values(&self, index: usize) -> Vec<Option<String>> {
-        let mut value = None;
-        self.ticks
-            .iter()
-            .map(|tick| {
-                if let Some((_, v)) = tick.state.iter().find(|(i, _)| *i == index) {
-                    value = v.clone();
-                }
-                value.clone()
-            })
-            .collect()
+        carried(&self.ticks, index, |tick| &tick.state)
     }
+
+    /// The value of input `index` at each tick: the last value read (`None` before the first, or
+    /// where memory isn't mapped).
+    pub fn input_values(&self, index: usize) -> Vec<Option<String>> {
+        carried(&self.ticks, index, |tick| &tick.inputs)
+    }
+
+    /// The run's hash: of the frames and sound from the start to the end, how and when the run
+    /// ended and the machine's state then; not of what the knowledge asked to read.
+    pub fn run_hash(&self) -> String {
+        let mut frames = Vec::new();
+        let mut sound: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        let spans = self.ticks.iter().map(|t| (&t.frames, &t.sound)).chain([(&self.end.frames, &self.end.sound)]);
+        for (f, s) in spans {
+            frames.extend(f.iter().cloned());
+            for (device, events) in s {
+                sound.entry(device.clone()).or_default().extend(events.as_array().into_iter().flatten().cloned());
+            }
+        }
+        // Keys in sorted order, as docs/formats.md gives the text that is hashed.
+        let run = json!({"cycles": self.end.cycles, "end": self.end.end, "frames": frames, "sound": sound,
+                         "state_hash": self.end.state_hash});
+        crate::cache::sha256(run.to_string().as_bytes())
+    }
+}
+
+/// An item's value at each tick, from the ticks' changes (`changes` picks a tick's list).
+fn carried(
+    ticks: &[Tick],
+    index: usize,
+    changes: impl Fn(&Tick) -> &Vec<(usize, Option<String>)>,
+) -> Vec<Option<String>> {
+    let mut value = None;
+    ticks
+        .iter()
+        .map(|tick| {
+            if let Some((_, v)) = changes(tick).iter().find(|(i, _)| *i == index) {
+                value = v.clone();
+            }
+            value.clone()
+        })
+        .collect()
 }
 
 /// `+OFF` for an ID in the program (Clockwork's address for an image offset).
@@ -175,10 +233,14 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     let module = repo.module();
     let inputs: Vec<Item> = k.ticks.inputs.iter().map(Item::from_input).collect();
+    // An item that is an input at every tick is written once, as the input.
+    let is_input =
+        |id: &str, size: Option<u32>| inputs.iter().any(|i| i.at == id && Some(i.size) == size && i.sync.is_empty());
     let state: Vec<Item> = k
         .data
         .iter()
         .filter(|(id, d)| id.module() == module && id.part().is_none() && d.size.is_some())
+        .filter(|(id, d)| !is_input(&id.to_string(), d.size))
         .map(|(id, d)| Item {
             name: d.decision.name.clone(),
             at: id.to_string(),
@@ -202,17 +264,31 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let cache = Cache::open(&repo.local)?;
     let text = trace.to_text();
     let hash = cache.put(text.as_bytes())?;
+    let run = trace.run_hash();
     let ticks = trace.ticks.len() as u64;
-    let before =
-        session.trace.replace(Recorded { hash: hash.clone(), ticks, clockwork: trace.header.clockwork.clone() });
+    let recorded = Recorded { hash: hash.clone(), run: run.clone(), ticks, clockwork: trace.header.clockwork.clone() };
+    let before = session.trace.replace(recorded);
     session.save(repo, name)?;
     say("trace", format!("{ticks} ticks, {} KB: {}", text.len() / 1024, trace.end.end));
     match before {
         Some(b) if b.hash == hash => say("same", "as the trace recorded before"),
-        Some(b) => say("differs", format!("from the trace recorded before ({}, {} ticks)", b.hash, b.ticks)),
+        Some(b) if b.run == run => say(
+            "same",
+            format!("run as before; the trace differs ({}, {} ticks): the knowledge changed", b.hash, b.ticks),
+        ),
+        Some(b) if b.run.is_empty() => say("differs", "from the trace recorded before, which has no run hash"),
+        Some(b) => say(
+            "differs",
+            format!(
+                "the run differs from the one recorded before ({}): the session, the game or Clockwork changed, \
+                 or a run isn't deterministic",
+                b.run
+            ),
+        ),
         None => {}
     }
     say("hash", hash);
+    say("run", run);
     Ok(ExitCode::SUCCESS)
 }
 
@@ -266,25 +342,29 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
     }
     let ranges = json!({ "ranges": ranges });
     let length_ms = (session.seconds * 1000.0) as u64;
-    let (mut ms, mut last_cycle) = (0, start);
+    let mut last_cycle = start;
+    // The values last written: an input's when it was last read, the state's at the tick before.
+    let mut last_input: Vec<Option<Option<String>>> = vec![None; header.inputs.len()];
     let mut previous: Vec<Option<String>> = vec![None; header.state.len()];
     let mut ticks = Vec::new();
-    let end = loop {
-        if ms >= length_ms {
-            break End { end: "the session's end".into(), cycles: last_cycle };
-        }
-        let request = json!({"from": last_cycle, "ranges": ranges["ranges"], "max_ms": length_ms - ms});
+    let stop = loop {
+        let request = json!({"from": last_cycle, "ranges": ranges["ranges"], "until_ms": length_ms});
         let ran = clockwork.ask("tick", request)?;
-        ms = ran["ms"].as_u64().unwrap_or(length_ms);
         let cycle = ran["cycles"].as_u64().unwrap_or(0);
         let Some(at) = ran["sync"]["at"].as_str() else {
-            let stop = ran["stop"].as_str().unwrap_or("?");
-            let stop = if stop == "time limit reached" { "the session's end" } else { stop };
-            break End { end: stop.into(), cycles: cycle };
+            break (ran["stop"].as_str().unwrap_or("?").to_owned(), cycle);
         };
+        let sync = syncs.get(at).cloned().unwrap_or_else(|| at.to_owned());
         let values: Vec<Option<String>> =
             ran["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
         let (inputs, state) = values.split_at(header.inputs.len().min(values.len()));
+        let mut read = Vec::new();
+        for (i, value) in inputs.iter().enumerate() {
+            if header.inputs[i].read_at(&sync) && last_input[i].as_ref() != Some(value) {
+                last_input[i] = Some(value.clone());
+                read.push((i, value.clone()));
+            }
+        }
         let changed = state
             .iter()
             .enumerate()
@@ -292,22 +372,35 @@ fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<T
             .map(|(i, v)| (i, v.clone()))
             .collect();
         previous = state.to_vec();
-        let frames = ran["frames"].as_array().cloned().unwrap_or_default();
-        let mut sound = ran["sound"].as_object().cloned().unwrap_or_default();
-        sound.retain(|_, v| v.as_array().is_some_and(|a| !a.is_empty()));
+        let (frames, sound) = (ran["frames"].as_array().cloned().unwrap_or_default(), sound_events(&ran["sound"]));
+        let skipped = ran["sync"]["skipped"].as_u64();
         ticks.push(Tick {
             tick: ticks.len() as u64 + 1,
-            sync: syncs.get(at).cloned().unwrap_or_else(|| at.to_owned()),
+            sync,
             cycle,
-            skipped: ran["sync"]["skipped"].as_u64(),
-            inputs: inputs.to_vec(),
+            skipped,
+            inputs: read,
             state: changed,
             frames,
             sound,
         });
         last_cycle = cycle;
     };
-    Ok(Trace { header, ticks, end })
+    // What the run did after the last tick, and the machine's state at the end.
+    let (stop, cycles) = stop;
+    let span = json!({ "from": last_cycle });
+    let frames = clockwork.ask("frames", span.clone())?["frames"].as_array().cloned().unwrap_or_default();
+    let sound = sound_events(&clockwork.ask("sound", span)?);
+    let state_hash = clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
+    let end = if stop == "time limit reached" { "the session's end".to_owned() } else { stop };
+    Ok(Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } })
+}
+
+/// Clockwork's `sound` answer as a trace has it: the devices with events.
+fn sound_events(answer: &Value) -> serde_json::Map<String, Value> {
+    let mut sound = answer.as_object().cloned().unwrap_or_default();
+    sound.retain(|_, v| v.as_array().is_some_and(|a| !a.is_empty()));
+    sound
 }
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
@@ -331,6 +424,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     };
     if let Some(item) = a.value("--item") {
         let lines: usize = a.value("--lines").map_or(Ok(40), str::parse).map_err(|_| "--lines is a count")?;
+        // Named data that is an input is in the trace as the input.
+        let as_input = k.named(item).and_then(|id| h.inputs.iter().find(|i| i.at == id.to_string()));
+        let item = if h.state.iter().any(|i| i.name == item) { item } else { as_input.map_or(item, |i| &i.name) };
         return show_item(&trace, item, &ty, lines);
     }
     if let Some(n) = a.value("--tick") {
@@ -342,7 +438,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .ok_or_else(|| format!("no tick {n} (1 to {})", trace.ticks.len()))?;
         let skipped = tick.skipped.map(|n| format!(", {n} hits skipped before it")).unwrap_or_default();
         say("tick", format!("{} at cycle {}, sync point {}{skipped}", tick.tick, tick.cycle, tick.sync));
-        for (item, value) in h.inputs.iter().zip(&tick.inputs) {
+        let index = (n - 1) as usize;
+        for (i, item) in h.inputs.iter().enumerate().filter(|(_, item)| item.read_at(&tick.sync)) {
+            let value = &trace.input_values(i)[index];
             say("input", format!("{} = {}", item.name, value_text(value.as_deref(), &ty(item))));
         }
         for (i, value) in &tick.state {
@@ -386,15 +484,17 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let most: Vec<String> = most.iter().take(8).filter(|m| m.0 > 0).map(|(n, name)| format!("{name} {n}")).collect();
     say("inputs", h.inputs.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "));
     say("state", format!("{} items; changed most: {}", h.state.len(), most.join(", ")));
-    say("frames", trace.ticks.iter().map(|t| t.frames.len()).sum::<usize>());
+    let frames = trace.ticks.iter().map(|t| t.frames.len()).sum::<usize>();
+    say("frames", format!("{frames}, then {} after the last tick", trace.end.frames.len()));
     Ok(ExitCode::SUCCESS)
 }
 
-/// An item's value over the ticks: each tick it changed (an input: each tick), as its type reads.
+/// An item's value over the ticks: each tick it changed (an input: of those that read it), as its
+/// type reads.
 fn show_item(trace: &Trace, name: &str, ty: &dyn Fn(&Item) -> String, lines: usize) -> Result<ExitCode, String> {
     let h = &trace.header;
     let (values, item): (Vec<Option<String>>, &Item) = if let Some(i) = h.inputs.iter().position(|i| i.name == name) {
-        (trace.ticks.iter().map(|t| t.inputs.get(i).cloned().flatten()).collect(), &h.inputs[i])
+        (trace.input_values(i), &h.inputs[i])
     } else if let Some(i) = h.state.iter().position(|i| i.name == name) {
         (trace.values(i), &h.state[i])
     } else {
@@ -404,7 +504,7 @@ fn show_item(trace: &Trace, name: &str, ty: &dyn Fn(&Item) -> String, lines: usi
     let mut shown = 0;
     let mut last: Option<&Option<String>> = None;
     for (tick, value) in trace.ticks.iter().zip(&values) {
-        if last == Some(value) {
+        if last == Some(value) || !item.read_at(&tick.sync) {
             continue;
         }
         last = Some(value);
@@ -509,31 +609,48 @@ mod tests {
             inputs: vec![item("elapsed", "GAME.EXE+20000")],
             state: vec![item("x", "GAME.EXE+20002"), item("y", "GAME.EXE+20004")],
         };
-        let tick = |n: u64, state: Vec<(usize, Option<String>)>| Tick {
+        let tick = |n: u64, inputs: Vec<(usize, Option<String>)>, state: Vec<(usize, Option<String>)>| Tick {
             tick: n,
             sync: "play".into(),
             cycle: n * 1000,
             skipped: None,
-            inputs: vec![Some("0100".into())],
+            inputs,
             state,
-            frames: vec![],
+            frames: vec![json!([n, n * 1000 - 10, 19, "61f5"])],
             sound: serde_json::Map::new(),
         };
+        let one = |hex: &str| vec![(0, Some(hex.to_owned()))];
         let trace = Trace {
             header,
             ticks: vec![
-                tick(1, vec![(0, Some("0000".into())), (1, Some("0500".into()))]),
-                tick(2, vec![(0, Some("0100".into()))]),
-                tick(3, vec![]),
+                tick(1, one("0100"), vec![(0, Some("0000".into())), (1, Some("0500".into()))]),
+                tick(2, vec![], one("0100")),
+                tick(3, one("0200"), vec![]),
             ],
-            end: End { end: "the session's end".into(), cycles: 4000 },
+            end: End {
+                end: "the session's end".into(),
+                cycles: 4000,
+                frames: vec![json!([4, 3990, 19, "61f6"])],
+                sound: serde_json::Map::new(),
+                state_hash: "0123456789abcdef".into(),
+            },
         };
         let text = trace.to_text();
         assert_eq!(text.lines().count(), 5);
-        assert!(!text.lines().nth(3).unwrap().contains("frames"), "empty lists are left out");
+        assert!(!text.lines().nth(2).unwrap().contains("inputs"), "empty lists are left out");
         assert_eq!(Trace::parse(&text).unwrap(), trace);
         let x: Vec<Option<String>> = trace.values(0);
         assert_eq!(x, [Some("0000".into()), Some("0100".into()), Some("0100".into())]);
+        let elapsed = trace.input_values(0);
+        assert_eq!(elapsed, [Some("0100".into()), Some("0100".into()), Some("0200".into())], "carried over");
+        // What the knowledge reads isn't the run; what the machine did is.
+        let mut renamed = trace.clone();
+        renamed.header.state.pop();
+        renamed.ticks[0].state.truncate(1);
+        renamed.ticks[2].inputs.clear();
+        assert_eq!(renamed.run_hash(), trace.run_hash());
+        renamed.end.frames.clear();
+        assert_ne!(renamed.run_hash(), trace.run_hash());
         assert_eq!(image_address("GAME.EXE", "GAME.EXE+20002").unwrap(), "+20002");
         assert!(image_address("GAME.EXE", "OTHER.EXE+20002").is_err());
         assert_eq!((value_text(Some("FEFF"), "i16"), value_text(Some("FEFF"), "u16")), ("-2".into(), "65534".into()));

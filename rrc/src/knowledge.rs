@@ -112,6 +112,9 @@ pub struct Input {
     /// Bytes (a device's are known).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub size: u32,
+    /// Read only at these sync points (by name), else at all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sync: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -301,6 +304,9 @@ impl Knowledge {
                 problems.push(format!("input {}: no device {:?} (mouse or joystick)", i.name, i.device));
             } else if i.size != 0 && i.size != i.bytes() {
                 problems.push(format!("input {}: a {} is {} bytes", i.name, i.device, i.bytes()));
+            }
+            for sync in i.sync.iter().filter(|s| !self.ticks.syncs.iter().any(|t| t.name == **s)) {
+                problems.push(format!("input {}: no sync point {sync}", i.name));
             }
         }
         for s in &self.types.structs {

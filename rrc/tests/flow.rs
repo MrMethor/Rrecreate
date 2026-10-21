@@ -105,6 +105,20 @@ fn a_session_is_traced_tick_by_tick() {
     let recorded = rrc.ok(&["record", "short"]);
     assert!(recorded.contains("ticks"), "{recorded}");
     assert!(rrc.ok(&["record", "short"]).contains("same      as the trace recorded before"), "deterministic");
+    // Reading more is another trace of the same run.
+    rrc.ok(&["data", "T.COM+00005", "delay", "--size", "2"]);
+    let again = rrc.ok(&["record", "short"]);
+    assert!(again.contains("same      run as before; the trace differs"), "{again}");
+    std::fs::write(
+        repo.join("knowledge/data.tsv"),
+        std::fs::read_to_string(repo.join("knowledge/data.tsv"))
+            .unwrap()
+            .lines()
+            .filter(|l| !l.contains("delay"))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
     let summary = rrc.ok(&["trace", "short"]);
     assert!(summary.contains("syncs     loop "), "{summary}");
     let watched = rrc.ok(&["watch", "short", "count", "--tick", "2", "--ticks", "1"]);
