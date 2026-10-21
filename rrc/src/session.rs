@@ -87,9 +87,9 @@ pub fn names(repo: &Repo) -> Result<Vec<String>, String> {
 }
 
 pub(crate) fn session(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--inputs", "--replay", "--seconds", "--description"], &[])?;
-    let usage = "session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT] | \
-                 set NAME [--seconds N] [--description TEXT]]";
+    let a = Args::parse(args, &["--inputs", "--replay", "--seconds", "--description", "--clockwork"], &[])?;
+    let usage = "session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT] \
+                 [--clockwork OPTIONS] | set NAME [--seconds N] [--description TEXT] [--clockwork OPTIONS]]";
     match a.positionals(0, 2, usage)? {
         [] => {
             for name in names(repo)? {
@@ -107,6 +107,9 @@ pub(crate) fn session(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             }
             if let Some(description) = a.value("--description") {
                 s.description = description.to_owned();
+            }
+            if let Some(options) = a.value("--clockwork") {
+                s.options = clockwork_options(options);
             }
             s.save(repo, name)?;
             say("session", format!("{name}: {} s (rrc record {name} to trace it so)", s.seconds));
@@ -144,10 +147,16 @@ fn add_session(repo: &Repo, a: &Args, name: &str) -> Result<ExitCode, String> {
         _ => return Err("--inputs or --replay, not both".into()),
     };
     let description = a.value("--description").unwrap_or_default().to_owned();
-    Session { description, inputs, replay, seconds, options: vec![], trace: None }.save(repo, name)?;
+    let options = a.value("--clockwork").map(clockwork_options).unwrap_or_default();
+    Session { description, inputs, replay, seconds, options, trace: None }.save(repo, name)?;
     say("session", format!("{name}: {seconds} s"));
     say("next", format!("rrc record {name}"));
     Ok(ExitCode::SUCCESS)
+}
+
+/// More `clockwork run` options for a session (`--joystick 1`), split at spaces.
+fn clockwork_options(text: &str) -> Vec<String> {
+    text.split_whitespace().map(str::to_owned).collect()
 }
 
 fn note(text: &str) -> String {

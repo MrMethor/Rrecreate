@@ -30,13 +30,16 @@ Clockwork unpacks the program if it was packed, Ghidra analyses it (minutes), an
 functions get their names from the signature packs. `rrc show <ID or name>` then tells what is known about a
 function: its name and evidence, its size, calls and callers, and with `--c` or `--asm` its decompiled code or
 disassembly, in which Ghidra's `FUN_` and `DAT_` names become the names you gave (`name[+N]` for a byte inside
-a data item). For data, it lists the instructions that read it, write it or take its address, by function.
+a data item). In the disassembly, lines and branch targets are IDs, and each instruction's data is named after
+it (`; tick_count`); a jump through a table says so, and `--listing` shows Clockwork's disassembly instead,
+following the jumps and listing each table's cases. For data, it lists the instructions that read it, write
+it or take its address, by function.
 Decompiled code is a hint, not a source (D2): it is partly wrong.
 
 Ghidra misses code that only a vector or a pointer reaches, such as interrupt handlers (`rrc inputs` names
 them by their entry). `rrc show ID --asm` then disassembles it with Clockwork, following its jumps; once you
 name it (`rrc name`), `rrc analyze` adds it to Ghidra's analysis as a function, with its calls, references
-and decompiled code (that takes Ghidra's minutes again).
+and decompiled code (Ghidra opens its analysis again for that: a minute or so).
 
 Look for prior art (D32): source releases, reimplementations, format documentation, bug lists. For a pilot
 whose source is released, the source stays out of reach (D3, D46).
@@ -48,6 +51,9 @@ A session is what to reproduce: an input script or recorded play, and how long i
 ```bash
 rrc session add first-level --seconds 51 --inputs first-level.inputs --description "..."
 ```
+
+An input script presses keys, clicks and moves the mouse, and moves the joystick (`{stick X Y BUTTONS}`; the
+session then needs `--clockwork "--joystick 1"`): `clockwork/README.md` lists its steps.
 
 A tick is one pass of the original's main loop; a sync point is the instruction where it ends. To find one:
 

@@ -48,8 +48,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   again only when it changed.
 - `analysis.toml`: what `rrc analyze` left: the hash of the game's program it analyzed (`original`), what Ghidra
   imported (`program`, in the cache: unpacked by Clockwork when `unpacked`), Ghidra's export (`export`, in the
-  cache), the entry point's offset in the load image (`entry`, which places Ghidra's addresses in the image) and
-  Ghidra's version.
+  cache), the records of the functions added to it (`additions`, in the cache, read after the export's), the
+  entry point's offset in the load image (`entry`, which places Ghidra's addresses in the image) and Ghidra's
+  version.
 - `ghidra/`: the last analysis's working files: the program Ghidra imported, the export script, Ghidra's log.
 
 ## Ghidra's export
@@ -68,7 +69,10 @@ script's `functions FILE` arguments), so they are in the export like the others.
 A folder of files named by their SHA-256: `objects/<first 2 hex digits>/<the other 62>`; and `index/<kind>/<key>`,
 what an earlier run made from given inputs:
 - `index/analysis/<key>`: the `analysis.toml` of a program analysed by the same export script, keyed by the
-  program's hash, the script and whether it decompiled (and the functions added to Ghidra's);
+  program's hash, the script and whether it decompiled; Ghidra's project of that analysis is kept in
+  `ghidra/<key>/`, to add functions to it without analysing it again;
+- `index/additions/<key>`: the records of the functions added to an analysis, keyed by the analysis and the
+  functions' offsets;
 - `index/snapshots/<key>`: the Clockwork snapshots `rrc record` kept of a session (`[[snapshot]]` with `tick`,
   `cycle`, `ms` and the snapshot's `hash`), keyed by what makes the run and its ticks the same: Clockwork's
   program (its hash), the game's files, the program and its options, the session's options and input (its
@@ -175,7 +179,7 @@ description = "the first level, up the main corridor"
 inputs = "walk.inputs"          # an input script (clockwork run --input-file), beside it; or
 # replay = "play.session"       # play recorded by clockwork play --record
 seconds = 86.0                  # emulated seconds it runs
-options = []                    # optional: more `clockwork run` options
+options = []                    # optional: more `clockwork run` options (rrc session --clockwork)
 
 [trace]                         # written by rrc record
 hash = "6e7f…"                  # the trace, in the cache

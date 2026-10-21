@@ -4,9 +4,10 @@
 //! unless someone named them already. What analysis left is indexed in `.rrc/analysis.toml`.
 //!
 //! Functions the knowledge names that Ghidra didn't find (an interrupt handler only a vector
-//! reaches, code called through a pointer) are created in a second analysis, so they get calls,
-//! references and decompiled code too. The first analysis is kept as it is: it is the base the
-//! missing functions are found against.
+//! reaches, code called through a pointer) are added to it, so they get calls, references and
+//! decompiled code too: Ghidra's project of the analysis is kept in the cache, and opened again
+//! (read only, without analysing it again) to create them and export just their records, which are
+//! read after the analysis's own.
 //!
 //! The scripts and packs are built into `rrc`, so a port repository needs no Rrecreate checkout.
 
@@ -41,6 +42,9 @@ pub struct Index {
     pub unpacked: bool,
     /// Ghidra's export (JSON lines), in the cache.
     pub export: String,
+    /// The records of the functions added to it (as the export's), in the cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<String>,
     /// The load image's offset of the entry point, which places Ghidra's addresses in the image.
     pub entry: u32,
     pub ghidra: String,
@@ -50,6 +54,15 @@ impl Index {
     pub fn load(repo: &Repo) -> Result<Option<Index>, String> {
         let path = repo.root.join(crate::repo::STATE).join(INDEX);
         if path.is_file() { read_toml(&path).map(Some) } else { Ok(None) }
+    }
+
+    /// The export's records, and the additions' after them.
+    fn records(&self, cache: &Cache) -> Result<String, String> {
+        let mut text = String::from_utf8_lossy(&cache.get(&self.export)?).into_owned();
+        if let Some(additions) = &self.additions {
+            text.push_str(&String::from_utf8_lossy(&cache.get(additions)?));
+        }
+        Ok(text)
     }
 }
 
@@ -64,12 +77,13 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     // The same program through the same script gives the same export: this machine's cache keeps
     // it for every repository (and fresh clone) of the game.
     let key = sha256(format!("{original_hash}\n{decompile}\n{EXPORT_SCRIPT}").as_bytes());
-    let index = kept_or_run(repo, &cache, &key, a.has("--again"), &[], || {
-        run_ghidra(repo, &cache, &original, &original_hash, decompile, &[])
-    })?;
-    let records = cache.get(&index.export)?;
-    let mut analysis = Analysis::parse(&String::from_utf8_lossy(&records), &module, index.entry)?;
-    // Then the functions the knowledge names that Ghidra didn't find, in an analysis of their own.
+    let again = a.has("--again");
+    // Ghidra's project of the analysis under `key`, kept for adding functions to it.
+    let project = cache.dir().join("ghidra").join(&key);
+    let analyse = || run_ghidra(repo, &cache, &original, &original_hash, decompile, &project);
+    let mut index = kept_or_run(repo, &cache, &key, again, analyse)?;
+    let mut analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry)?;
+    // Then the functions the knowledge names that Ghidra didn't find, added to it.
     let mut k = Knowledge::load(&repo.knowledge())?;
     let missing: Vec<u32> = k
         .functions
@@ -77,25 +91,35 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         .filter(|id| id.module() == module && id.part().is_none() && !analysis.functions.contains_key(*id))
         .map(|id| id.offset())
         .collect();
-    let index = if missing.is_empty() {
-        index
-    } else {
+    if !missing.is_empty() {
         let entries: Vec<String> = missing.iter().map(|offset| format!("{offset:05X}")).collect();
         say("adding", format!("{} functions the knowledge names that Ghidra didn't find", missing.len()));
-        let key = sha256(format!("{key}\n{}", entries.join("\n")).as_bytes());
-        let base = analysis.base;
-        let linear: Vec<u64> = missing.iter().map(|&offset| base + u64::from(offset)).collect();
-        let index = kept_or_run(repo, &cache, &key, a.has("--again"), &entries, || {
-            run_ghidra(repo, &cache, &original, &original_hash, decompile, &linear)
-        })?;
-        let records = cache.get(&index.export)?;
-        analysis = Analysis::parse(&String::from_utf8_lossy(&records), &module, index.entry)?;
+        let added = sha256(format!("{key}\n{}", entries.join("\n")).as_bytes());
+        let additions = match cache.recall("additions", &added).filter(|hash| !again && cache.has(hash)) {
+            Some(hash) => hash,
+            None => {
+                if !project.join(format!("{}.gpr", repo.settings.game.name)).is_file() {
+                    say(
+                        "program",
+                        "Ghidra's project of the analysis isn't kept on this machine: analysing again, once",
+                    );
+                    index = analyse()?;
+                    cache.remember("analysis", &key, &toml::to_string(&index).map_err(|e| e.to_string())?)?;
+                    analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry)?;
+                }
+                let linear: Vec<u64> = missing.iter().map(|&offset| analysis.base + u64::from(offset)).collect();
+                let hash = add_functions(repo, &cache, &project, &linear, decompile)?;
+                cache.remember("additions", &added, &hash)?;
+                hash
+            }
+        };
+        index.additions = Some(additions);
+        analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry)?;
         let still = missing.iter().filter(|&&offset| !analysis.functions.keys().any(|id| id.offset() == offset));
         for offset in still {
             say("missing", format!("{module}+{offset:05X}: Ghidra made no function there"));
         }
-        index
-    };
+    }
     write_toml(&repo.state()?.join(INDEX), &index)?;
     say("ghidra", format!("{} functions, {} calls ({})", analysis.functions.len(), analysis.calls.len(), index.ghidra));
     let named = name_library_functions(&mut k, &analysis);
@@ -107,19 +131,16 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
 }
 
 /// The analysis kept under `key` on this machine (unless `again`), else `run`'s, kept there.
-/// `entries`: the functions it adds to Ghidra's (for the message).
 fn kept_or_run(
     repo: &Repo,
     cache: &Cache,
     key: &str,
     again: bool,
-    entries: &[String],
     run: impl FnOnce() -> Result<Index, String>,
 ) -> Result<Index, String> {
     let earlier = cache.recall("analysis", key).and_then(|text| toml::from_str::<Index>(&text).ok());
     if let Some(index) = earlier.filter(|i| !again && cache.has(&i.export)) {
-        let what = if entries.is_empty() { "" } else { " with these functions" };
-        say("program", format!("{}: analyzed before{what} on this machine (--again redoes it)", repo.module()));
+        say("program", format!("{}: analyzed before on this machine (--again redoes it)", repo.module()));
         return Ok(index);
     }
     let index = run()?;
@@ -127,16 +148,15 @@ fn kept_or_run(
     Ok(index)
 }
 
-/// Unpacks the program with Clockwork (if it was packed), analyzes it with Ghidra (creating
-/// functions at the `functions` given, as Ghidra's linear addresses) and stores what that gives in
-/// the cache.
+/// Unpacks the program with Clockwork (if it was packed), analyzes it with Ghidra in a new project
+/// at `project` (kept, for adding functions later) and stores what that gives in the cache.
 fn run_ghidra(
     repo: &Repo,
     cache: &Cache,
     original: &Path,
     original_hash: &str,
     decompile: bool,
-    functions: &[u64],
+    project: &Path,
 ) -> Result<Index, String> {
     let (ghidra, java) = (tools::ghidra(&repo.local)?, tools::java(&repo.local)?);
     let work = repo.state()?.join("ghidra");
@@ -164,14 +184,14 @@ fn run_ghidra(
     let _ = std::fs::remove_file(&export);
     let script = work.join("scripts").join("RecExport.java");
     std::fs::write(&script, EXPORT_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
-    // Ghidra's project is a cache of this run only, in a temporary folder: Ghidra refuses project
-    // paths with a folder starting with a dot (`.rrc`).
-    let project = std::env::temp_dir().join(format!("rrc-ghidra-{}", std::process::id()));
-    std::fs::create_dir_all(&project).map_err(|e| format!("{}: {e}", project.display()))?;
+    // Ghidra's project is in the cache, not in `.rrc`: Ghidra refuses project paths with a folder
+    // starting with a dot.
+    let _ = std::fs::remove_dir_all(project);
+    std::fs::create_dir_all(project).map_err(|e| format!("{}: {e}", project.display()))?;
     let mut command = headless(&ghidra);
     command
         .env("JAVA_HOME", &java)
-        .arg(&project)
+        .arg(project)
         .arg(&repo.settings.game.name)
         .args(["-import"])
         .arg(&program)
@@ -182,17 +202,8 @@ fn run_ghidra(
     if decompile {
         command.arg("decompile");
     }
-    if !functions.is_empty() {
-        let list = work.join("functions.txt");
-        let text: String = functions.iter().map(|f| format!("{f}\n")).collect();
-        std::fs::write(&list, text).map_err(|e| format!("{}: {e}", list.display()))?;
-        // Not `functions=FILE`: Windows' cmd splits arguments at `=`.
-        command.arg("functions").arg(&list);
-    }
     let log = work.join("ghidra.log");
-    let output = command.output().map_err(|e| format!("Ghidra: {e}"));
-    let _ = std::fs::remove_dir_all(&project);
-    let output = output?;
+    let output = command.output().map_err(|e| format!("Ghidra: {e}"))?;
     std::fs::write(&log, [output.stdout.as_slice(), &output.stderr].concat()).map_err(|e| e.to_string())?;
     if !output.status.success() || !export.is_file() {
         return Err(format!("Ghidra's analysis failed (its log: {})", log.display()));
@@ -204,9 +215,55 @@ fn run_ghidra(
         program: cache.put(&bytes)?,
         unpacked,
         export: cache.put(&records)?,
+        additions: None,
         entry,
         ghidra: ghidra_version,
     })
+}
+
+/// Functions created at `functions` (Ghidra's linear addresses) in the analysis kept at `project`,
+/// opened read only and not analysed again: their records, in the cache.
+fn add_functions(
+    repo: &Repo,
+    cache: &Cache,
+    project: &Path,
+    functions: &[u64],
+    decompile: bool,
+) -> Result<String, String> {
+    let (ghidra, java) = (tools::ghidra(&repo.local)?, tools::java(&repo.local)?);
+    let work = repo.state()?.join("ghidra");
+    std::fs::create_dir_all(work.join("scripts")).map_err(|e| format!("{}: {e}", work.display()))?;
+    let script = work.join("scripts").join("RecExport.java");
+    std::fs::write(&script, EXPORT_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
+    let list = work.join("functions.txt");
+    let text: String = functions.iter().map(|f| format!("{f}\n")).collect();
+    std::fs::write(&list, text).map_err(|e| format!("{}: {e}", list.display()))?;
+    let out = work.join("additions.jsonl");
+    let _ = std::fs::remove_file(&out);
+    say("program", "Ghidra adds them to the analysis (a minute or so)");
+    let mut command = headless(&ghidra);
+    command
+        .env("JAVA_HOME", &java)
+        .arg(project)
+        .arg(&repo.settings.game.name)
+        .arg("-process")
+        .arg(repo.module())
+        .args(["-readOnly", "-noanalysis", "-scriptPath"])
+        .arg(work.join("scripts"))
+        .args(["-postScript", "RecExport.java"])
+        .arg(&out);
+    if decompile {
+        command.arg("decompile");
+    }
+    // Not `functions=FILE`: Windows' cmd splits arguments at `=`.
+    command.arg("functions").arg(&list).arg("only");
+    let log = work.join("ghidra-additions.log");
+    let output = command.output().map_err(|e| format!("Ghidra: {e}"))?;
+    std::fs::write(&log, [output.stdout.as_slice(), &output.stderr].concat()).map_err(|e| e.to_string())?;
+    if !output.status.success() || !out.is_file() {
+        return Err(format!("Ghidra couldn't add the functions (its log: {})", log.display()));
+    }
+    cache.put(&std::fs::read(&out).map_err(|e| format!("{}: {e}", out.display()))?)
 }
 
 fn headless(ghidra: &Path) -> Command {
@@ -282,8 +339,7 @@ impl Analysis {
     pub fn load(repo: &Repo) -> Result<Option<Analysis>, String> {
         let Some(index) = Index::load(repo)? else { return Ok(None) };
         let cache = Cache::open(&repo.local)?;
-        let records = cache.get(&index.export)?;
-        Analysis::parse(&String::from_utf8_lossy(&records), &repo.module(), index.entry).map(Some)
+        Analysis::parse(&index.records(&cache)?, &repo.module(), index.entry).map(Some)
     }
 
     /// Reads an export of `module` whose entry point is at image offset `entry`.

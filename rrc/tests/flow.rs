@@ -26,6 +26,10 @@ const MOUSE_POLLING: [u8; 16] =
 /// mov ax, es:[6Ch]; call poll; jmp $-14`, `poll` (+0000E) a `ret`.
 const BIOS_TIMER: [u8; 15] = [0xB8, 0x40, 0x00, 0x8E, 0xC0, 0x26, 0xA1, 0x6C, 0x00, 0xE8, 0x02, 0x00, 0xEB, 0xF2, 0xC3];
 
+/// A COM program that reads the game port forever: `mov dx, 201h; again: in al, dx; call poll; jmp
+/// again`, `poll` (+00009) a `ret`.
+const GAME_PORT: [u8; 10] = [0xBA, 0x01, 0x02, 0xEC, 0xE8, 0x02, 0x00, 0xEB, 0xFA, 0xC3];
+
 /// The workspace's `clockwork`, built if it isn't.
 fn clockwork() -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
@@ -243,5 +247,33 @@ fn memory_outside_the_image_is_mem() {
     let scanned = rrc.ok(&["inputs", "wait", "--at", "MEM+00400", "--len", "256"]);
     assert!(scanned.contains("scanned   MEM+00400, 256 bytes"), "{scanned}");
     assert!(scanned.contains("MEM+0046C bios_ticks (an input, 4 bytes)"), "{scanned}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_scripted_joystick_is_an_input() {
+    let (dir, rrc) = setup("joystick", &GAME_PORT);
+    rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    rrc.ok(&["input", "joystick", "stick"]);
+    rrc.ok(&["sync", "T.COM+00009", "poll", "--when-changed", "stick"]);
+    let script = dir.join("stick.inputs");
+    std::fs::write(&script, "100:{stick 1000 -2000 1}{stick 0 0 0}\n").unwrap();
+    let session = ["session", "add", "stick", "--seconds", "0.4", "--inputs", script.to_str().unwrap()];
+    rrc.ok(&[&session[..], &["--clockwork", "--joystick 1"]].concat());
+    // The first poll, then the stick's two moves.
+    assert!(rrc.ok(&["record", "stick"]).contains("trace     3 ticks"));
+    let stick = rrc.ok(&["trace", "stick", "--item", "stick"]);
+    let lines: Vec<&str> = stick.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "1         A: buttons 0, at (0, 0)",
+            "2         A: buttons 1, at (1000, -2000)",
+            "3         A: buttons 0, at (0, 0)"
+        ],
+        "{stick}"
+    );
+    assert!(rrc.ok(&["inputs", "stick"]).contains("unseen    port 201h (the joystick) read"));
     std::fs::remove_dir_all(&dir).ok();
 }

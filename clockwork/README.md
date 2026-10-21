@@ -33,6 +33,7 @@ ones:
 
 - `--input "25000:{enter}"` (repeatable) and `--input-file FILE` script keys and clicks at emulated times:
   text, named keys (`{esc}`, `{up}`, `{f1}`, `{ctrl}`...), `{click X Y}` in the mouse driver's coordinates,
+  `{move X Y}`, `{stick X Y BUTTONS}` (the first joystick, with `--joystick 1`; `{stick2 ...}` the second),
   `{hold KEY MS}`, `{keydown KEY}`/`{keyup KEY}`, `{wait MS}`. Run it, look at the `--screenshot`, add the
   next step. `../testdata/inputs/` has walkthroughs that take Wolfenstein 3D into its first level and past a
   pushwall, and Arena and Daggerfall to their first dungeons;

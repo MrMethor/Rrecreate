@@ -1,8 +1,10 @@
 // Exports an analyzed program as JSON lines, for the toolkit's knowledge files (DESIGN.md §5).
 // Run through Ghidra's headless analyzer:
-//   analyzeHeadless ... -postScript RecExport.java <out.jsonl> [decompile] [functions <file>]
+//   analyzeHeadless ... -postScript RecExport.java <out.jsonl> [decompile] [functions <file> [only]]
 // With a functions file (a linear address a line: entries found some other way, such as interrupt
-// handlers only a vector reaches), functions are created there first and the changes analyzed.
+// handlers only a vector reaches), functions are created there first and the changes analyzed; with
+// "only", the export has just those functions' records (to add to an export of the program made
+// before, from the same analysis: no program or block records).
 // One JSON object per line: a "program" record, then "block", "function", "call" and "ref" records
 // (an instruction's reference to data: "read", "write" or "data" for an address taken), then one
 // "code" record per function with its disassembly (and its decompilation when asked).
@@ -17,7 +19,9 @@ import java.io.FileWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
@@ -38,6 +42,9 @@ public class RecExport extends GhidraScript {
 
 	private BufferedWriter out;
 
+	/** The functions created from the functions file. */
+	private final Set<Address> created = new HashSet<>();
+
 	@Override
 	public void run() throws Exception {
 		String[] args = getScriptArgs();
@@ -45,9 +52,13 @@ public class RecExport extends GhidraScript {
 			throw new IllegalArgumentException("usage: RecExport.java <out.jsonl> [decompile] [functions <file>]");
 		}
 		boolean decompile = false;
+		boolean only = false;
 		for (int i = 1; i < args.length; i++) {
 			if (args[i].equals("decompile")) {
 				decompile = true;
+			}
+			else if (args[i].equals("only")) {
+				only = true;
 			}
 			else if (args[i].equals("functions") && i + 1 < args.length) {
 				createFunctions(Path.of(args[++i]));
@@ -55,18 +66,25 @@ public class RecExport extends GhidraScript {
 		}
 		out = new BufferedWriter(new FileWriter(args[0]));
 		try {
-			export(decompile);
+			export(decompile, only);
 		}
 		finally {
 			out.close();
 		}
 	}
 
-	private void export(boolean decompile) throws Exception {
+	private void export(boolean decompile, boolean only) throws Exception {
 		Address entry = null;
 		for (Symbol symbol : currentProgram.getSymbolTable().getSymbols("entry")) {
 			entry = symbol.getAddress();
 		}
+		if (!only) {
+			programRecords(entry);
+		}
+		exportFunctions(decompile, only);
+	}
+
+	private void programRecords(Address entry) throws Exception {
 		line("{\"record\":\"program\",\"name\":" + str(currentProgram.getName()) + ",\"language\":" +
 			str(currentProgram.getLanguageID().getIdAsString()) + ",\"compiler\":" +
 			str(currentProgram.getCompilerSpec().getCompilerSpecID().getIdAsString()) + ",\"entry\":" +
@@ -76,11 +94,18 @@ public class RecExport extends GhidraScript {
 				address(block.getStart()) + ",\"size\":" + block.getSize() + ",\"execute\":" +
 				block.isExecute() + ",\"initialized\":" + block.isInitialized() + "}");
 		}
+	}
+
+	/** The functions' records (with "only", the created functions'). */
+	private void exportFunctions(boolean decompile, boolean only) throws Exception {
 		List<Function> functions = new ArrayList<>();
 		FidService fid = new FidService();
 		for (Function f : currentProgram.getFunctionManager().getFunctions(true)) {
 			if (monitor.isCancelled()) {
 				return;
+			}
+			if (only && !created.contains(f.getEntryPoint())) {
+				continue;
 			}
 			functions.add(f);
 			StringBuilder ranges = new StringBuilder();
@@ -148,7 +173,6 @@ public class RecExport extends GhidraScript {
 
 	/** Creates a function at each entry the file lists where Ghidra has none, then analyzes them. */
 	private void createFunctions(Path file) throws Exception {
-		int created = 0;
 		for (String line : Files.readAllLines(file)) {
 			if (line.isBlank()) {
 				continue;
@@ -161,14 +185,14 @@ public class RecExport extends GhidraScript {
 				disassemble(address);
 			}
 			if (createFunction(address, null) != null) {
-				created++;
+				created.add(address);
 			}
 			else {
 				println("RecExport: no function could be made at " + address);
 			}
 		}
 		analyzeChanges(currentProgram);
-		println("RecExport: created " + created + " functions");
+		println("RecExport: created " + created.size() + " functions");
 	}
 
 	/** The kind of a data reference: "write", "read", or "data" (an address taken). */

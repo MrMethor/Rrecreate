@@ -51,17 +51,20 @@ usage: rrc <command> [arguments]     (inside a port repository)
   input [ID|mouse|joystick NAME [--size N] [--sync A,B] [--note TEXT]]
                          the boundary values, or one (memory, or a device's state; --sync: read only
                          at those sync points); --remove NAME; both take name's options
-  show ID|NAME|SEG:OFF [--asm] [--c]
+  show ID|NAME|SEG:OFF [--asm] [--c] [--listing]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
                          its DAT_SEG_OFF names): its name and evidence, what Ghidra found (size,
                          calls, callers; the function an address is inside; who reads and writes
-                         data), its disassembly (--asm, lines as IDs; Clockwork's for code Ghidra has
-                         no function for) or decompiled code (--c), with the knowledge's names for
-                         Ghidra's FUN_ and DAT_ names
-  session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]]
+                         data), its disassembly (--asm, lines and targets as IDs, each instruction's
+                         data named; Clockwork's for code Ghidra has no function for), Clockwork's
+                         disassembly following jumps and jump tables (--listing), or decompiled
+                         code (--c), with the knowledge's names for Ghidra's FUN_ and DAT_ names
+  session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]
+          [--clockwork OPTIONS]]
                          the sessions, or a new one: an input script (clockwork run --input-file) or
-                         play recorded by clockwork play --record, and how many emulated seconds
-  session set NAME [--seconds N] [--description TEXT]
+                         play recorded by clockwork play --record, and how many emulated seconds;
+                         --clockwork: more `clockwork run` options for it (\"--joystick 1\")
+  session set NAME [--seconds N] [--description TEXT] [--clockwork OPTIONS]
                          change a session
   record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound;

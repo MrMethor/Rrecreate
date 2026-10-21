@@ -120,8 +120,8 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 }
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &["--asm", "--c"])?;
-    let [what] = a.positionals(1, 1, "show ID|NAME|SEG:OFF [--asm] [--c]")? else { unreachable!() };
+    let a = Args::parse(args, &[], &["--asm", "--c", "--listing"])?;
+    let [what] = a.positionals(1, 1, "show ID|NAME|SEG:OFF [--asm] [--c] [--listing]")? else { unreachable!() };
     let k = Knowledge::load(&repo.knowledge())?;
     let analysis = Analysis::load(repo)?;
     let id = resolve(repo, &k, analysis.as_ref(), what)?;
@@ -143,7 +143,7 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
     } else {
         say("unnamed", &id);
-        if let Some((function, offset)) = analysis.as_ref().and_then(|a| a.containing(&id)) {
+        if let Some((function, offset)) = analysis.as_ref().and_then(|a| a.containing(&id)).filter(|f| *f.0 != id) {
             let name =
                 k.functions.get(function).map_or_else(|| function.to_string(), |d| format!("{} ({function})", d.name));
             say("inside", format!("{name}, {offset:#X} bytes in"));
@@ -161,7 +161,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         let size = k.data.get(&id).and_then(|d| d.size).unwrap_or(1);
         let referred = show_refs(&k, analysis, &id, size);
         let in_code = analysis.functions.contains_key(&id) || analysis.containing(&id).is_some();
-        if !in_code && !referred && !k.data.contains_key(&id) && !id.is_memory() {
+        if a.has("--listing") {
+            print!("{}", clockwork_listing(repo, &k, analysis, &id)?);
+        } else if !in_code && !referred && !k.data.contains_key(&id) && !id.is_memory() {
             if a.has("--asm") {
                 print!("{}", clockwork_listing(repo, &k, analysis, &id)?);
             } else {
@@ -210,8 +212,8 @@ fn show_refs(k: &Knowledge, analysis: &Analysis, id: &Id, size: u32) -> bool {
 /// Functions listed per kind of reference.
 const REFS_SHOWN: usize = 10;
 
-/// Clockwork's disassembly from `id`, following its control flow (`clockwork listing`), for code
-/// Ghidra has no function for; lines and targets as IDs, named ones by name.
+/// Clockwork's disassembly from `id`, following its control flow and the jump tables it finds
+/// (`clockwork listing`); lines and targets as IDs, named ones by name.
 fn clockwork_listing(repo: &Repo, k: &Knowledge, analysis: &Analysis, id: &Id) -> Result<String, String> {
     let index = crate::analysis::Index::load(repo)?.ok_or("no analysis: rrc analyze")?;
     let program = Cache::open(&repo.local)?.get(&index.program)?;
@@ -243,7 +245,7 @@ fn clockwork_listing(repo: &Repo, k: &Knowledge, analysis: &Analysis, id: &Id) -
         });
         name.unwrap_or(id)
     };
-    let mut out = format!("code      from Clockwork's disassembly (Ghidra has no function at {id})\n");
+    let mut out = format!("code      Clockwork's disassembly from {id}\n");
     for line in text.lines().skip(1) {
         // `+OFFSET  instruction`, with targets as `+OFFSET`.
         let (at, rest) = line.split_once("  ").unwrap_or(("", line));
@@ -291,13 +293,65 @@ fn show_analysis(k: &Knowledge, analysis: &Analysis, id: &Id, asm: bool, c: bool
     }
     if let Some((disassembly, decompiled)) = analysis.code.get(id) {
         if asm {
-            print!("{}", analysis.with_ids(&analysis.with_names(disassembly, k, id.module()), id.module()));
+            let lines = analysis.with_ids(&analysis.with_names(disassembly, k, id.module()), id.module());
+            print!("{}", annotated(&lines, k, analysis, id.module()));
         }
         if c {
             let decompiled = decompiled.as_deref().unwrap_or("(Ghidra didn't decompile it)");
             println!("{}", analysis.with_names(decompiled, k, id.module()));
         }
     }
+}
+
+/// Ghidra's disassembly (lines as IDs) with its branch targets (`0x1000:cce9`) as IDs or names, each
+/// instruction's data references named after it, and a jump through a table pointed to `--listing`.
+fn annotated(lines: &str, k: &Knowledge, analysis: &Analysis, module: &str) -> String {
+    // A function's or data item's name, `name[+N]` for a byte inside an item, else the ID.
+    let name = |id: &Id| {
+        if let Some(d) = k.functions.get(id) {
+            return d.name.clone();
+        }
+        let inside = k.data.range(..=id.clone()).next_back().filter(|(start, _)| start.module() == id.module());
+        match inside {
+            Some((start, d)) if start == id => d.decision.name.clone(),
+            Some((start, d)) if d.size.is_some_and(|size| id.offset() - start.offset() < size) => {
+                format!("{}[+{}]", d.decision.name, id.offset() - start.offset())
+            }
+            _ => id.to_string(),
+        }
+    };
+    let mut out = String::with_capacity(lines.len());
+    for line in lines.lines() {
+        let (at, instruction) = line.split_once("  ").unwrap_or((line, ""));
+        // `0xSSSS:OOOO` targets, as Ghidra prints near and far branches.
+        let mut text = String::with_capacity(instruction.len());
+        let mut rest = instruction;
+        while let Some(start) = rest.find("0x") {
+            let token: String = rest[start + 2..].chars().take_while(|c| c.is_ascii_hexdigit() || *c == ':').collect();
+            text.push_str(&rest[..start]);
+            match token.contains(':').then(|| analysis.id_of(module, &token)).flatten() {
+                Some(target) => text.push_str(&name(&target)),
+                None => text.push_str(&rest[start..start + 2 + token.len()]),
+            }
+            rest = &rest[start + 2 + token.len()..];
+        }
+        text.push_str(rest);
+        let mut notes: Vec<String> = Vec::new();
+        if let Ok(from) = parse_id(at) {
+            for (_, to, _) in analysis.refs.iter().filter(|(f, _, _)| *f == from) {
+                let note = name(to);
+                if !notes.contains(&note) {
+                    notes.push(note);
+                }
+            }
+        }
+        if instruction.starts_with("JMP") && instruction.contains("CS:[") {
+            notes.push("a table: --listing lists its cases".into());
+        }
+        let notes = if notes.is_empty() { String::new() } else { format!("  ; {}", notes.join(", ")) };
+        out.push_str(&format!("{at}  {text}{notes}\n"));
+    }
+    out
 }
 
 fn note(text: &str) -> String {

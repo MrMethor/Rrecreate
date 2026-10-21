@@ -300,8 +300,14 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
             (image_address(&repo.module(), &id.to_string())?, len)
         }
         None => {
+            // DS's segment, as an offset in the image when it is in it (so the output names it by ID).
             let regs = clockwork.ask("regs", Value::Null)?;
-            (format!("{:04X}:0000", regs["ds"].as_u64().unwrap_or(0)), 0x1_0000)
+            let ds = regs["ds"].as_u64().unwrap_or(0) as u32;
+            let base = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
+            match base.and_then(|base| (ds * 16).checked_sub(base)) {
+                Some(offset) => (format!("+{offset:05X}"), 0x1_0000),
+                None => (format!("{ds:04X}:0000"), 0x1_0000),
+            }
         }
     };
     clockwork.ask("watch", json!({"ranges": [{"at": at, "len": len}], "reads": true, "summary": true}))?;

@@ -294,8 +294,10 @@ reads a value, with the call chain), `record`, `trace`.
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees
 the segments); under an extender, the image dump. Ghidra imports it headless, applies the signature packs and
 exports functions, calls, disassembly and decompiled code (`ghidra/RecExport.java`) into the cache; `rrc show`
-puts that next to the knowledge. Ghidra's analysis isn't exactly reproducible (two runs on Wolf3D found 778 and 776
-functions), so the cache keeps the analysis of a program by its hash and later runs reuse it.
+puts that next to the knowledge. Two analyses with the same options find the same functions, but the options
+change them (decompiling adds one on Wolf3D: 778 functions against 777), so the cache keeps the analysis of a
+program by its hash, the export script and the options, and later runs reuse it. Its Ghidra project is kept
+too: functions the knowledge names that Ghidra missed are added to it without analysing the program again.
 
 **Traces** (`rrc record <session>`): Clockwork runs the session and stops at every sync point hit, a tick;
 at each it reads the boundary values and the named data, and takes the frames and sound events since the last

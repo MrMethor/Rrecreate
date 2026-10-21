@@ -10,6 +10,9 @@
 //! moves the mouse to X, Y in the mouse driver's coordinates, presses the button 100 ms later and
 //! releases it 250 ms after that (moving before pressing matters: some games, like Arena,
 //! put the cursor back where they last read it every frame); `{move X Y}` only moves;
+//! `{stick X Y BUTTONS}` puts the first joystick at X, Y (-32767 to 32767, left and up negative) with
+//! BUTTONS held (bit 0 button 1, bit 1 button 2) until the next such step, `{stick2 ...}` the second
+//! (`--joystick N` connects them);
 //! `{hold KEY MS}` holds a key (a named one or a character) down for MS ms, to walk in a game;
 //! `{keydown KEY}` and `{keyup KEY}` press and release one with other steps between (Ctrl held
 //! while walking, Alt+X); `{wait MS}` waits.
@@ -41,6 +44,13 @@ enum Step {
     Move {
         x: i16,
         y: i16,
+    },
+    /// A joystick (0 or 1) at a position with buttons held.
+    Stick {
+        stick: u8,
+        x: i16,
+        y: i16,
+        buttons: u8,
     },
     Wait(u64),
 }
@@ -110,6 +120,15 @@ impl Script {
                     ["click", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 1 },
                     ["rclick", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 2 },
                     ["move", x, y] => Step::Move { x: number(x)?, y: number(y)? },
+                    [which @ ("stick" | "stick2"), x, y, buttons] => {
+                        let buttons = buttons.parse::<u8>().ok().filter(|&b| b <= 3);
+                        Step::Stick {
+                            stick: u8::from(*which == "stick2"),
+                            x: number(x)?,
+                            y: number(y)?,
+                            buttons: buttons.ok_or_else(|| format!("--input {spec:?}: buttons are 0 to 3"))?,
+                        }
+                    }
                     ["wait", ms] => Step::Wait(ms.parse().map_err(|_| format!("--input {spec:?}: bad wait {ms:?}"))?),
                     ["hold", name, ms] => {
                         let codes = key(name).ok_or_else(|| format!("--input {spec:?}: unknown key {name:?}"))?;
@@ -165,6 +184,10 @@ impl Script {
                     m.queue_mouse(at, x, y, 0);
                     at += ms(m, KEY_SPACING_MS);
                 }
+                &Step::Stick { stick, x, y, buttons } => {
+                    m.queue_input(at, dos::Input::Joystick { stick, x, y, buttons });
+                    at += ms(m, KEY_SPACING_MS);
+                }
                 Step::KeyDown(codes) => {
                     m.queue_scancodes(at, codes);
                     at += ms(m, KEY_SPACING_MS);
@@ -214,6 +237,11 @@ mod tests {
             ]
         );
         assert_eq!(Script::parse("0:{down}{up}").unwrap().steps[1], Step::Key(vec![0xE0, 0x48]), "arrows still");
+        assert_eq!(
+            Script::parse("0:{stick -32767 0 1}{stick2 5 6 0}").unwrap().steps,
+            [Step::Stick { stick: 0, x: -32767, y: 0, buttons: 1 }, Step::Stick { stick: 1, x: 5, y: 6, buttons: 0 }]
+        );
+        assert!(Script::parse("0:{stick 0 0 4}").is_err());
         assert!(Script::parse("12:{nope}").is_err());
         assert!(Script::parse("12:{keydown}").is_err());
         assert!(Script::parse("x:a").is_err());
