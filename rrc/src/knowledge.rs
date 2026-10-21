@@ -201,9 +201,11 @@ impl Knowledge {
         Ok(knowledge)
     }
 
-    /// Writes the knowledge files in `dir`, tables sorted by ID.
+    /// Writes the knowledge files in `dir` whose items changed, tables sorted by ID. A TOML file
+    /// keeps the comments at its top; other comments are lost when a file is written.
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let before = Knowledge::load(dir).unwrap_or_default();
         let mut functions = format!("{FUNCTIONS_HEADER}\n");
         for (id, d) in &self.functions {
             functions.push_str(&line(&[
@@ -228,14 +230,30 @@ impl Knowledge {
                 &d.evidence,
             ]));
         }
-        let write = |file: &str, text: String| {
+        // A file is written when its items changed, or when it isn't there.
+        let write = |file: &str, same: bool, text: String| {
             let path = dir.join(file);
+            if same && path.is_file() {
+                return Ok(());
+            }
             std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
         };
-        write(FUNCTIONS, functions)?;
-        write(DATA, data)?;
-        write(TYPES, format!("# Structures and enumerations (docs/formats.md).\n{}", to_toml(&self.types)?))?;
-        write(TICKS, format!("# Sync points and boundary values (docs/formats.md).\n{}", to_toml(&self.ticks)?))
+        // A TOML file's comments at its top, kept; else a line saying what the file is.
+        let top = |file: &str, what: &str| {
+            let old = std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+            let kept: String = old
+                .lines()
+                .take_while(|l| l.starts_with('#') || l.trim().is_empty())
+                .map(|l| format!("{l}\n"))
+                .collect();
+            if kept.trim().is_empty() { format!("# {what} (docs/formats.md).\n") } else { kept }
+        };
+        write(FUNCTIONS, before.functions == self.functions, functions)?;
+        write(DATA, before.data == self.data, data)?;
+        let types = format!("{}{}", top(TYPES, "Structures and enumerations"), to_toml(&self.types)?);
+        write(TYPES, before.types == self.types, types)?;
+        let ticks = format!("{}{}", top(TICKS, "Sync points and boundary values"), to_toml(&self.ticks)?);
+        write(TICKS, before.ticks == self.ticks, ticks)
     }
 
     /// The function or data item named `name`.
@@ -462,6 +480,28 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("isn't a name")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("not in GAME.EXE")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("GAME.EXE+00202: past the image's end")), "{problems:?}");
+    }
+
+    #[test]
+    fn saving_writes_what_changed_and_keeps_a_toml_file_s_top_comments() {
+        let dir = std::env::temp_dir().join(format!("rrc-knowledge-comments-{}", std::process::id()));
+        let mut k = Knowledge::default();
+        k.ticks.syncs.push(Sync { name: "play".into(), at: "GAME.EXE+00120".into(), ..Sync::default() });
+        k.save(&dir).unwrap();
+        let notes = "# Sync points.\n#\n# The play loop waits for the timer here.\n\n";
+        let ticks = std::fs::read_to_string(dir.join(TICKS)).unwrap();
+        let ticks = format!("{notes}{}", ticks.lines().skip(1).map(|l| format!("{l}\n")).collect::<String>());
+        std::fs::write(dir.join(TICKS), &ticks).unwrap();
+        std::fs::write(dir.join(DATA), format!("{DATA_HEADER}\n# a comment of its own\n")).unwrap();
+        k.functions.insert(id("GAME.EXE+00120"), decision("play_loop"));
+        k.save(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(TICKS)).unwrap(), ticks, "unchanged: not written");
+        assert!(std::fs::read_to_string(dir.join(DATA)).unwrap().contains("a comment of its own"));
+        k.ticks.syncs[0].note = "where the wait returns".into();
+        k.save(&dir).unwrap();
+        let written = std::fs::read_to_string(dir.join(TICKS)).unwrap();
+        assert!(written.starts_with(notes) && written.contains("where the wait returns"), "{written}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

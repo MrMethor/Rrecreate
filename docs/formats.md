@@ -152,7 +152,9 @@ sync = ["menu"]                 # optional: read only at these sync points' tick
 ```
 
 `rrc sync` and `rrc input` write these. Each item may carry `provenance`, `confidence` and `evidence`, as the
-tables' items do, and a `note` saying what it is. A tick's inputs and state are what the memory holds at the
+tables' items do, and a `note` saying what it is. rrc writes a knowledge file only when its items changed, and
+keeps the comments at the top of `ticks.toml` and `types.toml`; comments elsewhere are lost then, so explain
+an item in its fields, and at length in `notes/`. A tick's inputs and state are what the memory holds at the
 sync point: what the pass starting there reads.
 With `when_changed`, a hit is a tick only when one of those items differs from what it was at this sync
 point's last tick (the first hit is always one): list what the loop reads, and the counter its timing reads.
