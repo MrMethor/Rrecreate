@@ -30,6 +30,9 @@ What Rrecreate produces for each game is a **Rust port of the original game**:
   - **portability:** a new platform is a new platform layer.
 - **Modernizations are toggles on top** (§6.4); the faithful mode stays checkable against the original for good.
 
+The games it is for are those whose source was never released (D52). A game whose source is out, such as
+Wolf3D, is a test bench: its source grades the toolkit, and its port goes only as far as the tests need.
+
 Rrecreate is the toolkit an AI agent uses to make such ports:
 
 - **The person** supplies the game's files, makes the calls that are theirs (what to port, downloads,
@@ -336,7 +339,7 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
 | M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | Recreate's Wolf3D knowledge loads (outside the port); a session of the Wolf3D port is traced |
 | M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, the comparison and its report | A toy port of a test program matches tick by tick |
-| M4 Pilot | Wolf3D gameplay as a native simulation, from a transplant at the start of E1M1, compared per tick | It matches through the pushwall session. id's released source stays out of the agent's reach and grades the result afterwards |
+| M4 Pilot | Wolf3D gameplay as a native simulation, from a transplant at the start of E1M1, compared per tick (a test of the toolkit, not a finished port: D52) | It matches through the pushwall session. id's released source stays out of the agent's reach and grades the result afterwards |
 | M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |
 | M6 Modern mode | Fixed-rate logic, free frame rate, resolution, the first quirk fixes | The modern toggles pass their own tests |
 | M7 A game without source | The same on a small real-mode game with no source release (not Arena or Daggerfall, which the person ports with the finished toolkit) | Honest evidence that the approach works where it's needed |

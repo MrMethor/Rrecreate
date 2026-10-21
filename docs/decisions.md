@@ -16,6 +16,13 @@ for example, should be able to get a real 3D renderer.
 **Why:** the faithful port is the base for modern versions of the game, not the end; behaviour that can't be
 checked against the original is lost, and logic tangled with its presentation can't be modernized.
 
+### D52. The targets are games whose source was never released. Accepted 2026-10-21, with the person.
+Rrecreate is for games without a source release. A game whose source is out, such as Wolf3D, is a test bench:
+its source grades the toolkit afterwards (D3), and its port goes only as far as testing the toolkit needs; it
+doesn't have to become a finished game.
+**Why:** a released source already lets people port such a game; what is missing is a way to port the games
+whose source is lost or was never published.
+
 ## Approach
 
 ### D1. Port by behaviour, compared with the original as a whole program. Accepted 2026-10-19, with the person.
