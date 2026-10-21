@@ -279,8 +279,10 @@ pub(crate) fn inputs(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         None => clockwork.ask("run", json!({"ms": length_ms - ms}))?,
     };
     let last = ran["sync"]["hit"].as_u64().map_or_else(|| "the session's end".to_owned(), |hit| format!("tick {hit}"));
-    let bytes = clockwork.ask("watch_end", Value::Null)?["bytes"].as_array().cloned().unwrap_or_default();
+    let watched = clockwork.ask("watch_end", Value::Null)?;
+    let bytes = watched["bytes"].as_array().cloned().unwrap_or_default();
     let vectors = interrupt_vectors(&mut clockwork)?;
+    let analysis = Analysis::load(repo)?;
     let image = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
     let names = Names { k: &k, module: repo.module() };
     say("scanned", format!("{at}, {len} bytes, from tick {first} to {last}"));
@@ -299,18 +301,70 @@ pub(crate) fn inputs(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         };
         say("writer", label);
         for c in candidates.iter().filter(|c| &c.writer == writer) {
-            let id = names.id(&c.at).map_or_else(|| c.at.clone(), |id| id.to_string());
-            let named = names.data(&c.at);
-            let named = if named == id { String::new() } else { format!(" ({named})") };
-            let also = if c.also_written { ", which the program writes too" } else { "" };
-            let bytes = if c.len == 1 { "1 byte".to_owned() } else { format!("{} bytes", c.len) };
-            say("  input?", format!("{id}{named}, {bytes}{also}"));
+            say("  input?", candidate_text(c, &names, &k, analysis.as_ref()));
         }
     }
     if candidates.is_empty() {
         say("none", "nothing the program read there was written by an interrupt handler or a host service");
     }
+    for line in unseen(&watched) {
+        say("unseen", line);
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A candidate as a line: the named item it is in, or its bytes; who wrote them; and what Ghidra
+/// says the writing instruction refers to (an array's start, for a store indexed by a key).
+fn candidate_text(c: &Candidate, names: &Names, k: &Knowledge, analysis: Option<&Analysis>) -> String {
+    let bytes = |n: u32| if n == 1 { "1 byte".to_owned() } else { format!("{n} bytes") };
+    let id = names.id(&c.at);
+    let item = id.as_ref().and_then(|id| {
+        let (start, datum) = k.data.range(..=id.clone()).next_back()?;
+        let size = datum.size?;
+        (start.module() == id.module() && id.offset() + c.len <= start.offset() + size)
+            .then(|| format!("{start} {} ({})", datum.decision.name, bytes(size)))
+    });
+    let place = id.as_ref().map_or_else(|| c.at.clone(), ToString::to_string);
+    let mut text = match item {
+        Some(item) => format!("{item}: {} written", bytes(c.touched)),
+        None if c.touched == c.len => format!("{place}, {}", bytes(c.len)),
+        None => format!("{place}, {} of the {} from here written", c.touched, bytes(c.len)),
+    };
+    if let Some(by) = c.by.as_ref().and_then(|by| names.id(by)) {
+        text += &format!(" by {by}");
+        let refers: Vec<String> = analysis
+            .into_iter()
+            .flat_map(|a| a.refs.iter())
+            .filter(|(from, _, _)| *from == by)
+            .map(|(_, to, _)| names.data(&format!("+{:05X}", to.offset())))
+            .collect();
+        if !refers.is_empty() {
+            text += &format!(" (Ghidra: it refers to {})", refers.join(", "));
+        }
+    }
+    if c.also_written {
+        text += "; the program writes it too";
+    }
+    text
+}
+
+/// What the scan can't see: input that comes back in registers from a service or a port.
+fn unseen(watched: &Value) -> Vec<String> {
+    let count = |kind: &str, key: &str| watched[kind][key].as_u64().unwrap_or(0);
+    let mut lines = Vec::new();
+    let sources = [
+        ("services", "33", "INT 33h (the mouse driver)", "declare it as device = \"mouse\""),
+        ("ports", "201", "port 201h (the joystick)", "declare it as device = \"joystick\""),
+        ("services", "16", "INT 16h (the BIOS keyboard)", "look for where the program keeps the keys"),
+    ];
+    for (kind, key, what, then) in sources {
+        let n = count(kind, key);
+        if n > 0 {
+            let verb = if kind == "ports" { "read" } else { "called" };
+            lines.push(format!("{what} {verb} {n} times: what it returns stays in registers, unscanned; {then}"));
+        }
+    }
+    lines
 }
 
 /// The real-mode interrupt vectors, as linear addresses.
@@ -340,20 +394,28 @@ fn interrupt_name(vector: usize) -> String {
 }
 
 /// Memory the program reads that an interrupt handler or a host service writes.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Candidate {
+    /// Its first byte.
     at: String,
+    /// From the first byte to the last.
     len: u32,
+    /// The bytes written in that span.
+    touched: u32,
     /// The interrupt handler's entry; `None`: a host service.
     writer: Option<String>,
+    /// The handler's instruction that wrote it.
+    by: Option<String>,
     /// The program's own code writes it too (clearing a key-state array, adjusting a counter).
     also_written: bool,
 }
 
-/// The candidates among a summary watch's runs, by writer; runs of the same writer up to 16 bytes
-/// apart are joined (an array of which not every element was written: the keys not pressed).
+/// The candidates among a summary watch's runs, by writer. A handler's bytes are grouped by the
+/// instruction that wrote them, so the elements of an array one store fills are one candidate
+/// however far apart (the keys pressed); other runs of the same writer up to 16 bytes apart are
+/// joined.
 fn candidates(runs: &[Value]) -> Vec<Candidate> {
-    let mut out: Vec<(u32, u32, Option<String>, bool, String)> = Vec::new();
+    let mut out: Vec<(u32, Candidate)> = Vec::new();
     for run in runs {
         let writer = run["interrupt_writer"].as_str().map(str::to_owned);
         if !run["read"].as_bool().unwrap_or(false) || (writer.is_none() && !run["host"].as_bool().unwrap_or(false)) {
@@ -362,23 +424,24 @@ fn candidates(runs: &[Value]) -> Vec<Candidate> {
         let Some((start, prefix)) = address(run["at"].as_str().unwrap_or("")) else { continue };
         let len = run["len"].as_u64().unwrap_or(0) as u32;
         let written = run["written"].as_bool().unwrap_or(false);
-        match out.iter_mut().rev().find(|c| c.2 == writer) {
-            Some((s, l, _, w, _)) if start <= *s + *l + 16 => {
-                *l = start + len - *s;
-                *w |= written;
+        let by = run["interrupt_write_by"].as_str().map(str::to_owned);
+        let group = out.iter_mut().rev().find(|(s, c)| {
+            c.writer == writer && if by.is_some() { c.by == by } else { c.by.is_none() && start <= s + c.len + 16 }
+        });
+        match group {
+            Some((s, c)) => {
+                c.len = start + len - *s;
+                c.touched += len;
+                c.also_written |= written;
             }
-            _ => out.push((start, len, writer, written, prefix)),
+            None => {
+                let at = format!("{prefix}{start:05X}");
+                out.push((start, Candidate { at, len, touched: len, writer, by, also_written: written }));
+            }
         }
     }
-    out.sort_by(|a, b| (&a.2, a.0).cmp(&(&b.2, b.0)));
-    out.into_iter()
-        .map(|(start, len, writer, also_written, prefix)| Candidate {
-            at: format!("{prefix}{start:05X}"),
-            len,
-            writer,
-            also_written,
-        })
-        .collect()
+    out.sort_by(|a, b| (&a.1.writer, a.0).cmp(&(&b.1.writer, b.0)));
+    out.into_iter().map(|(_, c)| c).collect()
 }
 
 /// A Clockwork address's number and its prefix (`+`, `@` or `%`).
@@ -407,17 +470,28 @@ mod tests {
             run("+42000", 2, false, false, Some("+0EA40")),
         ];
         let found = candidates(&runs);
-        let candidate = |at: &str, len, writer: &str, also_written| Candidate {
+        let candidate = |at: &str, len, touched, writer: &str, also_written| Candidate {
             at: at.into(),
             len,
+            touched,
             writer: Some(writer.into()),
+            by: None,
             also_written,
         };
         assert_eq!(
             found,
-            [candidate("+40D50", 4, "+0EA40", true), candidate("+40AA3", 15, "+0EB0D", true)],
+            [candidate("+40D50", 4, 4, "+0EA40", true), candidate("+40AA3", 15, 3, "+0EB0D", true)],
             "an array's elements joined; not what only the program writes, nor what it doesn't read"
         );
+        // Bytes one instruction wrote, however far apart, are one candidate; another's aren't in it.
+        let by = |at: &str, len: u32, instruction: &str| {
+            json!({"at": at, "len": len, "read": true, "written": false, "interrupt_writer": "+0EB0D",
+                   "interrupt_write_by": instruction, "host": false})
+        };
+        let runs = [by("+40B15", 2, "+0EB40"), by("+40B20", 1, "+0EB50"), by("+40B33", 12, "+0EB40")];
+        let found = candidates(&runs);
+        assert_eq!((found.len(), found[0].len, found[0].touched), (2, 0x2A, 14), "{found:?}");
+        assert_eq!(found[0].by.as_deref(), Some("+0EB40"));
         assert_eq!(interrupt_name(9), "INT 09h (the keyboard, IRQ 1)");
     }
 }

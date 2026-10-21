@@ -57,9 +57,11 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 JSON lines from `ghidra/RecExport.java`: a `program` record (name, language, compiler, `entry`, Ghidra's
 version), `block` records (memory blocks), `function` records (`address`, `name`, `source`, `convention`,
 `signature`, `thunk`, `fid`: Function ID hashes `{units, full, specific, extra}`, `body`: `[address, length]`
-ranges), `call` records (`caller`, `site`, `callee`) and `code` records (`address`, `asm`, `c`). Addresses are
-`{"linear": n, "text": "SSSS:OOOO"}`; an address's image offset is its linear address minus the entry point's,
-plus `entry`.
+ranges), `call` records (`caller`, `site`, `callee`), `ref` records (an instruction's reference to data: `from`,
+`to`, `kind`: `read`, `write`, or `data` for an address taken) and `code` records (`address`, `asm`, `c`).
+Addresses are `{"linear": n, "text": "SSSS:OOOO"}`; an address's image offset is its linear address minus the
+entry point's, plus `entry`. Functions the knowledge names that Ghidra didn't find are created first (the
+script's `functions FILE` arguments), so they are in the export like the others.
 
 ## The cache
 
@@ -118,6 +120,9 @@ values = { north = 0, east = 1 }
 [[sync]]                        # a sync point: where a tick ends (D47)
 name = "play"
 at = "GAME.EXE+0A31C"
+provenance = "agent:claude-opus-5-5"
+confidence = 0.8
+evidence = "rrc calls first-level: once a pass; notes/loops.md"
 note = "where wait_for_tick returns: the wait is over and the pass hasn't read its inputs yet"
 
 [[sync]]                        # a loop that polls with no wait (D48)
@@ -137,7 +142,9 @@ device = "mouse"                # or "joystick"; the size is the device's
 sync = ["menu"]                 # optional: read only at these sync points' ticks
 ```
 
-A tick's inputs and state are what the memory holds at the sync point: what the pass starting there reads.
+`rrc sync` and `rrc input` write these. Each item may carry `provenance`, `confidence` and `evidence`, as the
+tables' items do, and a `note` saying what it is. A tick's inputs and state are what the memory holds at the
+sync point: what the pass starting there reads.
 With `when_changed`, a hit is a tick only when one of those items differs from what it was at this sync
 point's last tick (the first hit is always one): list what the loop reads, and the counter its timing reads.
 

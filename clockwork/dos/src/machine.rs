@@ -1191,13 +1191,16 @@ impl Machine {
         let traced = self.probes.service_trace.is_some()
             && !matches!(id, bios::callback::TIMER_IRQ | bios::callback::KEYBOARD_IRQ);
         let call = traced.then(|| crate::trace::ServiceCall::begin(self, id));
-        let watched = self.probes.watch.as_deref().and_then(|w| w.bytes(|at| self.peek_u8(at)));
+        if let Some(watch) = self.probes.watch.as_deref_mut() {
+            watch.service_called(id);
+        }
+        let watched = self.watch_before();
         let ax = self.cpu.regs.ax();
         if !bios::dispatch(self, id) && !dos::dispatch(self, id) {
             self.diagnostic(format!("unknown host callback {id:#06x}"));
         }
-        if let Some(before) = watched {
-            self.watch_changes(&before, crate::watch::By::Service { id, ax });
+        if let Some(video) = watched {
+            self.watch_changes(video, crate::watch::By::Service { id, ax });
         }
         if let (Some(mut call), Some(trace)) = (call, self.probes.service_trace.as_mut()) {
             call.after = self.cpu.regs;
@@ -1223,24 +1226,29 @@ impl Machine {
         None
     }
 
-    /// Records the watched bytes that changed since `before` as written by `by`.
-    fn watch_changes(&mut self, before: &[u8], by: crate::watch::By) {
+    /// Before the host acts (a service, a device event) with a watch on: memory logs its writes, and
+    /// the watched video memory is kept to compare. `None` without a watch.
+    fn watch_before(&mut self) -> Option<Option<Vec<u8>>> {
+        let video = self.probes.watch.as_deref().map(|w| w.video_bytes(|at| self.peek_u8(at)))?;
+        self.mem.start_log();
+        Some(video)
+    }
+
+    /// After the host acted: records the watched bytes it changed as written by `by`.
+    fn watch_changes(&mut self, video_before: Option<Vec<u8>>, by: crate::watch::By) {
+        let log = self.mem.take_log();
         if let Some(mut watch) = self.probes.watch.take() {
-            if let Some(after) = watch.bytes(|at| self.peek_u8(at)) {
-                watch.changed(self.cpu.cycles, before, &after, by, self.probes.calls.as_deref());
-            }
+            let calls = self.probes.calls.as_deref();
+            watch.changed(self.cpu.cycles, &log, video_before.as_deref(), |at| self.peek_u8(at), by, calls);
             self.probes.watch = Some(watch);
         }
     }
 
     fn service_events(&mut self) {
-        // A summary watch scans large ranges, which devices rarely write and which comparing at
-        // every device event (each millisecond of Sound Blaster DMA) would make slow.
-        let compared = self.probes.watch.as_deref().filter(|w| w.touches.is_none());
-        let watched = compared.and_then(|w| w.bytes(|at| self.peek_u8(at)));
+        let watched = self.watch_before();
         self.service_devices();
-        if let Some(before) = watched {
-            self.watch_changes(&before, crate::watch::By::Device);
+        if let Some(video) = watched {
+            self.watch_changes(video, crate::watch::By::Device);
         }
     }
 

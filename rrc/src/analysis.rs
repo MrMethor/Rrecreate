@@ -3,6 +3,11 @@
 //! (`sigs/`) recognizes by their Function ID hashes are named in the knowledge (`library:<pack>`),
 //! unless someone named them already. What analysis left is indexed in `.rrc/analysis.toml`.
 //!
+//! Functions the knowledge names that Ghidra didn't find (an interrupt handler only a vector
+//! reaches, code called through a pointer) are created in a second analysis, so they get calls,
+//! references and decompiled code too. The first analysis is kept as it is: it is the base the
+//! missing functions are found against.
+//!
 //! The scripts and packs are built into `rrc`, so a port repository needs no Rrecreate checkout.
 
 use std::collections::BTreeMap;
@@ -59,23 +64,40 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     // The same program through the same script gives the same export: this machine's cache keeps
     // it for every repository (and fresh clone) of the game.
     let key = sha256(format!("{original_hash}\n{decompile}\n{EXPORT_SCRIPT}").as_bytes());
-    let earlier = cache.recall("analysis", &key).and_then(|text| toml::from_str::<Index>(&text).ok());
-    let index = match earlier.filter(|i| !a.has("--again") && cache.has(&i.export)) {
-        Some(index) => {
-            say("program", format!("{module}: analyzed before on this machine (--again redoes it)"));
-            index
+    let index = kept_or_run(repo, &cache, &key, a.has("--again"), &[], || {
+        run_ghidra(repo, &cache, &original, &original_hash, decompile, &[])
+    })?;
+    let records = cache.get(&index.export)?;
+    let mut analysis = Analysis::parse(&String::from_utf8_lossy(&records), &module, index.entry)?;
+    // Then the functions the knowledge names that Ghidra didn't find, in an analysis of their own.
+    let mut k = Knowledge::load(&repo.knowledge())?;
+    let missing: Vec<u32> = k
+        .functions
+        .keys()
+        .filter(|id| id.module() == module && id.part().is_none() && !analysis.functions.contains_key(*id))
+        .map(|id| id.offset())
+        .collect();
+    let index = if missing.is_empty() {
+        index
+    } else {
+        let entries: Vec<String> = missing.iter().map(|offset| format!("{offset:05X}")).collect();
+        say("adding", format!("{} functions the knowledge names that Ghidra didn't find", missing.len()));
+        let key = sha256(format!("{key}\n{}", entries.join("\n")).as_bytes());
+        let base = analysis.base;
+        let linear: Vec<u64> = missing.iter().map(|&offset| base + u64::from(offset)).collect();
+        let index = kept_or_run(repo, &cache, &key, a.has("--again"), &entries, || {
+            run_ghidra(repo, &cache, &original, &original_hash, decompile, &linear)
+        })?;
+        let records = cache.get(&index.export)?;
+        analysis = Analysis::parse(&String::from_utf8_lossy(&records), &module, index.entry)?;
+        let still = missing.iter().filter(|&&offset| !analysis.functions.keys().any(|id| id.offset() == offset));
+        for offset in still {
+            say("missing", format!("{module}+{offset:05X}: Ghidra made no function there"));
         }
-        None => {
-            let index = run_ghidra(repo, &cache, &original, original_hash, decompile)?;
-            cache.remember("analysis", &key, &toml::to_string(&index).map_err(|e| e.to_string())?)?;
-            index
-        }
+        index
     };
     write_toml(&repo.state()?.join(INDEX), &index)?;
-    let records = cache.get(&index.export)?;
-    let analysis = Analysis::parse(&String::from_utf8_lossy(&records), &module, index.entry)?;
     say("ghidra", format!("{} functions, {} calls ({})", analysis.functions.len(), analysis.calls.len(), index.ghidra));
-    let mut k = Knowledge::load(&repo.knowledge())?;
     let named = name_library_functions(&mut k, &analysis);
     k.save(&repo.knowledge())?;
     let library = analysis.functions.values().filter(|f| f.library.is_some()).count();
@@ -84,14 +106,37 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     Ok(ExitCode::SUCCESS)
 }
 
-/// Unpacks the program with Clockwork (if it was packed), analyzes it with Ghidra and stores what
-/// that gives in the cache.
+/// The analysis kept under `key` on this machine (unless `again`), else `run`'s, kept there.
+/// `entries`: the functions it adds to Ghidra's (for the message).
+fn kept_or_run(
+    repo: &Repo,
+    cache: &Cache,
+    key: &str,
+    again: bool,
+    entries: &[String],
+    run: impl FnOnce() -> Result<Index, String>,
+) -> Result<Index, String> {
+    let earlier = cache.recall("analysis", key).and_then(|text| toml::from_str::<Index>(&text).ok());
+    if let Some(index) = earlier.filter(|i| !again && cache.has(&i.export)) {
+        let what = if entries.is_empty() { "" } else { " with these functions" };
+        say("program", format!("{}: analyzed before{what} on this machine (--again redoes it)", repo.module()));
+        return Ok(index);
+    }
+    let index = run()?;
+    cache.remember("analysis", key, &toml::to_string(&index).map_err(|e| e.to_string())?)?;
+    Ok(index)
+}
+
+/// Unpacks the program with Clockwork (if it was packed), analyzes it with Ghidra (creating
+/// functions at the `functions` given, as Ghidra's linear addresses) and stores what that gives in
+/// the cache.
 fn run_ghidra(
     repo: &Repo,
     cache: &Cache,
     original: &Path,
-    original_hash: String,
+    original_hash: &str,
     decompile: bool,
+    functions: &[u64],
 ) -> Result<Index, String> {
     let (ghidra, java) = (tools::ghidra(&repo.local)?, tools::java(&repo.local)?);
     let work = repo.state()?.join("ghidra");
@@ -137,6 +182,13 @@ fn run_ghidra(
     if decompile {
         command.arg("decompile");
     }
+    if !functions.is_empty() {
+        let list = work.join("functions.txt");
+        let text: String = functions.iter().map(|f| format!("{f}\n")).collect();
+        std::fs::write(&list, text).map_err(|e| format!("{}: {e}", list.display()))?;
+        // Not `functions=FILE`: Windows' cmd splits arguments at `=`.
+        command.arg("functions").arg(&list);
+    }
     let log = work.join("ghidra.log");
     let output = command.output().map_err(|e| format!("Ghidra: {e}"));
     let _ = std::fs::remove_dir_all(&project);
@@ -148,7 +200,7 @@ fn run_ghidra(
     let records = std::fs::read(&export).map_err(|e| format!("{}: {e}", export.display()))?;
     let ghidra_version = Analysis::parse(&String::from_utf8_lossy(&records), &module, entry)?.ghidra;
     Ok(Index {
-        original: original_hash,
+        original: original_hash.to_owned(),
         program: cache.put(&bytes)?,
         unpacked,
         export: cache.put(&records)?,
@@ -217,6 +269,10 @@ pub struct Analysis {
     pub functions: BTreeMap<Id, Function>,
     /// (caller, call site, callee).
     pub calls: Vec<(Id, Id, Id)>,
+    /// Data references: (instruction, the address it refers to, `read`, `write` or `data`).
+    pub refs: Vec<(Id, Id, String)>,
+    /// Ghidra's memory blocks (the program's segments): image offset of the start, and size.
+    pub blocks: Vec<(u32, u32)>,
     /// Disassembly and decompiled code, by function.
     pub code: BTreeMap<Id, (String, Option<String>)>,
 }
@@ -271,6 +327,16 @@ impl Analysis {
                         (id(&r["caller"]), id(&r["site"]), id(&r["callee"]))
                     {
                         analysis.calls.push((caller, site, callee));
+                    }
+                }
+                Some("ref") => {
+                    if let (Some(from), Some(to)) = (id(&r["from"]), id(&r["to"])) {
+                        analysis.refs.push((from, to, r["kind"].as_str().unwrap_or("data").to_owned()));
+                    }
+                }
+                Some("block") => {
+                    if let (Some(start), Some(size)) = (id(&r["start"]), r["size"].as_u64()) {
+                        analysis.blocks.push((start.offset(), size as u32));
                     }
                 }
                 Some("code") => {
@@ -351,6 +417,11 @@ impl Analysis {
             .map(|(entry, _)| (entry, at.wrapping_sub(entry.offset())))
     }
 
+    /// The link segment of the block (Ghidra's segment) holding image offset `at`, if any.
+    pub fn segment_of(&self, at: u32) -> Option<u32> {
+        self.blocks.iter().find(|&&(start, size)| (start..start + size).contains(&at)).map(|&(start, _)| start >> 4)
+    }
+
     /// Ghidra's disassembly with each line's `SSSS:OOOO` as an ID.
     pub fn with_ids(&self, asm: &str, module: &str) -> String {
         let mut out = String::with_capacity(asm.len());
@@ -424,7 +495,10 @@ mod tests {
     const EXPORT: &str = r#"{"record":"program","name":"GAME.EXE","entry":{"linear":66576,"text":"1000:0410"},"ghidra":"12.1.4"}
 {"record":"function","address":{"linear":65552,"text":"1000:0010"},"name":"entry","source":"IMPORTED","fid":null,"body":[[{"linear":65552},16],[{"linear":65600},4]]}
 {"record":"function","address":{"linear":65600,"text":"1000:0040"},"name":"FUN_1000_0040","source":"DEFAULT","fid":{"units":16,"full":"777f06a5fc57d39c","specific":"40de0469e7504e7c","extra":0},"body":[[{"linear":65600},30]]}
+{"record":"block","name":"CODE_0","start":{"linear":65536,"text":"1000:0000"},"size":256,"execute":true,"initialized":true}
+{"record":"block","name":"DATA_1","start":{"linear":131072,"text":"2000:0000"},"size":64,"execute":true,"initialized":true}
 {"record":"call","caller":{"linear":65552},"site":{"linear":65560},"callee":{"linear":65600}}
+{"record":"ref","from":{"linear":65556},"to":{"linear":131088,"text":"2000:0010"},"kind":"write"}
 {"record":"code","address":{"linear":65600},"asm":"1000:0040  RETF\n","c":null}
 "#;
 
@@ -442,6 +516,8 @@ mod tests {
         let ftol = &a.functions[&id("GAME.EXE+00040")];
         assert_eq!(ftol.library, Some(("F_FTOL@".into(), "borland-c++-1991-medium".into())));
         assert_eq!(a.calls, [(id("GAME.EXE+00010"), id("GAME.EXE+00018"), id("GAME.EXE+00040"))]);
+        assert_eq!(a.refs, [(id("GAME.EXE+00014"), id("GAME.EXE+10010"), "write".into())]);
+        assert_eq!((a.segment_of(0x10020), a.segment_of(0x00F0), a.segment_of(0x10040)), (Some(0x1000), Some(0), None));
         assert_eq!(a.code[&id("GAME.EXE+00040")].0, "1000:0040  RETF\n");
         assert_eq!(a.id_of("GAME.EXE", "2000:0010"), Some(id("GAME.EXE+10010")));
         assert_eq!(a.id_of("GAME.EXE", "0FFF:0000"), None, "before the image");

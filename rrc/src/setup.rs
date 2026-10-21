@@ -163,23 +163,39 @@ pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String>
     Ok(ExitCode::SUCCESS)
 }
 
-/// The next step once the game is there: analysis, ticks, sessions, traces.
+/// The next step once the game is there: analysis, sessions, ticks and their inputs, traces
+/// (docs/porting.md, steps 2 to 4).
 fn next_after_setup(repo: &Repo) -> Result<String, String> {
     if crate::analysis::Index::load(repo)?.is_none() {
         return Ok("rrc analyze".into());
     }
     let k = knowledge::Knowledge::load(&repo.knowledge())?;
-    if k.ticks.syncs.is_empty() {
-        return Ok("find where a tick ends (the main loop) and add it to knowledge/ticks.toml as a sync point".into());
-    }
     let sessions = crate::session::names(repo)?;
-    if sessions.is_empty() {
-        return Ok("rrc session add NAME --seconds N --inputs FILE: a session to reproduce".into());
+    let Some(first) = sessions.first() else {
+        return Ok("rrc session add NAME --seconds N --inputs FILE: a session to reproduce, into play".into());
+    };
+    if k.ticks.syncs.is_empty() {
+        return Ok(format!("find where a tick ends: rrc calls {first} lists the loops; then rrc sync ID NAME"));
     }
+    if k.ticks.inputs.is_empty() {
+        return Ok(format!("find what a tick reads from outside: rrc inputs {first}; then rrc input ID NAME"));
+    }
+    let cache = crate::cache::Cache::open(&repo.local)?;
+    let (syncs, inputs, state) = crate::trace::items(&k, &repo.module())?;
     for name in &sessions {
-        if crate::session::Session::load(repo, name)?.trace.is_none() {
+        let Some(recorded) = crate::session::Session::load(repo, name)?.trace else {
             return Ok(format!("rrc record {name}"));
+        };
+        match crate::trace::recorded_header(&cache, &recorded.hash) {
+            None => return Ok(format!("rrc record {name}: its trace isn't in this machine's cache")),
+            Some(h) if h.version != crate::trace::VERSION => {
+                return Ok(format!("rrc record {name}: its trace is in an older format"));
+            }
+            Some(h) if (&h.syncs, &h.inputs, &h.state) != (&syncs, &inputs, &state) => {
+                return Ok(format!("rrc record {name}: the knowledge changed since it was recorded"));
+            }
+            Some(_) => {}
         }
     }
-    Ok("the state mapping and the port come with M3".into())
+    Ok("every session is recorded with the knowledge as it is; the state mapping and the port come with M3".into())
 }

@@ -86,7 +86,7 @@ pub struct Ticks {
     pub inputs: Vec<Input>,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sync {
     pub name: String,
     /// The instruction's ID.
@@ -96,6 +96,14 @@ pub struct Sync {
     /// when what it reads changed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub when_changed: Vec<String>,
+    /// Who decided, and from what (as `Decision`'s).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provenance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence: String,
+    /// What it is.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -115,6 +123,14 @@ pub struct Input {
     /// Read only at these sync points (by name), else at all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sync: Vec<String>,
+    /// Who decided, and from what (as `Decision`'s).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provenance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence: String,
+    /// What it is.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -397,7 +413,9 @@ mod tests {
             name: "play".into(),
             at: "GAME.EXE+00120".into(),
             when_changed: vec!["elapsed".into()],
-            note: String::new(),
+            provenance: "human".into(),
+            confidence: Some(0.9),
+            ..Sync::default()
         });
         k.ticks.inputs.push(Input {
             name: "elapsed".into(),
@@ -433,7 +451,7 @@ mod tests {
             name: "menu".into(),
             at: "GAME.EXE+00100".into(),
             when_changed: vec!["nothing".into()],
-            note: String::new(),
+            ..Sync::default()
         });
         k.ticks.inputs.push(Input { name: "pad".into(), device: "gamepad".into(), ..Input::default() });
         let problems = k.problems("GAME.EXE", Some(0x201));

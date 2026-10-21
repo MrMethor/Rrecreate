@@ -3562,12 +3562,18 @@ fn a_summary_watch_tells_what_only_an_interrupt_handler_writes() {
     let (counter, copy) = (base + o["counter"], base + o["copy"]);
     m.start_watch(dos::watch::Watch::summary(std::iter::once(counter..copy + 2).collect(), true));
     assert_eq!(m.run(SECOND * 2), Stop::Exited(0));
-    let touches = m.take_watch().unwrap().touches.unwrap();
-    // The handler's INC reads it too.
+    let watch = m.take_watch().unwrap();
+    assert!(
+        watch.services.contains_key(&0x21) && !watch.services.contains_key(&0x33),
+        "its exit, through DOS; no mouse"
+    );
+    let touches = watch.touches.unwrap();
+    // The handler's INC (its first instruction) reads it too.
     let only_interrupt = dos::watch::Touch {
         read: true,
         read_in_interrupt: true,
         interrupt_writer: Some(base + o["handler"]),
+        interrupt_write_by: Some(base + o["handler"]),
         ..Default::default()
     };
     assert_eq!((touches[&counter], touches[&(counter + 1)]), (only_interrupt, only_interrupt), "the program reads it");

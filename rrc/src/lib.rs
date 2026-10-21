@@ -14,6 +14,7 @@ mod naming;
 pub mod repo;
 pub mod session;
 mod setup;
+mod ticks;
 pub mod tools;
 pub mod trace;
 mod watch;
@@ -36,18 +37,26 @@ usage: rrc <command> [arguments]     (inside a port repository)
   analyze [--no-decompile] [--again]
                          the program, unpacked by Clockwork, analyzed by Ghidra into the cache (an
                          analysis of the same program on this machine is reused unless --again);
-                         library functions the signature packs know get their names
+                         library functions the signature packs know get their names; functions the
+                         knowledge names that Ghidra didn't find are added
   check                  the knowledge files: IDs, names, sizes, ticks, types (and against the image)
   name ID NAME           name a function (--evidence TEXT, --confidence 0-1, --by WHO: who decided,
                          else RRC_BY, else agent)
   data ID NAME [--size N] [--type T]
                          name data (the same options as name)
+  sync [ID NAME [--when-changed A,B] [--note TEXT]]
+                         the sync points, or one (where a tick ends; with --when-changed, a loop that
+                         polls ticks when these inputs or data changed); --remove NAME takes one out
+  input [ID|mouse|joystick NAME [--size N] [--sync A,B] [--note TEXT]]
+                         the boundary values, or one (memory, or a device's state; --sync: read only
+                         at those sync points); --remove NAME; both take name's options
   show ID|NAME|SEG:OFF [--asm] [--c]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
                          its DAT_SEG_OFF names): its name and evidence, what Ghidra found (size,
-                         calls, callers; the function an address is inside), its disassembly
-                         (--asm, lines as IDs) or decompiled code (--c), with the knowledge's names
-                         for Ghidra's FUN_ and DAT_ names
+                         calls, callers; the function an address is inside; who reads and writes
+                         data), its disassembly (--asm, lines as IDs; Clockwork's for code Ghidra has
+                         no function for) or decompiled code (--c), with the knowledge's names for
+                         Ghidra's FUN_ and DAT_ names
   session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]]
                          the sessions, or a new one: an input script (clockwork run --input-file) or
                          play recorded by clockwork play --record, and how many emulated seconds
@@ -55,10 +64,12 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          change a session
   record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound
-  calls SESSION [--min N] [--top N]
+  calls SESSION [ID|NAME] [--min N] [--top N]
                          how often the session calls each function, grouped by count (at least N,
-                         default 100): a loop calls its functions equally often, and the one in a
-                         group that waits for the timer is where a tick ends
+                         default 100), in phases (before the first tick, each run of ticks at one
+                         sync point): a loop calls its functions equally often, and the one in a
+                         group that waits for the timer is where a tick ends; with a function, how
+                         often each phase calls it
   watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles]
         [--limit N] [--lines N]
                          who writes (and with --reads, reads) it during the session, or from tick N
@@ -67,7 +78,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   inputs SESSION [--tick N] [--ticks N] [--at ID|SEG:OFF --len N]
                          boundary value candidates: memory the program reads that only interrupt
                          handlers or host services write (the key states, the timer counts), in the
-                         data segment from tick N (default 2) on, or in the range given
+                         data segment from tick N (default 2) on, or in the range given, by the
+                         instruction that wrote it; and the mouse and joystick calls it can't see
   trace SESSION [--tick N] [--item NAME [--lines N]] [--path]
                          a recorded trace: a summary, one tick, or one item over the ticks, values
                          read as data.tsv's types (an array as its elements that aren't zero);
@@ -101,6 +113,8 @@ pub fn main() -> ExitCode {
         Some("check") => here().and_then(|repo| naming::check(&repo)),
         Some("name") => here().and_then(|repo| naming::name(&repo, rest)),
         Some("data") => here().and_then(|repo| naming::data(&repo, rest)),
+        Some("sync") => here().and_then(|repo| ticks::sync(&repo, rest)),
+        Some("input") => here().and_then(|repo| ticks::input(&repo, rest)),
         Some("show") => here().and_then(|repo| naming::show(&repo, rest)),
         Some("session") => here().and_then(|repo| session::session(&repo, rest)),
         Some("calls") => here().and_then(|repo| calls::calls(&repo, rest)),

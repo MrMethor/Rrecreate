@@ -24,6 +24,10 @@ pub struct Memory {
     /// Which bytes have been written, when tracked ([`Memory::track_writes`]); not part of the
     /// memory's contents.
     written: Option<Box<Written>>,
+    /// The writes since [`Memory::start_log`]: each byte's physical address and the value it held
+    /// before. For watches, around what the host does (services, devices).
+    #[serde(skip)]
+    log: Option<Vec<(u32, u8)>>,
 }
 
 /// A bit per byte of physical memory: written since tracking began (or initialized then).
@@ -89,7 +93,18 @@ impl Memory {
             size,
             extended: vec![None; (size as usize).div_ceil(PAGE_SIZE)],
             written: None,
+            log: None,
         }
+    }
+
+    /// Logs every write from now on, with the value it replaced, until [`Memory::take_log`].
+    pub fn start_log(&mut self) {
+        self.log = Some(Vec::new());
+    }
+
+    /// The writes since [`Memory::start_log`] (physical address, old value), in order; logging stops.
+    pub fn take_log(&mut self) -> Vec<(u32, u8)> {
+        self.log.take().unwrap_or_default()
     }
 
     /// Tracks which bytes are written from now on (by the CPU or the host), every byte counting as
@@ -115,9 +130,10 @@ impl Memory {
         self.written.as_deref().is_none_or(|w| w.get(self.gate(addr)))
     }
 
+    /// Before a write to physical address `addr`.
     #[inline(always)]
     fn mark(&mut self, addr: u32) {
-        if self.written.is_some() {
+        if self.written.is_some() || self.log.is_some() {
             self.mark_written(addr);
         }
     }
@@ -128,6 +144,10 @@ impl Memory {
     fn mark_written(&mut self, addr: u32) {
         if let Some(written) = self.written.as_deref_mut() {
             written.set(addr);
+        }
+        let old = self.read_phys(addr);
+        if let Some(log) = self.log.as_mut() {
+            log.push((addr, old));
         }
     }
 
@@ -291,13 +311,13 @@ impl Memory {
     pub fn write_n<const N: usize>(&mut self, addr: u32, value: [u8; N]) {
         match self.block::<N>(addr, true) {
             Some((None, at)) => {
-                if self.written.is_some() {
+                if self.written.is_some() || self.log.is_some() {
                     (0..N as u32).for_each(|i| self.mark(at as u32 + i));
                 }
                 self.bytes[at..at + N].copy_from_slice(&value)
             }
             Some((Some(page), at)) => {
-                if self.written.is_some() {
+                if self.written.is_some() || self.log.is_some() {
                     let start = (page * PAGE_SIZE + at) as u32;
                     (0..N as u32).for_each(|i| self.mark(start + i));
                 }

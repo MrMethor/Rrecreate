@@ -109,6 +109,9 @@ impl Bus for ProbeBus<'_, '_> {
         if let Some(log) = self.log.as_deref_mut() {
             log.push(Access::Port);
         }
+        if let Some(watch) = self.watch.as_deref_mut() {
+            watch.port_read(port);
+        }
         self.inner.port_in_u8(port)
     }
 

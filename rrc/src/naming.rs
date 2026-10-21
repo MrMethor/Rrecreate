@@ -1,11 +1,13 @@
 //! The knowledge, item by item: `rrc check`, `rrc name`, `rrc data`, `rrc show`.
 
+use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 use ids::Id;
 
 use crate::analysis::Analysis;
 use crate::args::Args;
+use crate::cache::Cache;
 use crate::clockwork::Clockwork;
 use crate::knowledge::{Datum, Decision, Knowledge, is_name, parse_id};
 use crate::repo::Repo;
@@ -52,7 +54,7 @@ fn provenance(a: &Args) -> String {
     a.value("--by").map(str::to_owned).or_else(|| std::env::var("RRC_BY").ok()).unwrap_or_else(|| "agent".into())
 }
 
-fn decision(a: &Args, name: &str) -> Result<Decision, String> {
+pub(crate) fn decision(a: &Args, name: &str) -> Result<Decision, String> {
     if !is_name(name) {
         return Err(format!("{name:?} isn't a name (letters, digits, _, @ and $, not starting with a digit)"));
     }
@@ -76,7 +78,7 @@ fn unique(k: &Knowledge, id: &Id, name: &str) -> Result<(), String> {
     }
 }
 
-const DECISION_OPTIONS: [&str; 3] = ["--by", "--confidence", "--evidence"];
+pub(crate) const DECISION_OPTIONS: [&str; 3] = ["--by", "--confidence", "--evidence"];
 
 pub(crate) fn name(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &DECISION_OPTIONS, &[])?;
@@ -156,8 +158,111 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     if let Some(analysis) = &analysis {
         show_analysis(&k, analysis, &id, a.has("--asm"), a.has("--c"));
+        let size = k.data.get(&id).and_then(|d| d.size).unwrap_or(1);
+        let referred = show_refs(&k, analysis, &id, size);
+        let in_code = analysis.functions.contains_key(&id) || analysis.containing(&id).is_some();
+        if !in_code && !referred && !k.data.contains_key(&id) {
+            if a.has("--asm") {
+                print!("{}", clockwork_listing(repo, &k, analysis, &id)?);
+            } else {
+                say(
+                    "code",
+                    "Ghidra has no function here; if it is code (an interrupt handler: rrc inputs names them), --asm \
+                     disassembles it with Clockwork, and once named (rrc name) rrc analyze makes it a function",
+                );
+            }
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The instructions that refer to the `size` bytes at `id`, by kind and function (Ghidra's data
+/// references); whether there are any.
+fn show_refs(k: &Knowledge, analysis: &Analysis, id: &Id, size: u32) -> bool {
+    let range = id.offset()..id.offset() + size;
+    let mut by_kind: BTreeMap<&str, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    for (from, to, kind) in &analysis.refs {
+        if to.module() != id.module() || to.part() != id.part() || !range.contains(&to.offset()) {
+            continue;
+        }
+        let function = match analysis.containing(from) {
+            Some((entry, _)) => k.functions.get(entry).map_or_else(|| entry.to_string(), |d| d.name.clone()),
+            None => "no function".to_owned(),
+        };
+        let at = by_kind.entry(kind.as_str()).or_default().entry(function).or_default();
+        let instruction = format!("+{:05X}", from.offset());
+        if !at.contains(&instruction) {
+            at.push(instruction);
+        }
+    }
+    for (kind, label) in [("write", "written"), ("read", "read"), ("data", "address")] {
+        let Some(functions) = by_kind.get(kind) else { continue };
+        let mut list: Vec<String> =
+            functions.iter().take(REFS_SHOWN).map(|(f, at)| format!("{f} ({})", at.join(", "))).collect();
+        if functions.len() > REFS_SHOWN {
+            list.push(format!("and {} more functions", functions.len() - REFS_SHOWN));
+        }
+        say(label, list.join("; "));
+    }
+    !by_kind.is_empty()
+}
+
+/// Functions listed per kind of reference.
+const REFS_SHOWN: usize = 10;
+
+/// Clockwork's disassembly from `id`, following its control flow (`clockwork listing`), for code
+/// Ghidra has no function for; lines and targets as IDs, named ones by name.
+fn clockwork_listing(repo: &Repo, k: &Knowledge, analysis: &Analysis, id: &Id) -> Result<String, String> {
+    let index = crate::analysis::Index::load(repo)?.ok_or("no analysis: rrc analyze")?;
+    let program = Cache::open(&repo.local)?.get(&index.program)?;
+    // The load image: the program without its MZ header.
+    let header = program.get(8..10).map_or(0, |w| usize::from(u16::from_le_bytes([w[0], w[1]])) * 16);
+    let image = program.get(header..).ok_or("the analyzed program is shorter than its header")?;
+    let path = repo.state()?.join("ghidra").join("image.bin");
+    if std::fs::read(&path).ok().as_deref() != Some(image) {
+        std::fs::create_dir_all(path.parent().expect("a folder")).map_err(|e| e.to_string())?;
+        std::fs::write(&path, image).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    let offset = id.offset();
+    let segment = analysis.segment_of(offset).unwrap_or(offset >> 4);
+    let output = std::process::Command::new(crate::clockwork::find(&repo.local)?)
+        .arg("listing")
+        .arg(&path)
+        .args(["--entry", &format!("{offset:X}"), "--segment", &format!("{segment:X}")])
+        .output()
+        .map_err(|e| format!("clockwork listing: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("clockwork listing: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let module = id.module();
+    let named = |offset: &str| -> String {
+        let id = format!("{module}+{offset}");
+        let name = parse_id(&id).ok().and_then(|id| {
+            k.functions.get(&id).map(|d| d.name.clone()).or_else(|| k.data.get(&id).map(|d| d.decision.name.clone()))
+        });
+        name.unwrap_or(id)
+    };
+    let mut out = format!("code      from Clockwork's disassembly (Ghidra has no function at {id})\n");
+    for line in text.lines().skip(1) {
+        // `+OFFSET  instruction`, with targets as `+OFFSET`.
+        let (at, rest) = line.split_once("  ").unwrap_or(("", line));
+        let at = at.strip_prefix('+').map_or_else(|| at.to_owned(), |o| format!("{module}+{o}"));
+        let mut rest = rest.to_owned();
+        let mut from = 0;
+        while let Some(plus) = rest[from..].find('+').map(|i| from + i) {
+            let digits = rest[plus + 1..].chars().take_while(char::is_ascii_hexdigit).count();
+            if digits >= 5 {
+                let name = named(&rest[plus + 1..plus + 1 + digits]);
+                rest.replace_range(plus..plus + 1 + digits, &name);
+                from = plus + name.len();
+            } else {
+                from = plus + 1;
+            }
+        }
+        out.push_str(&format!("{at}  {rest}\n"));
+    }
+    Ok(out)
 }
 
 /// The ID `what` stands for: an ID, a name, or Ghidra's `SEG:OFF`.

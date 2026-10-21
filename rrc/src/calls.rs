@@ -1,78 +1,146 @@
 //! `rrc calls SESSION`: how often the session calls each function, grouped by count. Functions that
 //! one loop calls once a pass are called equally often, so a large group is a loop, and a function
 //! in it that waits for the timer is where a tick ends: a sync point (DESIGN.md §10, step 3).
+//!
+//! The counts are split into phases: before the first tick, then each run of ticks at one sync point
+//! (a loop: the menus, play), to the next phase's first tick or the session's end. With a function,
+//! it says how often each phase called it.
 
 use std::collections::BTreeMap;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use ids::Id;
+use serde_json::{Value, json};
 
+use crate::analysis::Analysis;
 use crate::args::Args;
-use crate::clockwork;
+use crate::clockwork::Clockwork;
 use crate::knowledge::Knowledge;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::Session;
+use crate::trace::{begin, sync_points};
+
+/// A stretch of the session and the calls made in it, by target (Clockwork's `+OFF` or `@LINEAR`).
+struct Phase {
+    label: String,
+    counts: BTreeMap<String, u64>,
+}
 
 pub(crate) fn calls(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &["--min", "--top"], &[])?;
-    let [name] = a.positionals(1, 1, "calls SESSION [--min N] [--top N]")? else { unreachable!() };
-    let top: usize = a.value("--top").map_or(Ok(10), str::parse).map_err(|_| "--top is a count")?;
+    let positionals = a.positionals(1, 2, "calls SESSION [ID|NAME] [--min N] [--top N]")?;
+    let top: usize = a.value("--top").map_or(Ok(5), str::parse).map_err(|_| "--top is a count")?;
     let min: u64 = a.value("--min").map_or(Ok(100), str::parse).map_err(|_| "--min is a count")?;
+    let name = &positionals[0];
     let session = Session::load(repo, name)?;
-    let counts = count_calls(repo, &session)?;
     let k = Knowledge::load(&repo.knowledge())?;
     let module = repo.module();
-    let mut groups: BTreeMap<u64, Vec<u32>> = BTreeMap::new();
-    for (&target, &n) in &counts {
-        groups.entry(n).or_default().push(target);
+    let function_name = |target: &str| -> String {
+        let id =
+            target.strip_prefix('+').and_then(|o| u32::from_str_radix(o, 16).ok()).map(|o| Id::new(&module, None, o));
+        match id {
+            Some(Ok(id)) => k.functions.get(&id).map_or_else(|| id.to_string(), |d| d.name.clone()),
+            _ => target.to_owned(),
+        }
+    };
+    let phases = phases(repo, &session, &k)?;
+    if let Some(what) = positionals.get(1) {
+        let analysis = Analysis::load(repo)?;
+        let id = crate::naming::resolve(repo, &k, analysis.as_ref(), what)?;
+        let target = format!("+{:05X}", id.offset());
+        let total: u64 = phases.iter().map(|p| p.counts.get(&target).copied().unwrap_or(0)).sum();
+        let named = function_name(&target);
+        let named = if named == id.to_string() { named } else { format!("{named} ({id})") };
+        say("calls", format!("{named}: {total} in {name}"));
+        for phase in &phases {
+            say("phase", format!("{}: {}", phase.label, phase.counts.get(&target).copied().unwrap_or(0)));
+        }
+        return Ok(ExitCode::SUCCESS);
     }
-    let mut groups: Vec<(u64, Vec<u32>)> = groups.into_iter().filter(|(n, _)| *n >= min).collect();
-    groups.sort_by_key(|(n, fs)| (std::cmp::Reverse(fs.len()), std::cmp::Reverse(*n)));
-    say("called", format!("{} functions in {name}", counts.len()));
-    for (n, functions) in groups.iter().take(top) {
-        let names: Vec<String> = functions
-            .iter()
-            .map(|&offset| match Id::new(&module, None, offset) {
-                Ok(id) => k.functions.get(&id).map_or_else(|| id.to_string(), |d| d.name.clone()),
-                Err(_) => format!("+{offset:05X}"),
-            })
-            .collect();
-        say(&format!("{n}x"), format!("{} functions: {}", functions.len(), names.join(", ")));
-    }
-    if groups.len() > top {
-        say("...", format!("{} more groups (--top N shows more)", groups.len() - top));
+    let called: std::collections::BTreeSet<&String> = phases.iter().flat_map(|p| p.counts.keys()).collect();
+    say("called", format!("{} functions in {name}, in {} phases", called.len(), phases.len()));
+    for phase in &phases {
+        say("phase", format!("{}: {} functions", phase.label, phase.counts.len()));
+        let mut groups: BTreeMap<u64, Vec<&String>> = BTreeMap::new();
+        for (target, &n) in &phase.counts {
+            groups.entry(n).or_default().push(target);
+        }
+        let mut groups: Vec<(u64, Vec<&String>)> = groups.into_iter().filter(|(n, _)| *n >= min).collect();
+        groups.sort_by_key(|(n, fs)| (std::cmp::Reverse(fs.len()), std::cmp::Reverse(*n)));
+        for (n, functions) in groups.iter().take(top) {
+            let names: Vec<String> = functions.iter().map(|t| function_name(t)).collect();
+            say("  group", format!("{n}x, {} functions: {}", functions.len(), names.join(", ")));
+        }
+        if groups.len() > top {
+            say("  ...", format!("{} more groups (--top N shows more, --min N fewer)", groups.len() - top));
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// Each called function's image offset with how often the session called it.
-fn count_calls(repo: &Repo, session: &Session) -> Result<BTreeMap<u32, u64>, String> {
-    let coverage = repo.state()?.join("coverage.json");
-    let original = &repo.settings.original;
-    let output = Command::new(clockwork::find(&repo.local)?)
-        .arg("run")
-        .arg(repo.game_dir()?)
-        .arg(&original.program)
-        .args(&original.options)
-        .args(session.options(repo))
-        .args(["--seconds", &session.seconds.to_string(), "--coverage"])
-        .arg(&coverage)
-        .output()
-        .map_err(|e| format!("clockwork run: {e}"))?;
-    if !coverage.is_file() {
-        return Err(format!("clockwork run gave no coverage: {}", String::from_utf8_lossy(&output.stderr).trim()));
-    }
-    let text = std::fs::read_to_string(&coverage).map_err(|e| format!("{}: {e}", coverage.display()))?;
-    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("the coverage: {e}"))?;
-    let mut counts = BTreeMap::new();
-    for call in json["calls"].as_array().into_iter().flatten() {
-        // [call site, target (-1: outside the image), count]
-        if let (Some(target), Some(n)) = (call[1].as_i64(), call[2].as_u64())
-            && let Ok(target) = u32::try_from(target)
-        {
-            *counts.entry(target).or_default() += n;
+/// The session's calls, phase by phase.
+fn phases(repo: &Repo, session: &Session, k: &Knowledge) -> Result<Vec<Phase>, String> {
+    let syncs = sync_points(k)?;
+    let (mut clockwork, _, names) = begin(repo, session, &syncs)?;
+    clockwork.ask("coverage", json!({"on": true}))?;
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let mut phases = Vec::new();
+    let mut before = BTreeMap::new();
+    let span = |from: u64, to: u64| format!("{:.1}-{:.1} s", from as f64 / 1000.0, to as f64 / 1000.0);
+    // The phase running: its sync point, first and last tick, and when it began (ms).
+    let mut current: Option<(String, u64, u64, u64)> = None;
+    let mut tick = 0;
+    loop {
+        let ran = if syncs.is_empty() {
+            clockwork.ask("run", json!({ "until_ms": length_ms }))?
+        } else {
+            clockwork.ask("run", json!({"sync": "next", "until_ms": length_ms}))?
+        };
+        let ms = ran["ms"].as_u64().unwrap_or(length_ms);
+        let Some(at) = ran["sync"]["at"].as_str() else {
+            let label = match current {
+                None if syncs.is_empty() => "the whole session".to_owned(),
+                None => "the whole session (no tick)".to_owned(),
+                Some((sync, first, last, from)) => {
+                    format!("{sync}, ticks {first}-{last} to the end ({})", span(from, ms))
+                }
+            };
+            phases.push(Phase { label, counts: since(&mut clockwork, &mut before)? });
+            return Ok(phases);
+        };
+        tick += 1;
+        let sync = names.get(at).cloned().unwrap_or_else(|| at.to_owned());
+        match &mut current {
+            Some((s, _, last, _)) if *s == sync => *last = tick,
+            _ => {
+                let label = match current.take() {
+                    None => format!("before tick 1 ({})", span(0, ms)),
+                    Some((s, first, last, from)) => {
+                        format!("{s}, ticks {first}-{last} to tick {tick} ({})", span(from, ms))
+                    }
+                };
+                phases.push(Phase { label, counts: since(&mut clockwork, &mut before)? });
+                current = Some((sync, tick, tick, ms));
+            }
         }
     }
-    Ok(counts)
+}
+
+/// The calls made since `before` (the counts then), which become the counts now.
+fn since(clockwork: &mut Clockwork, before: &mut BTreeMap<String, u64>) -> Result<BTreeMap<String, u64>, String> {
+    let answer = clockwork.ask("coverage_calls", Value::Null)?;
+    let now: BTreeMap<String, u64> = answer["calls"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| Some((c[0].as_str()?.to_owned(), c[1].as_u64()?)))
+        .collect();
+    let made = now
+        .iter()
+        .map(|(target, &n)| (target.clone(), n - before.get(target).copied().unwrap_or(0)))
+        .filter(|(_, n)| *n > 0)
+        .collect();
+    *before = now;
+    Ok(made)
 }

@@ -30,7 +30,13 @@ Clockwork unpacks the program if it was packed, Ghidra analyses it (minutes), an
 functions get their names from the signature packs. `rrc show <ID or name>` then tells what is known about a
 function: its name and evidence, its size, calls and callers, and with `--c` or `--asm` its decompiled code or
 disassembly, in which Ghidra's `FUN_` and `DAT_` names become the names you gave (`name[+N]` for a byte inside
-a data item). Decompiled code is a hint, not a source (D2): it is partly wrong.
+a data item). For data, it lists the instructions that read it, write it or take its address, by function.
+Decompiled code is a hint, not a source (D2): it is partly wrong.
+
+Ghidra misses code that only a vector or a pointer reaches, such as interrupt handlers (`rrc inputs` names
+them by their entry). `rrc show ID --asm` then disassembles it with Clockwork, following its jumps; once you
+name it (`rrc name`), `rrc analyze` adds it to Ghidra's analysis as a function, with its calls, references
+and decompiled code (that takes Ghidra's minutes again).
 
 Look for prior art (D32): source releases, reimplementations, format documentation, bug lists. For a pilot
 whose source is released, the source stays out of reach (D3, D46).
@@ -53,25 +59,33 @@ lists the functions the session calls, grouped by how often. A loop calls its fu
 large groups are loops; in a group, the function that waits for the timer (it reads a counter the timer
 interrupt advances, in a loop, until it changes) is where a tick of that loop ends. Check with
 `rrc show <ID> --c`; `rrc show 2A40:13C2` finds the ID of an address Ghidra's code names (`DAT_2a40_13c2`).
+Once there are sync points, the counts come in phases: before the first tick, then each run of ticks at one
+sync point (the menus, play), so a loop that has no sync point yet shows in the phase it runs in.
+`rrc calls first-level ID` says how often each phase called one function; `--top N` and `--min N` show more
+or fewer groups.
 
 **Where the tick ends (D47):** put the sync point where the wait is over and the pass hasn't read its inputs
 yet, usually where the waiting function returns (its last instruction), not its entry: a tick's inputs and
 state are what memory holds at the sync point, which is what the pass starting there reads. At the entry,
 the elapsed time is the previous pass's, and a key that changes during the wait reaches the pass but not the
 tick. A game has a loop per mode (play, demo playback, menus); one loop may also end its tick in two places
-(demo playback skipping the usual wait for one of its own): each gets a sync point.
+(demo playback skipping the usual wait for one of its own): each gets a sync point:
+
+```bash
+rrc sync GAME.EXE+0A31C play --evidence "where wait_for_tick returns; notes/loops.md" --confidence 0.8
+```
 
 **Loops that poll (D48):** menus and title screens often poll the controls as fast as the CPU runs, with no
 timer wait: `rrc calls` shows them as huge counts (thousands a second). A sync point at their poll would tick
 once a poll, which measures the emulated CPU, not the game. Gate it instead: `when_changed` lists what the
 loop reads (its inputs, and the counter its timing reads, such as the timer count a blinking cursor follows),
 and a hit is a tick only when one of them changed since that point's last tick. Put the sync point where the
-loop reads its controls. `rrc trace` says how many hits each gated sync point skipped; if the loop does work
-per poll that changes state (a random number drawn each pass), the trace shows it, and the notes should say
-so.
+loop reads its controls (`rrc sync ID menu --when-changed keys,timer_count,mouse`). `rrc trace` says how many
+hits each gated sync point skipped; if the loop does work per poll that changes state (a random number drawn
+each pass), the trace shows it, and the notes should say so.
 
-Declare them in `knowledge/ticks.toml`, with the tick's **boundary values**: what the loop reads that comes
-from outside it (the elapsed time the waiting function measures, the key-state array, the mouse). To find them:
+Then the tick's **boundary values**: what the loop reads that comes from outside it (the elapsed time the
+waiting function measures, the key-state array, the mouse). To find them:
 
 ```bash
 rrc inputs first-level
@@ -79,15 +93,25 @@ rrc inputs first-level
 
 scans the data segment the loop runs with and lists what the program reads that an interrupt handler or a
 host service writes, by handler: the keyboard's (INT 09h) writes the key states, the timer's (INT 08h) the
-timer counts and whatever runs at the timer's rate (music), the sound card's its own state. Which of these are
-inputs and which belong to an interrupt-driven subsystem of the simulation (D22) is your call: inputs come
-from the player and the clock. A session must press the keys for their bytes to show up.
+timer counts and whatever runs at the timer's rate (music), the sound card's its own state. A handler's bytes
+are grouped by the instruction that wrote them, so the keys a session pressed in a key-state array show as one
+candidate from the first to the last, with the instruction (and what Ghidra says it refers to: often the
+array's start); once you name the array (`rrc data`), the candidate shows as it. Which of these are inputs and
+which belong to an interrupt-driven subsystem of the simulation (D22) is your call: inputs come from the player
+and the clock. A session must press the keys for their bytes to show up. Declare each:
+
+```bash
+rrc input GAME.EXE+21C40 tick_elapsed --size 2 --evidence "..."
+rrc input mouse mouse --evidence "INT 33h 03h and 0Bh every pass"
+```
 
 Values that come back from a driver or a port in registers don't show here: a program often reads the mouse
-(INT 33h) or the joystick (port 201h) and uses the answer at once. Declare those as the device
-(`device = "mouse"` or `"joystick"` in an `[[input]]`, D49): the trace then has the driver's state at each tick,
-which is what the pass starting there reads, and `rrc trace --item mouse` shows it. A gated sync point can name
-it too, so a menu ticks when the mouse moves. Record the evidence in the notes.
+(INT 33h) or the joystick (port 201h) and uses the answer at once. `rrc inputs` says how often the program
+called or read them (`unseen`). Declare those as the device (`rrc input mouse NAME`, D49): the trace then has
+the driver's state at each tick, which is what the pass starting there reads, and `rrc trace --item NAME`
+shows it. A gated sync point can name it too, so a menu ticks when the mouse moves. An input only one loop
+reads can be read only at its sync points (`--sync menu`). `rrc sync` and `rrc input` alone list what is
+declared; `--remove NAME` takes one out. Record the evidence in the notes.
 
 ## 4. Record
 

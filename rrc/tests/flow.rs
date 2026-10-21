@@ -17,9 +17,10 @@ const POLLING: [u8; 24] = [
     0x4C, 0xCD, 0x21, 0xC3, 0x00,
 ];
 
-/// A COM program that resets the mouse driver, then polls it forever: `poll` (+00004) is
-/// `mov ax, 3; int 33h; jmp poll`.
-const MOUSE_POLLING: [u8; 11] = [0x31, 0xC0, 0xCD, 0x33, 0xB8, 0x03, 0x00, 0xCD, 0x33, 0xEB, 0xF9];
+/// A COM program that resets the mouse driver, then forever waits (`mov cx, 10000; loop $`) and
+/// polls it: `poll` (+00009) is `mov ax, 3; int 33h`.
+const MOUSE_POLLING: [u8; 16] =
+    [0x31, 0xC0, 0xCD, 0x33, 0xB9, 0x10, 0x27, 0xE2, 0xFE, 0xB8, 0x03, 0x00, 0xCD, 0x33, 0xEB, 0xF4];
 
 /// The workspace's `clockwork`, built if it isn't.
 fn clockwork() -> PathBuf {
@@ -88,7 +89,10 @@ fn a_session_is_traced_tick_by_tick() {
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
     let (taken, ok) = rrc.run(&["data", "T.COM+00011", "count", "--size", "2"]);
     assert!(!ok && taken.contains("count names T.COM+0000F already"), "{taken}");
-    std::fs::write(repo.join("knowledge/ticks.toml"), "[[sync]]\nname = \"loop\"\nat = \"T.COM+0000E\"\n").unwrap();
+    rrc.ok(&["sync", "T.COM+0000E", "loop", "--by", "human", "--evidence", "step runs once a pass"]);
+    let ticks = std::fs::read_to_string(repo.join("knowledge/ticks.toml")).unwrap();
+    assert!(ticks.contains("provenance = \"human\"") && ticks.contains("evidence = \"step runs once"), "{ticks}");
+    assert!(rrc.ok(&["sync"]).contains("sync      loop T.COM+0000E (human)"));
     let settings = std::fs::read_to_string(repo.join("rrc.toml")).unwrap();
     std::fs::write(repo.join("rrc.toml"), format!("{settings}\n[port]\nimports = false\n")).unwrap();
     let (refused, ok) = rrc.run(&["import", "recreate", "."]);
@@ -100,6 +104,9 @@ fn a_session_is_traced_tick_by_tick() {
     rrc.ok(&["session", "add", "short", "--seconds", "0.005"]);
     let calls = rrc.ok(&["calls", "short", "--min", "10"]);
     assert!(calls.contains("1 functions: step"), "the loop calls step once a pass: {calls}");
+    assert!(calls.contains("phase     before tick 1") && calls.contains("phase     loop, ticks 1-"), "{calls}");
+    let step = rrc.ok(&["calls", "short", "step"]);
+    assert!(step.contains("calls     step (T.COM+0000E): ") && step.contains("phase     loop, ticks 1-"), "{step}");
     // Analysis comes first (it needs Ghidra, which tests don't have).
     assert!(rrc.ok(&["status"]).contains("next      rrc analyze"));
     let recorded = rrc.ok(&["record", "short"]);
@@ -129,6 +136,24 @@ fn a_session_is_traced_tick_by_tick() {
     let counts = rrc.ok(&["trace", "short", "--item", "count"]);
     let lines: Vec<&str> = counts.lines().take(3).collect();
     assert_eq!(lines, ["1         1", "2         2", "3         3"], "the count at each tick, as a u16");
+
+    // With an analysis (a stand-in: tests have no Ghidra), status walks through ticks and traces.
+    let export = r#"{"record":"program","name":"T.COM","entry":{"linear":65536,"text":"1000:0000"},"ghidra":"-"}"#;
+    let export = rrc::cache::Cache::at(&rrc.cache).unwrap().put(export.as_bytes()).unwrap();
+    let index = format!(
+        "original = \"-\"\nprogram = \"-\"\nunpacked = false\nexport = \"{export}\"\nentry = 0\nghidra = \"-\"\n"
+    );
+    std::fs::write(repo.join(".rrc/analysis.toml"), index).unwrap();
+    assert!(rrc.ok(&["status"]).contains("next      find what a tick reads from outside: rrc inputs short"));
+    let added = rrc.ok(&["input", "T.COM+0000F", "tally", "--note", "the pass count"]);
+    assert!(added.contains("input     tally T.COM+0000F, 2 bytes (agent)"), "the named data's size: {added}");
+    let status = rrc.ok(&["status"]);
+    assert!(status.contains("rrc record short: the knowledge changed since it was recorded"), "{status}");
+    assert!(rrc.ok(&["record", "short"]).contains("same      run as before"));
+    assert!(rrc.ok(&["status"]).contains("every session is recorded with the knowledge as it is"));
+    let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other"]);
+    assert!(!ok && refused.contains("give --size N"), "{refused}");
+    assert!(rrc.ok(&["input", "tally", "--remove"]).contains("removed   tally"));
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -163,7 +188,7 @@ fn the_mouse_is_an_input_and_a_gate() {
     let (dir, rrc) = setup("mouse", &MOUSE_POLLING);
     rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
     rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
-    let ticks = "[[sync]]\nname = \"poll\"\nat = \"T.COM+00004\"\nwhen_changed = [\"mouse\"]\n\n\
+    let ticks = "[[sync]]\nname = \"poll\"\nat = \"T.COM+00009\"\nwhen_changed = [\"mouse\"]\n\n\
                  [[input]]\nname = \"mouse\"\ndevice = \"mouse\"\n";
     std::fs::write(rrc.repo.join("knowledge/ticks.toml"), ticks).unwrap();
     assert!(rrc.ok(&["check"]).contains("1 sync points, 1 inputs"));
@@ -185,5 +210,7 @@ fn the_mouse_is_an_input_and_a_gate() {
         ],
         "{mouse}"
     );
+    let inputs = rrc.ok(&["inputs", "click"]);
+    assert!(inputs.contains("unseen    INT 33h (the mouse driver) called"), "{inputs}");
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -37,8 +37,12 @@
 //!   byte, with the instruction, the cycle and the call chain (at most `"limit"` accesses, 10000 by
 //!   default). With `"summary": true`, who touched
 //!   each byte instead, as runs of bytes touched alike: `{"at", "len", "read", "read_in_interrupt",
-//!   "written", "interrupt_writer" (the handler's entry, or null), "host" (a service or device wrote)}`. `calls` `{"on": true}` tracks calls
-//!   from now on, so a watch started later sees the whole chain.
+//!   "written", "interrupt_writer" (the handler's entry, or null), "interrupt_write_by" (the instruction that
+//!   wrote it there first), "host" (a service or device wrote)}`, and the services called (`services`, by
+//!   callback: the interrupt, for the BIOS, DOS and the mouse driver) and ports read (`ports`), with how
+//!   often. `calls` `{"on": true}` tracks calls from now on, so a watch started later sees the whole chain.
+//! - `coverage` `{"on": true}`: records what the program's code runs from now on (as `clockwork run
+//!   --coverage`); `coverage_calls`: the calls made since, by target, with how often (`[[addr, n]]`).
 //! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
 //!   `uninit_end`.
 //! - `image` `{"dir"}`: the loaded image for analysis; `rebase`: image offsets count from the
@@ -219,8 +223,10 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 m.run(ms * ips / 1000)
             } else if let Some(cycles) = r.get("cycles").and_then(Value::as_u64) {
                 m.run(cycles)
+            } else if r.get("until_ms").is_some() {
+                m.run(max)
             } else {
-                return Err("run needs ms, cycles or sync".into());
+                return Err("run needs ms, cycles, until_ms or sync".into());
             };
             let mut reply =
                 json!({"stop": crate::summary::stop_text(&stop), "cycles": m.cpu.cycles, "ms": m.elapsed_ms()});
@@ -296,6 +302,23 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             m.track_calls(r.get("on").and_then(Value::as_bool).unwrap_or(true));
             Ok(json!({}))
         }
+        "coverage" => {
+            if r.get("on").and_then(Value::as_bool).unwrap_or(true) {
+                m.start_coverage();
+            } else {
+                m.probes.coverage = None;
+            }
+            Ok(json!({}))
+        }
+        "coverage_calls" => {
+            let coverage = m.probes.coverage.as_ref().ok_or("no coverage on")?;
+            let mut by_target: BTreeMap<u32, u64> = BTreeMap::new();
+            for (&(_, target), &n) in &coverage.calls {
+                *by_target.entry(target).or_default() += n;
+            }
+            let calls: Vec<Value> = by_target.iter().map(|(&target, &n)| json!([name(target), n])).collect();
+            Ok(json!({ "calls": calls }))
+        }
         "watch" => {
             let mut physical_ranges = Vec::new();
             for (at, len) in ranges(r, "ranges", "len")? {
@@ -317,7 +340,12 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         "watch_end" => {
             let watch = m.take_watch().ok_or("no watch on")?;
             if let Some(touches) = &watch.touches {
-                return Ok(json!({ "bytes": touch_runs(touches, &name, &name_physical) }));
+                let services: BTreeMap<String, u64> =
+                    watch.services.iter().map(|(id, n)| (format!("{id:02X}"), *n)).collect();
+                let ports: BTreeMap<String, u64> =
+                    watch.port_reads.iter().map(|(port, n)| (format!("{port:X}"), *n)).collect();
+                let bytes = touch_runs(touches, &name, &name_physical);
+                return Ok(json!({ "bytes": bytes, "services": services, "ports": ports }));
             }
             let hits: Vec<Value> = watch.hits.iter().map(|h| hit(h, &name, &name_physical)).collect();
             Ok(json!({"hits": hits, "dropped": watch.dropped}))
@@ -483,7 +511,8 @@ fn touch_runs(
         .map(|(at, len, t)| {
             json!({
                 "at": name_physical(*at), "len": len, "read": t.read, "read_in_interrupt": t.read_in_interrupt,
-                "written": t.written, "interrupt_writer": t.interrupt_writer.map(name), "host": t.written_by_host,
+                "written": t.written, "interrupt_writer": t.interrupt_writer.map(name),
+                "interrupt_write_by": t.interrupt_write_by.map(name), "host": t.written_by_host,
             })
         })
         .collect()

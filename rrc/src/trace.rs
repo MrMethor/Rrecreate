@@ -232,22 +232,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Err("no sync points in knowledge/ticks.toml: find where a tick ends first (docs/formats.md)".into());
     }
     let module = repo.module();
-    let inputs: Vec<Item> = k.ticks.inputs.iter().map(Item::from_input).collect();
-    // An item that is an input at every tick is written once, as the input.
-    let is_input =
-        |id: &str, size: Option<u32>| inputs.iter().any(|i| i.at == id && Some(i.size) == size && i.sync.is_empty());
-    let state: Vec<Item> = k
-        .data
-        .iter()
-        .filter(|(id, d)| id.module() == module && id.part().is_none() && d.size.is_some())
-        .filter(|(id, d)| !is_input(&id.to_string(), d.size))
-        .map(|(id, d)| Item {
-            name: d.decision.name.clone(),
-            at: id.to_string(),
-            size: d.size.unwrap_or(0),
-            ..Item::default()
-        })
-        .collect();
+    let (syncs, inputs, state) = items(&k, &module)?;
     let exe = clockwork::find(&repo.local)?;
     let header = Header {
         format: FORMAT.into(),
@@ -256,7 +241,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         session: name.clone(),
         program: module.clone(),
         clockwork: clockwork::version(&exe).unwrap_or_default(),
-        syncs: sync_points(&k)?,
+        syncs,
         inputs,
         state,
     };
@@ -292,7 +277,37 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Runs the session to its end, taking a tick at each sync point hit.
+/// The sync points, inputs and state items of a trace.
+pub(crate) type Items = (Vec<SyncPoint>, Vec<Item>, Vec<Item>);
+
+/// What a trace follows, from the knowledge: the sync points, the boundary values and the named
+/// data (but an item that is an input at every tick: it is written once, as the input).
+pub(crate) fn items(k: &Knowledge, module: &str) -> Result<Items, String> {
+    let inputs: Vec<Item> = k.ticks.inputs.iter().map(Item::from_input).collect();
+    let is_input =
+        |id: &str, size: Option<u32>| inputs.iter().any(|i| i.at == id && Some(i.size) == size && i.sync.is_empty());
+    let state: Vec<Item> = k
+        .data
+        .iter()
+        .filter(|(id, d)| id.module() == module && id.part().is_none() && d.size.is_some())
+        .filter(|(id, d)| !is_input(&id.to_string(), d.size))
+        .map(|(id, d)| Item {
+            name: d.decision.name.clone(),
+            at: id.to_string(),
+            size: d.size.unwrap_or(0),
+            ..Item::default()
+        })
+        .collect();
+    Ok((sync_points(k)?, inputs, state))
+}
+
+/// The header of the trace recorded under `hash`, if this machine's cache has it.
+pub(crate) fn recorded_header(cache: &Cache, hash: &str) -> Option<Header> {
+    let text = cache.get(hash).ok()?;
+    let first = text.split(|&b| b == b'\n').next()?;
+    serde_json::from_slice(first).ok()
+}
+
 /// The session's original in a fresh Clockwork with the sync points set: Clockwork, what `load`
 /// answered (the cycle it starts at, where the image is), and the sync points' names by Clockwork's
 /// address (`+OFF`).
