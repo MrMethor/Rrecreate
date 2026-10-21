@@ -297,9 +297,13 @@ impl Analysis {
         let program = records.iter().find(|r| r["record"] == "program").ok_or("the export has no program record")?;
         let entry_linear = program["entry"]["linear"].as_u64().ok_or("the export has no entry point")?;
         let base = entry_linear.checked_sub(u64::from(entry)).ok_or("the export's entry point is below its image")?;
+        // Below the image is memory of the PC's (vectors, the BIOS's data): `MEM`.
         let id = |address: &Value| -> Option<Id> {
-            let offset = address["linear"].as_u64()?.checked_sub(base)?;
-            Id::new(module, None, u32::try_from(offset).ok()?).ok()
+            let linear = address["linear"].as_u64()?;
+            match linear.checked_sub(base) {
+                Some(offset) => Id::new(module, None, u32::try_from(offset).ok()?).ok(),
+                None => Some(Id::memory(u32::try_from(linear).ok()?)),
+            }
         };
         let packs = Packs::load()?;
         let ghidra = program["ghidra"].as_str().unwrap_or("?").to_owned();
@@ -439,7 +443,11 @@ impl Analysis {
     pub fn id_of(&self, module: &str, address: &str) -> Option<Id> {
         let (segment, offset) = address.split_once(':')?;
         let linear = u64::from_str_radix(segment, 16).ok()? * 16 + u64::from_str_radix(offset, 16).ok()?;
-        Id::new(module, None, u32::try_from(linear.checked_sub(self.base)?).ok()?).ok()
+        match linear.checked_sub(self.base) {
+            Some(offset) => Id::new(module, None, u32::try_from(offset).ok()?).ok(),
+            // Below the image: memory of the PC's (Ghidra's segments are real mode's there).
+            None => Some(Id::memory(u32::try_from(linear).ok()?)),
+        }
     }
 }
 
@@ -520,7 +528,8 @@ mod tests {
         assert_eq!((a.segment_of(0x10020), a.segment_of(0x00F0), a.segment_of(0x10040)), (Some(0x1000), Some(0), None));
         assert_eq!(a.code[&id("GAME.EXE+00040")].0, "1000:0040  RETF\n");
         assert_eq!(a.id_of("GAME.EXE", "2000:0010"), Some(id("GAME.EXE+10010")));
-        assert_eq!(a.id_of("GAME.EXE", "0FFF:0000"), None, "before the image");
+        assert_eq!(a.id_of("GAME.EXE", "0FFF:0000"), Some(id("MEM+0FFF0")), "before the image: the PC's memory");
+        assert_eq!(a.id_of("GAME.EXE", "0040:006C"), Some(id("MEM+0046C")));
         let mut k = Knowledge::default();
         let d = |name: &str| Decision {
             name: name.into(),

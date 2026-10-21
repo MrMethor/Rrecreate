@@ -136,7 +136,8 @@ the session.
 - **Prior art first:** for every game, look for source releases, reimplementations, format documentation
   and community bug lists; import what licences allow, as evidence, not truth.
 - **IDs:** `<MODULE>[#<n>]+<offset>`, where `#n` is an overlay (MZ) or an object (LE/LX) and the offset is in
-  the loaded image, uppercase hex, 5 to 8 digits. The same form names functions and data.
+  the loaded image, uppercase hex, 5 to 8 digits. The same form names functions and data. The module `MEM`
+  is memory outside the programs' images, by linear address (`MEM+0046C`, the BIOS's timer count; D53).
 
 ## 6. The port
 

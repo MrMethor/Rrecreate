@@ -94,7 +94,8 @@ GAME.EXE+0A2F0	wait_for_tick	agent:claude-opus-5-5	0.8	called once a pass of the
 GAME.EXE+21C40	tick_elapsed	2	u16	human
 ```
 
-- **id:** `<MODULE>[#<n>]+<offset>` (D29), the offset in the loaded image, uppercase hex, 5 to 8 digits.
+- **id:** `<MODULE>[#<n>]+<offset>` (D53), the offset in the loaded image, uppercase hex, 5 to 8 digits; or
+  `MEM+<linear address>` for memory outside the program's image (the BIOS's data, the interrupt vectors).
 - **name:** letters, digits, `_`, and the `@` and `$` of compilers' runtime names, not starting with a digit;
   unique across both tables.
 - **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a primitive (`u8`,

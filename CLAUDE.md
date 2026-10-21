@@ -47,8 +47,8 @@ is in `rrc/` (M2). The runtime and the comparison are M3 (`DESIGN.md` §12).
   Unsupported things are reported (a stop, a diagnostic), never guessed.
 - Game files are never committed. Each game's port lives in its own repository (`DESIGN.md` §3).
 - IDs: `<MODULE>[#<n>]+<offset>` (`#n`: an overlay or an LE/LX object; the offset in the loaded image, uppercase
-  hex, 5 to 8 digits), for functions and data alike. The `ids` crate parses and prints them; its cases are in
-  `testdata/function_ids.tsv`.
+  hex, 5 to 8 digits), for functions and data alike; `MEM+<linear>` for memory outside the images (D53). The
+  `ids` crate parses and prints them; its cases are in `testdata/function_ids.tsv`.
 - Tool output is read by agents: keep it short. Large data goes to the cache, and the output gives its hash.
   `rrc` prints a label and a value per line.
 - `rrc` (MIT) drives Clockwork as a program (`clockwork serve`, `clockwork run`, `clockwork unpack`), never as a

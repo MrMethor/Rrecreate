@@ -214,9 +214,13 @@ fn carried(
         .collect()
 }
 
-/// `+OFF` for an ID in the program (Clockwork's address for an image offset).
+/// Clockwork's address for an ID: `+OFF` in the program's image, `@LINEAR` for memory outside it
+/// (`MEM+...`).
 pub(crate) fn image_address(module: &str, id: &str) -> Result<String, String> {
     let id = parse_id(id)?;
+    if id.is_memory() {
+        return Ok(format!("@{:X}", id.offset()));
+    }
     if id.module() != module || id.part().is_some() {
         return Err(format!("{id}: only the program's own image ({module}) can be traced so far"));
     }
@@ -296,7 +300,7 @@ pub(crate) fn items(k: &Knowledge, module: &str) -> Result<Items, String> {
     let state: Vec<Item> = k
         .data
         .iter()
-        .filter(|(id, d)| id.module() == module && id.part().is_none() && d.size.is_some())
+        .filter(|(id, d)| (id.module() == module || id.is_memory()) && id.part().is_none() && d.size.is_some())
         .filter(|(id, d)| !is_input(&id.to_string(), d.size))
         .map(|(id, d)| Item {
             name: d.decision.name.clone(),

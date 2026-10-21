@@ -193,9 +193,21 @@ IDs, the protocol, coverage and the mapping handle protected mode from M1.
 **Why:** Recreate's pipeline was real-mode only, and most of the person's library (Daggerfall, Battlespire,
 Redguard, Ultimate Doom) is 32-bit.
 
-### D29. IDs. Accepted (carried from Recreate, extended 2026-10-19).
+### D29. IDs. Superseded by D53.
 `<MODULE>[#<n>]+<offset>`: `#n` is an overlay (MZ) or an object (LE/LX); the offset is in the loaded image,
 uppercase hex, 5 to 8 digits; functions and data alike.
+
+### D53. IDs, and `MEM` for memory outside the images. Accepted 2026-10-21, with the person.
+`<MODULE>[#<n>]+<offset>`: `#n` is an overlay (MZ) or an object (LE/LX); the offset is in the loaded image,
+uppercase hex, 5 to 8 digits; functions and data alike. The module `MEM` (no parts) is memory outside any
+program's image, its offset the linear address: `MEM+0046C` is the BIOS's timer count, `MEM+004F0` the
+intra-application area.
+**Why:** games read memory that isn't theirs: the BIOS's timer count and keyboard buffer (where INT 16h's keys
+are), the interrupt vectors, other programs' memory (the first blind test found Wolf3D reading 0000:04F0).
+Only IDs in the program's image could be named, so these couldn't be inputs or data. A reserved module keeps
+one form for everything, so every tool that takes an ID takes these; a linear address, unlike `SEG:OFF`, has
+one spelling and carries over to protected mode.
+**Supersedes:** D29.
 
 ### D30. Game versions by hash. Accepted 2026-10-19, with the person.
 A port targets exact executables; each supported version is identified by its hash.

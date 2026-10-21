@@ -105,6 +105,11 @@ rrc input GAME.EXE+21C40 tick_elapsed --size 2 --evidence "..."
 rrc input mouse mouse --evidence "INT 33h 03h and 0Bh every pass"
 ```
 
+Memory outside the program's image is `MEM+<linear address>`: a game that times itself by the BIOS's count
+reads `MEM+0046C` (4 bytes), one that reads keys through INT 16h takes them from the BIOS's buffer
+(`MEM+0041A`, the head and tail words, then 32 bytes of keys). `rrc inputs SESSION --at MEM+00400 --len 256`
+scans the BIOS's data; `rrc show` names what Ghidra's code reads there (`DAT_0040_006c` is `MEM+0046C`).
+
 Values that come back from a driver or a port in registers don't show here: a program often reads the mouse
 (INT 33h) or the joystick (port 201h) and uses the answer at once. `rrc inputs` says how often the program
 called or read them (`unseen`). Declare those as the device (`rrc input mouse NAME`, D49): the trace then has

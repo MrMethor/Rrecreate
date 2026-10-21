@@ -161,7 +161,7 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         let size = k.data.get(&id).and_then(|d| d.size).unwrap_or(1);
         let referred = show_refs(&k, analysis, &id, size);
         let in_code = analysis.functions.contains_key(&id) || analysis.containing(&id).is_some();
-        if !in_code && !referred && !k.data.contains_key(&id) {
+        if !in_code && !referred && !k.data.contains_key(&id) && !id.is_memory() {
             if a.has("--asm") {
                 print!("{}", clockwork_listing(repo, &k, analysis, &id)?);
             } else {

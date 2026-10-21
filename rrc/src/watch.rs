@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use crate::analysis::Analysis;
 use crate::args::Args;
 use crate::clockwork::Clockwork;
-use crate::knowledge::Knowledge;
+use crate::knowledge::{Knowledge, parse_id};
 use crate::repo::Repo;
 use crate::say;
 use crate::session::Session;
@@ -34,6 +34,9 @@ struct Names<'a> {
 
 impl Names<'_> {
     fn id(&self, address: &str) -> Option<Id> {
+        if let Some(linear) = address.strip_prefix('@') {
+            return Some(Id::memory(u32::from_str_radix(linear, 16).ok()?));
+        }
         let offset = u32::from_str_radix(address.strip_prefix('+')?, 16).ok()?;
         Id::new(&self.module, None, offset).ok()
     }
@@ -47,7 +50,7 @@ impl Names<'_> {
     /// A data item's name (`name[+N]` inside one), or the address.
     fn data(&self, address: &str) -> String {
         let Some(id) = self.id(address) else { return address.to_owned() };
-        match self.k.data.range(..=id.clone()).next_back() {
+        match self.k.data.range(..=id.clone()).next_back().filter(|(start, _)| start.module() == id.module()) {
             Some((start, d)) if *start == id => d.decision.name.clone(),
             Some((start, d)) if d.size.is_some_and(|size| id.offset() - start.offset() < size) => {
                 format!("{}[+{}]", d.decision.name, id.offset() - start.offset())
@@ -56,7 +59,7 @@ impl Names<'_> {
         }
     }
 
-    /// An ID for an image address, the address otherwise.
+    /// An ID for an address in the image or outside it, the address otherwise (paged memory).
     fn plain(&self, address: &str) -> String {
         self.id(address).map_or_else(|| address.to_owned(), |id| id.to_string())
     }
@@ -313,7 +316,7 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     let analysis = Analysis::load(repo)?;
     let image = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
     let names = Names { k: &k, module: repo.module() };
-    say("scanned", format!("{at}, {len} bytes, from tick {first} to {last}"));
+    say("scanned", format!("{}, {len} bytes, from tick {first} to {last}", names.plain(&at)));
     let candidates = candidates(&bytes);
     let mut writers: Vec<&Option<String>> = candidates.iter().map(|c| &c.writer).collect();
     writers.dedup();
@@ -346,11 +349,19 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
 fn candidate_text(c: &Candidate, names: &Names, k: &Knowledge, analysis: Option<&Analysis>) -> String {
     let bytes = |n: u32| if n == 1 { "1 byte".to_owned() } else { format!("{n} bytes") };
     let id = names.id(&c.at);
-    let item = id.as_ref().and_then(|id| {
+    // A declared input it is in, else named data.
+    let within = |id: &Id, start: &Id, size: u32| {
+        start.module() == id.module() && start.offset() <= id.offset() && id.offset() + c.len <= start.offset() + size
+    };
+    let input = id.as_ref().and_then(|id| {
+        let i = k.ticks.inputs.iter().find(|i| parse_id(&i.at).is_ok_and(|start| within(id, &start, i.size)))?;
+        Some(format!("{} {} (an input, {})", i.at, i.name, bytes(i.size)))
+    });
+    let item = input.or_else(|| {
+        let id = id.as_ref()?;
         let (start, datum) = k.data.range(..=id.clone()).next_back()?;
         let size = datum.size?;
-        (start.module() == id.module() && id.offset() + c.len <= start.offset() + size)
-            .then(|| format!("{start} {} ({})", datum.decision.name, bytes(size)))
+        within(id, start, size).then(|| format!("{start} {} ({})", datum.decision.name, bytes(size)))
     });
     let place = id.as_ref().map_or_else(|| c.at.clone(), ToString::to_string);
     let mut text = match item {

@@ -1,11 +1,13 @@
-//! Stable IDs of a program's functions and data (DESIGN.md §5, decision D29).
+//! Stable IDs of a program's functions and data (DESIGN.md §5, decision D53).
 //!
 //! Canonical text form: `<MODULE>[#<n>]+<offset>`, for example `GAME.EXE+0A4D2` or
 //! `GAME.EXE#3+00120`. `#n` is a part of the module: an overlay of an MZ program, or an object of an
 //! LE/LX program. The offset is relative to the start of the module's (unpacked) load image or of
 //! the part, never a runtime `segment:offset`: load segments and where parts are placed vary between
-//! runs. Tested against `testdata/function_ids.tsv`, which every implementation of the format
-//! shares.
+//! runs. The module `MEM` is memory outside any program's image (the interrupt vectors, the BIOS's
+//! data, other programs' memory), its offset the linear address: `MEM+0046C` is the BIOS's timer
+//! count (D53). Tested against `testdata/function_ids.tsv`, which every implementation of the
+//! format shares.
 
 use std::fmt;
 use std::str::FromStr;
@@ -14,6 +16,9 @@ const MODULE_MAX_LEN: usize = 64;
 const OFFSET_MIN_DIGITS: usize = 5;
 const OFFSET_MAX_DIGITS: usize = 8;
 const MODULE_PUNCTUATION: &str = "._-~!$%&()@^{}'";
+
+/// The module of memory outside any program's image, by linear address (D53).
+pub const MEMORY: &str = "MEM";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id {
@@ -43,7 +48,20 @@ impl Id {
         if let Err(reason) = validate_module(&module) {
             return Err(ParseIdError { input: module, reason });
         }
+        if module == MEMORY && part.is_some() {
+            return Err(ParseIdError { input: module, reason: "MEM has no parts" });
+        }
         Ok(Self { module, part, offset })
+    }
+
+    /// The byte at a linear address outside any program's image (`MEM+...`).
+    pub fn memory(linear: u32) -> Self {
+        Self { module: MEMORY.into(), part: None, offset: linear }
+    }
+
+    /// Whether it names memory outside the programs' images.
+    pub fn is_memory(&self) -> bool {
+        self.module == MEMORY
     }
 
     pub fn module(&self) -> &str {

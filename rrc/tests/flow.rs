@@ -22,6 +22,10 @@ const POLLING: [u8; 24] = [
 const MOUSE_POLLING: [u8; 16] =
     [0x31, 0xC0, 0xCD, 0x33, 0xB9, 0x10, 0x27, 0xE2, 0xFE, 0xB8, 0x03, 0x00, 0xCD, 0x33, 0xEB, 0xF4];
 
+/// A COM program that reads the BIOS's timer count (0040:006C) forever: `mov ax, 40h; mov es, ax;
+/// mov ax, es:[6Ch]; call poll; jmp $-14`, `poll` (+0000E) a `ret`.
+const BIOS_TIMER: [u8; 15] = [0xB8, 0x40, 0x00, 0x8E, 0xC0, 0x26, 0xA1, 0x6C, 0x00, 0xE8, 0x02, 0x00, 0xEB, 0xF2, 0xC3];
+
 /// The workspace's `clockwork`, built if it isn't.
 fn clockwork() -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
@@ -219,5 +223,25 @@ fn the_mouse_is_an_input_and_a_gate() {
     );
     let inputs = rrc.ok(&["inputs", "click"]);
     assert!(inputs.contains("unseen    INT 33h (the mouse driver) called"), "{inputs}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn memory_outside_the_image_is_mem() {
+    let (dir, rrc) = setup("mem", &BIOS_TIMER);
+    rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    rrc.ok(&["input", "MEM+0046C", "bios_ticks", "--size", "4", "--note", "the BIOS's timer count"]);
+    rrc.ok(&["sync", "T.COM+0000E", "poll", "--when-changed", "bios_ticks"]);
+    assert!(rrc.ok(&["check"]).contains("1 sync points, 1 inputs"));
+    rrc.ok(&["session", "add", "wait", "--seconds", "0.5"]);
+    let recorded = rrc.ok(&["record", "wait"]);
+    // The first poll, then one a timer tick: 18.2 a second.
+    assert!(recorded.contains("trace     10 ticks"), "{recorded}");
+    let ticks = rrc.ok(&["trace", "wait", "--item", "bios_ticks"]);
+    assert_eq!(ticks.lines().count(), 10, "a new count each tick: {ticks}");
+    let scanned = rrc.ok(&["inputs", "wait", "--at", "MEM+00400", "--len", "256"]);
+    assert!(scanned.contains("scanned   MEM+00400, 256 bytes"), "{scanned}");
+    assert!(scanned.contains("MEM+0046C bios_ticks (an input, 4 bytes)"), "{scanned}");
     std::fs::remove_dir_all(&dir).ok();
 }
