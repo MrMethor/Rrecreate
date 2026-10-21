@@ -363,6 +363,8 @@ pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
 fn run(repo: &Repo, session: &Session, header: Header, module: &str) -> Result<(Trace, usize), String> {
     let (mut clockwork, loaded, syncs) = begin(repo, session, &header.syncs)?;
     let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
+    // Tracked from power-on, so the snapshots give a watch from them whole call chains.
+    clockwork.ask("calls", json!({"on": true}))?;
     let start = loaded["cycles"].as_u64().unwrap_or(0);
     let mut ranges = Vec::new();
     for item in header.inputs.iter().chain(&header.state) {

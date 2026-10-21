@@ -338,7 +338,9 @@ counts and gates). `rrc watch` and `rrc inputs` start from the last one before t
 56 s, watch 20-40 s, calls 20 s), most of them about play, which starts 44 s into the session. Measured on the
 Wolf3D port's pushwall: a watch at tick 2700 in 3 s instead of 40, `rrc calls` asked again in 0.1 s, and the
 run hash unchanged by the snapshots. A snapshot (about 2 MB) loads the input still to come with it, so the
-session's input isn't given again.
+session's input isn't given again. `rrc record` tracks calls from power-on and a snapshot keeps the call
+tracker's stack (beside the machine's state, not in its hash), so a watch from it sees whole call chains;
+recording takes about 10% longer for it.
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the

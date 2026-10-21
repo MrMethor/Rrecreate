@@ -2,7 +2,9 @@
 //! as it would have gone on. In memory, `Machine::clone` is the snapshot; this is its file form.
 //!
 //! The file: a header (`CLOCKWRK`, the format number, Clockwork's version, the machine's state
-//! hash), then the state, serialized with postcard and deflated. The game's files are an input,
+//! hash), then the state and the call tracker's stack if calls were tracked (an analysis tool's, not
+//! state, kept so that a watch from the snapshot sees whole call chains), serialized with postcard
+//! and deflated. The game's files are an input,
 //! not state: a snapshot holds only what the program changed on the drive, and loading it takes the
 //! drive as loaded (and the CD image, if any) again. Records (the sound logs, frames, console) are
 //! history, not state ([`crate::record`]): a loaded machine starts them empty.
@@ -19,8 +21,8 @@ use crate::vfs::Vfs;
 
 const MAGIC: &[u8; 8] = b"CLOCKWRK";
 
-/// The format's number: changed whenever the machine's state changes shape.
-pub const FORMAT: u32 = 2;
+/// The format's number: changed whenever what a snapshot holds changes shape.
+pub const FORMAT: u32 = 3;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -28,7 +30,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn save(m: &Machine, mut out: impl Write) -> Result<(), String> {
     let mut slim = m.clone();
     slim.drive = m.drive.changes_only();
-    let state = postcard::to_stdvec(&slim).map_err(|e| format!("snapshot: {e}"))?;
+    let state = postcard::to_stdvec(&(&slim, m.probes.calls.as_deref())).map_err(|e| format!("snapshot: {e}"))?;
     let io = |e: std::io::Error| format!("snapshot: {e}");
     out.write_all(MAGIC).map_err(io)?;
     out.write_all(&FORMAT.to_le_bytes()).map_err(io)?;
@@ -71,7 +73,9 @@ pub fn load(
     input.read_exact(&mut hash).map_err(io)?;
     let mut state = Vec::new();
     flate2::read::DeflateDecoder::new(input).read_to_end(&mut state).map_err(io)?;
-    let mut m: Machine = postcard::from_bytes(&state).map_err(|e| format!("snapshot: {e}"))?;
+    let (mut m, calls): (Machine, Option<crate::calls::Calls>) =
+        postcard::from_bytes(&state).map_err(|e| format!("snapshot: {e}"))?;
+    m.probes.calls = calls.map(Box::new);
     m.drive = std::mem::take(&mut m.drive).over(drive);
     m.cd_image = cd_image;
     m.restart_records();

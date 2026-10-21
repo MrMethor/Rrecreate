@@ -11,7 +11,7 @@
 use cpu::{Cpu, seg};
 
 /// One frame of the call chain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
     /// Linear address the call or interrupt went to.
     pub entry: u32,
@@ -25,7 +25,7 @@ pub struct Frame {
 }
 
 /// The instruction about to run, as [`Calls::before`] saw it.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Context {
     cs: u16,
     ip: u32,
@@ -34,7 +34,9 @@ struct Context {
     top: u32,
 }
 
-#[derive(Debug, Clone, Default)]
+/// A snapshot keeps it (beside the machine's state, not in it), so tracking goes on from a loaded
+/// machine with the whole chain.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Calls {
     stack: Vec<Frame>,
     context: Context,

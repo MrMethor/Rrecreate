@@ -3714,6 +3714,27 @@ fn a_sync_point_gated_on_a_timer_count_ticks_with_time() {
 }
 
 #[test]
+fn a_snapshot_keeps_the_calls_tracked_so_far() {
+    // Stopped inside `step` (its third call): a watch from the snapshot sees the call to it.
+    let (program, o) = ten_steps();
+    let mut drive = Vfs::new();
+    drive.insert_file("S.COM", program);
+    let mut m = Machine::with_program(Config::default(), drive.clone(), "S.COM", "").unwrap();
+    let base = u32::from(m.dos.psp) << 4;
+    m.track_calls(true);
+    assert!(matches!(m.run_to_sync(base + o["step"], 3, SECOND), Stop::Sync { .. }));
+    let mut file = Vec::new();
+    dos::snapshot::save(&m, &mut file).unwrap();
+    let mut loaded = dos::snapshot::load(&file[..], drive, None).unwrap();
+    let count = base + o["count"];
+    loaded.start_watch(dos::watch::Watch::range(count..count + 2, false));
+    assert_eq!(loaded.run(SECOND), Stop::Exited(0));
+    let watch = loaded.take_watch().unwrap();
+    let first = &watch.hits[0];
+    assert_eq!(first.chain.first().map(|f| f.entry), Some(base + o["step"]), "{:?}", first.chain);
+}
+
+#[test]
 fn a_sync_point_logs_its_timeline() {
     let (program, o) = ten_steps();
     let mut m = boot(&[("S.COM", &program)], "S.COM");

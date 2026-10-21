@@ -143,7 +143,7 @@ session's file with the new hashes.
 
 `rrc record` also keeps a snapshot of the machine every 10 emulated seconds (on this machine, in the cache):
 `rrc watch` and `rrc inputs` then start from the last one before the tick they look at, in seconds instead of
-a run from power-on (a watch's call chains begin there). Record a session before asking about its late ticks.
+a run from power-on, with the whole call chains. Record a session before asking about its late ticks.
 `rrc calls` and `rrc inputs` keep their answers: asked again with the same session and knowledge, they answer at
 once (`kept`).
 
