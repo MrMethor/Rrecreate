@@ -118,8 +118,9 @@ runs for a time, to a sync point's next hit or to the next tick (any sync point'
 (D48), memory and registers, the input devices' state (D49), input, the frames (with their pictures as
 indexed pixels and palette) and sound events of a span of time, watches with call chains, bounds checks,
 uninitialized reads and image dumps (real mode in full; protected mode as the selector map and the segments it
-bounds), coverage (the calls made, by target); and the GDB face (`clockwork gdb`). **Still to come:** image
-dumps of flat-model programs under an extender, which need where its loader put the LE objects.
+bounds), coverage (the calls made, by target); and the GDB face (`clockwork gdb`). A flat program under an
+extender is dumped by `clockwork unpack`: its LE objects found where the extender's loader put them, at the
+entry point, as an ELF file.
 
 `clockwork run` and `clockwork play` stay for people: run headless, or play in a window with sound and record
 the session.

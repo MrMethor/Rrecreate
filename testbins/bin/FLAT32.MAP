@@ -1,0 +1,300 @@
+Open Watcom Linker Version 2.0 beta Oct  1 2026 06:41:58 (64-bit)
+Copyright (c) 2002-2026 The Open Watcom Contributors. All Rights Reserved.
+Portions Copyright (c) 1985-2002 Sybase, Inc. All Rights Reserved.
+Created on:       26/10/21 22:16:48
+Executable Image: bin\FLAT32.EXE
+creating a CauseWay executable
+
+
+                        +------------+
+                        |   Groups   |
+                        +------------+
+
+Group                           Address              Size
+=====                           =======              ====
+
+DGROUP                          0002:00000000        00010590
+
+
+
+                        +--------------+
+                        |   Segments   |
+                        +--------------+
+
+Segment                Class          Group          Address         Size
+=======                =====          =====          =======         ====
+
+BEGTEXT                CODE           AUTO           0001:00000000   00000010
+_TEXT                  CODE           AUTO           0001:00000010   00003171
+_NULL                  BEGDATA        DGROUP         0002:00000000   00000004
+_AFTERNULL             BEGDATA        DGROUP         0002:00000004   00000000
+CONST                  DATA           DGROUP         0002:00000004   000000c0
+CONST2                 DATA           DGROUP         0002:000000c4   00000025
+_DATA                  DATA           DGROUP         0002:000000ec   00000305
+XIB                    DATA           DGROUP         0002:000003f2   00000000
+XI                     DATA           DGROUP         0002:000003f2   0000001e
+XIE                    DATA           DGROUP         0002:00000410   00000000
+YIB                    DATA           DGROUP         0002:00000410   00000000
+YI                     DATA           DGROUP         0002:00000410   0000000c
+YIE                    DATA           DGROUP         0002:0000041c   00000000
+TIB                    DATA           DGROUP         0002:0000041c   00000000
+TI                     DATA           DGROUP         0002:0000041c   00000000
+TIE                    DATA           DGROUP         0002:0000041c   00000000
+DATA                   DATA           DGROUP         0002:0000041c   00000000
+_BSS                   BSS            DGROUP         0002:0000041c   0000016e
+STACK                  STACK          DGROUP         0002:00000590   00010000
+
+
+                        +----------------+
+                        |   Memory Map   |
+                        +----------------+
+
+* = unreferenced symbol
++ = symbol only referenced locally
+
+Address        Symbol
+=======        ======
+
+Module: obj\flat32.obj(obj\flat32.obj)
+0002:0000041c+ _squares
+0001:00000024+ sum_
+0001:00000053  main_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(stk)
+0001:000000a7* __STK
+0001:000000ab  __CHK
+0001:000000a4* __GRO
+0001:000000d1* __STKOVERFLOW_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(printf.c)
+0001:000000e0  printf_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(cstart)
+0001:00000003* ___begtext
+0002:00000000* __nullarea
+0002:00000100* __D16Infoseg
+0002:00000102  __x386_zero_base_selector
+0001:000000f8  _cstart_
+0001:000002ed  __exit_
+0001:000002f0  __do_exit_with_msg_
+0001:000003b8* __GETDS
+0001:000003b8  ___GETDSStart_
+0001:000003c3  ___GETDSEnd_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(xmsg.c)
+0001:000003d0* __exit_with_msg_
+0001:000003e0  __fatal_runtime_error_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(crwdata)
+0002:0000013e  __osmajor
+0002:0000013f  __osminor
+0002:0000010c  __LpCmdLine
+0002:00000110  __LpPgmName
+0002:00000104  __dynend
+0002:00000108  __curbrk
+0002:00000128* __cbyte
+0002:0000012c* __cbyte2
+0002:00000130  __child
+0002:00000138  __Envptr
+0002:00000114  __psp
+0002:00000135  __Extender
+0002:00000136  __ExtenderSubtype
+0002:00000137  __X32VM
+0002:00000118* __x386_stacklow
+0002:00000118  __STACKLOW
+0002:0000011c  __STACKTOP
+0002:00000120  __ASTACKSIZ
+0002:00000124  __ASTACKPTR
+0002:00000134  __no87
+0002:00000140  ___FPE_handler
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(iob.c)
+0002:00000144  ___iob
+0002:00000460  ___OpenStreams
+0002:00000464  ___ClosedStreams
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(fprtf.c)
+0001:00000420  __fprtf_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(cmain386.c)
+0001:000004c0  __CMain
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(initrtns.c)
+0001:00000510  __InitRtns
+0001:00000560  __FiniRtns
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(dosseg)
+0000:00001234  __DOSseg__
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(uselfn.c)
+0002:0000034c  ___uselfn
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(enterdb.c)
+0001:000005c0  __EnterWVIDEO_
+0002:00000350+ __WD_Present
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(initfile.c)
+0001:000005f0  __InitFiles_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(ioexit.c)
+0001:000006f0* fcloseall_
+0001:00000700  __full_io_exit_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(fputc.c)
+0001:00000710  fputc_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(ioalloc.c)
+0001:000007e0  __ioalloc_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(prtf.c)
+0001:00001410  __prtf_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(flush.c)
+0001:00001670  __flush_
+0001:00001670* __clib_flush_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(cinit.c)
+0001:00001760  __CommonInit_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(___argc.c)
+0002:00000468  ____Argc
+0002:0000046c  ____Argv
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(exit.c)
+0001:000017b0+ __null_int23_exit_
+0001:000017b1  exit_
+0001:000017db* _exit_
+0002:00000354+ ___int23_exit
+0002:00000358+ ___FPE_handler_exit
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(sgdef086)
+0002:000003f2  __Start_XI
+0002:00000410  __End_XI
+0002:00000410  __Start_YI
+0002:0000041c  __End_YI
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(nmalloc.c)
+0001:000017f0* _nmalloc_
+0001:000017f0  malloc_
+0002:0000035c  ___nheapbeg
+0002:00000360  ___MiniHeapRover
+0002:00000364  ___LargestSizeB4MiniHeapRover
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(fclose.c)
+0001:000018d0+ __doclose_
+0001:00001960  __shutdown_stream_
+0001:00001980* fclose_
+0002:00000470+ ___RmTmpFileFn
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(freefp.c)
+0001:000019b0  __freefp_
+0001:000019e0  __purgefp_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(errno.c)
+0001:00001a10* __get_errno_ptr_
+0002:00000474  _errno
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(chktty.c)
+0001:00001a20  __chktty_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(wctomb.c)
+0001:00001a60  wctomb_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(itoa.c)
+0001:00001a90+ utoa_
+0001:00001ae0  itoa_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(strlen.c)
+0001:00001b10  strlen_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(strupr.c)
+0001:00001b30  _strupr_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(noefgfmt.c)
+0002:00000368  ___EFG_printf
+0002:0000036c* ___EFG_scanf
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(lltoa.c)
+0001:00001b60  ulltoa_
+0001:00001bc0* lltoa_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(ltoa.c)
+0001:00001bf0  ultoa_
+0001:00001c40* ltoa_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(mbislead.c)
+0001:00001c70  _ismbblead_
+0002:00000478  ___MBCSIsTable
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(__lseek.c)
+0001:00001c90  __lseek_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(qwrit.c)
+0001:00001ce0  __qwrite_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(fsync.c)
+0001:00001d60  fsync_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(dpmihost.c)
+0002:00000370  __DPMI
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(mem.c)
+0001:00001db0  __MemAllocator
+0001:00001e60  __MemFree
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(nmemneed.c)
+0001:00001fa0  __nmemneed_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(grownear.c)
+0001:00002030* __ReAllocDPMIBlock_
+0001:00002190+ __LastFree_
+0001:00002430  __ExpandDGROUP_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(_clse.c)
+0001:000025c0  __close_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(nfree.c)
+0001:00002610  _nfree_
+0001:00002610  free_
+0002:0000057c  ___MiniHeapFreeRover
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(isatt.c)
+0001:000026f0  isatty_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(alphabet.c)
+0002:000000c4  ___Alphabet
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(mbinit.c)
+0001:0000278a  __mbinit_
+0002:00000374+ ___MBCodePage
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(dosret.c)
+0001:00002820  __set_errno_dos_
+0001:000028a0* __set_errno_dos_reterr_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(iomode.c)
+0001:000028b0  __GetIOMode_
+0001:000028d0  __SetIOMode_
+0002:0000038c+ ___NFiles
+0002:00000390+ ___init_mode
+0002:000003e0+ ___io_mode
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(filedos.c)
+0001:000028f0* _dos_close_
+0001:00002900  _dos_commit_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(heapen.c)
+0001:00002910* _heapenable_
+0002:000003e4  ___heap_enabled
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(nheapmin.c)
+0001:00002920* _nheapshrink_
+0001:00002920* _heapshrink_
+0001:000029d0  __nheapshrink_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(nheapunl.c)
+0001:00002ae0  __UnlinkNHeap_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(minreal.c)
+0002:00000580  ___minreal
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(amblksiz.c)
+0002:000003e8  __amblksiz
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(sbrk.c)
+0001:00002b40  __brk_
+0001:00002c20  sbrk_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(mbisdbcs.c)
+0002:000003ec  ___IsDBCS
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(memset.c)
+0001:00002d00  memset_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(getltdos.c)
+0001:00002d20  dos_get_dbcs_lead_table_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(getcpdos.c)
+0001:00002e50  dos_get_code_page_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(doserrno.c)
+0001:00002f30* __get_doserrno_ptr_
+0002:00000584  __doserrno
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(doserror)
+0001:00002f38  __doserror_
+0001:00002f4b* __doserror1_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(seterrno.c)
+0001:00002f5c  __set_EINVAL_
+0001:00002f6c* __set_EDOM_
+0001:00002f77* __set_ERANGE_
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(__stos)
+0001:00002f90  __STOSB
+0001:00002fca* __STOSD
+Module: C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib(inirmsel.c)
+0002:00000588  __ExtenderRealModeSelector
+
+
+                        +----------------------+
+                        |   Imported Symbols   |
+                        +----------------------+
+
+Symbol                              Module
+======                              ======
+
+
+
+                        +--------------------+
+                        |   Libraries Used   |
+                        +--------------------+
+
+C:\Users\arnol\Tools\openwatcom\lib386\dos\clib3r.lib
+
+
+                        +-----------------------+
+                        |   Linker Statistics   |
+                        +-----------------------+
+
+Stack size:  00010000 (65536.)
+Memory size:  00013711 (79633.)
+Entry point address: 0001:000000f8
+Stub file: C:\Users\arnol\Tools\openwatcom\binw\cwstub.exe
+Link time: 00:00.37

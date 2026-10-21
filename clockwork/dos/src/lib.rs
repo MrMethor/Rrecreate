@@ -21,6 +21,7 @@ pub mod hash;
 pub mod image;
 pub mod joystick;
 pub mod keyboard;
+pub mod le;
 mod machine;
 pub mod memory;
 pub mod mouse;

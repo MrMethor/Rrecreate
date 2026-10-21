@@ -118,3 +118,35 @@ fn a_snapshot_from_another_format_is_refused() {
     let error = dos::snapshot::load(&file[..], drive, None).map(|_| ()).unwrap_err();
     assert!(error.contains("format"), "{error}");
 }
+
+#[test]
+fn a_flat_program_s_objects_are_found_where_its_extender_put_them() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testbins/bin/FLAT32.EXE");
+    let data = std::fs::read(&path).unwrap();
+    let le = dos::le::Le::parse(&data).unwrap().expect("an LE executable");
+    // FLAT32.MAP: _TEXT ends at 0001:3181, DGROUP is 10590h bytes, _cstart_ is at 0001:000000F8.
+    assert_eq!(le.objects.iter().map(|o| o.size).collect::<Vec<_>>(), [0x3181, 0x10590]);
+    assert_eq!(le.entry, (0, 0xF8));
+    assert!(le.objects[0].fixups.iter().any(|f| f.target == 1 && f.width == 4), "the code refers to its data");
+    let boot = || {
+        let mut drive = Vfs::new();
+        drive.insert_file("FLAT32.EXE", data.clone());
+        Machine::with_program(Config::default(), drive, "FLAT32.EXE", "").unwrap()
+    };
+    // CauseWay loads the program somewhere; once it is there, the objects are found.
+    let mut m = boot();
+    let bases = (0..10).find_map(|_| {
+        m.run(SECOND / 20);
+        le.bases(&m)
+    });
+    let bases = bases.expect("the objects in memory");
+    assert!(bases[0] % 4 == 0 && bases[1] != bases[0], "{bases:X?}");
+    // The same run again stops at the entry point, where the code is the file's.
+    let mut m = boot();
+    let entry = bases[0] + 0xF8;
+    assert_eq!(m.run_to_sync(entry, 1, 2 * SECOND), Stop::Sync { address: entry, hit: 1 });
+    let code: Vec<u8> = (0..16).map(|i| m.peek_linear_u8(entry + i).unwrap()).collect();
+    assert_eq!(code, le.objects[0].data[0xF8..0xF8 + 16]);
+    assert_eq!(m.run(2 * SECOND), Stop::Exited(32));
+    assert_eq!(output(&m), "flat32: 1240 from 16 calls\r\n");
+}

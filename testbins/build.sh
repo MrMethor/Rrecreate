@@ -6,8 +6,8 @@ set -e
 cd "$(dirname "$0")"
 : "${WATCOM:?set WATCOM to the Open Watcom v2 folder}"
 case "$(uname -s)" in
-    MINGW* | MSYS* | CYGWIN*) watcom=$(cygpath -u "$WATCOM"); PATH="$watcom/binnt64:$watcom/binnt:$PATH" ;;
-    *) PATH="$WATCOM/binl64:$WATCOM/binl:$PATH" ;;
+    MINGW* | MSYS* | CYGWIN*) watcom=$(cygpath -u "$WATCOM"); PATH="$watcom/binnt64:$watcom/binnt:$watcom/binw:$PATH" ;;
+    *) PATH="$WATCOM/binl64:$WATCOM/binl:$WATCOM/binw:$PATH" ;;
 esac
 export INCLUDE="$WATCOM/h" PATH
 mkdir -p bin obj
@@ -28,4 +28,6 @@ build MODE13 s src/mode13.c
 build TIMER s src/timer.c
 build FLOAT s -fpi87 src/float.c
 build MEDIUM m src/medmain.c src/medlib.c
+# 32-bit, flat, under the CauseWay extender (an LE executable).
+wcl386 -zq -bt=dos -l=causeway -fo=obj/ -fe=bin/FLAT32.EXE -fm=bin/FLAT32.MAP src/flat32.c
 rm -rf obj

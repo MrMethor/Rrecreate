@@ -13,6 +13,11 @@
 //! are the words that differ by exactly the difference of the load segments. The result is
 //! written as a plain MZ executable. The image runs up to the program's stack top (or the end
 //! of its memory block), so past the original file image it may hold the packer's leftovers.
+//!
+//! A flat program under a DOS extender (an LE executable) is placed by the extender's loader
+//! instead: Clockwork runs it until its objects are in memory ([`dos::le`]), then again to its entry
+//! point, and writes the objects as they are then, at their linear addresses, as an ELF executable:
+//! the form analysers load at given addresses (each object a segment, in the LE's order).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -181,6 +186,84 @@ pub fn mz_file(u: &Unpacked) -> Vec<u8> {
 }
 
 /// `clockwork unpack`.
+/// A flat program as its extender's loader placed it: each object's base, bytes and LE flags, at the
+/// entry point.
+pub struct Placed {
+    pub objects: Vec<(u32, Vec<u8>, u32)>,
+    pub entry: u32,
+    /// Instructions run to the entry point.
+    pub instructions: u64,
+}
+
+/// Runs the LE program at `path` until its objects are placed, then again to its entry point.
+pub fn place(path: &Path, le: &dos::le::Le) -> Result<Placed, String> {
+    let mut m = boot(path, 0)?;
+    let slice = m.config.instructions_per_second / 20;
+    let bases = loop {
+        let stop = m.run(slice);
+        if let Some(bases) = le.bases(&m) {
+            break bases;
+        }
+        if stop != Stop::CycleLimit || m.cpu.cycles > MAX_INSTRUCTIONS {
+            return Err(format!(
+                "the extender didn't place the program's objects ({})",
+                crate::summary::stop_text(&stop)
+            ));
+        }
+    };
+    let entry = bases[le.entry.0].wrapping_add(le.entry.1);
+    let mut m = boot(path, 0)?;
+    match m.run_to_sync(entry, 1, MAX_INSTRUCTIONS) {
+        Stop::Sync { .. } => {}
+        other => {
+            return Err(format!("the program didn't reach its entry point ({})", crate::summary::stop_text(&other)));
+        }
+    }
+    let objects = le
+        .objects
+        .iter()
+        .zip(&bases)
+        .map(|(o, &base)| {
+            (base, (0..o.size).map(|i| m.peek_linear_u8(base.wrapping_add(i)).unwrap_or(0)).collect(), o.flags)
+        })
+        .collect();
+    Ok(Placed { objects, entry, instructions: m.cpu.cycles })
+}
+
+/// The placed objects as a 32-bit x86 ELF executable: a loadable segment for each, at its base, and
+/// the entry point.
+pub fn elf_file(p: &Placed) -> Vec<u8> {
+    let count = p.objects.len() as u32;
+    let mut offset = 52 + 32 * count;
+    let mut out = Vec::new();
+    out.extend_from_slice(b"\x7FELF\x01\x01\x01");
+    out.resize(16, 0);
+    let half = |out: &mut Vec<u8>, v: u16| out.extend_from_slice(&v.to_le_bytes());
+    let word = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_le_bytes());
+    half(&mut out, 2); // an executable
+    half(&mut out, 3); // i386
+    word(&mut out, 1);
+    word(&mut out, p.entry);
+    word(&mut out, 52); // program headers
+    word(&mut out, 0); // no section headers
+    word(&mut out, 0);
+    for v in [52, 32, count as u16, 40, 0, 0] {
+        half(&mut out, v);
+    }
+    for (base, bytes, flags) in &p.objects {
+        // LE: 1 readable, 2 writable, 4 executable; ELF: 4, 2, 1.
+        let elf_flags = (flags & 1) << 2 | (flags & 2) | (flags & 4) >> 2;
+        for v in [1, offset, *base, *base, bytes.len() as u32, bytes.len() as u32, elf_flags, 1] {
+            word(&mut out, v);
+        }
+        offset += bytes.len() as u32;
+    }
+    for (_, bytes, _) in &p.objects {
+        out.extend_from_slice(bytes);
+    }
+    out
+}
+
 pub(crate) fn cmd_unpack(args: &[String]) -> Result<ExitCode, String> {
     let (mut program, mut out, mut json) = (None, None, false);
     let mut args = args.iter();
@@ -197,6 +280,42 @@ pub(crate) fn cmd_unpack(args: &[String]) -> Result<ExitCode, String> {
     }
     let program = program.ok_or("unpack needs a program")?;
     let out = out.ok_or("unpack needs --out FILE")?;
+    let data = std::fs::read(&program).map_err(|e| format!("{}: {e}", program.display()))?;
+    if let Some(le) = dos::le::Le::parse(&data)? {
+        let placed = place(&program, &le)?;
+        std::fs::write(&out, elf_file(&placed)).map_err(|e| format!("{}: {e}", out.display()))?;
+        let objects: Vec<String> = placed
+            .objects
+            .iter()
+            .enumerate()
+            .map(|(i, (base, bytes, flags))| {
+                format!("{} at {base:08X} ({} bytes, flags {flags:X})", i + 1, bytes.len())
+            })
+            .collect();
+        if json {
+            let objects: Vec<String> = placed
+                .objects
+                .iter()
+                .map(|(base, bytes, flags)| {
+                    format!(r#"{{"base":"{base:08X}","size":{},"flags":{flags}}}"#, bytes.len())
+                })
+                .collect();
+            println!(
+                r#"{{"format":"elf","entry":"{:08X}","objects":[{}],"instructions":{}}}"#,
+                placed.entry,
+                objects.join(","),
+                placed.instructions
+            );
+        } else {
+            println!(
+                "placed    LE objects {}; entry {:08X} ({} instructions)",
+                objects.join(", "),
+                placed.entry,
+                placed.instructions
+            );
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let unpacked = unpack(&program)?;
     std::fs::write(&out, mz_file(&unpacked)).map_err(|e| format!("{}: {e}", out.display()))?;
     let u = &unpacked;

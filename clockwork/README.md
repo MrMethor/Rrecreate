@@ -62,7 +62,9 @@ With `--record`, the input is saved as a session that `run DIR --replay keen.ses
 Session files are text: `<cycle> K <scancode hex>` for keys and `<cycle> M <x> <y> <buttons>` for the mouse.
 
 `unpack` undoes an executable packer (PKLITE, LZEXE, EXEPACK, DIET...) by running the program until the
-packer hands over; `listing` prints a function's code from a load image, following its control flow.
+packer hands over; for a flat program under a DOS extender (an LE executable: CauseWay, DOS/4GW), it runs it
+until the extender has placed its objects, then to its entry point, and writes the objects at their linear
+addresses as an ELF file. `listing` prints a function's code from a load image, following its control flow.
 
 ## Driving Clockwork from a tool
 
