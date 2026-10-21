@@ -1,8 +1,8 @@
 //! Call tracking: a shadow stack of the calls and interrupts in progress, kept from what
-//! instructions do to the stack. A transfer of control that pushes a return address just past the
-//! instruction is a call (or a software interrupt, when flags were pushed too); a frame ends when
-//! the stack rises above its return address. Hardware interrupts open frames of their own. No
-//! decoding is needed, so it follows hand-written assembly as well as compiled code.
+//! instructions do to the stack. A CALL or INT that pushes a return address just past itself and goes
+//! elsewhere is a call (or a software interrupt, when flags were pushed too); a frame ends when the
+//! stack rises above its return address. Hardware interrupts open frames of their own. Only the
+//! opcode is decoded, so it follows hand-written assembly as well as compiled code.
 //!
 //! Memory watches report the chain at each access. Tracking from the start of a run gives the whole
 //! chain to a watch started later ([`crate::machine::Machine::track_calls`]); a watch started
@@ -40,9 +40,23 @@ struct Context {
 pub struct Calls {
     stack: Vec<Frame>,
     context: Context,
+    /// When counting: the calls made since, by the linear address they went to (an analysis's, not
+    /// kept by snapshots). Interrupts aren't calls.
+    #[serde(skip)]
+    counts: Option<std::collections::BTreeMap<u32, u64>>,
 }
 
 impl Calls {
+    /// Counts the calls made from now on, by target (`on`), or stops counting.
+    pub fn count(&mut self, on: bool) {
+        self.counts = on.then(|| self.counts.take().unwrap_or_default());
+    }
+
+    /// The calls counted, by target, if counting.
+    pub fn counts(&self) -> Option<&std::collections::BTreeMap<u32, u64>> {
+        self.counts.as_ref()
+    }
+
     /// The call chain now, innermost first.
     pub fn chain(&self) -> Vec<Frame> {
         self.stack.iter().rev().copied().collect()
@@ -92,9 +106,13 @@ impl Calls {
             };
             if let Some((ret, interrupt)) = pushed {
                 let from = c.code_base.wrapping_add(ret);
-                // Control went elsewhere: not a PUSH of a value that happens to look like one.
-                if linear_ip != from {
+                // Control went elsewhere, by a CALL or INT: not a PUSH of a value that happens to look
+                // like a return address (a small count, in code at the start of its segment).
+                if linear_ip != from && calls_or_interrupts(&peek, c.code_base.wrapping_add(c.ip)) {
                     self.stack.push(Frame { entry: linear_ip, from, interrupt, slot: top, stack_base });
+                    if let Some(counts) = self.counts.as_mut().filter(|_| !interrupt) {
+                        *counts.entry(linear_ip).or_default() += 1;
+                    }
                 }
             }
         }
@@ -117,6 +135,21 @@ impl Calls {
             self.stack.pop();
         }
     }
+}
+
+/// Whether the instruction at linear address `at` is a CALL or a software interrupt (past its
+/// prefixes): the instructions that push a return address and go elsewhere.
+fn calls_or_interrupts(peek: &impl Fn(u32) -> Option<u8>, mut at: u32) -> bool {
+    for _ in 0..14 {
+        match peek(at) {
+            Some(0x26 | 0x2E | 0x36 | 0x3E | 0x64 | 0x65 | 0x66 | 0x67 | 0xF0 | 0xF2 | 0xF3) => at = at.wrapping_add(1),
+            Some(0xE8 | 0x9A | 0xCC | 0xCD | 0xCE | 0xF1) => return true,
+            // CALL near or far through a register or memory: FF /2, FF /3.
+            Some(0xFF) => return peek(at.wrapping_add(1)).is_some_and(|modrm| matches!(modrm >> 3 & 7, 2 | 3)),
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Linear address of the top of the stack.

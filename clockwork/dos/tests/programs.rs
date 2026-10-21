@@ -3801,6 +3801,42 @@ fn a_sync_point_gated_on_a_timer_count_ticks_with_time() {
 }
 
 #[test]
+fn the_call_tracker_counts_calls_by_target() {
+    // Ten calls of `step`; the INT 21h that exits isn't a call.
+    let (program, o) = ten_steps();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    m.track_calls(true);
+    m.probes.calls.as_deref_mut().unwrap().count(true);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let counts = m.probes.calls.as_deref().unwrap().counts().unwrap();
+    assert_eq!(counts.iter().collect::<Vec<_>>(), [(&(base + o["step"]), &10)]);
+
+    // A PUSH of a value that looks like a return address just past it isn't a call.
+    let step = std::cell::Cell::new(0);
+    let program = com(|a| {
+        step.set(a.addr("step") as u32);
+        let looks_like_a_return = a.addr("push") + 3;
+        a.mov(si, looks_like_a_return)?;
+        a.here("push")?;
+        a.push(si)?;
+        a.pop(si)?;
+        let target = a.l("step");
+        a.call(target)?;
+        exit(a, 0)?;
+        a.here("step")?;
+        a.ret()
+    });
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    m.track_calls(true);
+    m.probes.calls.as_deref_mut().unwrap().count(true);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let counts = m.probes.calls.as_deref().unwrap().counts().unwrap();
+    let step = (u32::from(m.dos.psp) << 4) + step.get();
+    assert_eq!(counts.iter().collect::<Vec<_>>(), [(&step, &1)]);
+}
+
+#[test]
 fn a_snapshot_keeps_the_calls_tracked_so_far() {
     // Stopped inside `step` (its third call): a watch from the snapshot sees the call to it.
     let (program, o) = ten_steps();

@@ -44,7 +44,9 @@
 //!   "written", "interrupt_writer" (the handler's entry, or null), "interrupt_write_by" (the instruction that
 //!   wrote it there first), "host" (a service or device wrote)}`, and the services called (`services`, by
 //!   callback: the interrupt, for the BIOS, DOS and the mouse driver) and ports read (`ports`), with how
-//!   often. `calls` `{"on": true}` tracks calls from now on, so a watch started later sees the whole chain.
+//!   often. `calls` `{"on": true}` tracks calls from now on, so a watch started later sees the whole chain;
+//!   with `"count": true` it counts them too, in any mode and program: `call_counts`, the calls made since,
+//!   by target, with how often (`[[addr, n]]`).
 //! - `coverage` `{"on": true}`: records what the program's code runs from now on (as `clockwork run
 //!   --coverage`); `coverage_calls`: the calls made since, by target, with how often (`[[addr, n]]`).
 //! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
@@ -334,7 +336,16 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "calls" => {
             m.track_calls(r.get("on").and_then(Value::as_bool).unwrap_or(true));
+            if let Some(calls) = m.probes.calls.as_deref_mut() {
+                calls.count(r.get("count").and_then(Value::as_bool).unwrap_or(false));
+            }
             Ok(json!({}))
+        }
+        "call_counts" => {
+            let counts = m.probes.calls.as_deref().and_then(|c| c.counts());
+            let counts = counts.ok_or(r#"no calls counted: calls {"count": true} first"#)?;
+            let calls: Vec<Value> = counts.iter().map(|(&target, &n)| json!([name(target), n])).collect();
+            Ok(json!({ "calls": calls }))
         }
         "frame_images" => {
             m.record_frame_images(r.get("on").and_then(Value::as_bool).unwrap_or(true));

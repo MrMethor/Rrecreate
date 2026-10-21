@@ -5,11 +5,13 @@
 //! The counts are split into phases: before the first tick, then each run of ticks at one sync point
 //! (a loop: the menus, play), to the next phase's first tick or the session's end. With a function,
 //! it says how often each phase called it.
+//!
+//! Clockwork's call tracker counts the calls, in real and protected mode alike; those to code outside
+//! the program (an extender's, drivers') are counted, not listed.
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use ids::Id;
 use serde_json::{Value, json};
 
 use crate::analysis::Analysis;
@@ -19,7 +21,8 @@ use crate::knowledge::Knowledge;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::Session;
-use crate::trace::{begin, sync_points};
+use crate::trace::{Places, begin, sync_points};
+use crate::watch::Names;
 
 /// A stretch of the session and the calls made in it, by target (Clockwork's `+OFF` or `@LINEAR`).
 struct Phase {
@@ -40,20 +43,13 @@ fn count_calls(repo: &Repo, a: &Args, positionals: &[String], session: &Session)
     let min: u64 = a.value("--min").map_or(Ok(100), str::parse).map_err(|_| "--min is a count")?;
     let name = &positionals[0];
     let k = Knowledge::load(&repo.knowledge())?;
-    let module = repo.module();
-    let function_name = |target: &str| -> String {
-        let id =
-            target.strip_prefix('+').and_then(|o| u32::from_str_radix(o, 16).ok()).map(|o| Id::new(&module, None, o));
-        match id {
-            Some(Ok(id)) => k.functions.get(&id).map_or_else(|| id.to_string(), |d| d.name.clone()),
-            _ => target.to_owned(),
-        }
-    };
-    let phases = phases(repo, session, &k)?;
+    let names = Names::new(&k, repo, session)?;
+    let function_name = |target: &str| names.function(target);
+    let mut phases = phases(repo, session, &k)?;
     if let Some(what) = positionals.get(1) {
         let analysis = Analysis::load(repo)?;
         let id = crate::naming::resolve(repo, &k, analysis.as_ref(), what)?;
-        let target = format!("+{:05X}", id.offset());
+        let target = Places::new(repo, session).address(&id.to_string())?;
         let total: u64 = phases.iter().map(|p| p.counts.get(&target).copied().unwrap_or(0)).sum();
         let named = function_name(&target);
         let named = if named == id.to_string() { named } else { format!("{named} ({id})") };
@@ -63,8 +59,16 @@ fn count_calls(repo: &Repo, a: &Args, positionals: &[String], session: &Session)
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let called: std::collections::BTreeSet<&String> = phases.iter().flat_map(|p| p.counts.keys()).collect();
-    say("called", format!("{} functions in {name}, in {} phases", called.len(), phases.len()));
+    // The program's functions; an extender's and drivers' are only counted.
+    let called: std::collections::BTreeSet<String> = phases.iter().flat_map(|p| p.counts.keys().cloned()).collect();
+    let outside = called.iter().filter(|target| !names.in_program(target)).count();
+    for phase in &mut phases {
+        phase.counts.retain(|target, _| names.in_program(target));
+    }
+    let elsewhere =
+        if outside > 0 { format!("; {outside} outside it (an extender's, drivers')") } else { String::new() };
+    let (functions, module, n) = (called.len() - outside, repo.module(), phases.len());
+    say("called", format!("{functions} functions of {module} in {name}, in {n} phases{elsewhere}"));
     for phase in &phases {
         say("phase", format!("{}: {} functions", phase.label, phase.counts.len()));
         let mut groups: BTreeMap<u64, Vec<&String>> = BTreeMap::new();
@@ -88,7 +92,8 @@ fn count_calls(repo: &Repo, a: &Args, positionals: &[String], session: &Session)
 fn phases(repo: &Repo, session: &Session, k: &Knowledge) -> Result<Vec<Phase>, String> {
     let syncs = sync_points(k)?;
     let (mut clockwork, _, names) = begin(repo, session, &syncs)?;
-    clockwork.ask("coverage", json!({"on": true}))?;
+    // The call tracker counts calls in 32-bit code too (coverage stays in real mode).
+    clockwork.ask("calls", json!({"on": true, "count": true}))?;
     let length_ms = (session.seconds * 1000.0) as u64;
     let mut phases = Vec::new();
     let mut before = BTreeMap::new();
@@ -134,7 +139,7 @@ fn phases(repo: &Repo, session: &Session, k: &Knowledge) -> Result<Vec<Phase>, S
 
 /// The calls made since `before` (the counts then), which become the counts now.
 fn since(clockwork: &mut Clockwork, before: &mut BTreeMap<String, u64>) -> Result<BTreeMap<String, u64>, String> {
-    let answer = clockwork.ask("coverage_calls", Value::Null)?;
+    let answer = clockwork.ask("call_counts", Value::Null)?;
     let now: BTreeMap<String, u64> = answer["calls"]
         .as_array()
         .into_iter()

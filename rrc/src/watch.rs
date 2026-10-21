@@ -27,7 +27,7 @@ const CHAIN_SHOWN: usize = 3;
 const ACCESSES_SHOWN: usize = 40;
 
 /// Clockwork's addresses (`+OFF` in the image, `@LINEAR` elsewhere) with the knowledge's names.
-struct Names<'a> {
+pub(crate) struct Names<'a> {
     k: &'a Knowledge,
     module: String,
     /// The module of `+OFF`: the program started (a launcher, when it starts the module).
@@ -37,7 +37,7 @@ struct Names<'a> {
 }
 
 impl<'a> Names<'a> {
-    fn new(k: &'a Knowledge, repo: &Repo, session: &Session) -> Result<Names<'a>, String> {
+    pub(crate) fn new(k: &'a Knowledge, repo: &Repo, session: &Session) -> Result<Names<'a>, String> {
         let objects =
             if crate::snapshots::is_le(repo) { crate::snapshots::objects(repo, session)? } else { Vec::new() };
         let objects = objects.iter().map(|&(base, size, _)| (base, size)).collect();
@@ -57,8 +57,16 @@ impl<'a> Names<'a> {
         Id::new(&self.image_module, None, offset).ok()
     }
 
+    /// Whether `address` is the program's own: in its image, or in an LE program's objects (whose
+    /// image is the extender's real-mode part); not memory elsewhere.
+    pub(crate) fn in_program(&self, address: &str) -> bool {
+        self.id(address).is_some_and(|id| {
+            id.module() == self.module && !id.is_memory() && (self.objects.is_empty() || id.part().is_some())
+        })
+    }
+
     /// A function's name, or its address.
-    fn function(&self, address: &str) -> String {
+    pub(crate) fn function(&self, address: &str) -> String {
         let id = self.id(address);
         id.as_ref().and_then(|id| self.k.functions.get(id)).map_or_else(|| self.plain(address), |d| d.name.clone())
     }

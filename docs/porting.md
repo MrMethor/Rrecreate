@@ -61,7 +61,8 @@ A tick is one pass of the original's main loop; a sync point is the instruction 
 rrc calls first-level
 ```
 
-lists the functions the session calls, grouped by how often. A loop calls its functions once a pass, so the
+lists the functions of the program the session calls, grouped by how often (an extender's and drivers' are
+only counted). A loop calls its functions once a pass, so the
 large groups are loops; in a group, the function that waits for the timer (it reads a counter the timer
 interrupt advances, in a loop, until it changes) is where a tick of that loop ends. Check with
 `rrc show <ID> --c`; `rrc show 2A40:13C2` finds the ID of an address Ghidra's code names (`DAT_2a40_13c2`).

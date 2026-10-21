@@ -307,6 +307,11 @@ fn a_flat_program_s_objects_have_ids() {
     assert!(watched.contains("write squares[+4] = 01000000 (was 00000000) by FLAT32.EXE#1+"), "{watched}");
     let inputs = rrc.ok(&["inputs", "run"]);
     assert!(inputs.contains("scanned   FLAT32.EXE#2+00000, 66960 bytes"), "its data object: {inputs}");
+    // Calls in 32-bit code, the program's listed and the extender's counted.
+    let calls = rrc.ok(&["calls", "run", "--min", "16"]);
+    assert!(calls.contains("functions of FLAT32.EXE in run, in 2 phases; ") && !calls.contains("MEM+"), "{calls}");
+    let square = rrc.ok(&["calls", "run", "FLAT32.EXE#1+00010"]);
+    assert!(square.contains("calls     FLAT32.EXE#1+00010: 16 in run"), "square, in its object: {square}");
     std::fs::remove_dir_all(&dir).ok();
 }
 
