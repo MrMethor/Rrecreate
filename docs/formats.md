@@ -57,6 +57,10 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   program its objects as Clockwork placed them (`objects`, `[linear address, size]` in the LE's order: Ghidra's
   addresses are these, and IDs name object `n` as `#n`) and Ghidra's version.
 - `ghidra/`: the last analysis's working files: the program Ghidra imported, the export script, Ghidra's log.
+- `knowledge.lock`: there while an `rrc` changes the knowledge files (from loading them to saving them), so
+  two at once don't lose each other's changes; one older than a minute is taken over. The files themselves
+  are written aside and renamed.
+- `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
 
 ## Ghidra's export
 
@@ -82,12 +86,13 @@ what an earlier run made from given inputs:
   `cycle`, `ms` and the snapshot's `hash`), keyed by what makes the run and its ticks the same: Clockwork's
   program (its hash), the game's files, the program and its options, the session's options and input (its
   file's hash), and the sync points (D51);
-- `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, keyed by the command, its arguments,
-  the session's run (as above, without the sync points), the knowledge files and the analysis;
+- `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, keyed by the build of `rrc` that gave
+  it (its program's hash), the command, its arguments, the session's run (as above, without the sync points),
+  the knowledge files and the analysis;
 - `index/places/<key>`: where a session's run puts the game's program, when it isn't simply loaded where
   `+OFF` counts from (an LE program, or one a launcher starts): `image BASE:SIZE`, then `object
-  BASE:SIZE:FLAGS` for each LE object, a line each, in hex; keyed by the session's run and the module (D55,
-  D57).
+  BASE:SIZE:FLAGS` for each LE object, a line each, in hex; keyed by the session's run, the module and the
+  build of `rrc` (D55, D57).
 
 It is `RRC_CACHE`,
 else `cache` in `rrc.local.toml`, else `%LOCALAPPDATA%\rrecreate\cache` on Windows and `$XDG_CACHE_HOME/rrecreate`

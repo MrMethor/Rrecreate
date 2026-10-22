@@ -301,6 +301,8 @@ fn a_flat_program_s_objects_have_ids() {
     // FLAT32.MAP: _squares at 0002:0000041C (16 ints); square, the first function, at 0001:00000010.
     rrc.ok(&["data", "FLAT32.EXE#2+0041C", "squares", "--size", "64", "--type", "i32[16]"]);
     rrc.ok(&["sync", "FLAT32.EXE#1+00010", "square"]);
+    let check = rrc.ok(&["check"]);
+    assert!(check.contains("objects   #1 12673, #2 66960 bytes"), "its object table: {check}");
     rrc.ok(&["session", "add", "run", "--seconds", "0.5"]);
     let recorded = rrc.ok(&["record", "run"]);
     assert!(recorded.contains("trace     16 ticks"), "a tick a call: {recorded}");

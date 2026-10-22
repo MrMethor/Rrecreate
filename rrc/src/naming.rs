@@ -32,7 +32,12 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         Ok(size) => say("image", format!("{size} bytes")),
         Err(e) => say("image", format!("unknown, so not checked against it: {e}")),
     }
-    let problems = k.problems(&repo.module(), image_size.ok());
+    let objects = crate::places::le_object_sizes(repo);
+    if let Some(objects) = &objects {
+        let sizes: Vec<String> = objects.iter().enumerate().map(|(i, size)| format!("#{} {size}", i + 1)).collect();
+        say("objects", format!("{} bytes", sizes.join(", ")));
+    }
+    let problems = k.problems(&repo.module(), image_size.ok(), objects.as_deref());
     for problem in &problems {
         say("problem", problem);
     }
@@ -42,11 +47,11 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
 /// The size of the program's image, from Clockwork loading it (a 16-bit game a launcher starts: where
 /// the first session's run loads it).
 fn image_size(repo: &Repo) -> Result<u32, String> {
-    if crate::snapshots::launched_16bit(repo) {
+    if crate::places::launched_16bit(repo) {
         let first = crate::session::names(repo)?.into_iter().next();
         let first = first.ok_or("the launcher's game is loaded by a session's run: no session yet")?;
         let session = crate::session::Session::load(repo, &first)?;
-        return Ok(crate::snapshots::placement(repo, &session)?.image.1);
+        return Ok(crate::places::placement(repo, &session)?.image.1);
     }
     let (_, loaded) = Clockwork::original(repo, &[])?;
     loaded
@@ -93,6 +98,7 @@ pub(crate) fn name(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         unreachable!()
     };
     let id = parse_id(id)?;
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if k.data.contains_key(&id) {
         return Err(format!("{id} is data: rrc data"));
@@ -110,6 +116,7 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let usage = "data ID NAME [--size N] [--type T] [--evidence TEXT] [--confidence X] [--by WHO]";
     let [id, name] = a.positionals(2, 2, usage)? else { unreachable!() };
     let id = parse_id(id)?;
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if k.functions.contains_key(&id) {
         return Err(format!("{id} is a function: rrc name"));

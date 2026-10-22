@@ -26,6 +26,7 @@ pub(crate) fn import(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .into());
     }
     let without: BTreeSet<&str> = a.value("--without").map(|w| w.split(',').collect()).unwrap_or_default();
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     let report = from_recreate(&mut k, Path::new(dir), &repo.module(), &without)?;
     k.save(&repo.knowledge())?;

@@ -13,13 +13,13 @@
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use ids::Id;
 use serde_json::{Value, json};
 
 use crate::args::Args;
 use crate::cache::Cache;
 use crate::clockwork::{self, Clockwork};
-use crate::knowledge::{Knowledge, parse_id};
+use crate::knowledge::Knowledge;
+use crate::places::Places;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::{Recorded, Session};
@@ -216,61 +216,6 @@ fn carried(
         .collect()
 }
 
-/// Clockwork's addresses for IDs in a session: `+OFF` in the program's image, `@LINEAR` in one of
-/// its LE objects (where the session's run places them, found once: `crate::snapshots::placement`) or
-/// outside the images (`MEM+...`).
-pub(crate) struct Places<'a> {
-    repo: &'a Repo,
-    session: &'a Session,
-    module: String,
-    objects: std::cell::OnceCell<Vec<(u32, u32, u32)>>,
-}
-
-impl<'a> Places<'a> {
-    pub(crate) fn new(repo: &'a Repo, session: &'a Session) -> Places<'a> {
-        Places { repo, session, module: repo.module(), objects: std::cell::OnceCell::new() }
-    }
-
-    pub(crate) fn address(&self, id: &str) -> Result<String, String> {
-        let id = parse_id(id)?;
-        let in_object = id.part().is_some() && id.module() == self.module && !id.is_memory();
-        let objects = if in_object {
-            Some(self.objects()?.iter().map(|&(base, size, _)| (base, size)).collect::<Vec<_>>())
-        } else {
-            None
-        };
-        address(&self.module, &id, objects.as_deref())
-    }
-
-    /// The program's LE objects in the session: (linear base, size, LE flags).
-    pub(crate) fn objects(&self) -> Result<&[(u32, u32, u32)], String> {
-        if self.objects.get().is_none() {
-            let found = crate::snapshots::placement(self.repo, self.session)?.objects;
-            let _ = self.objects.set(found);
-        }
-        Ok(self.objects.get().expect("just set"))
-    }
-}
-
-/// Clockwork's address for `id` in `module`, given its LE objects (base, size) if it has them.
-pub(crate) fn address(module: &str, id: &Id, objects: Option<&[(u32, u32)]>) -> Result<String, String> {
-    if id.is_memory() {
-        return Ok(format!("@{:X}", id.offset()));
-    }
-    if id.module() != module {
-        return Err(format!("{id}: not in {module}, the program traced"));
-    }
-    match (id.part(), objects) {
-        (None, _) => Ok(format!("+{:05X}", id.offset())),
-        (Some(n), Some(objects)) => match usize::from(n).checked_sub(1).and_then(|i| objects.get(i)) {
-            Some(&(base, size)) if id.offset() < size => Ok(format!("@{:X}", base.wrapping_add(id.offset()))),
-            Some(&(_, size)) => Err(format!("{id}: past object {n}'s end ({size:X}h bytes)")),
-            None => Err(format!("{id}: the program has {} objects", objects.len())),
-        },
-        (Some(_), None) => Err(format!("{id}: {module} has no objects")),
-    }
-}
-
 pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &[], &[])?;
     let [name] = a.positionals(1, 1, "record SESSION")? else { unreachable!() };
@@ -424,7 +369,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
     clockwork.ask("frame_images", json!({"on": true}))?;
     let writer = Cache::open(&repo.local)?.writer();
     let mut picture = Value::Null;
-    let start = loaded["cycles"].as_u64().unwrap_or(0);
+    let start = clockwork::number(&loaded, "cycles")?;
     let mut ranges = Vec::new();
     for item in header.inputs.iter().chain(&header.state) {
         ranges.push(item.request(&places)?);
@@ -439,7 +384,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
     let stop = loop {
         let request = json!({"from": last_cycle, "ranges": ranges["ranges"], "until_ms": length_ms});
         let ran = clockwork.ask("tick", request)?;
-        let cycle = ran["cycles"].as_u64().unwrap_or(0);
+        let cycle = clockwork::number(&ran, "cycles")?;
         let Some(at) = ran["sync"]["at"].as_str() else {
             break (ran["stop"].as_str().unwrap_or("?").to_owned(), cycle);
         };
@@ -474,7 +419,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
             frames,
             sound,
         });
-        saver.tick(&mut clockwork, ticks.len() as u64, cycle, ran["ms"].as_u64().unwrap_or(0))?;
+        saver.tick(&mut clockwork, ticks.len() as u64, cycle, clockwork::number(&ran, "ms")?)?;
         last_cycle = cycle;
     };
     // What the run did after the last tick, and the machine's state at the end.
@@ -768,14 +713,6 @@ mod tests {
         assert_eq!(renamed.run_hash(), trace.run_hash());
         renamed.end.frames.clear();
         assert_ne!(renamed.run_hash(), trace.run_hash());
-        let at = |id: &str, objects: Option<&[(u32, u32)]>| address("GAME.EXE", &id.parse().unwrap(), objects);
-        assert_eq!(at("GAME.EXE+20002", None).unwrap(), "+20002");
-        assert_eq!(at("MEM+0046C", None).unwrap(), "@46C");
-        let objects = [(0x435000, 0x3181), (0x439000, 0x10590)];
-        assert_eq!(at("GAME.EXE#2+00010", Some(&objects)).unwrap(), "@439010", "in object 2");
-        assert!(at("GAME.EXE#1+03181", Some(&objects)).is_err(), "past its end");
-        assert!(at("GAME.EXE#3+00010", Some(&objects)).is_err() && at("GAME.EXE#1+00010", None).is_err());
-        assert!(at("OTHER.EXE+20002", None).is_err());
         assert_eq!((value_text(Some("FEFF"), "i16"), value_text(Some("FEFF"), "u16")), ("-2".into(), "65534".into()));
         assert_eq!(value_text(Some("00000100"), "u16[2]"), "[0x1]=1");
         assert_eq!(value_text(Some("0000"), "u8[2]"), "all 2 zero");

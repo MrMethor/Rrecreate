@@ -57,21 +57,15 @@ impl Clockwork {
     /// its size).
     pub fn original(repo: &Repo, options: &[String]) -> Result<(Clockwork, Value), String> {
         let mut clockwork = Clockwork::start(&find(&repo.local)?)?;
-        let original = &repo.settings.original;
-        let mut argv = vec![repo.game_dir()?.to_string_lossy().into_owned(), original.program.clone()];
-        argv.extend(original.options.iter().cloned());
-        argv.extend(options.iter().cloned());
-        let loaded = clockwork.ask("load", json!({ "argv": argv }))?;
+        let loaded = clockwork.ask("load", json!({ "argv": argv(repo, options)? }))?;
         Ok((clockwork, loaded))
     }
 
     /// The session's run of the original, as [`Clockwork::original`] starts it; when a launcher starts
-    /// a 16-bit game, `+OFF` counts from where the run will load the game (D56), and `loaded` says so.
+    /// a 16-bit game, `+OFF` counts from where the run will load the game (D57), and `loaded` says so.
     pub fn session(repo: &Repo, session: &Session) -> Result<(Clockwork, Value), String> {
         let (mut clockwork, mut loaded) = Clockwork::original(repo, &session.options(repo))?;
-        if crate::snapshots::launched_16bit(repo) {
-            clockwork.rebase(&mut loaded, crate::snapshots::placement(repo, session)?.image)?;
-        }
+        crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
         Ok((clockwork, loaded))
     }
 
@@ -82,6 +76,86 @@ impl Clockwork {
         loaded["image"] = json!(format!("@{base:X}"));
         loaded["image_size"] = json!(size);
         Ok(())
+    }
+}
+
+/// An address as Clockwork writes it: `+OFF` (in the image `+OFF` counts from), `@LINEAR`, or `%PHYS`
+/// (physical memory, named so while paging is on). Hex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Address {
+    Image(u32),
+    Linear(u32),
+    Physical(u32),
+}
+
+impl Address {
+    pub fn parse(text: &str) -> Option<Address> {
+        let (kind, number) = text.split_at_checked(1)?;
+        let number = u32::from_str_radix(number, 16).ok()?;
+        match kind {
+            "+" => Some(Address::Image(number)),
+            "@" => Some(Address::Linear(number)),
+            "%" => Some(Address::Physical(number)),
+            _ => None,
+        }
+    }
+
+    /// Its number, whatever it counts in.
+    pub fn number(self) -> u32 {
+        match self {
+            Address::Image(n) | Address::Linear(n) | Address::Physical(n) => n,
+        }
+    }
+
+    /// Its linear address, given where `+OFF` counts from; none for physical memory.
+    pub fn linear(self, image: u32) -> Option<u32> {
+        match self {
+            Address::Image(offset) => Some(image.wrapping_add(offset)),
+            Address::Linear(linear) => Some(linear),
+            Address::Physical(_) => None,
+        }
+    }
+
+    /// The same kind of address at `number`.
+    pub fn with(self, number: u32) -> Address {
+        match self {
+            Address::Image(_) => Address::Image(number),
+            Address::Linear(_) => Address::Linear(number),
+            Address::Physical(_) => Address::Physical(number),
+        }
+    }
+}
+
+impl std::fmt::Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Address::Image(offset) => write!(f, "+{offset:05X}"),
+            Address::Linear(linear) => write!(f, "@{linear:X}"),
+            Address::Physical(physical) => write!(f, "%{physical:X}"),
+        }
+    }
+}
+
+/// What `load` and `load_snapshot` take: the game's folder, its program, the port's options, then
+/// `options` (`clockwork run` options).
+pub fn argv(repo: &Repo, options: &[String]) -> Result<Vec<String>, String> {
+    let original = &repo.settings.original;
+    let mut argv = vec![repo.game_dir()?.to_string_lossy().into_owned(), original.program.clone()];
+    argv.extend(original.options.iter().cloned());
+    argv.extend(options.iter().cloned());
+    Ok(argv)
+}
+
+/// A number in Clockwork's answer: one without it is a mismatch with the protocol, not a zero.
+pub fn number(answer: &Value, key: &str) -> Result<u64, String> {
+    answer[key].as_u64().ok_or_else(|| format!("clockwork answered without a number {key:?}: {answer}"))
+}
+
+/// A linear address (`@HEX`) in Clockwork's answer.
+pub fn linear(answer: &Value, key: &str) -> Result<u32, String> {
+    match answer[key].as_str().and_then(Address::parse) {
+        Some(Address::Linear(linear)) => Ok(linear),
+        _ => Err(format!("clockwork answered without a linear address {key:?}: {answer}")),
     }
 }
 

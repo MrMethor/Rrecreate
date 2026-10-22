@@ -13,13 +13,14 @@ use serde_json::{Value, json};
 
 use crate::analysis::Analysis;
 use crate::args::Args;
-use crate::clockwork::Clockwork;
+use crate::clockwork::{self, Address, Clockwork};
 use crate::knowledge::{Knowledge, parse_id};
+use crate::places::Places;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::Session;
 use crate::snapshots::{self, Taken};
-use crate::trace::{Places, SyncPoint, begin, sync_points};
+use crate::trace::{SyncPoint, begin, sync_points};
 
 /// Calls shown of a chain, innermost first.
 const CHAIN_SHOWN: usize = 3;
@@ -31,45 +32,23 @@ const BIOS_DATA: u32 = 0x400;
 /// Clockwork's addresses (`+OFF` in the image, `@LINEAR` elsewhere) with the knowledge's names.
 pub(crate) struct Names<'a> {
     k: &'a Knowledge,
-    module: String,
-    /// The module of `+OFF`: the program started, but a 16-bit game's that a launcher starts (Clockwork
-    /// counts `+OFF` from the game's image then).
-    image_module: String,
-    /// An LE program's objects in the session: (linear base, size).
-    objects: Vec<(u32, u32)>,
+    places: Places<'a>,
 }
 
 impl<'a> Names<'a> {
-    pub(crate) fn new(k: &'a Knowledge, repo: &Repo, session: &Session) -> Result<Names<'a>, String> {
-        let objects = if crate::snapshots::is_le(repo) {
-            crate::snapshots::placement(repo, session)?.objects
-        } else {
-            Vec::new()
-        };
-        let objects = objects.iter().map(|&(base, size, _)| (base, size)).collect();
-        let image_module = if crate::snapshots::launched_16bit(repo) { repo.module() } else { repo.program_module() };
-        Ok(Names { k, module: repo.module(), image_module, objects })
+    pub(crate) fn new(k: &'a Knowledge, repo: &'a Repo, session: &'a Session) -> Result<Names<'a>, String> {
+        let places = Places::new(repo, session);
+        places.objects()?;
+        Ok(Names { k, places })
     }
 
-    fn id(&self, address: &str) -> Option<Id> {
-        if let Some(linear) = address.strip_prefix('@') {
-            let linear = u32::from_str_radix(linear, 16).ok()?;
-            let object = self.objects.iter().position(|&(base, size)| linear.wrapping_sub(base) < size);
-            return Some(match object {
-                Some(i) => Id::new(&self.module, Some(i as u16 + 1), linear - self.objects[i].0).ok()?,
-                None => Id::memory(linear),
-            });
-        }
-        let offset = u32::from_str_radix(address.strip_prefix('+')?, 16).ok()?;
-        Id::new(&self.image_module, None, offset).ok()
+    pub(crate) fn id(&self, address: &str) -> Option<Id> {
+        self.places.id(address)
     }
 
-    /// Whether `address` is the program's own: in its image, or in an LE program's objects (whose
-    /// image is the extender's real-mode part); not memory elsewhere.
+    /// Whether `address` is the program's own ([`Places::in_program`]).
     pub(crate) fn in_program(&self, address: &str) -> bool {
-        self.id(address).is_some_and(|id| {
-            id.module() == self.module && !id.is_memory() && (self.objects.is_empty() || id.part().is_some())
-        })
+        self.places.in_program(address)
     }
 
     /// A function's name, or its address.
@@ -131,11 +110,11 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     } else {
         while ms < length_ms && count.is_none_or(|n| (ends.len() as u64) < n) {
             let ran = clockwork.ask("run", json!({"sync": "next", "max_ms": length_ms - ms}))?;
-            ms = ran["ms"].as_u64().unwrap_or(length_ms);
+            ms = clockwork::number(&ran, "ms")?;
             if ran.get("sync").is_none() {
                 break;
             }
-            ends.push(ran["cycles"].as_u64().unwrap_or(0));
+            ends.push(clockwork::number(&ran, "cycles")?);
         }
     }
     let watched = clockwork.ask("watch_end", Value::Null)?;
@@ -231,7 +210,7 @@ fn to_tick(clockwork: &mut Clockwork, n: u64, from: Option<&Taken>, length_ms: u
     if ran.get("sync").is_none() {
         return Err(format!("the session ends before tick {n}"));
     }
-    Ok(ran["ms"].as_u64().unwrap_or(0))
+    clockwork::number(&ran, "ms")
 }
 
 /// One access: the bytes one instruction (or service, or device) read or wrote at once.
@@ -332,17 +311,16 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
             let len: u32 = a.required("--len")?.parse().map_err(|_| "--len is a number of bytes")?;
             vec![(Places::new(repo, session).address(&id.to_string())?, len)]
         }
-        None if crate::snapshots::is_le(repo) => {
-            let objects = crate::snapshots::placement(repo, session)?.objects;
+        None if crate::places::is_le(repo) => {
+            let objects = Places::new(repo, session).objects()?.to_vec();
             let data = objects.iter().filter(|&&(_, _, flags)| flags & 4 == 0);
             data.map(|&(base, size, _)| (format!("@{base:X}"), size)).chain([bios]).collect()
         }
         None => {
             // DS's segment, as an offset in the image when it is in it (so the output names it by ID).
             let regs = clockwork.ask("regs", Value::Null)?;
-            let ds = regs["ds"].as_u64().unwrap_or(0) as u32;
-            let base = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
-            let data = match base.and_then(|base| (ds * 16).checked_sub(base)) {
+            let ds = clockwork::number(&regs, "ds")? as u32;
+            let data = match (ds * 16).checked_sub(clockwork::linear(&loaded, "image")?) {
                 Some(offset) => (format!("+{offset:05X}"), 0x1_0000),
                 None => (format!("{ds:04X}:0000"), 0x1_0000),
             };
@@ -360,7 +338,7 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     let bytes = watched["bytes"].as_array().cloned().unwrap_or_default();
     let vectors = interrupt_vectors(&mut clockwork)?;
     let analysis = Analysis::load(repo)?;
-    let image = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
+    let image = clockwork::linear(&loaded, "image")?;
     let names = Names::new(&k, repo, session)?;
     let scanned: Vec<String> = ranges.iter().map(|(at, len)| format!("{}, {len} bytes", names.plain(at))).collect();
     say("scanned", format!("{}, from tick {first} to {last}", scanned.join("; ")));
@@ -370,7 +348,7 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     for writer in writers {
         let label = match writer {
             Some(entry) => {
-                let linear = image.zip(names.id(entry)).map(|(base, id)| base + id.offset());
+                let linear = Address::parse(entry).and_then(|a| a.linear(image));
                 let vector = linear.and_then(|l| vectors.iter().position(|&v| v == l));
                 let what = vector.map_or_else(|| "an interrupt handler".to_owned(), interrupt_name);
                 format!("written by {what}, {}", names.function(entry))
@@ -507,12 +485,17 @@ fn candidates(runs: &[Value]) -> Vec<Candidate> {
         if !run["read"].as_bool().unwrap_or(false) || (writer.is_none() && !run["host"].as_bool().unwrap_or(false)) {
             continue;
         }
-        let Some((start, prefix)) = address(run["at"].as_str().unwrap_or("")) else { continue };
+        let Some(at) = run["at"].as_str().and_then(Address::parse) else { continue };
+        let start = at.number();
         let len = run["len"].as_u64().unwrap_or(0) as u32;
         let written = run["written"].as_bool().unwrap_or(false);
         let by = run["interrupt_write_by"].as_str().map(str::to_owned);
+        // Runs join only addresses of one kind (offsets in the image, linear, physical).
+        let same_kind = |c: &Candidate| Address::parse(&c.at).is_some_and(|a| a.with(0) == at.with(0));
         let group = out.iter_mut().rev().find(|(s, c)| {
-            c.writer == writer && if by.is_some() { c.by == by } else { c.by.is_none() && start <= s + c.len + 16 }
+            c.writer == writer
+                && same_kind(c)
+                && if by.is_some() { c.by == by } else { c.by.is_none() && start <= s + c.len + 16 }
         });
         match group {
             Some((s, c)) => {
@@ -521,20 +504,13 @@ fn candidates(runs: &[Value]) -> Vec<Candidate> {
                 c.also_written |= written;
             }
             None => {
-                let at = format!("{prefix}{start:05X}");
+                let at = at.with(start).to_string();
                 out.push((start, Candidate { at, len, touched: len, writer, by, also_written: written }));
             }
         }
     }
     out.sort_by(|a, b| (&a.1.writer, a.0).cmp(&(&b.1.writer, b.0)));
     out.into_iter().map(|(_, c)| c).collect()
-}
-
-/// A Clockwork address's number and its prefix (`+`, `@` or `%`).
-fn address(text: &str) -> Option<(u32, String)> {
-    let split = text.find(|c: char| c.is_ascii_hexdigit())?;
-    let (prefix, number) = text.split_at(split);
-    Some((u32::from_str_radix(number, 16).ok()?, prefix.to_owned()))
 }
 
 #[cfg(test)]

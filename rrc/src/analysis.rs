@@ -93,7 +93,7 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let mut index = kept_or_run(repo, &cache, &key, again, analyse)?;
     let mut analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
     // Then the functions the knowledge names that Ghidra didn't find, added to it.
-    let mut k = Knowledge::load(&repo.knowledge())?;
+    let k = Knowledge::load(&repo.knowledge())?;
     let missing: Vec<Id> = k
         .functions
         .keys()
@@ -131,6 +131,9 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     }
     write_toml(&repo.state()?.join(INDEX), &index)?;
     say("ghidra", format!("{} functions, {} calls ({})", analysis.functions.len(), analysis.calls.len(), index.ghidra));
+    // The library names, into the knowledge as it is now (it may have changed while Ghidra ran).
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
+    let mut k = Knowledge::load(&repo.knowledge())?;
     let named = name_library_functions(&mut k, &analysis);
     k.save(&repo.knowledge())?;
     let library = analysis.functions.values().filter(|f| f.library.is_some()).count();

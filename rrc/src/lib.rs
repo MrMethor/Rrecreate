@@ -12,6 +12,7 @@ pub mod game;
 pub mod import;
 pub mod knowledge;
 mod naming;
+pub mod places;
 pub mod repo;
 pub mod session;
 mod setup;

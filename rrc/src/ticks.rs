@@ -15,6 +15,7 @@ pub(crate) fn sync(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &options, &["--remove"])?;
     let usage = "sync [ID NAME [--when-changed A,B] [--note TEXT] [--evidence TEXT] [--confidence X] [--by WHO]] \
                  [NAME --remove]";
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if a.has("--remove") {
         let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
@@ -73,6 +74,7 @@ pub(crate) fn input(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &options, &["--remove"])?;
     let usage = "input [ID|mouse|joystick NAME [--size N] [--sync A,B] [--note TEXT] [--evidence TEXT] \
                  [--confidence X] [--by WHO]] [NAME --remove]";
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if a.has("--remove") {
         let [name] = a.positionals(1, 1, usage)? else { unreachable!() };

@@ -76,7 +76,10 @@ impl Cache {
         let dir = self.dir.join("index").join(kind);
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join(key);
-        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+        // Written aside and renamed, so another rrc reading it meanwhile never sees half of it.
+        let partial = path.with_extension(format!("partial-{}", std::process::id()));
+        std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
+        std::fs::rename(&partial, &path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     pub fn recall(&self, kind: &str, key: &str) -> Option<String> {
@@ -91,6 +94,18 @@ impl Cache {
 
 pub fn sha256(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
+}
+
+/// The hash of the `rrc` program running: what it keeps (answers, places) is kept by the build that
+/// found it, so a changed `rrc` doesn't answer from what an older one worked out.
+pub fn own_build() -> Result<String, String> {
+    static BUILD: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    BUILD
+        .get_or_init(|| {
+            let exe = std::env::current_exe().map_err(|e| format!("rrc's own program: {e}"))?;
+            sha256_file(&exe)
+        })
+        .clone()
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, String> {

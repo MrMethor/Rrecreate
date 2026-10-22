@@ -254,6 +254,7 @@ fn name_functions(repo: &Repo, map: &LinkerMap) -> Result<ExitCode, String> {
         return Err("this port takes no imports ([port] imports = false): a map is a build's truth".into());
     }
     let module = repo.module();
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     let (mut named, mut kept) = (0, 0);
     for (&(object, offset), symbol) in &map.functions() {

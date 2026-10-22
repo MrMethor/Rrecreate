@@ -18,10 +18,11 @@ use crate::analysis::Analysis;
 use crate::args::Args;
 use crate::clockwork::Clockwork;
 use crate::knowledge::Knowledge;
+use crate::places::Places;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::Session;
-use crate::trace::{Places, begin, sync_points};
+use crate::trace::{begin, sync_points};
 use crate::watch::Names;
 
 /// A stretch of the session and the calls made in it, by target (Clockwork's `+OFF` or `@LINEAR`).

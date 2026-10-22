@@ -2,7 +2,7 @@
 //! one item per line sorted by ID; types and ticks as TOML.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ids::Id;
 
@@ -18,6 +18,47 @@ pub const TYPES: &str = "types.toml";
 pub const TICKS: &str = "ticks.toml";
 /// The input devices a boundary value can be (D49), with the bytes of their state (docs/formats.md).
 pub const DEVICES: [(&str, u32); 2] = [("mouse", 46), ("joystick", 12)];
+
+/// The knowledge changes one `rrc` at a time: a command that changes it holds this from loading it to
+/// saving it, so two running at once don't lose each other's changes. A lock left by an `rrc` that
+/// stopped is taken over after a minute (changes take moments).
+pub struct EditLock {
+    path: PathBuf,
+}
+
+impl EditLock {
+    /// Takes the lock in `state`, the port's state folder (`.rrc`).
+    pub fn take(state: &Path) -> Result<EditLock, String> {
+        let path = state.join("knowledge.lock");
+        let started = std::time::Instant::now();
+        loop {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return Ok(EditLock { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let age = std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+                    if age.is_some_and(|age| age.as_secs() >= 60) {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if started.elapsed().as_secs() >= 30 {
+                        return Err(format!(
+                            "another rrc is changing the knowledge ({}; remove it if none runs)",
+                            path.display()
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+    }
+}
+
+impl Drop for EditLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// What every named item carries: who decided it and from what.
 #[derive(Debug, Clone, PartialEq)]
@@ -236,7 +277,10 @@ impl Knowledge {
             if same && path.is_file() {
                 return Ok(());
             }
-            std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+            // Written aside and renamed: an rrc stopped midway leaves the file as it was.
+            let partial = path.with_extension(format!("partial-{}", std::process::id()));
+            std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
+            std::fs::rename(&partial, &path).map_err(|e| format!("{}: {e}", path.display()))
         };
         // A TOML file's comments at its top, kept; else a line saying what the file is.
         let top = |file: &str, what: &str| {
@@ -279,7 +323,10 @@ impl Knowledge {
 
     /// What is wrong with the knowledge: names used twice, overlapping data, data outside the
     /// image (`image_size` bytes, when known), bad tick declarations, malformed types.
-    pub fn problems(&self, module: &str, image_size: Option<u32>) -> Vec<String> {
+    /// What's wrong with the knowledge: names taken twice or not names, IDs out of `module`, past
+    /// its image's end (`image_size`, when known) or its LE objects' (`objects`, their sizes, when it
+    /// is LE), overlapping data, bad tick declarations, malformed types.
+    pub fn problems(&self, module: &str, image_size: Option<u32>, objects: Option<&[u32]>) -> Vec<String> {
         let mut problems = Vec::new();
         let mut names: BTreeMap<&str, &Id> = BTreeMap::new();
         let decisions = self.functions.iter().chain(self.data.iter().map(|(id, d)| (id, &d.decision)));
@@ -299,6 +346,17 @@ impl Knowledge {
                 && id.offset() >= size
             {
                 problems.push(format!("{id}: past the image's end (+{size:05X})"));
+            }
+            if let (Some(objects), Some(n)) = (objects, id.part())
+                && id.module() == module
+            {
+                match usize::from(n).checked_sub(1).and_then(|i| objects.get(i)) {
+                    Some(&size) if id.offset() >= size => {
+                        problems.push(format!("{id}: past object {n}'s end ({size:X}h bytes)"));
+                    }
+                    Some(_) => {}
+                    None => problems.push(format!("{id}: {module} has {} objects", objects.len())),
+                }
             }
         }
         let mut previous: Option<(&Id, u32)> = None;
@@ -456,7 +514,8 @@ mod tests {
         assert_eq!(Knowledge::load(&dir).unwrap(), k);
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(k.named("elapsed"), Some(&id("GAME.EXE+20000")));
-        assert!(k.problems("GAME.EXE", Some(0x30000)).is_empty(), "{:?}", k.problems("GAME.EXE", Some(0x30000)));
+        let problems = k.problems("GAME.EXE", Some(0x30000), None);
+        assert!(problems.is_empty(), "{problems:?}");
     }
 
     #[test]
@@ -473,7 +532,7 @@ mod tests {
             ..Sync::default()
         });
         k.ticks.inputs.push(Input { name: "pad".into(), device: "gamepad".into(), ..Input::default() });
-        let problems = k.problems("GAME.EXE", Some(0x201));
+        let problems = k.problems("GAME.EXE", Some(0x201), None);
         assert!(problems.iter().any(|p| p.contains("nothing is neither")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("no device \"gamepad\"")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("twice names both")), "{problems:?}");
@@ -481,6 +540,40 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("isn't a name")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("not in GAME.EXE")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("GAME.EXE+00202: past the image's end")), "{problems:?}");
+
+        // An LE program's IDs, against its objects' sizes.
+        let mut k = Knowledge::default();
+        k.functions.insert(id("FLAT.EXE#1+00010"), decision("square"));
+        k.functions.insert(id("FLAT.EXE#1+03181"), decision("past_it"));
+        k.data.insert(id("FLAT.EXE#3+00000"), Datum { decision: decision("nowhere"), size: None, ty: String::new() });
+        let problems = k.problems("FLAT.EXE", None, Some(&[0x3181, 0x10590]));
+        assert_eq!(
+            problems,
+            ["FLAT.EXE#1+03181: past object 1's end (3181h bytes)", "FLAT.EXE#3+00000: FLAT.EXE has 2 objects"]
+        );
+    }
+
+    #[test]
+    fn changes_made_at_once_are_all_kept() {
+        // Two rrc changing the knowledge at the same time, each taking the lock around its change.
+        let dir = std::env::temp_dir().join(format!("rrc-knowledge-lock-{}", std::process::id()));
+        let (knowledge, state) = (dir.join("knowledge"), dir.join(".rrc"));
+        std::fs::create_dir_all(&state).unwrap();
+        let change = |first: u32| {
+            for n in first..first + 40 {
+                let _lock = EditLock::take(&state).unwrap();
+                let mut k = Knowledge::load(&knowledge).unwrap_or_default();
+                k.functions.insert(Id::new("GAME.EXE", None, n).unwrap(), decision(&format!("f{n}")));
+                k.save(&knowledge).unwrap();
+            }
+        };
+        std::thread::scope(|s| {
+            s.spawn(|| change(0));
+            s.spawn(|| change(1000));
+        });
+        assert_eq!(Knowledge::load(&knowledge).unwrap().functions.len(), 80);
+        assert!(!state.join("knowledge.lock").exists(), "released");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
