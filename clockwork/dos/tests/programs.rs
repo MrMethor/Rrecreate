@@ -3834,6 +3834,33 @@ fn the_call_tracker_counts_calls_by_target() {
     let counts = m.probes.calls.as_deref().unwrap().counts().unwrap();
     let step = (u32::from(m.dos.psp) << 4) + step.get();
     assert_eq!(counts.iter().collect::<Vec<_>>(), [(&step, &1)]);
+
+    // Calls with SP at 0, the top of the stack's segment: the push wraps SP to FFFEh, the return
+    // brings it back to 0, and the frame ends.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["step", "done"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.xor(sp, sp)?;
+        for _ in 0..2 {
+            let target = a.l("step");
+            a.call(target)?;
+        }
+        a.here("done")?;
+        exit(a, 0)?;
+        a.here("step")?;
+        a.ret()
+    });
+    let mut m = boot(&[("W.COM", &program)], "W.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let o = offsets.into_inner();
+    m.track_calls(true);
+    m.probes.calls.as_deref_mut().unwrap().count(true);
+    assert!(matches!(m.run_to_sync(base + o["done"], 1, SECOND), Stop::Sync { .. }));
+    let calls = m.probes.calls.as_deref().unwrap();
+    assert_eq!(calls.counts().unwrap().iter().collect::<Vec<_>>(), [(&(base + o["step"]), &2)]);
+    assert!(calls.chain().is_empty(), "{:?}", calls.chain());
 }
 
 #[test]

@@ -83,13 +83,15 @@ impl Calls {
     pub(crate) fn after(&mut self, cpu: &Cpu, peek: impl Fn(u32) -> Option<u8>) {
         let c = self.context;
         let (stack_base, top) = (cpu.segment_base(seg::SS), stack_top(cpu));
+        let stack32 = cpu.stack32();
         let linear_ip = cpu.segment_base(seg::CS).wrapping_add(cpu.regs.ip);
-        if stack_base == c.stack_base && top < c.top {
+        let fell = fell(c.top, top, stack32);
+        if stack_base == c.stack_base && fell > 0 {
             let u16_at = |at: u32| Some(u16::from_le_bytes([peek(at)?, peek(at.wrapping_add(1))?]));
             let u32_at = |at: u32| Some(u32::from(u16_at(at)?) | u32::from(u16_at(at.wrapping_add(2))?) << 16);
             // The return address a call or interrupt pushed: just past the instruction.
             let past = |ret: u32| ret > c.ip && ret <= c.ip.wrapping_add(15);
-            let pushed = match c.top - top {
+            let pushed = match fell {
                 2 => u16_at(top).map(u32::from).filter(|&r| past(r)).map(|r| (r, false)),
                 4 => match (u16_at(top), u16_at(top + 2), u32_at(top)) {
                     (Some(ip), Some(cs), _) if cs == c.cs && past(u32::from(ip)) => Some((u32::from(ip), false)),
@@ -116,7 +118,7 @@ impl Calls {
                 }
             }
         }
-        self.unwind(stack_base, top);
+        self.unwind(stack_base, top, stack32);
     }
 
     /// A hardware interrupt was taken: it opens a frame of its own.
@@ -127,14 +129,21 @@ impl Calls {
     }
 
     /// Frames whose return address the stack has risen above are gone.
-    fn unwind(&mut self, stack_base: u32, top: u32) {
+    fn unwind(&mut self, stack_base: u32, top: u32, stack32: bool) {
         while let Some(frame) = self.stack.last()
             && frame.stack_base == stack_base
-            && top > frame.slot
+            && fell(frame.slot, top, stack32) < 0
         {
             self.stack.pop();
         }
     }
+}
+
+/// How far the top of the stack went down from `from` to `to` (negative: up). A 16-bit stack counts
+/// modulo 64 KB: SP 0 is its top, and a push wraps it to FFFEh.
+fn fell(from: u32, to: u32, stack32: bool) -> i32 {
+    let down = from.wrapping_sub(to);
+    if stack32 { down as i32 } else { i32::from(down as u16 as i16) }
 }
 
 /// Whether the instruction at linear address `at` is a CALL or a software interrupt (past its
