@@ -229,7 +229,7 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
   where the loop's wait is over and the pass hasn't read its inputs yet (D47); a session's timeline is its
   sequence of sync hits. A loop that polls as fast as the CPU runs, with no wait, has a gated sync point: a
   hit is a tick only when what the loop reads changed since its last tick (D48). Hits count only while the
-  game's program runs, or a program it started (D56): a launcher may run other programs, whose code can sit
+  game's program runs, or a program it started (D57): a launcher may run other programs, whose code can sit
   at the same addresses, before the game.
 - **State mapping** (`mapping.toml` in the port): port field to original location and encoding (sizes,
   signedness, fixed point, packed bits, arrays); pointers in the original become indices or references in the
@@ -298,7 +298,7 @@ reads a value, with the call chain), `record`, `trace`.
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees
 the segments); for a flat program under an extender, its LE objects where the extender's loader put them, at
 the entry point (an ELF file, D55), whose IDs name the objects. When a launcher starts the game's program,
-that program is the one analysed and named (`[original] module`, D56). Ghidra imports it headless, applies the
+that program is the one analysed and named (`[original] module`, D57), found where each session puts it. Ghidra imports it headless, applies the
 signature packs and exports functions, calls, disassembly and decompiled code (`ghidra/RecExport.java`) into
 the cache; `rrc show` puts that next to the knowledge. Two analyses with the same options find the same functions, but the options
 change them (decompiling adds one on Wolf3D: 778 functions against 777), so the cache keeps the analysis of a

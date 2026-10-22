@@ -369,7 +369,7 @@ session can. Searching memory for the object without its fixups would find copie
 fixups to hold the base doesn't. Measured: Open Watcom's FLAT32 under CauseWay (testbins) and Daggerfall's
 FALL.EXE (three objects, placed in 1.7 s).
 
-### D56. A launcher's game: `module` names it, and sync points count in it only. Accepted 2026-10-21.
+### D56. A launcher's game: `module` names it, and sync points count in it only. Superseded by D57.
 A game whose program refuses to start alone (it checks it was started by its launcher) is started through the
 launcher, and `[original] module` in `rrc.toml` names the program the launcher starts: it is the one analysed,
 and its file name is the module of IDs. A sync point belongs to a program: Clockwork counts its hits only
@@ -381,6 +381,20 @@ program started, so rrc refuses a 16-bit module under a launcher until its image
 the extender puts at the same address, so a sync point in FALL.EXE was hit in REPORT.EXE too, and REPORT.EXE's
 objects were taken for FALL.EXE's. Measured on Daggerfall: one tick at FALL.EXE's entry, after the launcher.
 Parents count too because an unbound DOS/4GW game runs DOS4GW.EXE, which runs the game's code.
+
+### D57. The game's program, placed by the session's run: under a launcher, 16-bit or LE. Accepted 2026-10-22.
+D56's `module` and sync points, and the game's program is found where the session's run puts it, whatever
+starts it. Clockwork finds a program by name: the one running, or one that started it (walking the PSPs'
+parents), with its load image and, for an LE program, its objects (D55). rrc runs the session once until the
+game's program runs (and its objects are placed) and keeps where it is, by the run (`index/places/<run>`).
+When a launcher starts a 16-bit game, every session start tells Clockwork to count `+OFF` from that image, so
+IDs, sync points, watches and their answers are the game's, as when it starts alone; the launcher's code is
+memory outside the image (`MEM+...`). An LE game's objects are found the same way, through its parent when
+an extender it started runs its code.
+**Why:** D56 refused a 16-bit game under a launcher, whose IDs counted from the launcher's image. Looking a
+program up among the running one's parents also finds an unbound DOS/4GW game, whose stub runs DOS4GW.EXE,
+which loads the game's objects: measured with Open Watcom's DOS/4GW, objects found while DOS4GW.EXE runs.
+**Supersedes:** D56.
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the

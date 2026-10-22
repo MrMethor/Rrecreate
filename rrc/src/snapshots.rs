@@ -127,7 +127,10 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     // The session's own options, but not its input: the snapshot has what is still to come.
     argv.extend(session.options.iter().cloned());
     let file = cache.path(&taken.hash);
-    let loaded = clockwork.ask("load_snapshot", json!({ "argv": argv, "file": file }))?;
+    let mut loaded = clockwork.ask("load_snapshot", json!({ "argv": argv, "file": file }))?;
+    if launched_16bit(repo) {
+        clockwork.rebase(&mut loaded, placement(repo, session)?.image)?;
+    }
     Ok((clockwork, loaded))
 }
 
@@ -140,52 +143,73 @@ pub fn is_le(repo: &Repo) -> bool {
     file.starts_with(b"MZ") && file.get(header..header + 2) == Some(b"LE")
 }
 
-/// Where the session's run places the program's LE objects (linear base, size and LE flags: 4
-/// executable; in the LE's order): found once, by running the session until its extender has placed
-/// them, and kept by the run (`index/objects/<run>`). Clockwork is deterministic, so every run of the
-/// session places them there. Only the module's own count: a launcher may run other LE programs first
-/// (Daggerfall's runs REPORT.EXE before FALL.EXE).
-pub fn objects(repo: &Repo, session: &Session) -> Result<Vec<(u32, u32, u32)>, String> {
+/// Whether a launcher starts the game's program, a 16-bit one: its image is wherever the session's
+/// run loads it ([`placement`]), and Clockwork counts `+OFF` from there ([`Clockwork::session`]).
+pub fn launched_16bit(repo: &Repo) -> bool {
+    repo.module() != repo.program_module() && !is_le(repo)
+}
+
+/// Where a session's run puts the game's program: its load image (linear base, size) and, for an LE
+/// program, its objects (linear base, size and LE flags: 4 executable; in the LE's order).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Placement {
+    pub image: (u32, u32),
+    pub objects: Vec<(u32, u32, u32)>,
+}
+
+/// Where the session's run puts the game's program (D55, D56): found once, by running the session until
+/// the program runs (and its extender has placed its objects), and kept by the run
+/// (`index/places/<run>`). Clockwork is deterministic, so every run of the session puts it there. The
+/// program is found by name, running or having started the one that runs (an extender's loader), so
+/// another program a launcher runs first doesn't count (Daggerfall's runs REPORT.EXE before
+/// FALL.EXE).
+pub fn placement(repo: &Repo, session: &Session) -> Result<Placement, String> {
     let cache = Cache::open(&repo.local)?;
     let key = sha256(format!("{}\n{}", run_identity(repo, session)?, repo.module_file()).as_bytes());
-    let parse = |text: &str| -> Option<Vec<(u32, u32, u32)>> {
+    let parse = |text: &str| -> Option<Placement> {
         let hex = |t: &str| u32::from_str_radix(t, 16).ok();
-        let object = |o: &str| {
-            let mut fields = o.split(':').map(hex);
-            Some((fields.next()??, fields.next()??, fields.next()??))
-        };
-        text.split_whitespace().map(object).collect()
+        let mut placement = Placement { image: (0, 0), objects: Vec::new() };
+        for line in text.lines() {
+            let (what, fields) = line.split_once(' ')?;
+            let mut fields = fields.split(':').map(hex);
+            match what {
+                "image" => placement.image = (fields.next()??, fields.next()??),
+                "object" => placement.objects.push((fields.next()??, fields.next()??, fields.next()??)),
+                _ => return None,
+            }
+        }
+        Some(placement)
     };
-    if let Some(bases) = cache.recall("objects", &key).as_deref().and_then(parse) {
-        return Ok(bases);
+    if let Some(placement) = cache.recall("places", &key).as_deref().and_then(parse) {
+        return Ok(placement);
     }
     let (mut clockwork, _) = Clockwork::original(repo, &session.options(repo))?;
-    let module = repo.module();
+    let (module, le) = (repo.module(), is_le(repo));
     let length_ms = (session.seconds * 1000.0) as u64;
+    let hex = |v: &Value| v.as_str().unwrap_or("").trim_start_matches('@').to_owned();
     let mut ms = 0;
     loop {
         ms = (ms + 50).min(length_ms);
         let ran = clockwork.ask("run", json!({ "until_ms": ms }))?;
-        let answer = clockwork.ask("objects", Value::Null)?;
-        let program = answer["program"].as_str().unwrap_or("");
-        let running = program.rsplit(['/', '\\']).next().is_some_and(|name| name.eq_ignore_ascii_case(&module));
-        if let Some(objects) = answer["objects"].as_array().filter(|_| running) {
-            let text: Vec<String> = objects
-                .iter()
-                .map(|o| {
-                    let at = o["at"].as_str().unwrap_or("").trim_start_matches('@');
-                    format!("{at}:{:X}:{:X}", o["size"].as_u64().unwrap_or(0), o["flags"].as_u64().unwrap_or(0))
-                })
-                .collect();
-            let text = text.join(" ");
-            cache.remember("objects", &key, &text)?;
-            return parse(&text).ok_or_else(|| "Clockwork's objects can't be read".into());
+        let answer = clockwork.ask("objects", json!({ "program": module }))?;
+        let objects = answer["objects"].as_array();
+        if !answer["program"].is_null() && (!le || objects.is_some()) {
+            let mut text =
+                format!("image {}:{:X}\n", hex(&answer["image"]), answer["image_size"].as_u64().unwrap_or(0));
+            for o in objects.into_iter().flatten() {
+                let (size, flags) = (o["size"].as_u64().unwrap_or(0), o["flags"].as_u64().unwrap_or(0));
+                text.push_str(&format!("object {}:{size:X}:{flags:X}\n", hex(&o["at"])));
+            }
+            cache.remember("places", &key, &text)?;
+            return parse(&text).ok_or_else(|| "Clockwork's answer can't be read".into());
         }
         if ms >= length_ms || ran["stop"].as_str() != Some("time limit reached") {
-            return Err(format!(
-                "{} places no LE objects in this session: IDs with #N are an LE program's objects",
-                repo.module()
-            ));
+            return Err(match le {
+                true => {
+                    format!("{module} places no LE objects in this session: IDs with #N are an LE program's objects")
+                }
+                false => format!("{module} doesn't run in this session"),
+            });
         }
     }
 }

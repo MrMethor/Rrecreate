@@ -2345,6 +2345,18 @@ fn a_sync_point_counts_in_its_program_and_the_programs_it_started() {
         assert_eq!(m.run(SECOND), Stop::Exited(0));
         assert_eq!(m.syncs.get(at).unwrap().hits, hits, "{program:?}");
     }
+
+    // While TWO.COM runs, PARENT.COM is found by name too (an extender's loader runs a program that
+    // way), with its own image.
+    let mut m = boot(&files, "PARENT.COM");
+    let parent = m.dos.psp;
+    let parent_image = m.image_range();
+    m.syncs.set_program(at, Some("TWO.COM".into()));
+    assert!(matches!(m.run_to_sync(at, 1, SECOND), Stop::Sync { .. }));
+    assert_eq!(m.process_named("two.com").map(|(psp, _)| psp), Some(m.dos.psp));
+    assert_eq!(m.process_named("PARENT.COM"), Some((parent, "PARENT.COM")));
+    assert_eq!(m.image_range_of(parent), parent_image.start..parent_image.start + 0x1000 * 16 - 0x100);
+    assert_eq!(m.process_named("ONE.COM"), None, "it ended");
 }
 
 #[test]

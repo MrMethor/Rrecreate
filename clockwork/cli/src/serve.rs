@@ -32,8 +32,10 @@
 //!   there says how many hits it passed over before (`skipped`); with a program (a file name, D56),
 //!   only while it runs or a program it started does. `syncs`: each point's hits (and their cycles).
 //! - `read` `{"ranges": [{"at", "len"} or {"device"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`,
-//!   `hash` (the machine's state hash, as `clockwork run` prints it), `objects` (the running LE program's
-//!   objects, `[{"at", "size", "flags"}]` where its extender put them, or null; `dos::le`).
+//!   `hash` (the machine's state hash, as `clockwork run` prints it), `objects` `{"program"}` (the running
+//!   program, or the one named if it runs or started the one running: its path, its load image (`image`,
+//!   `image_size`) and its LE objects, `[{"at", "size", "flags"}]` where its extender put them, or null;
+//!   `dos::le`).
 //!   A device (D49) is `mouse` (what INT 33h would report: `dos::mouse::Mouse::reported_state`) or
 //!   `joystick` (the game port's sticks); a gate takes them too.
 //! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
@@ -52,7 +54,8 @@
 //! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
 //!   `uninit_end`.
 //! - `image` `{"dir"}`: the loaded image for analysis; `rebase`: image offsets count from the
-//!   program running now (a child program the first one started).
+//!   program running now (a child program the first one started), or from `{"at", "len"}`: an image
+//!   a program will be loaded to (a game a launcher starts, where an earlier run of it put it).
 //! - `quit`.
 
 use std::collections::BTreeMap;
@@ -214,7 +217,14 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             Ok(json!({}))
         }
         "rebase" => {
-            st.image = m.image_range();
+            st.image = match r.get("at") {
+                Some(_) => {
+                    let start = addr(m, text(r, "at")?)?;
+                    let len = r.get("len").and_then(Value::as_u64).ok_or("rebase needs \"len\" with \"at\"")?;
+                    start..start.saturating_add(len as u32)
+                }
+                None => m.image_range(),
+            };
             Ok(json!({"psp": m.dos.psp, "image": format!("@{:X}", st.image.start)}))
         }
         "run" => {
@@ -304,9 +314,18 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "hash" => Ok(json!({"state_hash": format!("{:016x}", m.state_hash())})),
         "objects" => {
-            // The running program's LE objects, where its extender put them: null until then, or for
-            // a program that isn't LE.
-            let le = m.drive.file(&m.dos.program).and_then(|file| dos::le::Le::parse(file).ok().flatten());
+            // The running program's (or the named one's, if it runs or started the one that does)
+            // load image, and its LE objects where its extender put them: null until then, or for a
+            // program that isn't LE.
+            let (psp, path) = match r.get("program").and_then(Value::as_str) {
+                Some(program) => match m.process_named(program) {
+                    Some((psp, path)) => (psp, path.to_owned()),
+                    None => return Ok(json!({"program": null, "image": null, "objects": null})),
+                },
+                None => (m.dos.psp, m.dos.program.clone()),
+            };
+            let image = m.image_range_of(psp);
+            let le = m.drive.file(&path).and_then(|file| dos::le::Le::parse(file).ok().flatten());
             let objects = le.and_then(|le| {
                 let bases = le.bases(m)?;
                 let objects = le
@@ -316,7 +335,8 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                     .map(|(o, base)| json!({"at": format!("@{base:X}"), "size": o.size, "flags": o.flags}));
                 Some(objects.collect::<Vec<_>>())
             });
-            Ok(json!({"program": m.dos.program, "objects": objects}))
+            let at = format!("@{:X}", image.start);
+            Ok(json!({"program": path, "image": at, "image_size": image.len(), "objects": objects}))
         }
         "regs" => {
             let g = &m.cpu.regs;

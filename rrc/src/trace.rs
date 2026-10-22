@@ -217,7 +217,7 @@ fn carried(
 }
 
 /// Clockwork's addresses for IDs in a session: `+OFF` in the program's image, `@LINEAR` in one of
-/// its LE objects (where the session's run places them, found once: `crate::snapshots::objects`) or
+/// its LE objects (where the session's run places them, found once: `crate::snapshots::placement`) or
 /// outside the images (`MEM+...`).
 pub(crate) struct Places<'a> {
     repo: &'a Repo,
@@ -245,7 +245,7 @@ impl<'a> Places<'a> {
     /// The program's LE objects in the session: (linear base, size, LE flags).
     pub(crate) fn objects(&self) -> Result<&[(u32, u32, u32)], String> {
         if self.objects.get().is_none() {
-            let found = crate::snapshots::objects(self.repo, self.session)?;
+            let found = crate::snapshots::placement(self.repo, self.session)?.objects;
             let _ = self.objects.set(found);
         }
         Ok(self.objects.get().expect("just set"))
@@ -389,8 +389,8 @@ pub(crate) fn begin(
         requests.push(request);
         names.insert(at, s.name.clone());
     }
-    // The places first: finding where an LE program's objects go takes a run of its own.
-    let (mut clockwork, loaded) = Clockwork::original(repo, &session.options(repo))?;
+    // The places first: finding where the game's program goes may take a run of its own.
+    let (mut clockwork, loaded) = Clockwork::session(repo, session)?;
     for request in requests {
         clockwork.ask("sync", request)?;
     }

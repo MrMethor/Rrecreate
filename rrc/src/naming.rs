@@ -39,8 +39,15 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
     Ok(if problems.is_empty() { ExitCode::SUCCESS } else { ExitCode::from(1) })
 }
 
-/// The size of the program's image, from Clockwork loading it.
+/// The size of the program's image, from Clockwork loading it (a 16-bit game a launcher starts: where
+/// the first session's run loads it).
 fn image_size(repo: &Repo) -> Result<u32, String> {
+    if crate::snapshots::launched_16bit(repo) {
+        let first = crate::session::names(repo)?.into_iter().next();
+        let first = first.ok_or("the launcher's game is loaded by a session's run: no session yet")?;
+        let session = crate::session::Session::load(repo, &first)?;
+        return Ok(crate::snapshots::placement(repo, &session)?.image.1);
+    }
     let (_, loaded) = Clockwork::original(repo, &[])?;
     loaded
         .get("image_size")

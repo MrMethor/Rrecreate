@@ -8,6 +8,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use serde_json::{Value, json};
 
 use crate::repo::{Local, Repo};
+use crate::session::Session;
 
 pub struct Clockwork {
     child: Child,
@@ -55,13 +56,6 @@ impl Clockwork {
     /// port's own (`clockwork run` options); also returns what `load` answered (where the image is,
     /// its size).
     pub fn original(repo: &Repo, options: &[String]) -> Result<(Clockwork, Value), String> {
-        if repo.module() != repo.program_module() && !crate::snapshots::is_le(repo) {
-            return Err(format!(
-                "{} starts {}: a 16-bit program a launcher starts isn't supported yet, only an LE program",
-                repo.program_module(),
-                repo.module()
-            ));
-        }
         let mut clockwork = Clockwork::start(&find(&repo.local)?)?;
         let original = &repo.settings.original;
         let mut argv = vec![repo.game_dir()?.to_string_lossy().into_owned(), original.program.clone()];
@@ -69,6 +63,25 @@ impl Clockwork {
         argv.extend(options.iter().cloned());
         let loaded = clockwork.ask("load", json!({ "argv": argv }))?;
         Ok((clockwork, loaded))
+    }
+
+    /// The session's run of the original, as [`Clockwork::original`] starts it; when a launcher starts
+    /// a 16-bit game, `+OFF` counts from where the run will load the game (D56), and `loaded` says so.
+    pub fn session(repo: &Repo, session: &Session) -> Result<(Clockwork, Value), String> {
+        let (mut clockwork, mut loaded) = Clockwork::original(repo, &session.options(repo))?;
+        if crate::snapshots::launched_16bit(repo) {
+            clockwork.rebase(&mut loaded, crate::snapshots::placement(repo, session)?.image)?;
+        }
+        Ok((clockwork, loaded))
+    }
+
+    /// Counts `+OFF` from `image` (linear base, size) from now on, and puts it in `loaded` (what
+    /// loading answered).
+    pub fn rebase(&mut self, loaded: &mut Value, (base, size): (u32, u32)) -> Result<(), String> {
+        self.ask("rebase", json!({ "at": format!("@{base:X}"), "len": size }))?;
+        loaded["image"] = json!(format!("@{base:X}"));
+        loaded["image_size"] = json!(size);
+        Ok(())
     }
 }
 

@@ -30,7 +30,8 @@ const ACCESSES_SHOWN: usize = 40;
 pub(crate) struct Names<'a> {
     k: &'a Knowledge,
     module: String,
-    /// The module of `+OFF`: the program started (a launcher, when it starts the module).
+    /// The module of `+OFF`: the program started, but a 16-bit game's that a launcher starts (Clockwork
+    /// counts `+OFF` from the game's image then).
     image_module: String,
     /// An LE program's objects in the session: (linear base, size).
     objects: Vec<(u32, u32)>,
@@ -38,10 +39,14 @@ pub(crate) struct Names<'a> {
 
 impl<'a> Names<'a> {
     pub(crate) fn new(k: &'a Knowledge, repo: &Repo, session: &Session) -> Result<Names<'a>, String> {
-        let objects =
-            if crate::snapshots::is_le(repo) { crate::snapshots::objects(repo, session)? } else { Vec::new() };
+        let objects = if crate::snapshots::is_le(repo) {
+            crate::snapshots::placement(repo, session)?.objects
+        } else {
+            Vec::new()
+        };
         let objects = objects.iter().map(|&(base, size, _)| (base, size)).collect();
-        Ok(Names { k, module: repo.module(), image_module: repo.program_module(), objects })
+        let image_module = if crate::snapshots::launched_16bit(repo) { repo.module() } else { repo.program_module() };
+        Ok(Names { k, module: repo.module(), image_module, objects })
     }
 
     fn id(&self, address: &str) -> Option<Id> {
@@ -325,7 +330,7 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
             vec![(Places::new(repo, session).address(&id.to_string())?, len)]
         }
         None if crate::snapshots::is_le(repo) => {
-            let objects = crate::snapshots::objects(repo, session)?;
+            let objects = crate::snapshots::placement(repo, session)?.objects;
             let data = objects.iter().filter(|&&(_, _, flags)| flags & 4 == 0);
             data.map(|&(base, size, _)| (format!("@{base:X}"), size)).collect()
         }

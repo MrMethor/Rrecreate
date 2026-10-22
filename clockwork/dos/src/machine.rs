@@ -833,32 +833,42 @@ impl Machine {
     /// Where the running program's load image is, as linear addresses: from its PSP's paragraph
     /// 10h (where load-image offsets count from) to the end of its memory block.
     pub fn image_range(&self) -> std::ops::Range<u32> {
-        let psp = u32::from(self.dos.psp);
+        self.image_range_of(self.dos.psp)
+    }
+
+    /// The load image of the process whose PSP is at paragraph `psp` ([`Machine::image_range`]).
+    pub fn image_range_of(&self, psp: u16) -> std::ops::Range<u32> {
+        let psp = u32::from(psp);
         let paragraphs = u32::from(self.mem.read_u16((psp.wrapping_sub(1) << 4) + 3));
         let start = (psp + 0x10) << 4;
         start..((psp + paragraphs) << 4).max(start)
     }
 
-    /// Whether the program running now is `program` (a file name, without case), or one it started
-    /// (its PSP's parents, up to the first process, its own parent).
+    /// Whether the program running now is `program` (a file name, without case), or one it started.
     pub fn running_in(&self, program: &str) -> bool {
+        self.process_named(program).is_some()
+    }
+
+    /// The process of `program` (a file name, without case), if it runs now or started the one that
+    /// does (its PSP's parents, up to the first process, its own parent): its PSP and path.
+    pub fn process_named(&self, program: &str) -> Option<(u16, &str)> {
         let named = |path: &str| path.rsplit(['\\', '/']).next().is_some_and(|name| name.eq_ignore_ascii_case(program));
         if named(&self.dos.program) {
-            return true;
+            return Some((self.dos.psp, &self.dos.program));
         }
         let mut psp = self.dos.psp;
         // A broken chain of parents ends the walk too.
         for _ in 0..32 {
             let parent = self.mem.read_u16(Self::lin(psp, 0x16));
             if parent == psp {
-                return false;
+                return None;
             }
             psp = parent;
-            if self.dos.process_paths.get(&psp).is_some_and(|path| named(path)) {
-                return true;
+            if let Some(path) = self.dos.process_paths.get(&psp).filter(|path| named(path)) {
+                return Some((psp, path));
             }
         }
-        false
+        None
     }
 
     /// Starts recording coverage of the program just loaded ([`Machine::image_range`]).

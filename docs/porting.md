@@ -178,10 +178,13 @@ the code object, `GAME.EXE#2+0041C` in a data object), as Ghidra's addresses (`F
 question about a session runs it once to find where its objects go (kept afterwards); `rrc inputs` scans the
 data objects. Clockwork's `--listing` reads 16-bit code only; `--asm` has Ghidra's.
 
-Such games often start through a launcher (a small program that checks the setup, then runs the game's own,
-which refuses to start alone). Start the launcher (`program`) and name the game's program as `module` in
-`rrc.toml` (`docs/formats.md`): it is the one analysed and named, and sync points count only in it. A 16-bit
-game's program under a launcher isn't supported yet: `rrc` says so.
+## A launcher
+
+Some games start through a launcher (a small program that checks the setup, then runs the game's own, which
+refuses to start alone). Start the launcher (`program`) and name the game's program as `module` in `rrc.toml`
+(`docs/formats.md`): it is the one analysed and named, and sync points count only in it. The first question
+about a session runs it once to find where the game's program goes (kept afterwards); from then on IDs work as
+if the game had started alone, and the launcher's code is memory outside it (`MEM+...`).
 
 ## An honest pilot
 

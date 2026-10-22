@@ -344,14 +344,28 @@ fn a_launcher_s_program_is_the_module() {
     let inputs = rrc.ok(&["inputs", "run"]);
     assert!(inputs.contains("scanned   FLAT32.EXE#2+00000, 66960 bytes"), "the module's data object: {inputs}");
 
-    // A 16-bit program under a launcher: its image isn't where the IDs' +OFF counts from.
+    // A 16-bit program under a launcher (after OTHER.EXE): +OFF counts from where the session's run
+    // loads it.
     std::fs::write(game.join("GAME/T.COM"), PROGRAM).unwrap();
+    std::fs::write(game.join("GAME/GO.BAT"), "OTHER\r\nT\r\n").unwrap();
     let settings = std::fs::read_to_string(rrc.repo.join("rrc.toml")).unwrap();
     std::fs::write(rrc.repo.join("rrc.toml"), settings.replace("module = \"FLAT32.EXE\"", "module = \"T.COM\""))
         .unwrap();
     std::fs::write(rrc.repo.join("knowledge/ticks.toml"), "").unwrap();
+    let data = std::fs::read_to_string(rrc.repo.join("knowledge/data.tsv")).unwrap();
+    let data: String = data.lines().filter(|l| !l.contains("squares")).map(|l| format!("{l}\n")).collect();
+    std::fs::write(rrc.repo.join("knowledge/data.tsv"), data).unwrap();
     rrc.ok(&["sync", "T.COM+0000E", "step"]);
-    let (text, ok) = rrc.run(&["record", "run"]);
-    assert!(!ok && text.contains("GO.BAT starts T.COM: a 16-bit program a launcher starts isn't supported"), "{text}");
+    rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
+    rrc.ok(&["session", "add", "t", "--seconds", "0.25"]);
+    let recorded = rrc.ok(&["record", "t"]);
+    assert!(recorded.contains(" ticks, "), "{recorded}");
+    let counts = rrc.ok(&["trace", "t", "--item", "count"]);
+    let lines: Vec<&str> = counts.lines().take(3).collect();
+    assert_eq!(lines, ["1         1", "2         2", "3         3"], "T.COM's count, where the launcher put it");
+    let watched = rrc.ok(&["watch", "t", "count", "--tick", "2", "--ticks", "1"]);
+    assert!(watched.contains("write count = 0200 (was 0100) by T.COM+00000"), "{watched}");
+    let check = rrc.ok(&["check"]);
+    assert!(check.contains("image     ") && !check.contains("unknown"), "{check}");
     std::fs::remove_dir_all(&dir).ok();
 }
