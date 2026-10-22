@@ -27,7 +27,8 @@ rrc analyze
 ```
 
 Clockwork unpacks the program if it was packed, Ghidra analyses it (minutes), and the runtime library's
-functions get their names from the signature packs. `rrc show <ID or name>` then tells what is known about a
+functions get their names from the signature packs (`sigs/README.md` lists them; `rrc sigs build` makes one
+from a program built with the game's compiler and its linker map). `rrc show <ID or name>` then tells what is known about a
 function: its name and evidence, its size, calls and callers, and with `--c` or `--asm` its decompiled code or
 disassembly, in which Ghidra's `FUN_` and `DAT_` names become the names you gave (`name[+N]` for a byte inside
 a data item). In the disassembly, lines and branch targets are IDs, and each instruction's data is named after

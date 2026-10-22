@@ -15,6 +15,7 @@ mod naming;
 pub mod repo;
 pub mod session;
 mod setup;
+mod sigs;
 pub mod snapshots;
 mod ticks;
 pub mod tools;
@@ -96,6 +97,12 @@ usage: rrc <command> [arguments]     (inside a port repository)
   import recreate DIR [--without PROVENANCE,...]
                          Recreate's knowledge files (its games/<game>/knowledge), leaving out the
                          items of the provenances named
+  sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]
+                         a library signature pack (sigs/README.md) from this analysis and the linker
+                         map of the same build: the library functions the map names, by their
+                         Function ID hashes (NAME.json unless --out says where)
+  sigs name MAP          name the map's functions in the knowledge (provenance map), so that rrc
+                         analyze adds those Ghidra didn't find: for a port made to build a pack
 
 Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/ (docs/formats.md).
 Environment: RRC_CLOCKWORK (the clockwork program), RRC_CACHE (the cache folder), GHIDRA_INSTALL_DIR and
@@ -133,6 +140,7 @@ pub fn main() -> ExitCode {
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
         Some("import") => here().and_then(|repo| import::import(&repo, rest)),
+        Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
     result.unwrap_or_else(|message| {

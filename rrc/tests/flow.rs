@@ -111,6 +111,9 @@ fn a_session_is_traced_tick_by_tick() {
     std::fs::write(repo.join("rrc.toml"), format!("{settings}\n[port]\nimports = false\n")).unwrap();
     let (refused, ok) = rrc.run(&["import", "recreate", "."]);
     assert!(!ok && refused.contains("takes no imports"), "{refused}");
+    let map = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testbins/bin/FLAT32.MAP");
+    let (refused, ok) = rrc.run(&["sigs", "name", map.to_str().unwrap()]);
+    assert!(!ok && refused.contains("takes no imports"), "a map is a build's truth: {refused}");
     let check = rrc.ok(&["check"]);
     assert!(check.contains("1 functions, 1 data, 0 types, 1 sync points"), "{check}");
     assert!(rrc.ok(&["show", "count"]).contains("count (agent)"));
@@ -349,6 +352,13 @@ fn a_flat_program_s_objects_have_ids() {
     ] {
         assert!(listing.lines().any(|l| l == line), "{line:?} in:\n{listing}");
     }
+
+    // A linker map's names, as in a port made to build a signature pack (sigs/README.md).
+    let map = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testbins/bin/FLAT32.MAP");
+    let named = rrc.ok(&["sigs", "name", map.to_str().unwrap()]);
+    assert!(named.contains("named     "), "{named}");
+    let functions = std::fs::read_to_string(rrc.repo.join("knowledge/functions.tsv")).unwrap();
+    assert!(functions.contains("FLAT32.EXE#1+000E0\tprintf_\tmap\t"), "{functions}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

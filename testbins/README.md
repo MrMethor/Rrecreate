@@ -17,6 +17,7 @@ Small C programs built with Open Watcom v2 for 16-bit DOS, each exercising one t
 | `MEDIUM.EXE` | medium | two code segments with far calls, a switch compiled to a jump table, recursion |
 | `FLAT32.EXE` | flat, 32-bit | an LE executable under the CauseWay extender: code and data objects the extender places, a call through a pointer |
 | `FLAT4GW.EXE` | flat, 32-bit | the same under DOS/4GW: its stub runs `DOS4GW.EXE`, which loads it; it waits a quarter of a second before and after its work |
+| `CLIB32.EXE` | flat, 32-bit | Open Watcom's 32-bit C runtime (`clib3r`, math, the 387 emulator) linked in by a table of 190 functions' addresses, for its signature pack |
 
 `DOS4GW.EXE` (Rational Systems' DOS/4GW, in Open Watcom's `binw`) isn't committed: nothing says it may be
 redistributed. The tests of `FLAT4GW.EXE` take it from the local Open Watcom (`WATCOM`) and skip without it,

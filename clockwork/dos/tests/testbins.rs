@@ -187,3 +187,14 @@ fn a_dos4gw_program_s_objects_are_found_while_dos4gw_runs_it() {
     // After DOS/4GW's banner.
     assert!(output(&m).ends_with("1990-1994\r\nflat4gw: 1240 from 16 calls\r\n"), "{}", output(&m));
 }
+
+#[test]
+fn the_32_bit_runtime_s_program_runs() {
+    // CLIB32 links Open Watcom's 32-bit runtime for its signature pack; it runs too.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testbins/bin/CLIB32.EXE");
+    let mut drive = Vfs::new();
+    drive.insert_file("CLIB32.EXE", std::fs::read(&path).unwrap());
+    let mut m = Machine::with_program(Config::default(), drive, "CLIB32.EXE", "").unwrap();
+    assert_eq!(m.run(2 * SECOND), Stop::Exited(0));
+    assert_eq!(output(&m), "clib32: 190 functions; 1 3 5 7 9; 1.414\r\n");
+}

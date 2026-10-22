@@ -114,7 +114,8 @@ GAME.EXE+21C40	tick_elapsed	2	u16	human
 - **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a primitive (`u8`,
   `i16`, `u32`, ...), an array (`u8[256]`), or empty.
 - **provenance:** who decided, and from what: `human`, `agent:<model>`, `ghidra`, `library:<pack>`,
-  `prior-art:<source>`, `recreate:<its provenance>` for what came from Recreate.
+  `prior-art:<source>`, `recreate:<its provenance>` for what came from Recreate, `map` for a linker map's
+  names (`rrc sigs name`, in a port made to build a signature pack).
 - **confidence:** 0 to 1, or empty. **evidence:** free text (IDs, sessions, sources), no tabs.
 
 Trailing empty columns may be left out. Lines starting `#` and blank lines are ignored.

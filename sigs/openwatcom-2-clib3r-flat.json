@@ -1,0 +1,2324 @@
+{
+  "compiler": "Open Watcom 2.0 C, 32-bit flat, register calls (clib3r, math3r, emu387)",
+  "functions": [
+    {
+      "full": "0b5a305086e3d0e6",
+      "name": "IF@ATAN",
+      "specific": "7d1ee9c1a9009d7c",
+      "units": 6
+    },
+    {
+      "full": "521b57db18f311a7",
+      "name": "IF@ATAN2",
+      "specific": "51aa1ff8677fd765",
+      "units": 6
+    },
+    {
+      "full": "11bfa60c85923469",
+      "name": "IF@COS",
+      "specific": "5381afb46975cf01",
+      "units": 3
+    },
+    {
+      "full": "2e6d80d3eb83d8c6",
+      "name": "IF@DACOS",
+      "specific": "91b65878ec84f19e",
+      "units": 25
+    },
+    {
+      "full": "ebf9fafca17fa6c4",
+      "name": "IF@DASIN",
+      "specific": "3269884fc5fa99af",
+      "units": 9
+    },
+    {
+      "full": "ab17f7621185d40a",
+      "name": "IF@DCOSH",
+      "specific": "9c0fa7a23c7198c1",
+      "units": 16
+    },
+    {
+      "full": "1d15dd4651d0593f",
+      "name": "IF@DFMOD",
+      "specific": "47e9006b0b001a25",
+      "units": 9
+    },
+    {
+      "full": "e7e08e5046cd60cc",
+      "name": "IF@DPOW",
+      "specific": "3b6c9224a7557632",
+      "units": 113
+    },
+    {
+      "full": "2755549f556451d7",
+      "name": "IF@DSINH",
+      "specific": "ec20cc25d694ca38",
+      "units": 13
+    },
+    {
+      "full": "607cbf907fc8a62c",
+      "name": "IF@DTANH",
+      "specific": "a3938b9e7d540a67",
+      "units": 40
+    },
+    {
+      "full": "8235f6fed6c95623",
+      "name": "IF@LOG",
+      "specific": "152cd0443a8ade7b",
+      "units": 4
+    },
+    {
+      "full": "30760397042e8ece",
+      "name": "IF@LOG10",
+      "specific": "26a42e47eebd9a42",
+      "units": 4
+    },
+    {
+      "full": "30760397042e8ece",
+      "name": "IF@LOG2",
+      "specific": "c616a05ebd0c75f9",
+      "units": 4
+    },
+    {
+      "full": "3c6e544786275546",
+      "name": "IF@SIN",
+      "specific": "1fda66c3dbcda762",
+      "units": 3
+    },
+    {
+      "full": "298a71d3c80cae13",
+      "name": "IF@TAN",
+      "specific": "b662d01edcbc2589",
+      "units": 6
+    },
+    {
+      "full": "694c59dcc26bb6f7",
+      "name": "_DoINTR_",
+      "specific": "bf16bb1be81f220c",
+      "units": 34
+    },
+    {
+      "full": "5a0ad3fff4a0e763",
+      "name": "_EFG_Format_",
+      "specific": "ec319c1746099a59",
+      "units": 150
+    },
+    {
+      "full": "93864ccc98949325",
+      "name": "_FLClass_",
+      "specific": "33fb78489873874e",
+      "units": 5
+    },
+    {
+      "full": "039dc55f4165e40a",
+      "name": "_LDScale10x_",
+      "specific": "5fb2ecd2b66b4ae6",
+      "units": 19
+    },
+    {
+      "full": "bc5ae49ffff4a8e1",
+      "name": "__@DEXP",
+      "specific": "27b8e4c09fb0f9d9",
+      "units": 17
+    },
+    {
+      "full": "bea2eff0dd55a1c4",
+      "name": "__@DEXP1",
+      "specific": "fbb1b1977a035052",
+      "units": 3
+    },
+    {
+      "full": "79dab6044c702263",
+      "name": "__@DSQRT",
+      "specific": "a90a123d4ecad3b5",
+      "units": 21
+    },
+    {
+      "full": "eb3ca20376ca4eee",
+      "name": "__CHK",
+      "specific": "4424cb084e5304fa",
+      "units": 16
+    },
+    {
+      "full": "8e3abbdf629b7dae",
+      "name": "__CHP",
+      "specific": "24c86d3a7a1f1e8b",
+      "units": 7
+    },
+    {
+      "full": "9c5c0ed6c639b2ef",
+      "name": "__CMain",
+      "specific": "e2d162964def69f8",
+      "units": 12
+    },
+    {
+      "full": "2aaec33f2ac7ace2",
+      "name": "__CacheOSTZ_",
+      "specific": "b55375d1425fa3bb",
+      "units": 10
+    },
+    {
+      "full": "ef0b6f0abb8204c2",
+      "name": "__ChkTTYIOMode_",
+      "specific": "06c49e0ab403b6b2",
+      "units": 27
+    },
+    {
+      "full": "82082d9b72adba2a",
+      "name": "__CommonInit_",
+      "specific": "bae81b8ce109eef8",
+      "units": 31
+    },
+    {
+      "full": "9f8f87a8b97a91e8",
+      "name": "__DOS4G_hook_fini_",
+      "specific": "eb259a9caff2c62b",
+      "units": 7
+    },
+    {
+      "full": "f43f839708b43368",
+      "name": "__DOS4G_hook_init_",
+      "specific": "d4672393628f277f",
+      "units": 12
+    },
+    {
+      "full": "621c25cb51d10b4f",
+      "name": "__DontCacheOSTZ_",
+      "specific": "da8be5ac38452bc1",
+      "units": 4
+    },
+    {
+      "full": "c82218f4f2d9041a",
+      "name": "__EnterWVIDEO_",
+      "specific": "c0f093d79cd21903",
+      "units": 7
+    },
+    {
+      "full": "3d26cc7ced4d3f10",
+      "name": "__ExpandDGROUP_",
+      "specific": "81c1d8c9dacb1969",
+      "units": 121
+    },
+    {
+      "full": "957804d51e23ebd5",
+      "name": "__FDFS",
+      "specific": "2562d00cd12b9b32",
+      "units": 30
+    },
+    {
+      "full": "a045c2f24dbe08d5",
+      "name": "__FPE2Handler_",
+      "specific": "a7a96dec583a222e",
+      "units": 91
+    },
+    {
+      "full": "0907f4443adc6796",
+      "name": "__FPEHandler_",
+      "specific": "717e5186c5077f86",
+      "units": 7
+    },
+    {
+      "full": "994fba3dfd259406",
+      "name": "__FiniRtns",
+      "specific": "6f8fc3858536ca93",
+      "units": 35
+    },
+    {
+      "full": "902c4aac92dba05f",
+      "name": "__Fini_FPE_handler_",
+      "specific": "73807af9d929df20",
+      "units": 22
+    },
+    {
+      "full": "9bd5f5f51576fd8a",
+      "name": "__GetIOMode_",
+      "specific": "b991305329056d8e",
+      "units": 12
+    },
+    {
+      "full": "2b2c7800c3c9412a",
+      "name": "__GrabFP87_",
+      "specific": "8f4bb42955e6bb30",
+      "units": 29
+    },
+    {
+      "full": "4f9ba65403487951",
+      "name": "__HeapManager_expand_",
+      "specific": "9584536c523adebe",
+      "units": 128
+    },
+    {
+      "full": "eb1f84684fd5f85a",
+      "name": "__I8LS",
+      "specific": "e6ee5c876b7ff8e3",
+      "units": 12
+    },
+    {
+      "full": "b8100b147c329dae",
+      "name": "__I8M",
+      "specific": "260dfb25ce8daf62",
+      "units": 17
+    },
+    {
+      "full": "481550cfb4629540",
+      "name": "__I8RS",
+      "specific": "fea911114eef3b5a",
+      "units": 12
+    },
+    {
+      "full": "3868332ec71a10d7",
+      "name": "__InitFiles_",
+      "specific": "667dc4e37f2b7478",
+      "units": 36
+    },
+    {
+      "full": "c8f14f04ab4b5871",
+      "name": "__InitRtns",
+      "specific": "dc8cae5ebf634be5",
+      "units": 33
+    },
+    {
+      "full": "d1836cc041257a67",
+      "name": "__Init_FPE_handler_",
+      "specific": "575171f99f996605",
+      "units": 22
+    },
+    {
+      "full": "3b036c687a3967c3",
+      "name": "__LDClass_",
+      "specific": "b88ab34e59042395",
+      "units": 30
+    },
+    {
+      "full": "7d37c9b6442253e4",
+      "name": "__LastFree_",
+      "specific": "140c71dc76c1a138",
+      "units": 46
+    },
+    {
+      "full": "5ba627d9f19a6ed4",
+      "name": "__MemAllocator",
+      "specific": "cf80afa764c2ccdb",
+      "units": 79
+    },
+    {
+      "full": "c92a71d1d23e048a",
+      "name": "__MemFree",
+      "specific": "bd64afcdb5a09db6",
+      "units": 119
+    },
+    {
+      "full": "6e9ab70332bab99a",
+      "name": "__NHeapWalk_",
+      "specific": "a8d032f1135dce53",
+      "units": 64
+    },
+    {
+      "full": "37cc3a2fb22acc72",
+      "name": "__Phar_hook_fini_",
+      "specific": "a517ca2cda39b085",
+      "units": 11
+    },
+    {
+      "full": "06dd4ffddb0fcc88",
+      "name": "__Phar_hook_init_",
+      "specific": "7a3a4f53557dc6d1",
+      "units": 49
+    },
+    {
+      "full": "034d0a2b34f152e8",
+      "name": "__ReAllocDPMIBlock_",
+      "specific": "1a9756132746c7ff",
+      "units": 126
+    },
+    {
+      "full": "4bb8415a70a53fcd",
+      "name": "__STOSB",
+      "specific": "d906ff013dedee07",
+      "units": 24
+    },
+    {
+      "full": "ca70d0afd1c7ce86",
+      "name": "__STOSD",
+      "specific": "17725834cc67b0c4",
+      "units": 48
+    },
+    {
+      "full": "4d22338d313089ef",
+      "name": "__SetIOMode_",
+      "specific": "7c17c87a52329abe",
+      "units": 11
+    },
+    {
+      "full": "8310d1b81c9eb0c5",
+      "name": "__SetIOMode_grow_",
+      "specific": "a63eb9db5dfed5e7",
+      "units": 36
+    },
+    {
+      "full": "78ce13eea79bbbe0",
+      "name": "__Slash_C_",
+      "specific": "fcac2e6ffcd7d39d",
+      "units": 17
+    },
+    {
+      "full": "d267ad08bfd09a05",
+      "name": "__Strtold_",
+      "specific": "e86de3ec39fb21eb",
+      "units": 110
+    },
+    {
+      "full": "09a16f625eec3e96",
+      "name": "__U8RS",
+      "specific": "33f7b7963a4d6eb3",
+      "units": 12
+    },
+    {
+      "full": "bba0c21fd9e068a6",
+      "name": "__UnlinkNHeap_",
+      "specific": "691d2d416fdef646",
+      "units": 31
+    },
+    {
+      "full": "7003f1881fc2e186",
+      "name": "__ZBuf2LD",
+      "specific": "12718879888839f9",
+      "units": 49
+    },
+    {
+      "full": "26e722c6572d2633",
+      "name": "__ZXBuf2LD_",
+      "specific": "f6806245e9f7c443",
+      "units": 93
+    },
+    {
+      "full": "4c284652d0d20bb2",
+      "name": "___FPEHandlerEnd_",
+      "specific": "b4a23ceedc3d28d2",
+      "units": 49
+    },
+    {
+      "full": "917715203863556a",
+      "name": "___dospawn",
+      "specific": "d7bbaad3ef6bb53c",
+      "units": 66
+    },
+    {
+      "full": "a3d74c529656675b",
+      "name": "__allocfp_",
+      "specific": "1ec0751345fffcfe",
+      "units": 57
+    },
+    {
+      "full": "536fb7b53fd69244",
+      "name": "__brk_",
+      "specific": "f33ddc5498c3f200",
+      "units": 79
+    },
+    {
+      "full": "48e11dd1084540f4",
+      "name": "__brktime_",
+      "specific": "0d05eb173c145147",
+      "units": 91
+    },
+    {
+      "full": "2554607884dd3179",
+      "name": "__ccmdline_",
+      "specific": "e5bfba1caca7b886",
+      "units": 36
+    },
+    {
+      "full": "fcabf5d6da70d215",
+      "name": "__cenvarg_",
+      "specific": "03a0ca2b6c0dc072",
+      "units": 82
+    },
+    {
+      "full": "eb938b3bd5cefde6",
+      "name": "__chk8087_",
+      "specific": "28184228e7349a36",
+      "units": 22
+    },
+    {
+      "full": "9a429e70031ea0be",
+      "name": "__chktty_",
+      "specific": "9fc6d53b8fb08268",
+      "units": 22
+    },
+    {
+      "full": "7cabb25b567e7dd1",
+      "name": "__clib_strdup_",
+      "specific": "9bf386f9861dc3f2",
+      "units": 19
+    },
+    {
+      "full": "63f6ae30e0bf6288",
+      "name": "__close_",
+      "specific": "1214448fa759f393",
+      "units": 32
+    },
+    {
+      "full": "1b77025eea276b5f",
+      "name": "__cnvs2d_",
+      "specific": "76f3dbeebb08c267",
+      "units": 6
+    },
+    {
+      "full": "af0ab1a21b59ce4d",
+      "name": "__cvtld_",
+      "specific": "2243ecda4ab3c9c1",
+      "units": 315
+    },
+    {
+      "full": "5fd35832708a8db5",
+      "name": "__do_exit_with_msg_",
+      "specific": "66adad0d03451574",
+      "units": 142
+    },
+    {
+      "full": "48d9638ac7104a65",
+      "name": "__doclose_",
+      "specific": "a142387ace808644",
+      "units": 44
+    },
+    {
+      "full": "a749f8178fac5904",
+      "name": "__doserror1_",
+      "specific": "ec0580d2afb3caeb",
+      "units": 5
+    },
+    {
+      "full": "7ede607a55cbbd34",
+      "name": "__doserror_",
+      "specific": "9bc3e61e2b47bfd3",
+      "units": 7
+    },
+    {
+      "full": "a4eaf918a65df2b6",
+      "name": "__fatal_runtime_error_",
+      "specific": "753ff243a61f517a",
+      "units": 8
+    },
+    {
+      "full": "b6b3830ad70d0492",
+      "name": "__fdiv_chk",
+      "specific": "d473eeddecace4f9",
+      "units": 5
+    },
+    {
+      "full": "2abba311dd6d97c4",
+      "name": "__fdiv_m32",
+      "specific": "373511f12e10f8ed",
+      "units": 23
+    },
+    {
+      "full": "a4a75949f4cf134c",
+      "name": "__fdiv_m32r",
+      "specific": "3c8fb910526150b5",
+      "units": 23
+    },
+    {
+      "full": "1cc1d25f084ca1a8",
+      "name": "__fdiv_m64",
+      "specific": "2820edc6bede7754",
+      "units": 23
+    },
+    {
+      "full": "0f7c9ce8f3dc7fd0",
+      "name": "__fdiv_m64r",
+      "specific": "8e214f1c96909fdc",
+      "units": 23
+    },
+    {
+      "full": "bf95038197e91ceb",
+      "name": "__fill_buffer_",
+      "specific": "05bcddb5706ea40d",
+      "units": 77
+    },
+    {
+      "full": "d0fa1c431e45f9cb",
+      "name": "__findenvadd_",
+      "specific": "4ff76b564032db07",
+      "units": 69
+    },
+    {
+      "full": "ef955cbe4322565e",
+      "name": "__findenvdel_",
+      "specific": "61eb6c17edc42256",
+      "units": 10
+    },
+    {
+      "full": "f75c25b6554f5b6e",
+      "name": "__flush_",
+      "specific": "da9da6da073df66e",
+      "units": 90
+    },
+    {
+      "full": "c518868d062c810f",
+      "name": "__flushall_",
+      "specific": "14a1a391ea322017",
+      "units": 22
+    },
+    {
+      "full": "e7691ea19fbf1e54",
+      "name": "__fpatan_chk",
+      "specific": "4b1598c59f3edcf5",
+      "units": 118
+    },
+    {
+      "full": "fdba5dfbfa01c048",
+      "name": "__fpatan_wrap",
+      "specific": "68bf02c6d864389b",
+      "units": 15
+    },
+    {
+      "full": "4667c13a1379e5e1",
+      "name": "__fprem1_chk",
+      "specific": "cfa236ee29c0c916",
+      "units": 52
+    },
+    {
+      "full": "4667c13a1379e5e1",
+      "name": "__fprem_chk",
+      "specific": "cfa236ee29c0c916",
+      "units": 52
+    },
+    {
+      "full": "33ff1b4362cb5602",
+      "name": "__fprtf_",
+      "specific": "33ff1b4362cb5602",
+      "units": 5
+    },
+    {
+      "full": "201bd4253f71852a",
+      "name": "__fptan_chk",
+      "specific": "0fd35a870f1d5963",
+      "units": 60
+    },
+    {
+      "full": "ce710c67584bd58d",
+      "name": "__freeenvp_",
+      "specific": "b293d8bcbdd16999",
+      "units": 35
+    },
+    {
+      "full": "eaa079005166882f",
+      "name": "__freefp_",
+      "specific": "285043009e8b95d5",
+      "units": 19
+    },
+    {
+      "full": "7ef13c88edd874a5",
+      "name": "__get_std_stream_",
+      "specific": "6b752786a77db193",
+      "units": 10
+    },
+    {
+      "full": "3e64b90e962b5deb",
+      "name": "__getctime_",
+      "specific": "1cbf4c327024ec92",
+      "units": 74
+    },
+    {
+      "full": "47400944a3b712f0",
+      "name": "__getdcwd_",
+      "specific": "3aa9904b866ec49d",
+      "units": 5
+    },
+    {
+      "full": "e43f0b9b7b2a7d99",
+      "name": "__grab_int23_",
+      "specific": "45d6107c43159df7",
+      "units": 92
+    },
+    {
+      "full": "e43f0b9b7b2a7d99",
+      "name": "__grab_int_ctrl_break_",
+      "specific": "955a3ca4c272cc39",
+      "units": 92
+    },
+    {
+      "full": "b1a647c4a4fd7880",
+      "name": "__grow_iomode_",
+      "specific": "0babe0353f044f54",
+      "units": 47
+    },
+    {
+      "full": "3f6166b2e9ed5e64",
+      "name": "__hook387",
+      "specific": "b48b57bcf5956634",
+      "units": 73
+    },
+    {
+      "full": "bea10b06ed7409f1",
+      "name": "__init_8087_",
+      "specific": "90b9cc4fbd9a1223",
+      "units": 10
+    },
+    {
+      "full": "801dafc530fccc75",
+      "name": "__int386x_",
+      "specific": "38c322423dc6a1b7",
+      "units": 31
+    },
+    {
+      "full": "36a9a366be166b97",
+      "name": "__int7",
+      "specific": "832c2895ffe72990",
+      "units": 20
+    },
+    {
+      "full": "f5c2ee79cfaef185",
+      "name": "__int7_X32VM",
+      "specific": "08ffde77ce98b538",
+      "units": 37
+    },
+    {
+      "full": "cb999d0c987bdd01",
+      "name": "__int7_pl3",
+      "specific": "18e5945947c5f3a8",
+      "units": 13
+    },
+    {
+      "full": "14205de1fff2af13",
+      "name": "__ioalloc_",
+      "specific": "ffcf3283e22da694",
+      "units": 49
+    },
+    {
+      "full": "ab1e5e60a161120c",
+      "name": "__isindst_",
+      "specific": "876026bc669ae3ca",
+      "units": 249
+    },
+    {
+      "full": "9e9fea3441c868fc",
+      "name": "__leapyear_",
+      "specific": "258fec58a7b438ef",
+      "units": 26
+    },
+    {
+      "full": "9481788056163add",
+      "name": "__lib_cvt_mbstowcs_errno_",
+      "specific": "fc1e35587438e36a",
+      "units": 34
+    },
+    {
+      "full": "2bd6ad50b625b741",
+      "name": "__local_mktime_",
+      "specific": "b11ff4ac27d04c5b",
+      "units": 103
+    },
+    {
+      "full": "c6b32a8c4fb7a03b",
+      "name": "__log_matherr_",
+      "specific": "2b28157b315b6d9a",
+      "units": 30
+    },
+    {
+      "full": "63b0a608df5d9cb7",
+      "name": "__lseek_",
+      "specific": "7e4468f0bcfd868c",
+      "units": 31
+    },
+    {
+      "full": "22945b0bddd0713b",
+      "name": "__math1err_",
+      "specific": "550234bf23445d4b",
+      "units": 4
+    },
+    {
+      "full": "8980923ac538b71c",
+      "name": "__math2err_",
+      "specific": "b929ce18c6e7c13b",
+      "units": 89
+    },
+    {
+      "full": "376bf14fd5a10d8b",
+      "name": "__math87_err_",
+      "specific": "0571abfe9824fee9",
+      "units": 48
+    },
+    {
+      "full": "fec016e1524568d4",
+      "name": "__mbinit_",
+      "specific": "7ecc41c36c6231ff",
+      "units": 39
+    },
+    {
+      "full": "edb1ca2c28ac447e",
+      "name": "__nheapshrink_",
+      "specific": "d58d988c4965dd38",
+      "units": 37
+    },
+    {
+      "full": "d28945eb7437506b",
+      "name": "__open_flags_",
+      "specific": "79e8a262c5067455",
+      "units": 93
+    },
+    {
+      "full": "0454daf5152163bc",
+      "name": "__parse_tz_",
+      "specific": "26c1039ec3c0ffe3",
+      "units": 71
+    },
+    {
+      "full": "f31bcbdbe3075188",
+      "name": "__pow87_err_",
+      "specific": "d16e3ea2df174198",
+      "units": 56
+    },
+    {
+      "full": "43898d6dfed51bf0",
+      "name": "__prtf_",
+      "specific": "289b3d4ca8c4a041",
+      "units": 174
+    },
+    {
+      "full": "bd31e4c6bdd64cdf",
+      "name": "__purgefp_",
+      "specific": "0da8ae43a8231b87",
+      "units": 13
+    },
+    {
+      "full": "f12ede4b869989fa",
+      "name": "__putenv_",
+      "specific": "50e37e62e1611aeb",
+      "units": 47
+    },
+    {
+      "full": "22e7540a97b338b7",
+      "name": "__qread_",
+      "specific": "74349a61081f40a3",
+      "units": 15
+    },
+    {
+      "full": "7621aff344a024eb",
+      "name": "__qwrite_",
+      "specific": "595f22b77d6e6bfa",
+      "units": 50
+    },
+    {
+      "full": "0031484ff1bd9b75",
+      "name": "__reporterror_",
+      "specific": "865439adb0e1a5df",
+      "units": 37
+    },
+    {
+      "full": "f6487ef2bbf66363",
+      "name": "__reporterrorsimple_",
+      "specific": "54347bbf7aa8934b",
+      "units": 39
+    },
+    {
+      "full": "dc78d51160c0eb4d",
+      "name": "__restore_int23_",
+      "specific": "f3d0c3bb58803692",
+      "units": 60
+    },
+    {
+      "full": "a5e06f39dbe10b5e",
+      "name": "__restore_int_ctrl_break_",
+      "specific": "80e777c6796716c3",
+      "units": 60
+    },
+    {
+      "full": "f8033e751b274f0b",
+      "name": "__rterrmsg_",
+      "specific": "2cd45560918bd1de",
+      "units": 20
+    },
+    {
+      "full": "c55ee0514e7f87ef",
+      "name": "__scnf_",
+      "specific": "506bc1ae2d6a1ca5",
+      "units": 181
+    },
+    {
+      "full": "435f7f5a46ec23f7",
+      "name": "__set_errno_dos_",
+      "specific": "9245be9b6bd479d1",
+      "units": 41
+    },
+    {
+      "full": "d21555874b0896b5",
+      "name": "__set_errno_dos_reterr_",
+      "specific": "5e4388a54c91d8d1",
+      "units": 5
+    },
+    {
+      "full": "aa36027a40adae98",
+      "name": "__setbits_",
+      "specific": "a36f208f418b3549",
+      "units": 23
+    },
+    {
+      "full": "1d4cec8e985d94e6",
+      "name": "__setenvp_",
+      "specific": "c93eb6d1171c8f4d",
+      "units": 86
+    },
+    {
+      "full": "3c3c4bd3f3ca4616",
+      "name": "__shutdown_stream_",
+      "specific": "fa7fed7d600d033a",
+      "units": 7
+    },
+    {
+      "full": "22a96991e7c484a3",
+      "name": "__sigfpe_handler_",
+      "specific": "f004048df8f74afd",
+      "units": 18
+    },
+    {
+      "full": "17c708e813255ffd",
+      "name": "__sys_fini_387_emulator",
+      "specific": "a3517e02b93460ff",
+      "units": 24
+    },
+    {
+      "full": "60c3bf72a5b751fc",
+      "name": "__sys_init_387_emulator",
+      "specific": "15880c7b475fe86b",
+      "units": 21
+    },
+    {
+      "full": "bc910d1104e12a2c",
+      "name": "__unhook387",
+      "specific": "10865e2efb6e6d68",
+      "units": 26
+    },
+    {
+      "full": "8d0553be99413046",
+      "name": "__verify_pentium_fdiv_bug_",
+      "specific": "6567d8f9eb1058a6",
+      "units": 23
+    },
+    {
+      "full": "7084049c3075ecb6",
+      "name": "__wfindenvadd_",
+      "specific": "82800c967bd30559",
+      "units": 45
+    },
+    {
+      "full": "ef955cbe4322565e",
+      "name": "__wfindenvdel_",
+      "specific": "61eb6c17edc42256",
+      "units": 10
+    },
+    {
+      "full": "e529bc6ce4500533",
+      "name": "__wputenv_",
+      "specific": "96b16296615a966f",
+      "units": 33
+    },
+    {
+      "full": "d494cb04d6525c22",
+      "name": "__x87id",
+      "specific": "c35e8db8f1df82a5",
+      "units": 26
+    },
+    {
+      "full": "d1a05a7d81a768f7",
+      "name": "_asctime_",
+      "specific": "3510397bcb3c608f",
+      "units": 59
+    },
+    {
+      "full": "414f10197c8ae720",
+      "name": "_chain_intr_",
+      "specific": "5807bb215888994c",
+      "units": 20
+    },
+    {
+      "full": "4ae5f4e5eec998a2",
+      "name": "_chsize_",
+      "specific": "bd3c48739bc06d3b",
+      "units": 97
+    },
+    {
+      "full": "d510fe453dcf4e92",
+      "name": "_ctime_",
+      "specific": "9fbe2dbe2d0bdb46",
+      "units": 8
+    },
+    {
+      "full": "fad880fd784b51a0",
+      "name": "_dos_close_",
+      "specific": "a96e2d206087caf5",
+      "units": 5
+    },
+    {
+      "full": "15b90e6f550cfc3a",
+      "name": "_dos_commit_",
+      "specific": "cafcbf41ef3ce979",
+      "units": 6
+    },
+    {
+      "full": "7fc4295b4f7200b1",
+      "name": "_dos_creat_",
+      "specific": "19ee5a2b91798f20",
+      "units": 9
+    },
+    {
+      "full": "7fc4295b4f7200b1",
+      "name": "_dos_creatnew_",
+      "specific": "b61ee9d57099f38e",
+      "units": 9
+    },
+    {
+      "full": "a3778dda135ce03d",
+      "name": "_dos_findfirst_",
+      "specific": "5d0848a357f7ba3c",
+      "units": 32
+    },
+    {
+      "full": "0ba6018d821a1fd7",
+      "name": "_dos_findnext_",
+      "specific": "9b3bf126fecc017a",
+      "units": 36
+    },
+    {
+      "full": "a17e9e9e6abfe87a",
+      "name": "_dos_getdate_",
+      "specific": "9b1e770f2a69a8b0",
+      "units": 14
+    },
+    {
+      "full": "4776b086c3edaac8",
+      "name": "_dos_getdiskfree_",
+      "specific": "4582fc5b795f20b3",
+      "units": 22
+    },
+    {
+      "full": "120c669398d7b179",
+      "name": "_dos_getdrive_",
+      "specific": "140979545f387b5c",
+      "units": 10
+    },
+    {
+      "full": "1524a69af1052cd7",
+      "name": "_dos_getfileattr_",
+      "specific": "01dc1dcbfca348f3",
+      "units": 11
+    },
+    {
+      "full": "4458d01757625c2d",
+      "name": "_dos_gettime_",
+      "specific": "06d85d1ee05a637f",
+      "units": 14
+    },
+    {
+      "full": "f30d0e1ab959a277",
+      "name": "_dos_getvect_",
+      "specific": "48ed9365c4bb3a23",
+      "units": 26
+    },
+    {
+      "full": "d1ac90eda6d252a5",
+      "name": "_dos_open_",
+      "specific": "6449bffae9a72564",
+      "units": 10
+    },
+    {
+      "full": "29c18566d4e71b1e",
+      "name": "_dos_read_",
+      "specific": "845245b65ba7fed6",
+      "units": 15
+    },
+    {
+      "full": "83cbbcbcd1e0ce81",
+      "name": "_dos_setdrive_",
+      "specific": "4e1bc5caacfd4f4d",
+      "units": 11
+    },
+    {
+      "full": "ab6960c8b20e7af7",
+      "name": "_dos_setvect_",
+      "specific": "152c4b4315e177a9",
+      "units": 20
+    },
+    {
+      "full": "69b33bf926bff50b",
+      "name": "_eof_",
+      "specific": "462287031c3d8e9d",
+      "units": 22
+    },
+    {
+      "full": "0d7c91b430687de9",
+      "name": "_exit_",
+      "specific": "6a0b146e497be31d",
+      "units": 2
+    },
+    {
+      "full": "5c0cf79f976b68c8",
+      "name": "_filelength_",
+      "specific": "fd2421a67a419a09",
+      "units": 31
+    },
+    {
+      "full": "d2ff93ec542f2fa6",
+      "name": "_fpreset_",
+      "specific": "1c464059d49fc5fc",
+      "units": 7
+    },
+    {
+      "full": "450237bce9be8886",
+      "name": "_fsopen_",
+      "specific": "4d65a0735f15a70a",
+      "units": 32
+    },
+    {
+      "full": "3d085eb097d2f0de",
+      "name": "_fullpath_",
+      "specific": "82e14bf880507fa0",
+      "units": 39
+    },
+    {
+      "full": "f2544e35297cca31",
+      "name": "_gmtime_",
+      "specific": "f429ec376d0aa7d7",
+      "units": 11
+    },
+    {
+      "full": "bf1d8f804ba89b37",
+      "name": "_heapenable_",
+      "specific": "9778ba500a641053",
+      "units": 6
+    },
+    {
+      "full": "67c580218c526d8e",
+      "name": "_heapwalk_",
+      "specific": "1995b803cdc91d66",
+      "units": 4
+    },
+    {
+      "full": "45c323fdc27dc5db",
+      "name": "_ismbblead_",
+      "specific": "dd4dc66f886d069c",
+      "units": 4
+    },
+    {
+      "full": "1fdf85ec73eee3bd",
+      "name": "_localtime_",
+      "specific": "74bcd7882f7382bd",
+      "units": 32
+    },
+    {
+      "full": "3cfd7151494c0f9a",
+      "name": "_makepath_",
+      "specific": "e31ca84049441c92",
+      "units": 114
+    },
+    {
+      "full": "e4e2fd38cbf76d36",
+      "name": "_matherr_",
+      "specific": "1da561f5b1b37e06",
+      "units": 19
+    },
+    {
+      "full": "46251eeaea956303",
+      "name": "_mbclen_",
+      "specific": "98cb5967b0ccc319",
+      "units": 7
+    },
+    {
+      "full": "b842a8330bbe8647",
+      "name": "_mbctoupper_",
+      "specific": "81a01335f6a10e09",
+      "units": 17
+    },
+    {
+      "full": "25d16070a89901a6",
+      "name": "_mbdtoupper_",
+      "specific": "82c3ebfaa0425f95",
+      "units": 6
+    },
+    {
+      "full": "63b0c7d364ed0df4",
+      "name": "_mbsdec_",
+      "specific": "18f84917b9714770",
+      "units": 40
+    },
+    {
+      "full": "ee7a1d5fd33ec6c5",
+      "name": "_mbsinc_",
+      "specific": "d611273683e2f26b",
+      "units": 16
+    },
+    {
+      "full": "dad8182d8ab5aef3",
+      "name": "_mbslen_",
+      "specific": "4a26ffbab744e0ab",
+      "units": 21
+    },
+    {
+      "full": "74ee2551b4e9faba",
+      "name": "_mbsnbcnt_",
+      "specific": "3532bec4039cbe3b",
+      "units": 30
+    },
+    {
+      "full": "bf1e192cf650e72a",
+      "name": "_mbsnbcpy_",
+      "specific": "37bda2803f06da84",
+      "units": 37
+    },
+    {
+      "full": "81de7dbfebe04bbe",
+      "name": "_mbsnccnt_",
+      "specific": "cd5b603fc64e9d7a",
+      "units": 20
+    },
+    {
+      "full": "50d9180f4dadfc80",
+      "name": "_mbsncpy_",
+      "specific": "74a7ad149a85e513",
+      "units": 13
+    },
+    {
+      "full": "bb0495d9a8d33f03",
+      "name": "_mbsnextc_",
+      "specific": "2682750aa9c4f069",
+      "units": 16
+    },
+    {
+      "full": "b65864fd898451c8",
+      "name": "_mbterm_",
+      "specific": "7718cd86e1342f0a",
+      "units": 19
+    },
+    {
+      "full": "1f5c31694c472e82",
+      "name": "_mbvtop_",
+      "specific": "f8ee17c39e562718",
+      "units": 14
+    },
+    {
+      "full": "cf86e82ea41e507c",
+      "name": "_memicmp_",
+      "specific": "f4c6dae9eb45ad95",
+      "units": 34
+    },
+    {
+      "full": "24eda55b775f37f0",
+      "name": "_nexpand_",
+      "specific": "520057ffa3249907",
+      "units": 39
+    },
+    {
+      "full": "a10ddb942edab99d",
+      "name": "_nfree_",
+      "specific": "66d6da4f46c29dec",
+      "units": 90
+    },
+    {
+      "full": "d2727bcbdf432370",
+      "name": "_nheapchk_",
+      "specific": "94cbbf1924c6ebcf",
+      "units": 42
+    },
+    {
+      "full": "2c66326f7cd10ebd",
+      "name": "_nheapshrink_",
+      "specific": "962594a20489fe7f",
+      "units": 108
+    },
+    {
+      "full": "67c580218c526d8e",
+      "name": "_nheapwalk_",
+      "specific": "1995b803cdc91d66",
+      "units": 4
+    },
+    {
+      "full": "88106a1dfcb6b55a",
+      "name": "_nmalloc_",
+      "specific": "1f26283b02379358",
+      "units": 79
+    },
+    {
+      "full": "c669234e49be0f99",
+      "name": "_nmsize_",
+      "specific": "c862df8b5a67d892",
+      "units": 5
+    },
+    {
+      "full": "0c9baf1b4f3a7987",
+      "name": "_nrealloc_",
+      "specific": "5db7f71606438613",
+      "units": 60
+    },
+    {
+      "full": "0696a1a5cb9f8452",
+      "name": "_setjmp_",
+      "specific": "2704202f63df30d5",
+      "units": 17
+    },
+    {
+      "full": "ae10bc610b0cfd86",
+      "name": "_setmode_",
+      "specific": "0e9ec80099b3fef6",
+      "units": 65
+    },
+    {
+      "full": "86a0120c309ae502",
+      "name": "_sopen_",
+      "specific": "c28899c907ea1922",
+      "units": 11
+    },
+    {
+      "full": "bfedc57b219d3403",
+      "name": "_splitpath2_",
+      "specific": "bd015852dbc361f1",
+      "units": 105
+    },
+    {
+      "full": "454de72ea59d1922",
+      "name": "_splitpath_",
+      "specific": "257e12ed505d5fb0",
+      "units": 71
+    },
+    {
+      "full": "dff086daa7bdacb4",
+      "name": "_strerror_",
+      "specific": "5714c97ea9631d4e",
+      "units": 24
+    },
+    {
+      "full": "4b26da27a36965fd",
+      "name": "_stricmp_",
+      "specific": "680ead51d25fd63a",
+      "units": 28
+    },
+    {
+      "full": "af5ab1f1b7a37949",
+      "name": "_strlwr_",
+      "specific": "cb187aace34a0a46",
+      "units": 20
+    },
+    {
+      "full": "4e070f319ef662aa",
+      "name": "_strnicmp_",
+      "specific": "f8e48974b7443fc5",
+      "units": 36
+    },
+    {
+      "full": "2e96242bac7333d9",
+      "name": "_strrev_",
+      "specific": "d928c3cce660a13c",
+      "units": 22
+    },
+    {
+      "full": "ed386313c4e651ca",
+      "name": "_strset_",
+      "specific": "6f73bdc41eda77d4",
+      "units": 11
+    },
+    {
+      "full": "ff9d6084c0e45923",
+      "name": "_strupr_",
+      "specific": "0cb03b7e6a3860a8",
+      "units": 19
+    },
+    {
+      "full": "e35a98d02f4c4eab",
+      "name": "_tell_",
+      "specific": "7e8acb377d6e9eb5",
+      "units": 7
+    },
+    {
+      "full": "33525b8e5ad42511",
+      "name": "abs_",
+      "specific": "42c1d85d84346f59",
+      "units": 5
+    },
+    {
+      "full": "fe6cd2cad74decad",
+      "name": "access_",
+      "specific": "0179b61e8ba0dcb5",
+      "units": 22
+    },
+    {
+      "full": "381af9c11d5ca2d4",
+      "name": "asctime_",
+      "specific": "322f61e49b754d80",
+      "units": 4
+    },
+    {
+      "full": "5ccb603115899b2f",
+      "name": "atan2_",
+      "specific": "af0d71eb7a424fff",
+      "units": 3
+    },
+    {
+      "full": "6fe6c20b538db6dd",
+      "name": "atexit_",
+      "specific": "3d9a17a946927385",
+      "units": 18
+    },
+    {
+      "full": "180b4108d8347a1a",
+      "name": "atof_",
+      "specific": "1cd195f2338545f6",
+      "units": 4
+    },
+    {
+      "full": "d7eb7420be986039",
+      "name": "atoi_",
+      "specific": "698e566050b1995b",
+      "units": 36
+    },
+    {
+      "full": "d7eb7420be986039",
+      "name": "atol_",
+      "specific": "698e566050b1995b",
+      "units": 36
+    },
+    {
+      "full": "10a82930bd3ff981",
+      "name": "bsearch_",
+      "specific": "6c5692cb55dec426",
+      "units": 57
+    },
+    {
+      "full": "13c5682430bb8a3d",
+      "name": "calloc_",
+      "specific": "1cba55c4fdad338d",
+      "units": 10
+    },
+    {
+      "full": "367bcda4a209110b",
+      "name": "ceil_",
+      "specific": "d73ac88840e1a408",
+      "units": 11
+    },
+    {
+      "full": "1b74a0adfb26bf09",
+      "name": "chdir_",
+      "specific": "19c40e3e250d66d7",
+      "units": 5
+    },
+    {
+      "full": "1e6082a2d94e809c",
+      "name": "clearenv_",
+      "specific": "21567b045bf5db16",
+      "units": 66
+    },
+    {
+      "full": "9d4f43f8517f688b",
+      "name": "cprintf_",
+      "specific": "ab25d754b100a821",
+      "units": 11
+    },
+    {
+      "full": "79666a970a693048",
+      "name": "cputs_",
+      "specific": "c052f758ed210c30",
+      "units": 16
+    },
+    {
+      "full": "a282fd2dda878cc0",
+      "name": "creat_",
+      "specific": "cd3067ee6c705d93",
+      "units": 6
+    },
+    {
+      "full": "c0c83862a51ceed2",
+      "name": "ctime_",
+      "specific": "459d11514f70fa2e",
+      "units": 3
+    },
+    {
+      "full": "2847ff5528888138",
+      "name": "delay_",
+      "specific": "29ad3297422098a4",
+      "units": 87
+    },
+    {
+      "full": "faa65255d702cc3e",
+      "name": "difftime_",
+      "specific": "e7235c23a2c64331",
+      "units": 13
+    },
+    {
+      "full": "287dcf8ec6311f06",
+      "name": "div_",
+      "specific": "1480ba0a75bb7d03",
+      "units": 8
+    },
+    {
+      "full": "79f0c78bbb042a0f",
+      "name": "dos_get_code_page_",
+      "specific": "f222ad2af445aace",
+      "units": 78
+    },
+    {
+      "full": "88cdef1587236796",
+      "name": "dos_get_dbcs_lead_table_",
+      "specific": "56f4f624deb10ce8",
+      "units": 97
+    },
+    {
+      "full": "128d733f598b39f7",
+      "name": "exit_",
+      "specific": "099c940bd80c7704",
+      "units": 4
+    },
+    {
+      "full": "f696b2ed4cc255e3",
+      "name": "fabs_",
+      "specific": "37128dc3e4197455",
+      "units": 4
+    },
+    {
+      "full": "6e206550a23ad4d8",
+      "name": "fclose_",
+      "specific": "18a450e42ed4c2ce",
+      "units": 20
+    },
+    {
+      "full": "fb6e308bb8954211",
+      "name": "fdopen_",
+      "specific": "2c6bb14e5b80c234",
+      "units": 64
+    },
+    {
+      "full": "83238b734f5d3024",
+      "name": "feclearexcept_",
+      "specific": "4e1553fe613da898",
+      "units": 13
+    },
+    {
+      "full": "2b042916ceeac0c5",
+      "name": "fedisableexcept_",
+      "specific": "d432d4ef0d489e9e",
+      "units": 12
+    },
+    {
+      "full": "d903c6d85d20647f",
+      "name": "feenableexcept_",
+      "specific": "ea2139ea11d036fd",
+      "units": 13
+    },
+    {
+      "full": "b599a7347c14b2ee",
+      "name": "fegetexceptflag_",
+      "specific": "143606cd269816af",
+      "units": 13
+    },
+    {
+      "full": "9490228ee0810bc5",
+      "name": "fegetround_",
+      "specific": "62accf64ab8767d8",
+      "units": 9
+    },
+    {
+      "full": "60eee97501d83d54",
+      "name": "feholdexcept_",
+      "specific": "132d7e89a08e5b6b",
+      "units": 13
+    },
+    {
+      "full": "99c3bebb4f2d6eb7",
+      "name": "feraiseexcept_",
+      "specific": "b53cbe639c387220",
+      "units": 15
+    },
+    {
+      "full": "d2ba6715b889b446",
+      "name": "fesetexceptflag_",
+      "specific": "b9ef7b492ab701da",
+      "units": 16
+    },
+    {
+      "full": "6b2038e892ae07c0",
+      "name": "fesetround_",
+      "specific": "2cbcf688758bfb58",
+      "units": 26
+    },
+    {
+      "full": "4f9fdb09beba5092",
+      "name": "fetestexcept_",
+      "specific": "9e1e1c5ff73e76ce",
+      "units": 9
+    },
+    {
+      "full": "f8a7be2b0ea98c00",
+      "name": "feupdateenv_",
+      "specific": "6ea5698e7282c0b6",
+      "units": 15
+    },
+    {
+      "full": "49ac233e1c64742a",
+      "name": "fflush_",
+      "specific": "f28ca37e02e452a6",
+      "units": 4
+    },
+    {
+      "full": "c779775e82b39101",
+      "name": "fgetc_",
+      "specific": "c94b9ea89066047b",
+      "units": 61
+    },
+    {
+      "full": "133688218c249b36",
+      "name": "fgets_",
+      "specific": "c5a8470e464ffe7e",
+      "units": 49
+    },
+    {
+      "full": "7c041951598812aa",
+      "name": "floor_",
+      "specific": "f5c1841473da4df7",
+      "units": 25
+    },
+    {
+      "full": "5ccb603115899b2f",
+      "name": "fmod_",
+      "specific": "af0d71eb7a424fff",
+      "units": 3
+    },
+    {
+      "full": "3aabd139f6029d92",
+      "name": "fopen_",
+      "specific": "45d3e6814cbd7dca",
+      "units": 4
+    },
+    {
+      "full": "256b364b2dd9319f",
+      "name": "fprintf_",
+      "specific": "1f25d2b7795b45b6",
+      "units": 8
+    },
+    {
+      "full": "9a1c7b495a76fbe4",
+      "name": "fputc_",
+      "specific": "6632d3299e7cf1db",
+      "units": 70
+    },
+    {
+      "full": "5fb0687609b394fc",
+      "name": "fputs_",
+      "specific": "871e16bda3229c8a",
+      "units": 56
+    },
+    {
+      "full": "1e6cfc3c1488d64c",
+      "name": "fread_",
+      "specific": "ef2c073e87f66927",
+      "units": 141
+    },
+    {
+      "full": "b1bb4fa113fdc5c5",
+      "name": "freopen_",
+      "specific": "53244bb6d7c4f0fe",
+      "units": 31
+    },
+    {
+      "full": "b15710a964b51748",
+      "name": "frexp_",
+      "specific": "594fbb105693dbf7",
+      "units": 32
+    },
+    {
+      "full": "256b364b2dd9319f",
+      "name": "fscanf_",
+      "specific": "1f25d2b7795b45b6",
+      "units": 8
+    },
+    {
+      "full": "2c84c6de46207174",
+      "name": "fseek_",
+      "specific": "780e505136fc5acd",
+      "units": 84
+    },
+    {
+      "full": "22fe76778edd68e8",
+      "name": "ftell_",
+      "specific": "ee3ea7b53e489c83",
+      "units": 26
+    },
+    {
+      "full": "4b8cc176650d4885",
+      "name": "fwrite_",
+      "specific": "8a66808e5118a0ac",
+      "units": 130
+    },
+    {
+      "full": "3c547f49d837b55b",
+      "name": "getch_",
+      "specific": "58b8a04a3ee4d58c",
+      "units": 12
+    },
+    {
+      "full": "64f77205373ce7ad",
+      "name": "getchar_",
+      "specific": "6c348a8508731365",
+      "units": 20
+    },
+    {
+      "full": "3c547f49d837b55b",
+      "name": "getche_",
+      "specific": "b1534aa4a249e64d",
+      "units": 12
+    },
+    {
+      "full": "d76dcf514d5d2587",
+      "name": "getcwd_",
+      "specific": "714bbede796ad476",
+      "units": 44
+    },
+    {
+      "full": "c62257fe85ae816c",
+      "name": "getenv_",
+      "specific": "38d927c25280ce31",
+      "units": 50
+    },
+    {
+      "full": "381af9c11d5ca2d4",
+      "name": "gmtime_",
+      "specific": "322f61e49b754d80",
+      "units": 4
+    },
+    {
+      "full": "b63fba7ba90d0cc4",
+      "name": "hypot_",
+      "specific": "9c2107f7011e7222",
+      "units": 8
+    },
+    {
+      "full": "877616d0b7c42d99",
+      "name": "inp_",
+      "specific": "877616d0b7c42d99",
+      "units": 6
+    },
+    {
+      "full": "aa531fb53791d8b0",
+      "name": "inpw_",
+      "specific": "aa531fb53791d8b0",
+      "units": 6
+    },
+    {
+      "full": "0b611af4c89c5961",
+      "name": "int386_",
+      "specific": "75363d93c47b9239",
+      "units": 11
+    },
+    {
+      "full": "d55dd5960bc696f7",
+      "name": "int386x_",
+      "specific": "f8ae60da3e253dfe",
+      "units": 13
+    },
+    {
+      "full": "c40698fff7ca07b4",
+      "name": "intdos_",
+      "specific": "2c3d64af78ee3816",
+      "units": 46
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "isalnum_",
+      "specific": "4ad05262838f395c",
+      "units": 13
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "isalpha_",
+      "specific": "905d4ffa10690166",
+      "units": 13
+    },
+    {
+      "full": "458823ec84d5ee7d",
+      "name": "isatty_",
+      "specific": "fda030a7e08d867b",
+      "units": 21
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "iscntrl_",
+      "specific": "479430b24dd4a46f",
+      "units": 13
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "isdigit_",
+      "specific": "b1066aa351ae6c86",
+      "units": 13
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "islower_",
+      "specific": "3fdc8294a383440b",
+      "units": 13
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "isprint_",
+      "specific": "1992fc00c043d590",
+      "units": 13
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "ispunct_",
+      "specific": "750b273d1b7a9496",
+      "units": 13
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "isspace_",
+      "specific": "8742f9e35af7e4da",
+      "units": 13
+    },
+    {
+      "full": "a6c45140a97a6aa3",
+      "name": "isupper_",
+      "specific": "101921a397dda082",
+      "units": 13
+    },
+    {
+      "full": "0ea163fa082c71c5",
+      "name": "isxdigit_",
+      "specific": "98a38eac25936e8a",
+      "units": 13
+    },
+    {
+      "full": "8f81630677d52a4a",
+      "name": "itoa_",
+      "specific": "e53801f43556589c",
+      "units": 15
+    },
+    {
+      "full": "14f3461ad0f09076",
+      "name": "kbhit_",
+      "specific": "598b90522df48c4a",
+      "units": 9
+    },
+    {
+      "full": "33525b8e5ad42511",
+      "name": "labs_",
+      "specific": "42c1d85d84346f59",
+      "units": 5
+    },
+    {
+      "full": "567bc1ec4f18e153",
+      "name": "ldexp_",
+      "specific": "294ae4a07a7f5953",
+      "units": 63
+    },
+    {
+      "full": "7af309f9d601d91e",
+      "name": "lltoa_",
+      "specific": "deb1d75b126fbbb6",
+      "units": 17
+    },
+    {
+      "full": "381af9c11d5ca2d4",
+      "name": "localtime_",
+      "specific": "322f61e49b754d80",
+      "units": 4
+    },
+    {
+      "full": "d6bda3940cbdcad5",
+      "name": "longjmp_",
+      "specific": "e4ee376b3b03597b",
+      "units": 40
+    },
+    {
+      "full": "cfde686932889bf8",
+      "name": "lseek_",
+      "specific": "da6906b7a80c4cf8",
+      "units": 16
+    },
+    {
+      "full": "8f81630677d52a4a",
+      "name": "ltoa_",
+      "specific": "e53801f43556589c",
+      "units": 15
+    },
+    {
+      "full": "b568a8cacef31f62",
+      "name": "mbstowcs_",
+      "specific": "7e60784e209187a1",
+      "units": 49
+    },
+    {
+      "full": "8e5199de58b7654b",
+      "name": "mbtowc_",
+      "specific": "536683cc78f13cf6",
+      "units": 54
+    },
+    {
+      "full": "727fb2a7b729a004",
+      "name": "memchr_",
+      "specific": "16bc0cfdd02e4ce8",
+      "units": 18
+    },
+    {
+      "full": "59c71cf020dcc0b6",
+      "name": "memcmp_",
+      "specific": "96f2ba064feeba28",
+      "units": 19
+    },
+    {
+      "full": "063499707b7e5fab",
+      "name": "memcpy_",
+      "specific": "2b4c470134280489",
+      "units": 23
+    },
+    {
+      "full": "a7470305e6e1cea2",
+      "name": "memmove_",
+      "specific": "5177d63ebe5783d2",
+      "units": 53
+    },
+    {
+      "full": "11c3766c840a9acb",
+      "name": "memset_",
+      "specific": "60504f7323dfe215",
+      "units": 11
+    },
+    {
+      "full": "1b74a0adfb26bf09",
+      "name": "mkdir_",
+      "specific": "3ffb55e202fe0ea2",
+      "units": 5
+    },
+    {
+      "full": "059ad9674168f972",
+      "name": "mktime_",
+      "specific": "d62c5eb6489ba073",
+      "units": 48
+    },
+    {
+      "full": "4028eeab35a1171e",
+      "name": "modf_",
+      "specific": "068bf34f91bad92a",
+      "units": 9
+    },
+    {
+      "full": "32209d716f9ce156",
+      "name": "nosound_",
+      "specific": "8f3ade13835f60eb",
+      "units": 7
+    },
+    {
+      "full": "6b9e68d19b96f455",
+      "name": "open_",
+      "specific": "33d3a39bb0359733",
+      "units": 13
+    },
+    {
+      "full": "5212741f75b3aa6a",
+      "name": "outp_",
+      "specific": "5212741f75b3aa6a",
+      "units": 7
+    },
+    {
+      "full": "dc36575711f65552",
+      "name": "outpw_",
+      "specific": "dc36575711f65552",
+      "units": 7
+    },
+    {
+      "full": "5ccb603115899b2f",
+      "name": "pow_",
+      "specific": "af0d71eb7a424fff",
+      "units": 3
+    },
+    {
+      "full": "462c3518ad7d2f43",
+      "name": "printf_",
+      "specific": "ad44ea0f2f6fbaee",
+      "units": 8
+    },
+    {
+      "full": "031a18bdd5b6a3ce",
+      "name": "putch_",
+      "specific": "b42e2772b1b3bf4f",
+      "units": 9
+    },
+    {
+      "full": "452a2fb26c921455",
+      "name": "putchar_",
+      "specific": "3ba7711fbe96ee21",
+      "units": 40
+    },
+    {
+      "full": "5dcf7aab77d0466a",
+      "name": "putenv_",
+      "specific": "791e33702b23a606",
+      "units": 16
+    },
+    {
+      "full": "7e871518f5382d6b",
+      "name": "puts_",
+      "specific": "3bec05d350037064",
+      "units": 17
+    },
+    {
+      "full": "7f0970161a84c330",
+      "name": "qsort_",
+      "specific": "fe8c9ac8e9c7a38d",
+      "units": 461
+    },
+    {
+      "full": "2cfee04d772c1f72",
+      "name": "raise_",
+      "specific": "75ca514f9982b25e",
+      "units": 64
+    },
+    {
+      "full": "fd9a246b39505758",
+      "name": "rand_",
+      "specific": "e3da2b6967238d78",
+      "units": 10
+    },
+    {
+      "full": "645eca8e47ba193b",
+      "name": "read_",
+      "specific": "e3058b2880e26cce",
+      "units": 113
+    },
+    {
+      "full": "6e40ff6590489516",
+      "name": "rename_",
+      "specific": "318a87c7cc223fc3",
+      "units": 10
+    },
+    {
+      "full": "4d20dd0628171feb",
+      "name": "rewind_",
+      "specific": "28657d71606f6560",
+      "units": 8
+    },
+    {
+      "full": "1b74a0adfb26bf09",
+      "name": "rmdir_",
+      "specific": "bb8ca910333e1503",
+      "units": 5
+    },
+    {
+      "full": "edd7663384da0328",
+      "name": "sbrk_",
+      "specific": "2837aecea3aeda8e",
+      "units": 77
+    },
+    {
+      "full": "440a23ad25e9de73",
+      "name": "segread_",
+      "specific": "7467329b700c6bbe",
+      "units": 16
+    },
+    {
+      "full": "077288e43ced18c2",
+      "name": "setvbuf_",
+      "specific": "acf6bf2185b25cbe",
+      "units": 37
+    },
+    {
+      "full": "438d12cc375471c1",
+      "name": "signal_",
+      "specific": "30dd3bd273de289d",
+      "units": 50
+    },
+    {
+      "full": "bcc890a54e8350be",
+      "name": "sound_",
+      "specific": "f893ca0025307edc",
+      "units": 29
+    },
+    {
+      "full": "1a14eb8f4cf6816c",
+      "name": "spawnl_",
+      "specific": "0e57c304531b8340",
+      "units": 11
+    },
+    {
+      "full": "256b364b2dd9319f",
+      "name": "spawnlp_",
+      "specific": "1f25d2b7795b45b6",
+      "units": 8
+    },
+    {
+      "full": "e3d18a82cead1099",
+      "name": "spawnve_",
+      "specific": "b8850eb63918caa8",
+      "units": 223
+    },
+    {
+      "full": "f4bf789b07e3a027",
+      "name": "spawnvp_",
+      "specific": "6e647282c96693a3",
+      "units": 4
+    },
+    {
+      "full": "55a7a1dc1e375865",
+      "name": "spawnvpe_",
+      "specific": "ec7304ba73f8d44f",
+      "units": 85
+    },
+    {
+      "full": "256b364b2dd9319f",
+      "name": "sprintf_",
+      "specific": "1f25d2b7795b45b6",
+      "units": 8
+    },
+    {
+      "full": "828d061434aa52b7",
+      "name": "sqrt_",
+      "specific": "a2d8cd0089f52a67",
+      "units": 13
+    },
+    {
+      "full": "b0d5ae0548976991",
+      "name": "srand_",
+      "specific": "bfe7059b123d333d",
+      "units": 10
+    },
+    {
+      "full": "256b364b2dd9319f",
+      "name": "sscanf_",
+      "specific": "1f25d2b7795b45b6",
+      "units": 8
+    },
+    {
+      "full": "0592b85b3eccc380",
+      "name": "stackavail_",
+      "specific": "a2d2c0ad56be8004",
+      "units": 7
+    },
+    {
+      "full": "56891f1097d29e8e",
+      "name": "strcat_",
+      "specific": "5a56fe27f29d7cf2",
+      "units": 31
+    },
+    {
+      "full": "d721ef9dd420ebad",
+      "name": "strchr_",
+      "specific": "6ddf9ffde374c287",
+      "units": 13
+    },
+    {
+      "full": "6c9632e98c4af417",
+      "name": "strcmp_",
+      "specific": "3ac4e69f90245493",
+      "units": 127
+    },
+    {
+      "full": "fe72f1cb099d2273",
+      "name": "strcpy_",
+      "specific": "1fa2815cac329f08",
+      "units": 15
+    },
+    {
+      "full": "c4a7f8a8b3d3869d",
+      "name": "strcspn_",
+      "specific": "946cb0f201126328",
+      "units": 28
+    },
+    {
+      "full": "bd391be36cb6b455",
+      "name": "strerror_",
+      "specific": "9529958c1fab22b3",
+      "units": 8
+    },
+    {
+      "full": "38e8b41b4f96b228",
+      "name": "strftime_",
+      "specific": "92e1d98be8a3e73f",
+      "units": 111
+    },
+    {
+      "full": "276638a31cc70a20",
+      "name": "strlen_",
+      "specific": "276638a31cc70a20",
+      "units": 17
+    },
+    {
+      "full": "70926cbc6ebe8b88",
+      "name": "strncat_",
+      "specific": "6c838e36dc26ec5e",
+      "units": 23
+    },
+    {
+      "full": "4516c7e3a51938ef",
+      "name": "strncmp_",
+      "specific": "f3b16cf324beccd1",
+      "units": 22
+    },
+    {
+      "full": "4800d126c1dc8113",
+      "name": "strncpy_",
+      "specific": "b202e466bc052ab7",
+      "units": 24
+    },
+    {
+      "full": "a61490e02c2fc59a",
+      "name": "strpbrk_",
+      "specific": "ce224781979e1f1b",
+      "units": 28
+    },
+    {
+      "full": "d96c520a1a8f3337",
+      "name": "strrchr_",
+      "specific": "d1cbd22f3fd59d4d",
+      "units": 15
+    },
+    {
+      "full": "106f98fd2d1bdcfe",
+      "name": "strspn_",
+      "specific": "16970b7bbb30e84f",
+      "units": 28
+    },
+    {
+      "full": "dc4ff12c78efe1b4",
+      "name": "strstr_",
+      "specific": "423f3896c789f119",
+      "units": 55
+    },
+    {
+      "full": "98461fd8c0bdeca4",
+      "name": "strtod_",
+      "specific": "e9a93dde6a6f3182",
+      "units": 95
+    },
+    {
+      "full": "884c3fc99c6fa7b5",
+      "name": "strtok_",
+      "specific": "bb99861ed5c73fad",
+      "units": 4
+    },
+    {
+      "full": "6089fab7ed93601d",
+      "name": "strtok_r_",
+      "specific": "51bf518d31dde346",
+      "units": 70
+    },
+    {
+      "full": "2cc43dc4a4fc0735",
+      "name": "strtol_",
+      "specific": "971781e2be694573",
+      "units": 4
+    },
+    {
+      "full": "fc3cb85e1126d6dc",
+      "name": "strtoul_",
+      "specific": "b64c8558ce8006c8",
+      "units": 4
+    },
+    {
+      "full": "77785fb52e4cc1a7",
+      "name": "system_",
+      "specific": "2a586dc4cf46850b",
+      "units": 47
+    },
+    {
+      "full": "731822d30b1ac7ac",
+      "name": "time_",
+      "specific": "3222e91129e8fe03",
+      "units": 20
+    },
+    {
+      "full": "6250b0f7da39f758",
+      "name": "tmpnam_",
+      "specific": "060998fcd2bd32c5",
+      "units": 60
+    },
+    {
+      "full": "05121d3446bd40d8",
+      "name": "tolower_",
+      "specific": "f4889439636add81",
+      "units": 6
+    },
+    {
+      "full": "5f8cd5350afc3210",
+      "name": "toupper_",
+      "specific": "e3fdeccba3a7a93f",
+      "units": 6
+    },
+    {
+      "full": "dfcfdb4432723bd0",
+      "name": "towupper_",
+      "specific": "4ac4dd8bac073461",
+      "units": 6
+    },
+    {
+      "full": "0051e93ecb6ffe99",
+      "name": "tzset_",
+      "specific": "36a6fad23bde01c5",
+      "units": 12
+    },
+    {
+      "full": "8ec2ea6b7293480f",
+      "name": "ulltoa_",
+      "specific": "e0302431d9a8fceb",
+      "units": 42
+    },
+    {
+      "full": "eab4dda92e1d8e77",
+      "name": "ultoa_",
+      "specific": "bac6c6453bf1bcef",
+      "units": 34
+    },
+    {
+      "full": "10b253ad570f5ee6",
+      "name": "ungetc_",
+      "specific": "785bf577dd96da02",
+      "units": 82
+    },
+    {
+      "full": "1b74a0adfb26bf09",
+      "name": "unlink_",
+      "specific": "1f0e4aca69fde436",
+      "units": 5
+    },
+    {
+      "full": "fbbc74970f775cb6",
+      "name": "utoa_",
+      "specific": "736f02c6f3c1aa7a",
+      "units": 34
+    },
+    {
+      "full": "2d231c583a539588",
+      "name": "vcprintf_",
+      "specific": "7e27123c38c849f0",
+      "units": 9
+    },
+    {
+      "full": "5f4565cd92e2dd3f",
+      "name": "vfscanf_",
+      "specific": "7be8b128493a4816",
+      "units": 23
+    },
+    {
+      "full": "36e4b56ea0b2ba8c",
+      "name": "vsprintf_",
+      "specific": "a34edd1624a9aa6f",
+      "units": 8
+    },
+    {
+      "full": "0f29422f0f02e5ea",
+      "name": "vsscanf_",
+      "specific": "bc52d53e9fbc9402",
+      "units": 7
+    },
+    {
+      "full": "de37a7c1e924676f",
+      "name": "wctomb_",
+      "specific": "b9569b06c12bc2e1",
+      "units": 18
+    },
+    {
+      "full": "9aaaf1e0119b09e7",
+      "name": "write_",
+      "specific": "ffcdbab9171f4982",
+      "units": 185
+    }
+  ],
+  "name": "openwatcom-2-clib3r-flat",
+  "source": "testbins/CLIB32.EXE and its map",
+  "version": 1
+}

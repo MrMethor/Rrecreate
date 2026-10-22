@@ -23,7 +23,7 @@ pub const DEVICES: [(&str, u32); 2] = [("mouse", 46), ("joystick", 12)];
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decision {
     pub name: String,
-    /// `human`, `agent:<model>`, `ghidra`, `library:<pack>`, `prior-art:<source>`, `import:<source>`.
+    /// `human`, `agent:<model>`, `ghidra`, `library:<pack>`, `prior-art:<source>`, `import:<source>`, `map`.
     pub provenance: String,
     pub confidence: Option<f64>,
     /// Free text: the IDs, sessions or sources that support it.

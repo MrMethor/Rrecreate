@@ -26,7 +26,10 @@ use crate::repo::{Repo, read_toml, write_toml};
 use crate::{say, tools};
 
 const EXPORT_SCRIPT: &str = include_str!("../../ghidra/RecExport.java");
-const PACKS: &[&str] = &[include_str!("../../sigs/borland-c++-1991-medium.json")];
+const PACKS: &[&str] = &[
+    include_str!("../../sigs/borland-c++-1991-medium.json"),
+    include_str!("../../sigs/openwatcom-2-clib3r-flat.json"),
+];
 const PROCESSOR: &str = "x86:LE:16:Real Mode";
 /// A flat program under a DOS extender (its LE objects as Clockwork placed them, an ELF file).
 const FLAT_PROCESSOR: &str = "x86:LE:32:default";
@@ -63,7 +66,7 @@ impl Index {
     }
 
     /// The export's records, and the additions' after them.
-    fn records(&self, cache: &Cache) -> Result<String, String> {
+    pub(crate) fn records(&self, cache: &Cache) -> Result<String, String> {
         let mut text = String::from_utf8_lossy(&cache.get(&self.export)?).into_owned();
         if let Some(additions) = &self.additions {
             text.push_str(&String::from_utf8_lossy(&cache.get(additions)?));

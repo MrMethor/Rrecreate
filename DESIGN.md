@@ -132,7 +132,8 @@ the session.
 - **Load through Clockwork:** analysis starts from the loaded image Clockwork dumps, not the file, so packed
   programs, overlays and LE/LX programs under an extender take one path.
 - **Ghidra, headless:** imports the image with its segment map, applies library signature packs, and its
-  export (functions, calls, disassembly, decompiled code) lands in the knowledge files.
+  export (functions, calls, disassembly, decompiled code) lands in the knowledge files. A pack is made from a
+  program built with the compiler and its linker map (`rrc sigs build`, `sigs/README.md`).
 - **Dynamic:** sessions give coverage, call edges with counts (code Ghidra missed, calls through pointers),
   and per-function memory use (which functions read and write each global).
 - **Prior art first:** for every game, look for source releases, reimplementations, format documentation
@@ -333,7 +334,8 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
   CPU tests and the SingleStepTests runner, minus what hosted the old ports inside the emulator: overrides and
   the `Call` interface, dual-run, captured-call replay, poison checks and lockstep with overrides. Kept and
   extended: snapshots, coverage, memory-access tracing, contract inference.
-- The Ghidra export script, the library signature packs, the test programs built with Open Watcom.
+- The Ghidra export script, the library signature packs and how they are made (`rec sigs build`, now `rrc sigs
+  build`, with its linker map parser), the test programs built with Open Watcom.
 - Recreate's Wolf3D knowledge (names transferred from id's released source, globals, its 46 overrides written
   from that source) stays outside the Wolf3D port: it grades the pilot afterwards, like the source itself (D3,
   D46).
