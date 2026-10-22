@@ -10,6 +10,9 @@
 
 use cpu::{Cpu, seg};
 
+/// Most frames on other stacks an unwind passes over to reach this stack's newest.
+const PASSED: usize = 64;
+
 /// One frame of the call chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
@@ -118,7 +121,19 @@ impl Calls {
                 }
             }
         }
-        self.unwind(stack_base, top, stack32);
+        // Back where a frame on another stack was entered from (an IRET from a handler that ran on its
+        // own stack): it ended.
+        while let Some(frame) = self.stack.last()
+            && frame.stack_base != stack_base
+            && frame.from == linear_ip
+        {
+            self.stack.pop();
+        }
+        // Just after SS changed, SP may still be the old stack's (`mov ss` then `mov sp`): the next
+        // instruction unwinds.
+        if stack_base == c.stack_base {
+            self.unwind(stack_base, top, stack32);
+        }
     }
 
     /// A hardware interrupt was taken: it opens a frame of its own.
@@ -128,13 +143,18 @@ impl Calls {
         self.stack.push(Frame { entry, from, interrupt: true, slot: stack_top(cpu), stack_base });
     }
 
-    /// Frames whose return address the stack has risen above are gone.
+    /// Frames whose return address the stack has risen above are gone, and every frame opened after
+    /// them with them: an extender's handler may switch stacks and come back to its caller's without
+    /// returning on its own, so frames on another stack above a closed one close too. The newest
+    /// frame on this stack decides (older ones on it are deeper); frames on other stacks above it are
+    /// passed over, at most [`PASSED`] of them.
     fn unwind(&mut self, stack_base: u32, top: u32, stack32: bool) {
-        while let Some(frame) = self.stack.last()
-            && frame.stack_base == stack_base
-            && fell(frame.slot, top, stack32) < 0
-        {
-            self.stack.pop();
+        loop {
+            let newest = self.stack.iter().enumerate().rev().take(PASSED).find(|(_, f)| f.stack_base == stack_base);
+            match newest {
+                Some((i, frame)) if fell(frame.slot, top, stack32) < 0 => self.stack.truncate(i),
+                _ => break,
+            }
         }
     }
 }

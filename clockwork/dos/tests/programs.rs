@@ -3873,6 +3873,63 @@ fn the_call_tracker_counts_calls_by_target() {
     let calls = m.probes.calls.as_deref().unwrap();
     assert_eq!(calls.counts().unwrap().iter().collect::<Vec<_>>(), [(&(base + o["step"]), &2)]);
     assert!(calls.chain().is_empty(), "{:?}", calls.chain());
+
+    // Handlers that run on a stack of their own and go back to their caller's stack without returning
+    // on theirs (as an extender's do). `away` calls `back` on another stack; `back` goes back to the
+    // first stack and on where it was called from: its frame ends there. Then `away` calls `gone` on
+    // the other stack, which goes back to the first stack and returns from `away`: both frames end.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["resume", "done"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        let target = a.l("away");
+        a.call(target)?;
+        a.here("done")?;
+        exit(a, 0)?;
+        a.here("away")?;
+        let saved = word_at(a, "saved");
+        a.mov(saved, sp)?;
+        for (callee, after) in [("back", "resume"), ("gone", "unreached")] {
+            a.mov(ax, cs)?;
+            a.add(ax, 0x1000)?;
+            a.mov(ss, ax)?;
+            a.mov(sp, 0x100)?;
+            let target = a.l(callee);
+            a.call(target)?;
+            a.here(after)?;
+        }
+        a.nop()?;
+        // back: to the first stack, on after its call.
+        a.here("back")?;
+        a.mov(ax, cs)?;
+        a.mov(ss, ax)?;
+        let saved = word_at(a, "saved");
+        a.mov(sp, saved)?;
+        let target = a.l("resume");
+        a.jmp(target)?;
+        // gone: to the first stack, returning from `away`.
+        a.here("gone")?;
+        a.mov(ax, cs)?;
+        a.mov(ss, ax)?;
+        let saved = word_at(a, "saved");
+        a.mov(sp, saved)?;
+        a.ret()?;
+        a.here("saved")?;
+        a.dw(&[0])
+    });
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let o = offsets.into_inner();
+    m.track_calls(true);
+    m.probes.calls.as_deref_mut().unwrap().count(true);
+    assert!(matches!(m.run_to_sync(base + o["resume"], 1, SECOND), Stop::Sync { .. }));
+    let chain = m.probes.calls.as_deref().unwrap().chain();
+    assert_eq!(chain.len(), 1, "back's frame ended where it was called from: {chain:?}");
+    assert!(matches!(m.run_to_sync(base + o["done"], 1, SECOND), Stop::Sync { .. }));
+    let calls = m.probes.calls.as_deref().unwrap();
+    assert_eq!(calls.counts().unwrap().len(), 3, "away, back and gone");
+    assert!(calls.chain().is_empty(), "{:?}", calls.chain());
 }
 
 #[test]
