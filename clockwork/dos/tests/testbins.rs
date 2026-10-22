@@ -150,3 +150,40 @@ fn a_flat_program_s_objects_are_found_where_its_extender_put_them() {
     assert_eq!(m.run(2 * SECOND), Stop::Exited(32));
     assert_eq!(output(&m), "flat32: 1240 from 16 calls\r\n");
 }
+
+/// DOS4GW.EXE from the local Open Watcom (`WATCOM`): it isn't committed, as nothing says it may be
+/// redistributed. Without it, the tests that need it skip.
+pub fn dos4gw() -> Option<Vec<u8>> {
+    let watcom = std::env::var_os("WATCOM")?;
+    std::fs::read(Path::new(&watcom).join("binw").join("dos4gw.exe")).ok()
+}
+
+#[test]
+fn a_dos4gw_program_s_objects_are_found_while_dos4gw_runs_it() {
+    let Some(dos4gw) = dos4gw() else {
+        eprintln!("skipped: no DOS4GW.EXE (set WATCOM to Open Watcom's folder)");
+        return;
+    };
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testbins/bin/FLAT4GW.EXE");
+    let data = std::fs::read(&path).unwrap();
+    let le = dos::le::Le::parse(&data).unwrap().expect("an LE executable");
+    // FLAT4GW.MAP: _cstart_ is at 0001:000001C8.
+    assert_eq!(le.entry, (0, 0x1C8));
+    let mut drive = Vfs::new();
+    drive.insert_file("FLAT4GW.EXE", data);
+    drive.insert_file("DOS4GW.EXE", dos4gw);
+    let mut m = Machine::with_program(Config::default(), drive, "FLAT4GW.EXE", "").unwrap();
+    // Its stub runs DOS4GW.EXE, which loads it: the objects are found while DOS4GW.EXE runs, and the
+    // program by name through its parent.
+    let bases = (0..20).find_map(|_| {
+        m.run(SECOND / 20);
+        le.bases(&m)
+    });
+    let bases = bases.expect("the objects in memory");
+    assert!(m.dos.program.ends_with("DOS4GW.EXE"), "{}", m.dos.program);
+    assert_eq!(m.process_named("flat4gw.exe").map(|(_, path)| path), Some("FLAT4GW.EXE"));
+    assert!(bases[0] % 4 == 0 && bases[1] != bases[0], "{bases:X?}");
+    assert_eq!(m.run(2 * SECOND), Stop::Exited(32));
+    // After DOS/4GW's banner.
+    assert!(output(&m).ends_with("1990-1994\r\nflat4gw: 1240 from 16 calls\r\n"), "{}", output(&m));
+}

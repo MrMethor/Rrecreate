@@ -30,4 +30,7 @@ build FLOAT s -fpi87 src/float.c
 build MEDIUM m src/medmain.c src/medlib.c
 # 32-bit, flat, under the CauseWay extender (an LE executable).
 wcl386 -zq -bt=dos -l=causeway -fo=obj/ -fe=bin/FLAT32.EXE -fm=bin/FLAT32.MAP src/flat32.c
+# The same under DOS/4GW, whose DOS4GW.EXE (in Open Watcom's binw) isn't committed: its tests skip
+# without WATCOM.
+wcl386 -zq -bt=dos -l=dos4g -fo=obj/ -fe=bin/FLAT4GW.EXE -fm=bin/FLAT4GW.MAP src/flat4gw.c
 rm -rf obj

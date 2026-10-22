@@ -28,7 +28,7 @@ is in `rrc/` (M2). The runtime and the comparison are M3 (`DESIGN.md` §12).
   `a.addr("name")`, `a.l("name")`). CPU tests in `clockwork/cpu/tests/` hand-encode instructions (protected-mode
   tests in `protected.rs` assemble with iced-x86; FPU tests in `fpu.rs` use iced's `fsub_2`, `fdivr_2`... for
   two-operand register forms); shared helpers are in `tests/common/mod.rs`. `testbins/` has C programs built with
-  Open Watcom (`testbins/README.md`).
+  Open Watcom (`testbins/README.md`); the DOS/4GW tests need `WATCOM` set (they skip without it).
 - `clockwork/dos/src/fonts.rs` and `vga_params.rs` are generated from DOSBox Staging's sources by the scripts in
   `clockwork/tools/`; don't edit them by hand.
 - Licences: everything is MIT except `clockwork/`, which is GPL-2.0-or-later. Code from DOSBox or other GPL

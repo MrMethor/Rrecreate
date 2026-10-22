@@ -352,6 +352,34 @@ fn a_flat_program_s_objects_have_ids() {
 }
 
 #[test]
+fn a_dos4gw_program_s_objects_are_found_through_its_stub() {
+    // DOS4GW.EXE from the local Open Watcom (`WATCOM`): it isn't committed (testbins/README.md).
+    let watcom = std::env::var_os("WATCOM").map(PathBuf::from);
+    let Some(dos4gw) = watcom.and_then(|w| std::fs::read(w.join("binw").join("dos4gw.exe")).ok()) else {
+        eprintln!("skipped: no DOS4GW.EXE (set WATCOM to Open Watcom's folder)");
+        return;
+    };
+    let program = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../testbins/bin/FLAT4GW.EXE")).unwrap();
+    let (dir, rrc) = setup_file("dos4gw", "FLAT4GW.EXE", &program);
+    std::fs::write(dir.join("game/DOS4GW.EXE"), dos4gw).unwrap();
+    rrc.ok(&["init", ".", "--program", "FLAT4GW.EXE", "--name", "flat4gw"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    // FLAT4GW.MAP: _squares at 0002:0000042C; square, the first function, at 0001:00000010. Its stub
+    // runs DOS4GW.EXE, which runs it: the objects are its, found through DOS4GW.EXE's parent.
+    rrc.ok(&["data", "FLAT4GW.EXE#2+0042C", "squares", "--size", "64", "--type", "i32[16]"]);
+    rrc.ok(&["sync", "FLAT4GW.EXE#1+00010", "square"]);
+    rrc.ok(&["session", "add", "run", "--seconds", "1"]);
+    let recorded = rrc.ok(&["record", "run"]);
+    assert!(recorded.contains("trace     16 ticks"), "a tick a call: {recorded}");
+    let squares = rrc.ok(&["trace", "run", "--item", "squares"]);
+    let last = squares.lines().last().unwrap_or("");
+    assert!(last.starts_with("16        [0x1]=1 [0x2]=4 [0x3]=9") && last.ends_with("[0xE]=196"), "{squares}");
+    let square = rrc.ok(&["calls", "run", "FLAT4GW.EXE#1+00010"]);
+    assert!(square.contains("calls     FLAT4GW.EXE#1+00010: 16 in run"), "{square}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn a_launcher_s_program_is_the_module() {
     // GAME\GO.BAT runs OTHER.EXE, then FLAT32.EXE: the module. OTHER.EXE is FLAT32.EXE with a data object
     // 4 KB larger, another LE program whose objects aren't the module's.
