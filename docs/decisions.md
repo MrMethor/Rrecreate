@@ -396,6 +396,21 @@ program up among the running one's parents also finds an unbound DOS/4GW game, w
 which loads the game's objects: measured with Open Watcom's DOS/4GW, objects found while DOS4GW.EXE runs.
 **Supersedes:** D56.
 
+### D58. One protocol for emulators: a core and platform extensions, checked by a handshake. Accepted 2026-10-22, with the person.
+The protocol tools drive an emulator with is a documented contract (`docs/protocol.md`) with a revision: a
+core any emulated machine can answer (loading, running to times and sync points, memory, watches, call
+tracking, coverage, checks, frames, sound, input, snapshots, the state hash, and the determinism that makes
+them repeatable) and an extension per platform (Clockwork's `dos-pc`: `SEG:OFF` addresses, LE objects,
+`rebase`, processes, devices, interrupt-numbered services). An emulator answers `hello` with its revision and
+platform; `rrc` refuses another revision or a platform it doesn't know. Every change to the protocol is a new
+revision, in the emulator, the tools and the document together.
+**Why:** the person may port games from other machines (Apple II, Commodore 64) the same way, with an emulator
+per machine, possibly written by others. A written contract, with what is common apart from what is DOS's,
+keeps that door open at little cost now, where finding the DOS assumptions later would cost much; and the
+handshake already catches today's mistake of an `rrc` and a `clockwork` from different builds. Not done yet,
+because it is best shaped by a second platform in hand: a platform layer inside `rrc`, a core shared between
+emulators, a `platform` setting in `rrc.toml` (a later default of `dos-pc` needs no change to existing ports).
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the

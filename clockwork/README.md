@@ -74,8 +74,9 @@ file), following its control flow.
 each on one line. `load` takes `clockwork run`'s arguments; then a tool can run for a time or to a sync point's
 next hit, read and write memory, take and restore snapshots, and watch memory: each read or write of the
 watched bytes comes back with its instruction, cycle and call chain. Bounds checks and uninitialized reads
-work the same way. Addresses are `+OFF` (image offsets), `SEG:OFF` or `@LINEAR`. The operations are listed in
-`cli/src/serve.rs`. A request that makes Clockwork panic gets an error and drops the machine; the server goes on.
+work the same way. Addresses are `+OFF` (image offsets), `SEG:OFF` or `@LINEAR`. The operations are the emulator
+protocol's, in `../docs/protocol.md` (its core, and the `dos-pc` platform's extension); `hello` says the
+revision. A request that makes Clockwork panic gets an error and drops the machine; the server goes on.
 
 `clockwork gdb [--port N] <dir> <program> [run's options]` starts the program stopped at its entry and waits
 for a debugger speaking GDB's remote protocol (`target remote 127.0.0.1:1234` in gdb, or Ghidra's debugger):

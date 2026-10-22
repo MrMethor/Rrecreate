@@ -93,7 +93,12 @@ Rules:
 ### 4.2 Control protocol
 
 Clockwork runs as a long-lived process (`clockwork serve`) and takes requests as JSON lines over stdin or a
-TCP socket; requests can be batched ("run to the 500th sync point, then return these ranges"). Operations:
+TCP socket; requests can be batched ("run to the 500th sync point, then return these ranges"). The protocol is
+a documented contract, `docs/protocol.md` (D58): a core any emulated machine can answer, and an extension per
+platform (Clockwork's is `dos-pc`). An emulator says its revision and platform (`hello`), and a tool refuses
+one it doesn't speak. Another machine (an Apple II, a Commodore 64) would be another emulator speaking the same
+core; the toolkit would then need that platform's knowledge too (how its programs are found, analysed and
+named, its boundary values), which it has for DOS only. Operations:
 
 - load a program (with drives, CD, environment); run to a cycle, an address or the n-th hit of a sync point;
   step;

@@ -1,5 +1,6 @@
-//! Clockwork as a child process, driven through `clockwork serve` (`clockwork/cli/src/serve.rs`): a
-//! JSON request per line on its input, an answer per line on its output.
+//! Clockwork as a child process, driven through `clockwork serve`: a JSON request per line on its input,
+//! an answer per line on its output, as `docs/protocol.md` describes. rrc speaks one revision of the
+//! protocol, and the `dos-pc` platform; an emulator that says otherwise is refused.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -9,6 +10,12 @@ use serde_json::{Value, json};
 
 use crate::repo::{Local, Repo};
 use crate::session::Session;
+
+/// The protocol's revision rrc speaks (`docs/protocol.md`).
+pub const PROTOCOL: u64 = 1;
+
+/// The platform rrc knows.
+pub const PLATFORM: &str = "dos-pc";
 
 pub struct Clockwork {
     child: Child,
@@ -30,7 +37,18 @@ impl Clockwork {
             .map_err(|e| format!("{}: {e}", exe.display()))?;
         let input = child.stdin.take().expect("a piped input");
         let output = BufReader::new(child.stdout.take().expect("a piped output"));
-        Ok(Clockwork { child, input, output, next_id: 1 })
+        let mut clockwork = Clockwork { child, input, output, next_id: 1 };
+        let hello = clockwork.hello().map_err(|e| format!("{}: {e}", exe.display()))?;
+        compatible(&hello).map_err(|e| format!("{}: {e}", exe.display()))?;
+        Ok(clockwork)
+    }
+
+    /// What the emulator says it is: `protocol`, `platform`, `emulator`, `version`.
+    pub fn hello(&mut self) -> Result<Value, String> {
+        // An emulator older than the handshake answers it with an error of some kind.
+        self.ask("hello", Value::Null).map_err(|e| {
+            format!("it doesn't answer hello ({e}): an older Clockwork? Build both from the same Rrecreate")
+        })
     }
 
     /// Sends `op` with the fields of `args` (an object, or null) and returns the answer.
@@ -146,6 +164,21 @@ pub fn argv(repo: &Repo, options: &[String]) -> Result<Vec<String>, String> {
     Ok(argv)
 }
 
+/// Whether an emulator that answered `hello` this way is one rrc can drive.
+pub fn compatible(hello: &Value) -> Result<(), String> {
+    let protocol = hello["protocol"].as_u64();
+    if protocol != Some(PROTOCOL) {
+        let theirs = protocol.map_or("no".to_owned(), |p| p.to_string());
+        return Err(format!(
+            "it speaks protocol revision {theirs}, rrc revision {PROTOCOL}: build both from the same Rrecreate"
+        ));
+    }
+    match hello["platform"].as_str() {
+        Some(PLATFORM) => Ok(()),
+        other => Err(format!("it emulates {}, rrc knows {PLATFORM} only", other.unwrap_or("no platform"))),
+    }
+}
+
 /// A number in Clockwork's answer: one without it is a mismatch with the protocol, not a zero.
 pub fn number(answer: &Value, key: &str) -> Result<u64, String> {
     answer[key].as_u64().ok_or_else(|| format!("clockwork answered without a number {key:?}: {answer}"))
@@ -190,4 +223,20 @@ pub fn version(exe: &Path) -> Option<String> {
     let output = Command::new(exe).arg("--version").output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     Some(text.trim().trim_start_matches("clockwork ").to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rrc_drives_an_emulator_of_its_protocol_and_platform_only() {
+        let hello = |protocol: u64, platform: &str| json!({"protocol": protocol, "platform": platform});
+        assert!(compatible(&hello(PROTOCOL, "dos-pc")).is_ok());
+        let newer = compatible(&hello(PROTOCOL + 1, "dos-pc")).unwrap_err();
+        assert!(newer.contains(&format!("revision {}, rrc revision {PROTOCOL}", PROTOCOL + 1)), "{newer}");
+        let other = compatible(&hello(PROTOCOL, "c64")).unwrap_err();
+        assert_eq!(other, "it emulates c64, rrc knows dos-pc only");
+        assert!(compatible(&json!({})).is_err(), "no revision");
+    }
 }

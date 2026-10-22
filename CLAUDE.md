@@ -52,7 +52,9 @@ is in `rrc/` (M2). The runtime and the comparison are M3 (`DESIGN.md` §12).
 - Tool output is read by agents: keep it short. Large data goes to the cache, and the output gives its hash.
   `rrc` prints a label and a value per line.
 - `rrc` (MIT) drives Clockwork as a program (`clockwork serve`, `clockwork run`, `clockwork unpack`), never as a
-  library. The files it reads and writes are documented in `docs/formats.md`: change the two together, and
+  library. `clockwork serve` speaks the emulator protocol, `docs/protocol.md` (D58): a change to it is a new
+  revision (`PROTOCOL` in `serve.rs` and `rrc/src/clockwork.rs`) and goes into that document; keep what is
+  DOS's in the `dos-pc` extension. The files it reads and writes are documented in `docs/formats.md`: change the two together, and
   `docs/porting.md` when a step of the workflow changes. `rrc/tests/flow.rs` runs the whole flow on a small
   program with the workspace's debug `clockwork`.
 - The predecessor, Recreate (`../Recreated`, github.com/MrMethor/Recreate), is a source of code as listed in

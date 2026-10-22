@@ -14,7 +14,8 @@ The port's faithful mode is checked against the original for good; modernization
 analysis through Ghidra, knowledge files, sessions and per-tick traces of the original
 ([`docs/porting.md`](docs/porting.md)). The port runtime and the comparison are next. The design is
 [`DESIGN.md`](DESIGN.md); the decisions and their reasons are in [`docs/decisions.md`](docs/decisions.md), the
-file formats in [`docs/formats.md`](docs/formats.md).
+file formats in [`docs/formats.md`](docs/formats.md), and how tools drive an emulator in
+[`docs/protocol.md`](docs/protocol.md).
 
 ```bash
 cargo build --release -p rrc -p clockwork

@@ -1,63 +1,12 @@
-//! `clockwork serve`: Clockwork as a long-lived process that tools drive (DESIGN.md §4.2). Requests
-//! are JSON objects, one per line, on stdin (or a TCP connection with `--port N`); each gets one line
-//! back with the same `id`: `{"id":…,"ok":true,…}` or `{"id":…,"error":"…"}`. A request that
-//! panics inside Clockwork gets an error, and the machine is dropped (its invariants may not hold);
-//! copies in memory stay.
+//! `clockwork serve`: Clockwork as a long-lived process that tools drive (DESIGN.md §4.2), speaking the
+//! emulator protocol (`docs/protocol.md`, revision [`PROTOCOL`]): its core and the `dos-pc` platform's
+//! extension. Requests are JSON objects, one per line, on stdin (or a TCP connection with `--port N`); each
+//! gets one line back with the same `id`. A request that panics inside Clockwork gets an error, and the
+//! machine is dropped (its invariants may not hold); copies in memory stay.
 //!
-//! Addresses are `+OFF` (an offset in the program's load image, hex), `SEG:OFF` (as the CPU sees it
-//! now) or `@LINEAR` (hex); answers name addresses the same way, `+OFF` where they fall in the image.
-//! Memory a watch reports is named by the linear address it was watched at; other physical memory
-//! (an uninitialized read) the same way while paging is off (physical is linear then), `%PHYS` while
-//! it is on.
-//!
-//! Operations:
-//! - `load` `{"argv": [dir, program, options…]}`: a machine as `clockwork run` would start it (the
-//!   same options: drives, CD, input scripts…); says where the program's image is and its size.
-//!   `load_snapshot` `{"argv": [dir, options…], "file"}`: from a snapshot. `save` `{"file"}`: a
-//!   snapshot on disk.
-//! - `snapshot` / `restore` / `forget` `{"name"}`: copies of the machine in memory.
-//! - `run` `{"ms"}` or `{"cycles"}`, or `{"sync": addr, "n": 1, "max_ms": 60000}`: runs on; says why it
-//!   stopped and when. `{"sync": "next", "n": 1}` stops at the n-th next hit of any sync point: the next
-//!   tick. `"until_ms"` instead of `"max_ms"` stops at that time from power-on, wherever the run is.
-//!   `tick` `{"from", "ranges", "max_ms"}`: a tick in one request: runs to the next tick, then
-//!   answers as `read` (`data`), `frames` and `sound` (since cycle `from`) would.
-//! - `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as their number,
-//!   cycle, video mode and hash. `frame_images` `{"on": true}`: from now on, the picture of each frame
-//!   whose picture changed (`dos::frame_image`), handed over with each `tick` (`images`: `[[number,
-//!   hex]]`) or by `take_frame_images`. `sound` `{"from", "to"}`: the sound events then: OPL writes (`[ns,
-//!   register, value]`), PC speaker waveforms (`[pit_tick, wave]`), digitized sound starts (`[ns, rate,
-//!   stereo]`), MIDI bytes (`[pit_tick, byte]`) and CD audio plays (`[ns, sector, sectors]`).
-//! - `sync` `{"at", "log": false, "gate": [{"at", "len"}], "program"}`: a sync point; with a gate (D48),
-//!   a hit counts only when the gate's bytes changed since the point's last counted hit, and a stop
-//!   there says how many hits it passed over before (`skipped`); with a program (a file name, D56),
-//!   only while it runs or a program it started does. `syncs`: each point's hits (and their cycles).
-//! - `read` `{"ranges": [{"at", "len"} or {"device"}]}` (hex strings back), `write` `{"at", "hex"}`, `regs`,
-//!   `hash` (the machine's state hash, as `clockwork run` prints it), `objects` `{"program"}` (the running
-//!   program, or the one named if it runs or started the one running: its path, its load image (`image`,
-//!   `image_size`) and its LE objects, `[{"at", "size", "flags"}]` where its extender put them, or null;
-//!   `dos::le`).
-//!   A device (D49) is `mouse` (what INT 33h would report: `dos::mouse::Mouse::reported_state`) or
-//!   `joystick` (the game port's sticks); a gate takes them too.
-//! - `input` `{"lines": ["MS:KEYS", …]}`: scripted input, at emulated times from the start.
-//! - `watch` `{"ranges": [{"at", "len"}], "reads": false}` … `watch_end`: who wrote (or read) each
-//!   byte, with the instruction, the cycle and the call chain (at most `"limit"` accesses, 10000 by
-//!   default). With `"summary": true`, who touched
-//!   each byte instead, as runs of bytes touched alike: `{"at", "len", "read", "read_in_interrupt",
-//!   "written", "interrupt_writer" (the handler's entry, or null), "interrupt_write_by" (the instruction that
-//!   wrote it there first), "host" (a service or device wrote)}`, and the services called (`services`, by
-//!   callback: the interrupt, for the BIOS, DOS and the mouse driver) and ports read (`ports`), with how
-//!   often. `calls` `{"on": true}` tracks calls from now on, so a watch started later sees the whole chain;
-//!   with `"count": true` it counts them too, in any mode and program: `call_counts`, the calls made since,
-//!   by target, with how often (`[[addr, n]]`).
-//! - `coverage` … `coverage_end`: what code ran meanwhile, in any mode and anywhere (as `clockwork run
-//!   --coverage` records it): where each instruction started (`executed`), and the calls made, with how
-//!   often (`calls`: `[[site, target, n]]`).
-//! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
-//!   `uninit_end`.
-//! - `image` `{"dir"}`: the loaded image for analysis; `rebase`: image offsets count from the
-//!   program running now (a child program the first one started), or from `{"at", "len"}`: an image
-//!   a program will be loaded to (a game a launcher starts, where an earlier run of it put it).
-//! - `quit`.
+//! Addresses: `+OFF` counts from `State::image` (the started program's image, or what `rebase` set);
+//! memory a watch reports is named by the linear address it was watched at, other physical memory the same
+//! way while paging is off (physical is linear then), `%PHYS` while it is on.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -65,6 +14,45 @@ use std::ops::Range;
 
 use dos::Machine;
 use serde_json::{Value, json};
+
+/// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
+/// protocol, and tools refuse an emulator whose revision isn't theirs.
+pub const PROTOCOL: u64 = 1;
+
+/// The machine this emulates: the protocol's core and the `dos-pc` extension.
+pub const PLATFORM: &str = "dos-pc";
+
+/// The operations that need a machine: an unknown one is answered as such whether a machine is
+/// loaded or not.
+pub const MACHINE_OPS: &[&str] = &[
+    "save",
+    "snapshot",
+    "rebase",
+    "run",
+    "sync",
+    "syncs",
+    "read",
+    "write",
+    "hash",
+    "objects",
+    "regs",
+    "input",
+    "calls",
+    "call_counts",
+    "frame_images",
+    "take_frame_images",
+    "coverage",
+    "coverage_end",
+    "watch",
+    "watch_end",
+    "bounds",
+    "bounds_end",
+    "uninit",
+    "uninit_end",
+    "frames",
+    "sound",
+    "image",
+];
 
 struct State {
     m: Option<Machine>,
@@ -150,6 +138,12 @@ pub fn cmd_serve(args: &[String]) -> Result<std::process::ExitCode, String> {
 
 fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
     match op {
+        "hello" => {
+            return Ok(json!({
+                "protocol": PROTOCOL, "platform": PLATFORM, "emulator": "clockwork",
+                "version": env!("CARGO_PKG_VERSION"),
+            }));
+        }
         "load" | "load_snapshot" => {
             let argv = strings(r, "argv")?;
             let mut options = crate::options::parse_options(&argv)?;
@@ -197,7 +191,12 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
     }
     let image = st.image.clone();
     let watched = st.watched.clone();
-    let m = st.m.as_mut().ok_or("no machine: load one first")?;
+    let Some(m) = st.m.as_mut() else {
+        return Err(match MACHINE_OPS.contains(&op) {
+            true => "no machine: load one first".into(),
+            false => format!("unknown op {op:?}"),
+        });
+    };
     let addr = |m: &Machine, s: &str| address(m, image.start, s);
     let name = |linear: u32| describe(&image, linear);
     let paging = m.cpu.cr0 & 0x8000_0000 != 0;

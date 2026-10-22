@@ -88,9 +88,13 @@ pub(crate) fn doctor(repo: &Repo) -> Result<ExitCode, String> {
         }
     };
     check("repo", Ok(format!("{} ({})", repo.root.display(), repo.settings.game.name)), true);
-    let clockwork = clockwork::find(&repo.local).map(|exe| {
-        let version = clockwork::version(&exe).unwrap_or_else(|| "?".into());
-        format!("{version} ({})", exe.display())
+    // Started, it says what it is; rrc refuses one it can't drive.
+    let clockwork = clockwork::find(&repo.local).and_then(|exe| {
+        let hello = clockwork::Clockwork::start(&exe)?.hello()?;
+        let text = |key: &str| hello[key].as_str().unwrap_or("?").to_owned();
+        let protocol = hello["protocol"].as_u64().unwrap_or(0);
+        let (emulator, version, platform) = (text("emulator"), text("version"), text("platform"));
+        Ok(format!("{emulator} {version}, protocol {protocol}, {platform} ({})", exe.display()))
     });
     check("clockwork", clockwork, true);
     check("game", which_version(repo).map(|(dir, version)| format!("{}: {version}", dir.display())), true);

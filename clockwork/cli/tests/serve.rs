@@ -154,3 +154,32 @@ fn a_field_of_the_wrong_type_is_refused_not_defaulted() {
     assert_eq!(answers[2]["error"], "\"reads\" must be true or false");
     assert_eq!(answers[3]["stop"], "exited with code 0", "null is absent");
 }
+
+#[test]
+fn hello_says_what_the_emulator_is() {
+    let answers = serve(&[json!({"id": 1, "op": "hello"})]);
+    assert_eq!(answers[0]["protocol"], clockwork::serve::PROTOCOL);
+    assert_eq!((&answers[0]["platform"], &answers[0]["emulator"]), (&json!("dos-pc"), &json!("clockwork")));
+    assert!(answers[0]["version"].is_string(), "{}", answers[0]);
+}
+
+#[test]
+fn every_operation_is_known_with_or_without_a_machine() {
+    let dir = std::env::temp_dir().join(format!("clockwork-ops-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("W.COM"), PROGRAM).unwrap();
+    let dir = dir.to_string_lossy().into_owned();
+    let ops = clockwork::serve::MACHINE_OPS;
+    let without: Vec<Value> = ops.iter().map(|op| json!({"op": op})).collect();
+    let mut with = vec![json!({"op": "load", "argv": [dir, "W.COM"]})];
+    with.extend(without.iter().cloned());
+    let (without, with) = (serve(&without), serve(&with));
+    std::fs::remove_dir_all(&dir).ok();
+    for (op, answer) in ops.iter().zip(&without) {
+        assert_eq!(answer["error"], "no machine: load one first", "{op}");
+    }
+    for (op, answer) in ops.iter().zip(&with[1..]) {
+        assert!(!answer["error"].as_str().unwrap_or("").starts_with("unknown op"), "{op}: {answer}");
+    }
+    assert_eq!(serve(&[json!({"op": "frobnicate"})])[0]["error"], "unknown op \"frobnicate\"", "without a machine");
+}
