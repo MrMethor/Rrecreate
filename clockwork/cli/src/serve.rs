@@ -49,8 +49,9 @@
 //!   often. `calls` `{"on": true}` tracks calls from now on, so a watch started later sees the whole chain;
 //!   with `"count": true` it counts them too, in any mode and program: `call_counts`, the calls made since,
 //!   by target, with how often (`[[addr, n]]`).
-//! - `coverage` `{"on": true}`: records what the program's code runs from now on (as `clockwork run
-//!   --coverage`); `coverage_calls`: the calls made since, by target, with how often (`[[addr, n]]`).
+//! - `coverage` `{"on": true}`: records what code runs from now on, in any mode and anywhere (as
+//!   `clockwork run --coverage`); `coverage_calls`: the calls made since, by target, with how often
+//!   (`[[addr, n]]`).
 //! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
 //!   `uninit_end`.
 //! - `image` `{"dir"}`: the loaded image for analysis; `rebase`: image offsets count from the

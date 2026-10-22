@@ -1,49 +1,50 @@
-//! Coverage of a program's code during a run, for analysis: which instructions of its load image
-//! ran, and which calls were made from it, with their targets and counts. Code static analysis missed (functions reached only
-//! through pointers, overlays) shows up in the call targets.
+//! Coverage of the code a run executes, for analysis: where each instruction that ran started, and
+//! which calls were made, from where to where and how often. Code static analysis missed
+//! (functions reached only through pointers, overlays) shows up in the call targets.
 //!
-//! Recorded in real and virtual-8086 mode only (DOS extender code runs elsewhere), and only for
-//! the image of the program the machine started with. A debugging aid: not part of the machine's
-//! state or hash.
+//! Recorded in every mode and wherever code runs: the program's load image, a DOS extender and the
+//! objects it loads, the BIOS's stubs. Addresses are linear (protected-mode code by its segment's
+//! base, whether paging is on or not); the JSON gives the started program's image too, where its
+//! offsets count from. A debugging aid: not part of the machine's state or hash.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
-/// What one run executed in a load image.
+/// Bytes a page of the record covers.
+const PAGE: u32 = 4096;
+
+/// A bit per byte of a page: where an instruction started.
+type Page = [u64; PAGE as usize / 64];
+
+/// What one run executed.
 #[derive(Debug, Clone, Default)]
 pub struct Coverage {
-    /// Linear address and size of the load image.
-    pub base: u32,
-    pub size: u32,
-    /// A bit per image byte where an instruction started.
-    executed: Vec<u64>,
-    /// (call site, target linear address) → times the call was made.
+    /// The started program's load image (linear), as the JSON gives it.
+    pub image: Range<u32>,
+    /// The pages instructions ran in, by number (linear address / [`PAGE`]).
+    pages: BTreeMap<u32, Box<Page>>,
+    /// (call site, target), linear → times the call was made.
     pub calls: BTreeMap<(u32, u32), u64>,
     /// A call is executing: its site, to be completed with the target.
     pending_call: Option<u32>,
 }
 
 impl Coverage {
-    pub fn new(base: u32, size: u32) -> Self {
-        Coverage { base, size, executed: vec![0; (size as usize).div_ceil(64)], ..Coverage::default() }
-    }
-
-    /// Image offset of `linear`, if it is in the image.
-    fn offset(&self, linear: u32) -> Option<u32> {
-        linear.checked_sub(self.base).filter(|&offset| offset < self.size)
+    pub fn new(image: Range<u32>) -> Self {
+        Coverage { image, ..Coverage::default() }
     }
 
     /// Before an instruction at `linear` runs; `opcode` are its first bytes. A call's target comes
     /// with `after`.
     pub fn before(&mut self, linear: u32, opcode: [u8; 4]) {
-        self.pending_call = None;
-        let Some(offset) = self.offset(linear) else { return };
-        self.executed[offset as usize / 64] |= 1 << (offset % 64);
-        if is_call(opcode) {
-            self.pending_call = Some(offset);
-        }
+        let page = self.pages.entry(linear / PAGE).or_insert_with(|| Box::new([0; PAGE as usize / 64]));
+        let offset = linear % PAGE;
+        page[offset as usize / 64] |= 1 << (offset % 64);
+        self.pending_call = is_call(opcode).then_some(linear);
     }
 
-    /// After the instruction ran: if it was a call, CS:IP is its target.
+    /// After the instruction ran: if it was a call, `target` (CS's base and IP, linear) is where it
+    /// went.
     pub fn after(&mut self, target: u32) {
         if let Some(site) = self.pending_call.take() {
             *self.calls.entry((site, target)).or_insert(0) += 1;
@@ -55,30 +56,26 @@ impl Coverage {
         self.pending_call = None;
     }
 
-    /// Offsets in the image where instructions started, ascending.
+    /// Linear addresses where instructions started, ascending.
     pub fn executed(&self) -> impl Iterator<Item = u32> + '_ {
-        self.executed.iter().enumerate().flat_map(|(i, &word)| {
-            (0..64).filter(move |bit| word >> bit & 1 != 0).map(move |bit| (i * 64 + bit) as u32)
+        self.pages.iter().flat_map(|(&page, bits)| {
+            bits.iter().enumerate().flat_map(move |(i, &word)| {
+                (0..64).filter(move |bit| word >> bit & 1 != 0).map(move |bit| page * PAGE + (i * 64 + bit) as u32)
+            })
         })
     }
 
-    /// JSON: the image, executed instruction offsets, and calls (site offset, target offset or
-    /// -1 when outside the image, count).
+    /// JSON: the module and its image (`[base, size]`, linear), the executed instructions' linear
+    /// addresses, and the calls (`[site, target, count]`, linear).
     pub fn to_json(&self, module: &str) -> String {
-        let executed: Vec<String> = self.executed().map(|o| o.to_string()).collect();
-        let calls: Vec<String> = self
-            .calls
-            .iter()
-            .map(|(&(site, target), count)| {
-                let target = self.offset(target).map_or(-1, i64::from);
-                format!("[{site},{target},{count}]")
-            })
-            .collect();
+        let executed: Vec<String> = self.executed().map(|at| at.to_string()).collect();
+        let calls: Vec<String> =
+            self.calls.iter().map(|(&(site, target), count)| format!("[{site},{target},{count}]")).collect();
         format!(
-            "{{\"module\":\"{}\",\"base\":{},\"size\":{},\"executed\":[{}],\"calls\":[{}]}}\n",
+            "{{\"module\":\"{}\",\"image\":[{},{}],\"executed\":[{}],\"calls\":[{}]}}\n",
             module.replace('\\', "\\\\").replace('"', "\\\""),
-            self.base,
-            self.size,
+            self.image.start,
+            self.image.len(),
             executed.join(","),
             calls.join(",")
         )
@@ -115,22 +112,23 @@ mod tests {
     }
 
     #[test]
-    fn records_executed_offsets_and_calls() {
-        let mut c = Coverage::new(0x1000, 0x100);
+    fn records_executed_instructions_and_calls_anywhere() {
+        let mut c = Coverage::new(0x1000..0x1100);
         c.before(0x1010, [0xE8, 0, 0, 0]);
         c.after(0x1080);
         c.before(0x1010, [0xE8, 0, 0, 0]);
         c.after(0x1080);
         c.before(0x1013, [0x90, 0, 0, 0]);
         c.after(0x1014);
-        c.before(0x2000, [0xE8, 0, 0, 0]); // outside the image
-        c.after(0x1000);
+        c.before(0x43_5024, [0xE8, 0, 0, 0]); // flat code, out of the image
+        c.after(0x43_5010);
         c.before(0x1020, [0x9A, 0, 0, 0]);
         c.after(0xF0000); // into the BIOS
-        assert_eq!(c.executed().collect::<Vec<_>>(), [0x10, 0x13, 0x20]);
-        assert_eq!(c.calls.len(), 2);
+        assert_eq!(c.executed().collect::<Vec<_>>(), [0x1010, 0x1013, 0x1020, 0x43_5024]);
+        assert_eq!(c.calls.len(), 3);
         let json = c.to_json("GAME.EXE");
-        assert!(json.contains("\"executed\":[16,19,32]"), "{json}");
-        assert!(json.contains("[16,128,2]") && json.contains("[32,-1,1]"), "{json}");
+        assert!(json.contains("\"image\":[4096,256]"), "{json}");
+        assert!(json.contains("\"executed\":[4112,4115,4128,4411428]"), "{json}");
+        assert!(json.contains("[4112,4224,2]") && json.contains("[4411428,4411408,1]"), "{json}");
     }
 }

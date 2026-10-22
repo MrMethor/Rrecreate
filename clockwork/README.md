@@ -40,7 +40,8 @@ ones:
 - `--screenshot out.png` (or `.bmp`) saves the last screen in any video mode;
 - `--save-changes DIR` writes the files the program created or changed to DIR (the game folder is never
   touched): that's how to install a game with its own installer;
-- `--coverage FILE` records which instructions of the program ran and which calls it made, and
+- `--coverage FILE` records which instructions ran and which calls were made, in any mode and anywhere
+  (linear addresses: the JSON gives the program's image, where its offsets count from), and
   `--contracts FILE` infers each called function's contract (registers read, returned and kept, stack
   arguments, memory used); both write JSON;
 - `--save-snapshot FILE` saves the machine after the run, and `--load-snapshot FILE` goes on from one for

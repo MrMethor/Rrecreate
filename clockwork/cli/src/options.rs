@@ -40,8 +40,8 @@ options:
   --screenshot FILE  run: save the final screen as a PNG (FILE.png) or a BMP
   --wav FILE         run: save the sound (OPL, Sound Blaster, PC speaker, CD audio) as a WAV
                      file; after --load-snapshot, from the snapshot on
-  --coverage FILE    run: record which instructions of the program's image ran and the calls it
-                     made (JSON)
+  --coverage FILE    run: record which instructions ran and the calls made, in any mode and
+                     anywhere (JSON, linear addresses, with the program's image)
   --contracts FILE   run: infer each called function's contract (registers read and returned,
                      registers preserved, stack arguments and pops, memory use; JSON)
   --dump-image DIR   run: afterwards, write the program's image for analysis to DIR: in real mode

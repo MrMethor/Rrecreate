@@ -92,7 +92,7 @@ fn count_calls(repo: &Repo, a: &Args, positionals: &[String], session: &Session)
 fn phases(repo: &Repo, session: &Session, k: &Knowledge) -> Result<Vec<Phase>, String> {
     let syncs = sync_points(k)?;
     let (mut clockwork, _, names) = begin(repo, session, &syncs)?;
-    // The call tracker counts calls in 32-bit code too (coverage stays in real mode).
+    // Clockwork's call tracker counts the calls, in any mode.
     clockwork.ask("calls", json!({"on": true, "count": true}))?;
     let length_ms = (session.seconds * 1000.0) as u64;
     let mut phases = Vec::new();

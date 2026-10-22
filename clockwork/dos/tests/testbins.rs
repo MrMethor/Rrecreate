@@ -198,3 +198,27 @@ fn the_32_bit_runtime_s_program_runs() {
     assert_eq!(m.run(2 * SECOND), Stop::Exited(0));
     assert_eq!(output(&m), "clib32: 190 functions; 1 3 5 7 9; 1.414\r\n");
 }
+
+#[test]
+fn coverage_records_a_flat_program_s_32_bit_code() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testbins/bin/FLAT32.EXE");
+    let data = std::fs::read(&path).unwrap();
+    let le = dos::le::Le::parse(&data).unwrap().expect("an LE executable");
+    let mut drive = Vfs::new();
+    drive.insert_file("FLAT32.EXE", data);
+    let mut m = Machine::with_program(Config::default(), drive, "FLAT32.EXE", "").unwrap();
+    m.start_coverage();
+    let bases = (0..10).find_map(|_| {
+        m.run(SECOND / 20);
+        le.bases(&m)
+    });
+    let bases = bases.expect("the objects in memory");
+    assert_eq!(m.run(2 * SECOND), Stop::Exited(32));
+    let coverage = m.probes.coverage.take().unwrap();
+    // FLAT32.MAP: square at 0001:00000010, called 16 times through a pointer from sum_ (0001:00000024).
+    let square = bases[0] + 0x10;
+    assert!(coverage.executed().any(|at| at == square), "its 32-bit code ran");
+    let calls: u64 = coverage.calls.iter().filter(|((_, target), _)| *target == square).map(|(_, n)| n).sum();
+    assert_eq!(calls, 16);
+    assert!(coverage.executed().any(|at| coverage.image.contains(&at)), "and its 16-bit stub");
+}

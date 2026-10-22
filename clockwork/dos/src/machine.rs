@@ -871,10 +871,9 @@ impl Machine {
         None
     }
 
-    /// Starts recording coverage of the program just loaded ([`Machine::image_range`]).
+    /// Starts recording coverage ([`crate::coverage`]), with the image of the program running now.
     pub fn start_coverage(&mut self) {
-        let image = self.image_range();
-        self.probes.coverage = Some(crate::coverage::Coverage::new(image.start, image.len() as u32));
+        self.probes.coverage = Some(crate::coverage::Coverage::new(self.image_range()));
     }
 
     /// Starts contract inference ([`crate::contracts`]) for the program the machine started with.
@@ -884,14 +883,23 @@ impl Machine {
     }
 
     fn coverage_before(&mut self) {
-        let Some(coverage) = &mut self.probes.coverage else { return };
-        if self.cpu.protected_mode() {
-            coverage.cancel();
+        if self.probes.coverage.is_none() {
             return;
         }
         let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-        let opcode = std::array::from_fn(|i| self.mem.read_u8(linear.wrapping_add(i as u32)));
-        coverage.before(linear, opcode);
+        let opcode = self.peek_code(linear);
+        self.probes.coverage.as_mut().expect("checked").before(linear, opcode);
+    }
+
+    /// The 4 bytes at linear address `linear` (zeros where nothing is mapped), translated once when
+    /// they are on one page.
+    fn peek_code(&self, linear: u32) -> [u8; 4] {
+        if linear & 0xFFF <= 0xFFC
+            && let Some(physical) = self.cpu.peek_translate(|at| self.mem.read_u32(at), linear)
+        {
+            return std::array::from_fn(|i| self.peek_u8(physical + i as u32));
+        }
+        std::array::from_fn(|i| self.peek_linear_u8(linear.wrapping_add(i as u32)).unwrap_or(0))
     }
 
     /// Records the instruction about to run if it starts in the watched range.
