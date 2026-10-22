@@ -49,9 +49,9 @@
 //!   often. `calls` `{"on": true}` tracks calls from now on, so a watch started later sees the whole chain;
 //!   with `"count": true` it counts them too, in any mode and program: `call_counts`, the calls made since,
 //!   by target, with how often (`[[addr, n]]`).
-//! - `coverage` `{"on": true}`: records what code runs from now on, in any mode and anywhere (as
-//!   `clockwork run --coverage`); `coverage_calls`: the calls made since, by target, with how often
-//!   (`[[addr, n]]`).
+//! - `coverage` … `coverage_end`: what code ran meanwhile, in any mode and anywhere (as `clockwork run
+//!   --coverage` records it): where each instruction started (`executed`), and the calls made, with how
+//!   often (`calls`: `[[site, target, n]]`).
 //! - `bounds` `{"objects": [{"at", "size"}]}` … `bounds_end`; `uninit` `{"more": [{"at", "len"}]}` …
 //!   `uninit_end`.
 //! - `image` `{"dir"}`: the loaded image for analysis; `rebase`: image offsets count from the
@@ -157,7 +157,8 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 options.load_snapshot = Some(text(r, "file")?.into());
             }
             let (m, _, _) = crate::run::prepare(&options)?;
-            st.image = m.image_range();
+            // The started program's image, from a snapshot too (a program it started may run then).
+            st.image = m.image_range_of(m.first_psp());
             st.copies.clear();
             let image = format!("@{:X}", st.image.start);
             let reply = json!({"psp": m.dos.psp, "image": image, "image_size": st.image.len(), "cycles": m.cpu.cycles});
@@ -230,29 +231,31 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "run" => {
             let ips = m.config.instructions_per_second;
-            let max = match r.get("until_ms").and_then(Value::as_u64) {
+            let until_ms = number(r, "until_ms")?;
+            let max = match until_ms {
                 Some(ms) => m.cycle_at_ms(ms).saturating_sub(m.cpu.cycles),
-                None => r.get("max_ms").and_then(Value::as_u64).unwrap_or(60_000) * ips / 1000,
+                None => number(r, "max_ms")?.unwrap_or(60_000) * ips / 1000,
             };
-            let stop = if r.get("sync").and_then(Value::as_str) == Some("next") {
+            let sync = optional(r, "sync", Value::as_str, "an address or \"next\"")?;
+            let n = number(r, "n")?.unwrap_or(1);
+            let stop = if sync == Some("next") {
                 let end = m.cpu.cycles + max;
                 let mut stop = m.run_to_next_sync(max);
-                for _ in 1..r.get("n").and_then(Value::as_u64).unwrap_or(1) {
+                for _ in 1..n {
                     if !matches!(stop, dos::Stop::Sync { .. }) {
                         break;
                     }
                     stop = m.run_to_next_sync(end.saturating_sub(m.cpu.cycles));
                 }
                 stop
-            } else if let Some(at) = r.get("sync").and_then(Value::as_str) {
+            } else if let Some(at) = sync {
                 let at = addr(m, at)?;
-                let n = r.get("n").and_then(Value::as_u64).unwrap_or(1);
                 m.run_to_sync(at, n, max)
-            } else if let Some(ms) = r.get("ms").and_then(Value::as_u64) {
+            } else if let Some(ms) = number(r, "ms")? {
                 m.run(ms * ips / 1000)
-            } else if let Some(cycles) = r.get("cycles").and_then(Value::as_u64) {
+            } else if let Some(cycles) = number(r, "cycles")? {
                 m.run(cycles)
-            } else if r.get("until_ms").is_some() {
+            } else if until_ms.is_some() {
                 m.run(max)
             } else {
                 return Err("run needs ms, cycles, until_ms or sync".into());
@@ -269,7 +272,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "sync" => {
             let at = addr(m, text(r, "at")?)?;
-            m.syncs.add(at, r.get("log").and_then(Value::as_bool).unwrap_or(false));
+            m.syncs.add(at, flag(r, "log")?.unwrap_or(false));
             if r.get("gate").is_some() {
                 let mut sources = Vec::new();
                 for spec in specs(r, "gate")? {
@@ -280,7 +283,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 }
                 m.syncs.gate(at, sources);
             }
-            if let Some(program) = r.get("program").and_then(Value::as_str) {
+            if let Some(program) = optional(r, "program", Value::as_str, "a file name")? {
                 m.syncs.set_program(at, Some(program.to_owned()));
             }
             Ok(json!({"at": name(at)}))
@@ -318,7 +321,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             // The running program's (or the named one's, if it runs or started the one that does)
             // load image, and its LE objects where its extender put them: null until then, or for a
             // program that isn't LE.
-            let (psp, path) = match r.get("program").and_then(Value::as_str) {
+            let (psp, path) = match optional(r, "program", Value::as_str, "a file name")? {
                 Some(program) => match m.process_named(program) {
                     Some((psp, path)) => (psp, path.to_owned()),
                     None => return Ok(json!({"program": null, "image": null, "objects": null})),
@@ -356,9 +359,9 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             Ok(json!({}))
         }
         "calls" => {
-            m.track_calls(r.get("on").and_then(Value::as_bool).unwrap_or(true));
+            m.track_calls(flag(r, "on")?.unwrap_or(true));
             if let Some(calls) = m.probes.calls.as_deref_mut() {
-                calls.count(r.get("count").and_then(Value::as_bool).unwrap_or(false));
+                calls.count(flag(r, "count")?.unwrap_or(false));
             }
             Ok(json!({}))
         }
@@ -369,26 +372,24 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             Ok(json!({ "calls": calls }))
         }
         "frame_images" => {
-            m.record_frame_images(r.get("on").and_then(Value::as_bool).unwrap_or(true));
+            m.record_frame_images(flag(r, "on")?.unwrap_or(true));
             Ok(json!({}))
         }
         "take_frame_images" => Ok(json!({ "images": images(m) })),
         "coverage" => {
-            if r.get("on").and_then(Value::as_bool).unwrap_or(true) {
+            if flag(r, "on")?.unwrap_or(true) {
                 m.start_coverage();
             } else {
                 m.probes.coverage = None;
             }
             Ok(json!({}))
         }
-        "coverage_calls" => {
-            let coverage = m.probes.coverage.as_ref().ok_or("no coverage on")?;
-            let mut by_target: BTreeMap<u32, u64> = BTreeMap::new();
-            for (&(_, target), &n) in &coverage.calls {
-                *by_target.entry(target).or_default() += n;
-            }
-            let calls: Vec<Value> = by_target.iter().map(|(&target, &n)| json!([name(target), n])).collect();
-            Ok(json!({ "calls": calls }))
+        "coverage_end" => {
+            let coverage = m.probes.coverage.take().ok_or("no coverage on")?;
+            let executed: Vec<String> = coverage.executed().map(name).collect();
+            let calls: Vec<Value> =
+                coverage.calls.iter().map(|(&(site, target), &n)| json!([name(site), name(target), n])).collect();
+            Ok(json!({ "executed": executed, "calls": calls }))
         }
         "watch" => {
             let mut physical_ranges = Vec::new();
@@ -402,14 +403,14 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                     physical_ranges.push(span);
                 }
             }
-            let reads = r.get("reads").and_then(Value::as_bool).unwrap_or(false);
-            let summary = r.get("summary").and_then(Value::as_bool).unwrap_or(false);
+            let reads = flag(r, "reads")?.unwrap_or(false);
+            let summary = flag(r, "summary")?.unwrap_or(false);
             let mut watch = if summary {
                 dos::watch::Watch::summary(physical_ranges, reads)
             } else {
                 dos::watch::Watch::new(physical_ranges, reads)
             };
-            if let Some(limit) = r.get("limit").and_then(Value::as_u64) {
+            if let Some(limit) = number(r, "limit")? {
                 watch.limit = limit as usize;
             }
             m.start_watch(watch);
@@ -450,7 +451,8 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "uninit" => {
             let mut more = Vec::new();
-            for (at, len) in ranges(r, "more", "len").unwrap_or_default() {
+            let more_ranges = if r.get("more").is_some() { ranges(r, "more", "len")? } else { Vec::new() };
+            for (at, len) in more_ranges {
                 more.extend(physical_spans(m, addr(m, &at)?, len)?);
             }
             m.start_uninit(&more);
@@ -572,8 +574,8 @@ fn hit(h: &dos::watch::Hit, name: &impl Fn(u32) -> String, name_physical: &impl 
 
 /// `{"from", "to"}` in cycles; `to` defaults to now.
 fn span(m: &Machine, r: &Value) -> Result<(u64, u64), String> {
-    let from = r.get("from").and_then(Value::as_u64).ok_or("missing \"from\" (cycles)")?;
-    let to = r.get("to").and_then(Value::as_u64).unwrap_or(m.cpu.cycles);
+    let from = number(r, "from")?.ok_or("missing \"from\" (cycles)")?;
+    let to = number(r, "to")?.unwrap_or(m.cpu.cycles);
     Ok((from, to))
 }
 
@@ -599,6 +601,28 @@ fn touch_runs(
             })
         })
         .collect()
+}
+
+/// An optional field of a request: absent (or null) is `None`; given as another type, an error, not
+/// the default.
+fn optional<'a, T>(
+    r: &'a Value,
+    key: &str,
+    read: impl Fn(&'a Value) -> Option<T>,
+    what: &str,
+) -> Result<Option<T>, String> {
+    match r.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => read(value).map(Some).ok_or_else(|| format!("{key:?} must be {what}")),
+    }
+}
+
+fn flag(r: &Value, key: &str) -> Result<Option<bool>, String> {
+    optional(r, key, Value::as_bool, "true or false")
+}
+
+fn number(r: &Value, key: &str) -> Result<Option<u64>, String> {
+    optional(r, key, Value::as_u64, "a number")
 }
 
 fn text<'a>(r: &'a Value, key: &str) -> Result<&'a str, String> {

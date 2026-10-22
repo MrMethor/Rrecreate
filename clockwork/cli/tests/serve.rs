@@ -114,3 +114,43 @@ fn a_tool_steps_tick_by_tick_and_reads_frames_and_sound() {
     assert!(speaker[0][1].get("Periodic").is_some(), "a square wave: {speaker:?}");
     assert_eq!(answers[11]["frames"], json!([]));
 }
+
+#[test]
+fn coverage_says_what_ran_and_the_calls_made() {
+    let dir = std::env::temp_dir().join(format!("clockwork-coverage-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("W.COM"), PROGRAM).unwrap();
+    let dir = dir.to_string_lossy().into_owned();
+    let answers = serve(&[
+        json!({"id": 1, "op": "load", "argv": [dir, "W.COM"]}),
+        json!({"id": 2, "op": "coverage"}),
+        json!({"id": 3, "op": "run", "ms": 100}),
+        json!({"id": 4, "op": "coverage_end"}),
+        json!({"id": 5, "op": "coverage_end"}),
+    ]);
+    std::fs::remove_dir_all(&dir).ok();
+    let executed: Vec<&str> = answers[3]["executed"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    for at in ["+00000", "+00006", "+00009", "+0000B", "+00011"] {
+        assert!(executed.contains(&at), "{at} in {executed:?}");
+    }
+    assert!(answers[3]["calls"].as_array().unwrap().contains(&json!(["+00006", "+0000B", 1])), "{}", answers[3]);
+    assert_eq!(answers[4]["error"], "no coverage on", "it ended");
+}
+
+#[test]
+fn a_field_of_the_wrong_type_is_refused_not_defaulted() {
+    let dir = std::env::temp_dir().join(format!("clockwork-fields-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("W.COM"), PROGRAM).unwrap();
+    let dir = dir.to_string_lossy().into_owned();
+    let answers = serve(&[
+        json!({"id": 1, "op": "load", "argv": [dir, "W.COM"]}),
+        json!({"id": 2, "op": "run", "ms": "100"}),
+        json!({"id": 3, "op": "watch", "ranges": [{"at": "+00100", "len": 2}], "reads": 1}),
+        json!({"id": 4, "op": "run", "ms": 100, "n": null}),
+    ]);
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(answers[1]["error"], "\"ms\" must be a number");
+    assert_eq!(answers[2]["error"], "\"reads\" must be true or false");
+    assert_eq!(answers[3]["stop"], "exited with code 0", "null is absent");
+}

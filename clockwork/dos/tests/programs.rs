@@ -2357,6 +2357,7 @@ fn a_sync_point_counts_in_its_program_and_the_programs_it_started() {
     assert_eq!(m.process_named("PARENT.COM"), Some((parent, "PARENT.COM")));
     assert_eq!(m.image_range_of(parent), parent_image.start..parent_image.start + 0x1000 * 16 - 0x100);
     assert_eq!(m.process_named("ONE.COM"), None, "it ended");
+    assert_eq!(m.first_psp(), parent, "the program the machine started with");
 }
 
 #[test]

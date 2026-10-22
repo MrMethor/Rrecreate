@@ -849,6 +849,21 @@ impl Machine {
         self.process_named(program).is_some()
     }
 
+    /// The PSP of the program the machine started with: the first process, its own parent, from which
+    /// the one running now descends.
+    pub fn first_psp(&self) -> u16 {
+        let mut psp = self.dos.psp;
+        // A broken chain of parents ends the walk too.
+        for _ in 0..32 {
+            let parent = self.mem.read_u16(Self::lin(psp, 0x16));
+            if parent == psp || !self.dos.process_paths.contains_key(&parent) {
+                break;
+            }
+            psp = parent;
+        }
+        psp
+    }
+
     /// The process of `program` (a file name, without case), if it runs now or started the one that
     /// does (its PSP's parents, up to the first process, its own parent): its PSP and path.
     pub fn process_named(&self, program: &str) -> Option<(u16, &str)> {
