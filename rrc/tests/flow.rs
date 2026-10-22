@@ -254,8 +254,9 @@ fn memory_outside_the_image_is_mem() {
     assert!(frame.contains("video mode 3h, 720 × 400"), "{frame}");
     let png = std::fs::read(rrc.repo.join(".rrc/frames/wait-5.png")).unwrap();
     assert!(png.starts_with(b"\x89PNG"));
-    let scanned = rrc.ok(&["inputs", "wait", "--at", "MEM+00400", "--len", "256"]);
-    assert!(scanned.contains("scanned   MEM+00400, 256 bytes"), "{scanned}");
+    // The BIOS's data is scanned with the data segment.
+    let scanned = rrc.ok(&["inputs", "wait"]);
+    assert!(scanned.contains("bytes; MEM+00400, 256 bytes, from tick 2"), "{scanned}");
     assert!(scanned.contains("MEM+0046C bios_ticks (an input, 4 bytes)"), "{scanned}");
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -25,6 +25,8 @@ use crate::trace::{Places, SyncPoint, begin, sync_points};
 const CHAIN_SHOWN: usize = 3;
 /// Lines of accesses shown.
 const ACCESSES_SHOWN: usize = 40;
+/// The BIOS's data area (256 bytes), which `rrc inputs` scans too.
+const BIOS_DATA: u32 = 0x400;
 
 /// Clockwork's addresses (`+OFF` in the image, `@LINEAR` elsewhere) with the knowledge's names.
 pub(crate) struct Names<'a> {
@@ -320,8 +322,9 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     let length_ms = (session.seconds * 1000.0) as u64;
     let (mut clockwork, loaded, from) = open(repo, session, &syncs, first)?;
     let ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
-    // The data segment the loop runs with (an LE program's data objects), unless asked for another
-    // range.
+    // The data segment the loop runs with (an LE program's data objects) and the BIOS's data (its
+    // timer count, the keyboard's flags and buffer: games read them), unless asked for another range.
+    let bios = (format!("@{BIOS_DATA:X}"), 0x100);
     let ranges: Vec<(String, u32)> = match a.value("--at") {
         Some(at) => {
             let analysis = Analysis::load(repo)?;
@@ -332,17 +335,18 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
         None if crate::snapshots::is_le(repo) => {
             let objects = crate::snapshots::placement(repo, session)?.objects;
             let data = objects.iter().filter(|&&(_, _, flags)| flags & 4 == 0);
-            data.map(|&(base, size, _)| (format!("@{base:X}"), size)).collect()
+            data.map(|&(base, size, _)| (format!("@{base:X}"), size)).chain([bios]).collect()
         }
         None => {
             // DS's segment, as an offset in the image when it is in it (so the output names it by ID).
             let regs = clockwork.ask("regs", Value::Null)?;
             let ds = regs["ds"].as_u64().unwrap_or(0) as u32;
             let base = loaded["image"].as_str().and_then(|i| u32::from_str_radix(i.trim_start_matches('@'), 16).ok());
-            match base.and_then(|base| (ds * 16).checked_sub(base)) {
-                Some(offset) => vec![(format!("+{offset:05X}"), 0x1_0000)],
-                None => vec![(format!("{ds:04X}:0000"), 0x1_0000)],
-            }
+            let data = match base.and_then(|base| (ds * 16).checked_sub(base)) {
+                Some(offset) => (format!("+{offset:05X}"), 0x1_0000),
+                None => (format!("{ds:04X}:0000"), 0x1_0000),
+            };
+            vec![data, bios]
         }
     };
     let request: Vec<Value> = ranges.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();

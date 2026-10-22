@@ -65,7 +65,8 @@ lists the functions of the program the session calls, grouped by how often (an e
 only counted). A loop calls its functions once a pass, so the
 large groups are loops; in a group, the function that waits for the timer (it reads a counter the timer
 interrupt advances, in a loop, until it changes) is where a tick of that loop ends. Check with
-`rrc show <ID> --c`; `rrc show 2A40:13C2` finds the ID of an address Ghidra's code names (`DAT_2a40_13c2`).
+`rrc show <ID> --c`; `rrc show DAT_2a40_13c2` (Ghidra's name, as its code has it, or `2A40:13C2`; `FUN_0043525b` in a
+flat program) finds the ID of an address.
 Once there are sync points, the counts come in phases: before the first tick, then each run of ticks at one
 sync point (the menus, play), so a loop that has no sync point yet shows in the phase it runs in.
 `rrc calls first-level ID` says how often each phase called one function; `--top N` and `--min N` show more
@@ -98,7 +99,8 @@ waiting function measures, the key-state array, the mouse). To find them:
 rrc inputs first-level
 ```
 
-scans the data segment the loop runs with and lists what the program reads that an interrupt handler or a
+scans the data segment the loop runs with and the BIOS's data (`MEM+00400`, 256 bytes), and lists what the
+program reads that an interrupt handler or a
 host service writes, by handler: the keyboard's (INT 09h) writes the key states, the timer's (INT 08h) the
 timer counts and whatever runs at the timer's rate (music), the sound card's its own state. A handler's bytes
 are grouped by the instruction that wrote them, so the keys a session pressed in a key-state array show as one
@@ -114,8 +116,9 @@ rrc input mouse mouse --evidence "INT 33h 03h and 0Bh every pass"
 
 Memory outside the program's image is `MEM+<linear address>`: a game that times itself by the BIOS's count
 reads `MEM+0046C` (4 bytes), one that reads keys through INT 16h takes them from the BIOS's buffer
-(`MEM+0041A`, the head and tail words, then 32 bytes of keys). `rrc inputs SESSION --at MEM+00400 --len 256`
-scans the BIOS's data; `rrc show` names what Ghidra's code reads there (`DAT_0040_006c` is `MEM+0046C`).
+(`MEM+0041A`, the head and tail words, then 32 bytes of keys). `rrc inputs` scans the BIOS's data with the
+program's; `--at ID --len N` scans another range instead. `rrc show` names what Ghidra's code reads there
+(`DAT_0040_006c` is `MEM+0046C`; a flat program's `_DAT_0000046c` too).
 
 Values that come back from a driver or a port in registers don't show here: a program often reads the mouse
 (INT 33h) or the joystick (port 201h) and uses the answer at once. `rrc inputs` says how often the program
@@ -176,7 +179,7 @@ A flat program under a DOS extender (an LE executable: CauseWay, DOS/4GW) works 
 `rrc analyze` analyses them where the extender put them, and IDs name an object by number (`GAME.EXE#1+00024` in
 the code object, `GAME.EXE#2+0041C` in a data object), as Ghidra's addresses (`FUN_00435024`) become. The first
 question about a session runs it once to find where its objects go (kept afterwards); `rrc inputs` scans the
-data objects.
+data objects (and the BIOS's data).
 
 ## A launcher
 

@@ -573,7 +573,11 @@ impl Analysis {
     /// The ID of one of Ghidra's addresses: `SSSS:OOOO` in real mode, a linear `LLLLLLLL` in a flat
     /// program.
     pub fn id_of(&self, module: &str, address: &str) -> Option<Id> {
-        let linear = match address.split_once(':') {
+        // Ghidra's names for addresses too, as its code has them: `FUN_0043525b`, `_DAT_0000046c` (its
+        // leading underscores mark overlapping globals), `DAT_2a40_13c2`.
+        let address = address.trim_start_matches('_');
+        let address = ["FUN_", "DAT_", "LAB_", "PTR_"].iter().find_map(|p| address.strip_prefix(p)).unwrap_or(address);
+        let linear = match address.split_once([':', '_']) {
             Some((segment, offset)) => {
                 u64::from_str_radix(segment, 16).ok()? * 16 + u64::from_str_radix(offset, 16).ok()?
             }
@@ -663,6 +667,7 @@ mod tests {
         assert_eq!(a.id_of("GAME.EXE", "2000:0010"), Some(id("GAME.EXE+10010")));
         assert_eq!(a.id_of("GAME.EXE", "0FFF:0000"), Some(id("MEM+0FFF0")), "before the image: the PC's memory");
         assert_eq!(a.id_of("GAME.EXE", "0040:006C"), Some(id("MEM+0046C")));
+        assert_eq!(a.id_of("GAME.EXE", "DAT_0040_006c"), Some(id("MEM+0046C")), "Ghidra's name for it");
         let mut k = Knowledge::default();
         let d = |name: &str| Decision {
             name: name.into(),
@@ -703,6 +708,8 @@ mod tests {
         assert_eq!(a.containing(&id("FLAT.EXE#2+00012")), None, "another object");
         assert_eq!(a.id_of("FLAT.EXE", "0043941c"), Some(id("FLAT.EXE#2+0041C")));
         assert_eq!(a.id_of("FLAT.EXE", "0000046c"), Some(id("MEM+0046C")));
+        assert_eq!(a.id_of("FLAT.EXE", "_DAT_0000046c"), Some(id("MEM+0046C")), "Ghidra's name for it");
+        assert_eq!(a.id_of("FLAT.EXE", "FUN_0043941c"), Some(id("FLAT.EXE#2+0041C")));
         assert_eq!(a.layout().linear(&id("FLAT.EXE#2+0041C")), Some(0x43941C));
         let mut k = Knowledge::default();
         let d =
