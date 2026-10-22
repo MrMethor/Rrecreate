@@ -176,7 +176,7 @@ A flat program under a DOS extender (an LE executable: CauseWay, DOS/4GW) works 
 `rrc analyze` analyses them where the extender put them, and IDs name an object by number (`GAME.EXE#1+00024` in
 the code object, `GAME.EXE#2+0041C` in a data object), as Ghidra's addresses (`FUN_00435024`) become. The first
 question about a session runs it once to find where its objects go (kept afterwards); `rrc inputs` scans the
-data objects. Clockwork's `--listing` reads 16-bit code only; `--asm` has Ghidra's.
+data objects.
 
 ## A launcher
 

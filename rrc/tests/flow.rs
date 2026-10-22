@@ -312,6 +312,42 @@ fn a_flat_program_s_objects_have_ids() {
     assert!(calls.contains("functions of FLAT32.EXE in run, in 2 phases; ") && !calls.contains("MEM+"), "{calls}");
     let square = rrc.ok(&["calls", "run", "FLAT32.EXE#1+00010"]);
     assert!(square.contains("calls     FLAT32.EXE#1+00010: 16 in run"), "square, in its object: {square}");
+
+    // Clockwork's listing of 32-bit code, from the ELF file `clockwork unpack` writes (an analysis
+    // with a stand-in for Ghidra's export, which tests don't have).
+    let elf = dir.join("FLAT32.ELF");
+    let unpacked = Command::new(&rrc.clockwork)
+        .arg("unpack")
+        .arg(dir.join("game/FLAT32.EXE"))
+        .arg("--out")
+        .arg(&elf)
+        .output()
+        .unwrap();
+    assert!(unpacked.status.success(), "{}", String::from_utf8_lossy(&unpacked.stderr));
+    let elf = std::fs::read(&elf).unwrap();
+    let word = |at: usize| u32::from_le_bytes(elf[at..at + 4].try_into().unwrap());
+    let objects: Vec<String> =
+        (0..2).map(|i| format!("[{}, {}]", word(0x34 + 32 * i + 8), word(0x34 + 32 * i + 20))).collect();
+    let cache = rrc::cache::Cache::at(&rrc.cache).unwrap();
+    let export = format!(
+        r#"{{"record":"program","name":"FLAT32.EXE","entry":{{"linear":{},"text":"-"}},"ghidra":"-"}}"#,
+        word(0x34 + 8) + 0xF8
+    );
+    let (program, export) = (cache.put(&elf).unwrap(), cache.put(export.as_bytes()).unwrap());
+    let index = format!(
+        "original = \"-\"\nprogram = \"{program}\"\nunpacked = true\nexport = \"{export}\"\nentry = 0\n\
+         objects = [{}]\nghidra = \"-\"\n",
+        objects.join(", ")
+    );
+    std::fs::write(rrc.repo.join(".rrc/analysis.toml"), index).unwrap();
+    let listing = rrc.ok(&["show", "FLAT32.EXE#1+00024", "--listing"]);
+    for line in [
+        "FLAT32.EXE#1+0003B  jge FLAT32.EXE#1+0004D",
+        "FLAT32.EXE#1+00041  mov [edx*4+squares],eax",
+        "FLAT32.EXE#1+00052  ret",
+    ] {
+        assert!(listing.lines().any(|l| l == line), "{line:?} in:\n{listing}");
+    }
     std::fs::remove_dir_all(&dir).ok();
 }
 

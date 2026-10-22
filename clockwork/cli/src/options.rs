@@ -16,9 +16,12 @@ usage:
                                                  the program stopped at its entry, for gdb or
                                                  Ghidra's debugger on 127.0.0.1:N (1234; gdb.rs)
   clockwork listing <image> --entry OFFSET --segment SEG
+  clockwork listing <file.elf> --entry LINEAR
                                                  a function's code from a load image (hex image
                                                  offset and link segment), following its control
-                                                 flow and jump tables, in image offsets
+                                                 flow and jump tables, in image offsets; or a flat
+                                                 program's 32-bit code from the ELF file unpack
+                                                 wrote, in linear addresses
 
 options:
   --args TEXT        command line passed to the program

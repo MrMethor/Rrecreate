@@ -224,23 +224,32 @@ const REFS_SHOWN: usize = 10;
 fn clockwork_listing(repo: &Repo, k: &Knowledge, analysis: &Analysis, id: &Id) -> Result<String, String> {
     let index = crate::analysis::Index::load(repo)?.ok_or("no analysis: rrc analyze")?;
     let program = Cache::open(&repo.local)?.get(&index.program)?;
-    // The load image: the program without its MZ header.
+    let flat = !analysis.objects.is_empty();
+    // An LE program's ELF file as `clockwork unpack` wrote it; a 16-bit one's load image (without its
+    // MZ header).
     let header = program.get(8..10).map_or(0, |w| usize::from(u16::from_le_bytes([w[0], w[1]])) * 16);
-    let image = program.get(header..).ok_or("the analyzed program is shorter than its header")?;
-    let path = repo.state()?.join("ghidra").join("image.bin");
+    let image = if flat {
+        &program[..]
+    } else {
+        program.get(header..).ok_or("the analyzed program is shorter than its header")?
+    };
+    let path = repo.state()?.join("ghidra").join(if flat { "image.elf" } else { "image.bin" });
     if std::fs::read(&path).ok().as_deref() != Some(image) {
         std::fs::create_dir_all(path.parent().expect("a folder")).map_err(|e| e.to_string())?;
         std::fs::write(&path, image).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    let offset = id.offset();
-    if !analysis.objects.is_empty() {
-        return Err("Clockwork's listing reads 16-bit code: this program is 32-bit (--asm has Ghidra's)".into());
-    }
-    let segment = analysis.segment_of(offset).unwrap_or(offset >> 4);
+    let layout = analysis.layout();
+    let entry = if flat {
+        let linear = layout.linear(id).ok_or_else(|| format!("{id} isn't in the program's objects"))?;
+        vec!["--entry".to_owned(), format!("{linear:X}")]
+    } else {
+        let segment = analysis.segment_of(id.offset()).unwrap_or(id.offset() >> 4);
+        vec!["--entry".to_owned(), format!("{:X}", id.offset()), "--segment".to_owned(), format!("{segment:X}")]
+    };
     let output = std::process::Command::new(crate::clockwork::find(&repo.local)?)
         .arg("listing")
         .arg(&path)
-        .args(["--entry", &format!("{offset:X}"), "--segment", &format!("{segment:X}")])
+        .args(&entry)
         .output()
         .map_err(|e| format!("clockwork listing: {e}"))?;
     if !output.status.success() {
@@ -248,33 +257,77 @@ fn clockwork_listing(repo: &Repo, k: &Knowledge, analysis: &Analysis, id: &Id) -
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let module = id.module();
-    let named = |offset: &str| -> String {
-        let id = format!("{module}+{offset}");
-        let name = parse_id(&id).ok().and_then(|id| {
-            k.functions.get(&id).map(|d| d.name.clone()).or_else(|| k.data.get(&id).map(|d| d.decision.name.clone()))
-        });
-        name.unwrap_or(id)
+    // An address as Clockwork lists it (`+OFFSET` in the image, `@LINEAR` in a flat program) as an ID.
+    let id_of = |sign: char, hex: &str| -> Option<Id> {
+        match sign {
+            '+' => parse_id(&format!("{module}+{hex}")).ok(),
+            _ => layout.id_at(module, u64::from_str_radix(hex, 16).ok()?),
+        }
+    };
+    let named = |id: Id| -> String {
+        let name =
+            k.functions.get(&id).map(|d| d.name.clone()).or_else(|| k.data.get(&id).map(|d| d.decision.name.clone()));
+        name.unwrap_or_else(|| id.to_string())
     };
     let mut out = format!("code      Clockwork's disassembly from {id}\n");
     for line in text.lines().skip(1) {
-        // `+OFFSET  instruction`, with targets as `+OFFSET`.
+        // `+OFFSET  instruction` or `@LINEAR  instruction`, with targets the same way.
         let (at, rest) = line.split_once("  ").unwrap_or(("", line));
-        let at = at.strip_prefix('+').map_or_else(|| at.to_owned(), |o| format!("{module}+{o}"));
+        let at = match at.chars().next() {
+            Some(sign @ ('+' | '@')) => id_of(sign, &at[1..]).map_or_else(|| at.to_owned(), |id| id.to_string()),
+            _ => at.to_owned(),
+        };
         let mut rest = rest.to_owned();
         let mut from = 0;
-        while let Some(plus) = rest[from..].find('+').map(|i| from + i) {
-            let digits = rest[plus + 1..].chars().take_while(char::is_ascii_hexdigit).count();
-            if digits >= 5 {
-                let name = named(&rest[plus + 1..plus + 1 + digits]);
-                rest.replace_range(plus..plus + 1 + digits, &name);
-                from = plus + name.len();
-            } else {
-                from = plus + 1;
+        let sign = if flat { '@' } else { '+' };
+        while let Some(sign_at) = rest[from..].find(sign).map(|i| from + i) {
+            let digits = rest[sign_at + 1..].chars().take_while(char::is_ascii_hexdigit).count();
+            let id = (digits >= 5).then(|| id_of(sign, &rest[sign_at + 1..sign_at + 1 + digits])).flatten();
+            match id {
+                Some(id) => {
+                    let name = named(id);
+                    rest.replace_range(sign_at..sign_at + 1 + digits, &name);
+                    from = sign_at + name.len();
+                }
+                None => from = sign_at + 1,
             }
+        }
+        if flat {
+            rest = with_object_ids(&rest, |linear| {
+                layout.id_at(module, linear).filter(|id| id.part().is_some()).map(named)
+            });
         }
         out.push_str(&format!("{at}  {rest}\n"));
     }
     Ok(out)
+}
+
+/// `text` (an instruction as Clockwork formats it) with each number (`54BC04h`) that `name` names (an
+/// address in the program's objects) replaced by the name.
+fn with_object_ids(text: &str, name: impl Fn(u64) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_hexdigit()) {
+        let digits = rest[start..].chars().take_while(char::is_ascii_hexdigit).count();
+        let after = &rest[start + digits..];
+        let word = start == 0 || !rest[..start].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
+        let named = (word && after.starts_with('h'))
+            .then(|| u64::from_str_radix(&rest[start..start + digits], 16).ok().and_then(&name))
+            .flatten();
+        match named {
+            Some(named) => {
+                out.push_str(&rest[..start]);
+                out.push_str(&named);
+                rest = &after[1..];
+            }
+            None => {
+                out.push_str(&rest[..start + digits]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The ID `what` stands for: an ID, a name, or Ghidra's `SEG:OFF`.
