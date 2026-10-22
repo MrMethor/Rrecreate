@@ -22,6 +22,8 @@ pub struct Frame {
     pub from: u32,
     /// An interrupt (software or hardware), not a call.
     pub interrupt: bool,
+    /// A hardware interrupt: what runs inside it is an interrupt handler's ([`Calls::interrupt_entry`]).
+    pub hardware: bool,
     /// Where its return address is on the stack (linear), and the stack segment's base.
     slot: u32,
     stack_base: u32,
@@ -65,9 +67,13 @@ impl Calls {
         self.stack.iter().rev().copied().collect()
     }
 
-    /// The entry of the innermost interrupt handler running, if one is.
+    /// The entry of the innermost interrupt handler running for a hardware interrupt, if one is: the
+    /// handler of the IRQ, or of a software interrupt it made (INT 1Ch, from the timer's). A software
+    /// interrupt the program makes itself isn't one: its handler runs for the program, and DOS's EXEC
+    /// runs a launcher's game inside its INT 21h.
     pub fn interrupt_entry(&self) -> Option<u32> {
-        self.stack.iter().rev().find(|f| f.interrupt).map(|f| f.entry)
+        let outermost = self.stack.iter().position(|f| f.hardware)?;
+        self.stack[outermost..].iter().rev().find(|f| f.interrupt).map(|f| f.entry)
     }
 
     /// Before an instruction runs.
@@ -114,7 +120,14 @@ impl Calls {
                 // Control went elsewhere, by a CALL or INT: not a PUSH of a value that happens to look
                 // like a return address (a small count, in code at the start of its segment).
                 if linear_ip != from && calls_or_interrupts(&peek, c.code_base.wrapping_add(c.ip)) {
-                    self.stack.push(Frame { entry: linear_ip, from, interrupt, slot: top, stack_base });
+                    self.stack.push(Frame {
+                        entry: linear_ip,
+                        from,
+                        interrupt,
+                        hardware: false,
+                        slot: top,
+                        stack_base,
+                    });
                     if let Some(counts) = self.counts.as_mut().filter(|_| !interrupt) {
                         *counts.entry(linear_ip).or_default() += 1;
                     }
@@ -140,7 +153,7 @@ impl Calls {
     pub(crate) fn interrupt(&mut self, cpu: &Cpu, from: u32) {
         let entry = cpu.segment_base(seg::CS).wrapping_add(cpu.regs.ip);
         let stack_base = cpu.segment_base(seg::SS);
-        self.stack.push(Frame { entry, from, interrupt: true, slot: stack_top(cpu), stack_base });
+        self.stack.push(Frame { entry, from, interrupt: true, hardware: true, slot: stack_top(cpu), stack_base });
     }
 
     /// Frames whose return address the stack has risen above are gone, and every frame opened after

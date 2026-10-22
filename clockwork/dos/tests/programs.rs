@@ -3627,7 +3627,83 @@ fn a_watch_sees_an_interrupt_handler_and_reads() {
 
 #[test]
 fn a_summary_watch_tells_what_only_an_interrupt_handler_writes() {
-    // The timer handler counts ticks; the main program copies the count until it reaches 20.
+    let (program, o) = timer_counting();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let (counter, copy) = (base + o["counter"], base + o["copy"]);
+    m.start_watch(dos::watch::Watch::summary(std::iter::once(counter..copy + 2).collect(), true));
+    assert_eq!(m.run(SECOND * 2), Stop::Exited(0));
+    let watch = m.take_watch().unwrap();
+    assert!(
+        watch.services.contains_key(&0x21) && !watch.services.contains_key(&0x33),
+        "its exit, through DOS; no mouse"
+    );
+    let touches = watch.touches.unwrap();
+    // The handler's INC (its first instruction) reads it too.
+    let only_interrupt = dos::watch::Touch {
+        read: true,
+        read_in_interrupt: true,
+        interrupt_writer: Some(base + o["handler"]),
+        interrupt_write_by: Some(base + o["handler"]),
+        ..Default::default()
+    };
+    assert_eq!((touches[&counter], touches[&(counter + 1)]), (only_interrupt, only_interrupt), "the program reads it");
+    let main = dos::watch::Touch { written: true, ..Default::default() };
+    assert_eq!((touches[&copy], touches[&(copy + 1)]), (main, main));
+}
+
+#[test]
+fn a_launcher_s_program_runs_inside_no_interrupt_handler() {
+    // The timer-counting program started by a launcher, with calls tracked: DOS's EXEC runs it inside
+    // the launcher's INT 21h, a software interrupt, so what it reads and writes is its own.
+    let (program, o) = timer_counting();
+    let launcher = com(|a| {
+        a.mov(ah, 0x4A)?; // keep 64 KB
+        a.mov(bx, 0x1000)?;
+        a.int(0x21)?;
+        let block = a.addr("block") as u32;
+        for at in [block + 4, block + 8, block + 12] {
+            a.mov(word_ptr(at), ds)?;
+        }
+        a.push(ds)?;
+        a.pop(es)?;
+        let at = a.addr("block");
+        a.mov(bx, at)?;
+        load_dx(a, "child")?;
+        a.mov(ax, 0x4B00)?;
+        a.int(0x21)?;
+        exit(a, 0)?;
+        a.here("child")?;
+        a.db(b"S.COM\0")?;
+        a.here("tail")?;
+        a.db(b"\x00\r")?;
+        let tail = a.addr("tail") as u16;
+        a.here("block")?;
+        a.dw(&[0, tail, 0, 0x5C, 0, 0x6C, 0])
+    });
+    let files: [(&str, &[u8]); 2] = [("L.COM", &launcher), ("S.COM", &program)];
+    // Where the launcher loads it.
+    let mut m = boot(&files, "L.COM");
+    let psp = (0..100).find_map(|_| {
+        m.run(SECOND / 100);
+        m.process_named("S.COM").map(|(psp, _)| psp)
+    });
+    let base = u32::from(psp.expect("S.COM runs")) << 4;
+    let (counter, copy) = (base + o["counter"], base + o["copy"]);
+    let mut m = boot(&files, "L.COM");
+    m.track_calls(true);
+    m.start_watch(dos::watch::Watch::summary(std::iter::once(counter..copy + 2).collect(), true));
+    assert_eq!(m.run(SECOND * 2), Stop::Exited(0));
+    let touches = m.take_watch().unwrap().touches.unwrap();
+    assert_eq!(touches[&counter].interrupt_writer, Some(base + o["handler"]), "the timer's handler writes it");
+    assert!(touches[&counter].read, "the program reads it: {:?}", touches[&counter]);
+    let main = dos::watch::Touch { written: true, ..Default::default() };
+    assert_eq!((touches[&copy], touches[&(copy + 1)]), (main, main), "the program writes it");
+}
+
+/// A program whose timer handler (on INT 1Ch) counts ticks while the main program copies the count
+/// until it reaches 20.
+fn timer_counting() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
     let offsets = std::cell::RefCell::new(BTreeMap::new());
     let program = com(|a| {
         for name in ["handler", "counter", "copy"] {
@@ -3655,29 +3731,7 @@ fn a_summary_watch_tells_what_only_an_interrupt_handler_writes() {
         a.here("copy")?;
         a.dw(&[0])
     });
-    let o = offsets.into_inner();
-    let mut m = boot(&[("S.COM", &program)], "S.COM");
-    let base = u32::from(m.dos.psp) << 4;
-    let (counter, copy) = (base + o["counter"], base + o["copy"]);
-    m.start_watch(dos::watch::Watch::summary(std::iter::once(counter..copy + 2).collect(), true));
-    assert_eq!(m.run(SECOND * 2), Stop::Exited(0));
-    let watch = m.take_watch().unwrap();
-    assert!(
-        watch.services.contains_key(&0x21) && !watch.services.contains_key(&0x33),
-        "its exit, through DOS; no mouse"
-    );
-    let touches = watch.touches.unwrap();
-    // The handler's INC (its first instruction) reads it too.
-    let only_interrupt = dos::watch::Touch {
-        read: true,
-        read_in_interrupt: true,
-        interrupt_writer: Some(base + o["handler"]),
-        interrupt_write_by: Some(base + o["handler"]),
-        ..Default::default()
-    };
-    assert_eq!((touches[&counter], touches[&(counter + 1)]), (only_interrupt, only_interrupt), "the program reads it");
-    let main = dos::watch::Touch { written: true, ..Default::default() };
-    assert_eq!((touches[&copy], touches[&(copy + 1)]), (main, main));
+    (program, offsets.into_inner())
 }
 
 /// A program that calls `step` ten times (from `again`); `step` counts its calls in `count`.

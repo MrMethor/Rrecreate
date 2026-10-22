@@ -15,6 +15,9 @@
 //! reads that only interrupt handlers write (its key states, its timer counts) is what the loop
 //! takes from outside. It also counts the services called and the ports read meanwhile: what those
 //! return stays in registers, where no watch looks (the mouse through INT 33h, the joystick's port).
+//! An interrupt handler here is what runs for a hardware interrupt (and the software interrupts it
+//! makes: INT 1Ch from the timer's), asynchronously to the program; a software interrupt the program
+//! makes itself runs for it, as DOS's EXEC runs a launcher's game ([`Calls::interrupt_entry`]).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
