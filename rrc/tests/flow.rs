@@ -99,9 +99,14 @@ fn a_session_is_traced_tick_by_tick() {
 
     assert!(rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]).contains("next      rrc game"));
     assert!(repo.join(".gitattributes").is_file() && repo.join(".gitignore").is_file());
-    rrc.ok(&["game", game.to_str().unwrap(), "--add-version", "1.0"]);
+    assert!(repo.join(".git").is_dir(), "a port is a git repository");
+    // A saved game isn't part of the version.
+    std::fs::write(game.join("SAVEGAM0.SAV"), b"saved").unwrap();
+    let added = rrc.ok(&["game", game.to_str().unwrap(), "--add-version", "1.0", "--without", "*.sav"]);
+    assert!(added.contains("without   1 files left out"), "{added}");
+    std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 3, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 4, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
@@ -151,11 +156,11 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(summary.contains("syncs     loop "), "{summary}");
     let watched = rrc.ok(&["watch", "short", "count", "--tick", "2", "--ticks", "1"]);
     assert!(watched.contains("watch     count (T.COM+0000F, 2 bytes), tick 2"), "{watched}");
-    assert!(watched.contains("write count = 0200 (was 0100) by T.COM+00000"), "{watched}");
+    assert!(watched.contains("write count = 2 (was 1) by T.COM+00000"), "as its type reads: {watched}");
     // From the snapshot record kept, the same answer.
     let later = rrc.ok(&["watch", "short", "count", "--tick", "30", "--ticks", "1"]);
     assert!(later.contains("start     from the snapshot at tick 2"), "{later}");
-    assert!(later.contains("write count = 1E00 (was 1D00) by T.COM+00000"), "{later}");
+    assert!(later.contains("write count = 30 (was 29) by T.COM+00000"), "{later}");
     let inputs = rrc.ok(&["inputs", "short"]);
     assert!(inputs.contains("none"), "no interrupt handler writes anything it reads: {inputs}");
     let again = rrc.ok(&["inputs", "short"]);
@@ -256,10 +261,14 @@ fn memory_outside_the_image_is_mem() {
     let (dir, rrc) = setup("mem", &BIOS_TIMER);
     rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
     rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
-    rrc.ok(&["input", "MEM+0046C", "bios_ticks", "--size", "4", "--note", "the BIOS's timer count"]);
+    // A gate's input comes first, naming the sync point to come; rrc record waits for it.
+    let input = rrc.ok(&["input", "MEM+0046C", "bios_ticks", "--size", "4", "--sync", "poll"]);
+    assert!(input.contains("note      no sync point poll yet"), "{input}");
+    rrc.ok(&["session", "add", "wait", "--seconds", "0.5"]);
+    let (refused, ok) = rrc.run(&["record", "wait"]);
+    assert!(!ok && refused.contains("no sync points"), "{refused}");
     rrc.ok(&["sync", "T.COM+0000E", "poll", "--when-changed", "bios_ticks"]);
     assert!(rrc.ok(&["check"]).contains("1 sync points, 1 inputs"));
-    rrc.ok(&["session", "add", "wait", "--seconds", "0.5"]);
     let recorded = rrc.ok(&["record", "wait"]);
     // The first poll, then one a timer tick: 18.2 a second.
     assert!(recorded.contains("trace     10 ticks"), "{recorded}");
@@ -274,6 +283,11 @@ fn memory_outside_the_image_is_mem() {
     let scanned = rrc.ok(&["inputs", "wait"]);
     assert!(scanned.contains("bytes; MEM+00400, 256 bytes, from tick 2"), "{scanned}");
     assert!(scanned.contains("MEM+0046C bios_ticks (an input, 4 bytes)"), "{scanned}");
+    // A span of time instead, as for a loop with no sync point yet.
+    let span = rrc.ok(&["inputs", "wait", "--from-ms", "100", "--to-ms", "300"]);
+    assert!(span.contains("256 bytes, from 100 ms to 300 ms") && span.contains("bios_ticks"), "{span}");
+    let path = rrc.ok(&["trace", "wait", "--path"]);
+    assert!(Path::new(path.trim()).is_file(), "the path alone: {path}");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -302,6 +316,10 @@ fn a_scripted_joystick_is_an_input() {
         "{stick}"
     );
     assert!(rrc.ok(&["inputs", "stick"]).contains("unseen    port 201h (the joystick) read"));
+    // Where: the IN at +00003, every pass.
+    let ports = rrc.ok(&["ports", "stick", "201"]);
+    assert!(ports.contains("201h      read by T.COM+00003 ("), "{ports}");
+    assert!(!rrc.ok(&["ports", "stick"]).contains("none"), "the timer's handler ends its interrupts too");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -323,7 +341,7 @@ fn a_flat_program_s_objects_have_ids() {
     let last = squares.lines().last().unwrap_or("");
     assert!(last.starts_with("16        [0x1]=1 [0x2]=4 [0x3]=9") && last.ends_with("[0xE]=196"), "{squares}");
     let watched = rrc.ok(&["watch", "run", "squares", "--tick", "3", "--ticks", "1"]);
-    assert!(watched.contains("write squares[+4] = 01000000 (was 00000000) by FLAT32.EXE#1+"), "{watched}");
+    assert!(watched.contains("write squares[+4] = 1 (was 0) by FLAT32.EXE#1+"), "an element: {watched}");
     let inputs = rrc.ok(&["inputs", "run"]);
     assert!(inputs.contains("scanned   FLAT32.EXE#2+00000, 66960 bytes"), "its data object: {inputs}");
     // Calls in 32-bit code, the program's listed and the extender's counted.
@@ -454,7 +472,7 @@ fn a_launcher_s_program_is_the_module() {
     let lines: Vec<&str> = counts.lines().take(3).collect();
     assert_eq!(lines, ["1         1", "2         2", "3         3"], "T.COM's count, where the launcher put it");
     let watched = rrc.ok(&["watch", "t", "count", "--tick", "2", "--ticks", "1"]);
-    assert!(watched.contains("write count = 0200 (was 0100) by T.COM+00000"), "{watched}");
+    assert!(watched.contains("write count = 2 (was 1) by T.COM+00000"), "as its type reads: {watched}");
     let check = rrc.ok(&["check"]);
     assert!(check.contains("image     ") && !check.contains("unknown"), "{check}");
     std::fs::remove_dir_all(&dir).ok();

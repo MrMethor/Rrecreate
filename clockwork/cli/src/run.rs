@@ -148,7 +148,7 @@ pub(crate) fn cmd_run(o: &Options) -> Result<ExitCode, String> {
         save_changes(&m, dir)?;
     }
     if let Some(dir) = &o.dump_image {
-        dump_image(&m, dir)?;
+        println!("image     {}", dump_image(&m, dir)?);
     }
     if let Some(path) = &o.save_snapshot {
         let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -291,7 +291,9 @@ fn print_image_dump(m: &Machine, base: u32, offset: u32, length: usize) {
 }
 
 /// Writes [`Machine::image`] to `dir`.
-pub(crate) fn dump_image(m: &Machine, dir: &Path) -> Result<(), String> {
+/// Writes the program's image for analysis to `dir`; says what it wrote (`serve` answers it: its
+/// standard output is the protocol's).
+pub(crate) fn dump_image(m: &Machine, dir: &Path) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let write = |name: &str, data: &[u8]| {
         let path = dir.join(name);
@@ -305,7 +307,7 @@ pub(crate) fn dump_image(m: &Machine, dir: &Path) -> Result<(), String> {
                 "cs": cs, "ip": ip, "ss": ss, "sp": sp,
             });
             write("image.json", map.to_string().as_bytes())?;
-            println!("image     {} bytes from {load_segment:04X}:0000 in {}", bytes.len(), dir.display());
+            Ok(format!("{} bytes from {load_segment:04X}:0000 in {}", bytes.len(), dir.display()))
         }
         dos::image::Image::Protected { segments, regions } => {
             for (base, bytes) in &regions {
@@ -317,10 +319,9 @@ pub(crate) fn dump_image(m: &Machine, dir: &Path) -> Result<(), String> {
                 "regions": regions.iter().map(|(base, bytes)| serde_json::json!({"base": base, "size": bytes.len()})).collect::<Vec<_>>(),
             });
             write("segments.json", map.to_string().as_bytes())?;
-            println!("image     {} segments, {} regions in {}", segments.len(), regions.len(), dir.display());
+            Ok(format!("{} segments, {} regions in {}", segments.len(), regions.len(), dir.display()))
         }
     }
-    Ok(())
 }
 
 /// A watched entry point: CS, IP and the return address on the stack (segment, offset).

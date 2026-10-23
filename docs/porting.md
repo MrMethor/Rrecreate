@@ -11,13 +11,16 @@ Run `rrc` inside the port repository. `rrc status` names the next step; `rrc doc
 rrc init wolf3d-port --program WOLF3D.EXE --name wolf3d --title "Wolfenstein 3-D"
 ```
 
-Then, inside it, point it at the person's copy of the game and record that copy as a version:
+`rrc init` makes the folder a git repository too (a port is one of its own). Then, inside it, point it at the
+person's copy of the game and record that copy as a version:
 
 ```bash
 rrc game "C:/Games/WOLF3D" --add-version "shareware 1.4"
 ```
 
-The game's files never go into the repository (`rrc.local.toml`, which holds the folder, isn't committed).
+A version is every file in the folder, so leave out what isn't the game: saved games, a setup program's
+configuration (`--without SAVEGAM?.WL1,CONFIG.WL1`; `*` and `?` are wildcards). The game's files never go
+into the repository (`rrc.local.toml`, which holds the folder, isn't committed).
 Tools are found through `rrc.local.toml` or the environment (`docs/formats.md`).
 
 ## 2. Analyse
@@ -34,13 +37,18 @@ disassembly, in which Ghidra's `FUN_` and `DAT_` names become the names you gave
 a data item). In the disassembly, lines and branch targets are IDs, and each instruction's data is named after
 it (`; tick_count`); a jump through a table says so, and `--listing` shows Clockwork's disassembly instead,
 following the jumps and listing each table's cases. For data, it lists the instructions that read it, write
-it or take its address, by function.
+it or take its address, by function (ten functions a kind; `--all` lists them all).
 Decompiled code is a hint, not a source (D2): it is partly wrong.
 
 Ghidra misses code that only a vector or a pointer reaches, such as interrupt handlers (`rrc inputs` names
 them by their entry). `rrc show ID --asm` then disassembles it with Clockwork, following its jumps; once you
 name it (`rrc name`), `rrc analyze` adds it to Ghidra's analysis as a function, with its calls, references
 and decompiled code (Ghidra opens its analysis again for that: a minute or so).
+
+Some games make code at run time (drawing routines generated for each size, say): `rrc calls` then counts
+functions past the program's file image, which Ghidra can't see. `rrc show ID` says so, and `rrc show ID
+--asm --session NAME [--tick N]` disassembles it from the session's memory, by tick N or at its last
+snapshot. Port what the generator makes, not the bytes (DESIGN.md §6).
 
 Look for prior art (D32): source releases, reimplementations, format documentation, bug lists. For a pilot
 whose source is released, the source stays out of reach (D3, D46).
@@ -80,7 +88,9 @@ or fewer groups.
 yet, usually where the waiting function returns (its last instruction), not its entry: a tick's inputs and
 state are what memory holds at the sync point, which is what the pass starting there reads. At the entry,
 the elapsed time is the previous pass's, and a key that changes during the wait reaches the pass but not the
-tick. A game has a loop per mode (play, demo playback, menus); one loop may also end its tick in two places
+tick. A sync point in a function ticks at every call of it: if something else calls the waiting function too
+(a level's setup), put the sync point after the loop's own call of it (the instruction the call returns
+to). A game has a loop per mode (play, demo playback, menus); one loop may also end its tick in two places
 (demo playback skipping the usual wait for one of its own): each gets a sync point:
 
 ```bash
@@ -125,15 +135,18 @@ waiting function measures, the key-state array, the mouse). To find them:
 rrc inputs first-level
 ```
 
-scans the data segment the loop runs with and the BIOS's data (`MEM+00400`, 256 bytes), and lists what the
-program reads that an interrupt handler or a
-host service writes, by handler: the keyboard's (INT 09h) writes the key states, the timer's (INT 08h) the
+scans the data segment the loop runs with and the BIOS's data (`MEM+00400`, 256 bytes) from tick 2 on (a loop
+that has no sync point yet: `--from-ms MS [--to-ms MS]` scans that time), and lists what the program reads
+that an interrupt handler or a host service writes, by handler: the keyboard's (INT 09h) writes the key states, the timer's (INT 08h) the
 timer counts and whatever runs at the timer's rate (music), the sound card's its own state. A handler's bytes
 are grouped by the instruction that wrote them, so the keys a session pressed in a key-state array show as one
 candidate from the first to the last, with the instruction (and what Ghidra says it refers to: often the
-array's start); once you name the array (`rrc data`), the candidate shows as it. Which of these are inputs and
-which belong to an interrupt-driven subsystem of the simulation (D22) is your call: inputs come from the player
-and the clock. A session must press the keys for their bytes to show up. Declare each:
+array's start); once you name the array (`rrc data`), the candidate shows as it. Which of these are inputs is
+your call. Inputs come from outside the game: the player (keys, mouse, joystick) and the clock the loop
+measures time by. Work an interrupt handler does for the game at its own rate (music, sound effects, an
+animation the timer advances) is part of the simulation (D22): the port does it too, and what it writes is
+state, compared at each tick, not an input. A session must press the keys for their bytes to show up. Declare
+each:
 
 ```bash
 rrc input GAME.EXE+21C40 tick_elapsed --size 2 --evidence "..."
@@ -150,9 +163,13 @@ Values that come back from a driver or a port in registers don't show here: a pr
 (INT 33h) or the joystick (port 201h) and uses the answer at once. `rrc inputs` says how often the program
 called or read them (`unseen`). Declare those as the device (`rrc input mouse NAME`, D49): the trace then has
 the driver's state at each tick, which is what the pass starting there reads, and `rrc trace --item NAME`
-shows it. A gated sync point can name it too, so a menu ticks when the mouse moves. An input only one loop
-reads can be read only at its sync points (`--sync menu`). `rrc sync` and `rrc input` alone list what is
-declared; `--remove NAME` takes one out. Record the evidence in the notes.
+shows it. A gated sync point can name it too, so a menu ticks when the mouse moves. `rrc ports SESSION 201`
+lists the instructions that read the joystick's port (any port: the display's retrace at 3DA, a sound card),
+to find where a loop reads it. An input only one loop reads can be read only at its sync points (`--sync
+menu`). A gated sync point names inputs that exist, so declare a polling loop's inputs first: `--sync` may
+name its sync point before it is declared (`rrc record` refuses until it is). Declaring an item again replaces
+it (`rrc` shows what it `was`). `rrc sync` and `rrc input` alone list what is declared; `--remove NAME` takes
+one out. Record the evidence in the notes.
 
 ## 4. Record
 
@@ -225,4 +242,7 @@ For such a port:
 - keep the game's copy in a folder of its own, away from projects that hold derived knowledge;
 - don't read Rrecreate's git history: its commit messages carry names from the project before it;
 - set `[port] imports = false` in `rrc.toml`, so `rrc import` refuses;
+- give it a cache of its own (`cache` in `rrc.local.toml`): the cache is shared by the ports on a machine,
+  and `rrc analyze` reuses an analysis of the same program, with the functions other ports' knowledge added
+  to Ghidra's;
 - name things after what the code does, with evidence from this toolkit only.

@@ -5,6 +5,8 @@
 //! - `rrc inputs SESSION`: the boundary values' candidates: memory the program reads that interrupt
 //!   handlers (the keyboard's, the timer's) or host services write. A summary watch over the data
 //!   segment finds them without anyone knowing their names.
+//! - `rrc ports SESSION`: the instructions that read and write each port (the display's retrace, a
+//!   sound card), from the same summary watch.
 
 use std::process::ExitCode;
 
@@ -58,6 +60,25 @@ impl<'a> Names<'a> {
     }
 
     /// A data item's name (`name[+N]` inside one), or the address.
+    /// The bytes `hex` at `address` as their named data's type reads them, if they are one element
+    /// of it (a `u16` whole, an element of a `u8[256]`).
+    fn typed(&self, address: &str, hex: &str) -> Option<String> {
+        let id = self.id(address)?;
+        let (start, d) =
+            self.k.data.range(..=id.clone()).next_back().filter(|(start, _)| start.module() == id.module())?;
+        let element = d.ty.split('[').next()?;
+        let width = match element {
+            "u8" | "i8" => 1,
+            "u16" | "i16" => 2,
+            "u32" | "i32" => 4,
+            _ => return None,
+        };
+        let offset = id.offset() - start.offset();
+        let inside = d.size.is_none_or(|size| offset < size);
+        (inside && offset % width == 0 && hex.len() == 2 * width as usize)
+            .then(|| crate::trace::value_text(Some(hex), element))
+    }
+
     fn data(&self, address: &str) -> String {
         let Some(id) = self.id(address) else { return address.to_owned() };
         match self.k.data.range(..=id.clone()).next_back().filter(|(start, _)| start.module() == id.module()) {
@@ -182,7 +203,7 @@ fn ticks_text(first: u64, count: u64) -> String {
 /// Runs to where tick `n` starts (the end of tick n-1); returns the session's milliseconds then.
 /// Clockwork with the session and its sync points: from the last snapshot `rrc record` kept before
 /// tick `first`, if there is one (which it says), else from the start; what loading answered.
-fn open(
+pub(crate) fn open(
     repo: &Repo,
     session: &Session,
     syncs: &[SyncPoint],
@@ -201,7 +222,7 @@ fn open(
 
 /// Runs to the end of tick `n - 1`, where tick `n` begins (from the snapshot `from`, if one was
 /// loaded); the ms then.
-fn to_tick(clockwork: &mut Clockwork, n: u64, from: Option<&Taken>, length_ms: u64) -> Result<u64, String> {
+pub(crate) fn to_tick(clockwork: &mut Clockwork, n: u64, from: Option<&Taken>, length_ms: u64) -> Result<u64, String> {
     let (done, ms) = from.map_or((0, 0), |t| (t.tick, t.ms));
     if n <= done + 1 {
         return Ok(ms);
@@ -227,7 +248,9 @@ struct Access {
 impl Access {
     fn describe(&self, names: &Names) -> String {
         let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
-        let was = if self.kind == "write" { format!(" (was {})", hex(&self.old)) } else { String::new() };
+        // As the named data's type reads it, where it is one of its elements; bytes otherwise.
+        let value = |bytes: &[u8]| names.typed(&self.at, &hex(bytes)).unwrap_or_else(|| hex(bytes));
+        let was = if self.kind == "write" { format!(" (was {})", value(&self.old)) } else { String::new() };
         let by = if let Some(at) = self.by["instruction"].as_str() {
             names.plain(at)
         } else if let Some(service) = self.by["service"].as_str() {
@@ -248,7 +271,7 @@ impl Access {
             chain.push("…".into());
         }
         let chain = if chain.is_empty() { String::new() } else { format!(" in {}", chain.join(" < ")) };
-        format!("{} {} = {}{was} by {by}{chain}", self.kind, names.data(&self.at), hex(&self.value))
+        format!("{} {} = {}{was} by {by}{chain}", self.kind, names.data(&self.at), value(&self.value))
     }
 }
 
@@ -282,8 +305,8 @@ fn group(hits: Vec<Value>) -> Vec<Access> {
 }
 
 pub(crate) fn inputs(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--tick", "--ticks", "--at", "--len"], &[])?;
-    let usage = "inputs SESSION [--tick N] [--ticks N] [--at ID|SEG:OFF --len N]";
+    let a = Args::parse(args, &["--tick", "--ticks", "--at", "--len", "--from-ms", "--to-ms"], &[])?;
+    let usage = "inputs SESSION [--tick N] [--ticks N | --from-ms MS [--to-ms MS]] [--at ID|SEG:OFF --len N]";
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     let session = Session::load(repo, name)?;
     let key = snapshots::result_key(repo, &session, &[&["inputs".to_owned()], args].concat())?;
@@ -293,14 +316,27 @@ pub(crate) fn inputs(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, String> {
     let k = Knowledge::load(&repo.knowledge())?;
     let syncs = sync_points(&k)?;
-    if syncs.is_empty() {
-        return Err("rrc inputs scans from a tick on: declare a sync point first (knowledge/ticks.toml)".into());
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let span_ms = ms_span(a, length_ms)?;
+    if span_ms.is_none() && syncs.is_empty() {
+        return Err("rrc inputs scans from a tick on: declare a sync point first (knowledge/ticks.toml), or scan \
+                    a time: --from-ms MS"
+            .into());
     }
     let (first, count) = tick_span(a)?;
     let first = first.max(2);
-    let length_ms = (session.seconds * 1000.0) as u64;
-    let (mut clockwork, loaded, from) = open(repo, session, &syncs, first)?;
-    let ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
+    let (mut clockwork, loaded, ms) = match span_ms {
+        Some((from, _)) => {
+            let (mut clockwork, loaded, _) = begin(repo, session, &syncs)?;
+            clockwork.ask("run", json!({ "until_ms": from }))?;
+            (clockwork, loaded, from)
+        }
+        None => {
+            let (mut clockwork, loaded, from) = open(repo, session, &syncs, first)?;
+            let ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
+            (clockwork, loaded, ms)
+        }
+    };
     // The data segment the loop runs with (an LE program's data objects) and the BIOS's data (its
     // timer count, the keyboard's flags and buffer: games read them), unless asked for another range.
     let bios = (format!("@{BIOS_DATA:X}"), 0x100);
@@ -329,11 +365,18 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     };
     let request: Vec<Value> = ranges.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
     clockwork.ask("watch", json!({"ranges": request, "reads": true, "summary": true}))?;
-    let ran = match count {
-        Some(n) => clockwork.ask("run", json!({"sync": "next", "n": n, "max_ms": length_ms - ms}))?,
-        None => clockwork.ask("run", json!({"ms": length_ms - ms}))?,
+    let ran = match (span_ms, count) {
+        (Some((_, to)), _) => clockwork.ask("run", json!({ "until_ms": to }))?,
+        (None, Some(n)) => clockwork.ask("run", json!({"sync": "next", "n": n, "max_ms": length_ms - ms}))?,
+        (None, None) => clockwork.ask("run", json!({"ms": length_ms - ms}))?,
     };
-    let last = ran["sync"]["hit"].as_u64().map_or_else(|| "the session's end".to_owned(), |hit| format!("tick {hit}"));
+    let (start, last) = match span_ms {
+        Some((from, to)) => (format!("{from} ms"), format!("{to} ms")),
+        None => (
+            format!("tick {first}"),
+            ran["sync"]["hit"].as_u64().map_or_else(|| "the session's end".to_owned(), |hit| format!("tick {hit}")),
+        ),
+    };
     let watched = clockwork.ask("watch_end", Value::Null)?;
     let bytes = watched["bytes"].as_array().cloned().unwrap_or_default();
     let vectors = interrupt_vectors(&mut clockwork)?;
@@ -341,7 +384,7 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     let image = clockwork::linear(&loaded, "image")?;
     let names = Names::new(&k, repo, session)?;
     let scanned: Vec<String> = ranges.iter().map(|(at, len)| format!("{}, {len} bytes", names.plain(at))).collect();
-    say("scanned", format!("{}, from tick {first} to {last}", scanned.join("; ")));
+    say("scanned", format!("{}, from {start} to {last}", scanned.join("; ")));
     let candidates = candidates(&bytes);
     let mut writers: Vec<&Option<String>> = candidates.iter().map(|c| &c.writer).collect();
     writers.dedup();
@@ -396,10 +439,21 @@ fn candidate_text(c: &Candidate, names: &Names, k: &Knowledge, analysis: Option<
     };
     if let Some(by) = c.by.as_ref().and_then(|by| names.id(by)) {
         text += &format!(" by {by}");
+        // Where Ghidra's reference can be what was written: the array's start, at most a segment before.
+        // A reference elsewhere is Ghidra's guess of a segment register the handler sets itself.
+        let written = id.as_ref();
+        let near = |to: &Id| {
+            written.is_some_and(|w| {
+                to.module() == w.module()
+                    && to.part() == w.part()
+                    && to.offset() <= w.offset()
+                    && w.offset() - to.offset() < 0x1_0000
+            })
+        };
         let refers: Vec<String> = analysis
             .into_iter()
             .flat_map(|a| a.refs.iter())
-            .filter(|(from, _, _)| *from == by)
+            .filter(|(from, to, _)| *from == by && near(to))
             .map(|(_, to, _)| names.data(&format!("+{:05X}", to.offset())))
             .collect();
         if !refers.is_empty() {
@@ -418,7 +472,7 @@ fn unseen(watched: &Value) -> Vec<String> {
     let mut lines = Vec::new();
     let sources = [
         ("services", "33", "INT 33h (the mouse driver)", "declare it as device = \"mouse\""),
-        ("ports", "201", "port 201h (the joystick)", "declare it as device = \"joystick\""),
+        ("ports", "201", "port 201h (the joystick)", "declare it as device = \"joystick\" (rrc ports finds where)"),
         ("services", "16", "INT 16h (the BIOS keyboard)", "look for where the program keeps the keys"),
     ];
     for (kind, key, what, then) in sources {
@@ -429,6 +483,116 @@ fn unseen(watched: &Value) -> Vec<String> {
         }
     }
     lines
+}
+
+/// `--from-ms MS [--to-ms MS]`: a span of the session in ms, if given (to its end by default).
+fn ms_span(a: &Args, length_ms: u64) -> Result<Option<(u64, u64)>, String> {
+    let ms =
+        |key: &str| a.value(key).map(|v| v.parse::<u64>().map_err(|_| format!("{key} is a number of ms"))).transpose();
+    let (from, to) = (ms("--from-ms")?, ms("--to-ms")?);
+    let Some(from) = from else {
+        return match to {
+            Some(_) => Err("--to-ms goes with --from-ms".into()),
+            None => Ok(None),
+        };
+    };
+    if a.value("--tick").is_some() || a.value("--ticks").is_some() {
+        return Err("a span of ticks or of ms, not both".into());
+    }
+    let to = to.unwrap_or(length_ms).min(length_ms);
+    if from >= to {
+        return Err(format!("nothing from {from} ms to {to} ms (the session is {length_ms} ms)"));
+    }
+    Ok(Some((from, to)))
+}
+
+/// `rrc ports SESSION [PORT,...] [--tick N] [--ticks N]`.
+pub(crate) fn ports(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
+    let a = Args::parse(args, &["--tick", "--ticks"], &[])?;
+    let positionals = a.positionals(1, 2, "ports SESSION [PORT,...] [--tick N] [--ticks N]")?;
+    let session = Session::load(repo, &positionals[0])?;
+    let mut wanted = Vec::new();
+    for port in positionals.get(1).into_iter().flat_map(|p| p.split(',')) {
+        let hex = port.trim().trim_end_matches(['h', 'H']);
+        wanted.push(u16::from_str_radix(hex, 16).map_err(|_| format!("{port:?}: a port in hex (3DA)"))?);
+    }
+    let key = snapshots::result_key(repo, &session, &[&["ports".to_owned()], args].concat())?;
+    snapshots::kept(repo, &key, || scan_ports(repo, &a, &session, &wanted))
+}
+
+/// Instructions listed per port and kind of use.
+const USES_SHOWN: usize = 6;
+
+fn scan_ports(repo: &Repo, a: &Args, session: &Session, wanted: &[u16]) -> Result<ExitCode, String> {
+    let k = Knowledge::load(&repo.knowledge())?;
+    let syncs = sync_points(&k)?;
+    if syncs.is_empty() && a.value("--tick").is_some() {
+        return Err("--tick needs sync points (knowledge/ticks.toml)".into());
+    }
+    let (first, count) = tick_span(a)?;
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let (mut clockwork, _, from) = open(repo, session, &syncs, first)?;
+    let ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
+    clockwork.ask("watch", json!({"ranges": [], "summary": true}))?;
+    let ran = match count {
+        Some(n) if !syncs.is_empty() => {
+            clockwork.ask("run", json!({"sync": "next", "n": n, "max_ms": length_ms - ms}))?
+        }
+        _ => clockwork.ask("run", json!({"ms": length_ms - ms}))?,
+    };
+    let watched = clockwork.ask("watch_end", Value::Null)?;
+    let names = Names::new(&k, repo, session)?;
+    let start = if syncs.is_empty() || first == 1 { "the start".to_owned() } else { format!("tick {first}") };
+    let end = ran["sync"]["hit"].as_u64().map_or_else(|| "the session's end".to_owned(), |hit| format!("tick {hit}"));
+    say("scanned", format!("from {start} to {end}"));
+    // By port: the program's reads and writes by instruction, and interrupt handlers' counted apart.
+    struct Uses {
+        reads: Vec<(String, u64)>,
+        writes: Vec<(String, u64)>,
+        in_interrupts: (u64, u64),
+    }
+    let mut ports: std::collections::BTreeMap<u16, Uses> = std::collections::BTreeMap::new();
+    for u in watched["port_uses"].as_array().into_iter().flatten() {
+        let Some(port) = u["port"].as_str().and_then(|p| u16::from_str_radix(p, 16).ok()) else { continue };
+        if !wanted.is_empty() && !wanted.contains(&port) {
+            continue;
+        }
+        let n = u["n"].as_u64().unwrap_or(0);
+        let write = u["write"].as_bool().unwrap_or(false);
+        let entry = ports.entry(port).or_insert(Uses { reads: Vec::new(), writes: Vec::new(), in_interrupts: (0, 0) });
+        if u["interrupt"].as_bool().unwrap_or(false) {
+            if write { entry.in_interrupts.1 += n } else { entry.in_interrupts.0 += n }
+        } else {
+            let at = names.plain(u["at"].as_str().unwrap_or("?"));
+            if write { entry.writes.push((at, n)) } else { entry.reads.push((at, n)) }
+        }
+    }
+    let listed = |uses: &mut Vec<(String, u64)>| {
+        uses.sort_by_key(|(at, n)| (std::cmp::Reverse(*n), at.clone()));
+        let mut list: Vec<String> = uses.iter().take(USES_SHOWN).map(|(at, n)| format!("{at} ({n})")).collect();
+        if uses.len() > USES_SHOWN {
+            list.push(format!("{} more", uses.len() - USES_SHOWN));
+        }
+        list.join(", ")
+    };
+    for (port, mut uses) in ports {
+        let mut parts = Vec::new();
+        if !uses.reads.is_empty() {
+            parts.push(format!("read by {}", listed(&mut uses.reads)));
+        }
+        if !uses.writes.is_empty() {
+            parts.push(format!("written by {}", listed(&mut uses.writes)));
+        }
+        match uses.in_interrupts {
+            (0, 0) => {}
+            (r, w) => parts.push(format!("in interrupt handlers: {r} reads, {w} writes")),
+        }
+        say(&format!("{port:X}h"), parts.join("; "));
+    }
+    if watched["port_uses"].as_array().is_none_or(|u| u.is_empty()) {
+        say("none", "no port was read or written");
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The real-mode interrupt vectors, as linear addresses.

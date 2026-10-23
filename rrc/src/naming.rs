@@ -134,8 +134,9 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 }
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &["--asm", "--c", "--listing"])?;
-    let [what] = a.positionals(1, 1, "show ID|NAME|SEG:OFF [--asm] [--c] [--listing]")? else { unreachable!() };
+    let a = Args::parse(args, &["--session", "--tick"], &["--asm", "--c", "--listing", "--all"])?;
+    let usage = "show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]]";
+    let [what] = a.positionals(1, 1, usage)? else { unreachable!() };
     let k = Knowledge::load(&repo.knowledge())?;
     let analysis = Analysis::load(repo)?;
     let id = resolve(repo, &k, analysis.as_ref(), what)?;
@@ -173,13 +174,39 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if let Some(analysis) = &analysis {
         show_analysis(&k, analysis, &id, a.has("--asm"), a.has("--c"));
         let size = k.data.get(&id).and_then(|d| d.size).unwrap_or(1);
-        let referred = show_refs(&k, analysis, &id, size);
+        let shown = if a.has("--all") { usize::MAX } else { REFS_SHOWN };
+        let referred = show_refs(&k, analysis, &id, size, shown);
         let in_code = analysis.functions.contains_key(&id) || analysis.containing(&id).is_some();
+        // Code a 16-bit program makes at run time is past its file image, in the session's memory only.
+        let file_size = file_image_size(repo, analysis)?;
+        let made = analysis.objects.is_empty()
+            && id.module() == repo.module()
+            && !id.is_memory()
+            && u64::from(id.offset()) >= file_size;
+        let image = match a.value("--session") {
+            Some(session) if made => Some(session_image(repo, session, a.value("--tick"))?),
+            Some(_) => return Err(format!("{id} is in the program's file: --session is for code made at run time")),
+            None => None,
+        };
+        if made && image.is_none() && (a.has("--asm") || a.has("--listing")) {
+            return Err(format!(
+                "{id} is past the program's file image ({file_size} bytes): code made at run time; --session NAME \
+                 [--tick N] disassembles it from the session's memory"
+            ));
+        }
         if a.has("--listing") {
-            print!("{}", clockwork_listing(repo, &k, analysis, &id)?);
+            print!("{}", clockwork_listing(repo, &k, analysis, &id, image.as_deref())?);
         } else if !in_code && !referred && !k.data.contains_key(&id) && !id.is_memory() {
             if a.has("--asm") {
-                print!("{}", clockwork_listing(repo, &k, analysis, &id)?);
+                print!("{}", clockwork_listing(repo, &k, analysis, &id, image.as_deref())?);
+            } else if made {
+                say(
+                    "code",
+                    format!(
+                        "past the program's file image ({file_size} bytes): made at run time (code a game generates, or \
+                         data); --asm --session NAME [--tick N] disassembles it from the session's memory"
+                    ),
+                );
             } else {
                 say(
                     "code",
@@ -193,8 +220,8 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 }
 
 /// The instructions that refer to the `size` bytes at `id`, by kind and function (Ghidra's data
-/// references); whether there are any.
-fn show_refs(k: &Knowledge, analysis: &Analysis, id: &Id, size: u32) -> bool {
+/// references), `shown` functions a kind; whether there are any.
+fn show_refs(k: &Knowledge, analysis: &Analysis, id: &Id, size: u32, shown: usize) -> bool {
     let range = id.offset()..id.offset() + size;
     let mut by_kind: BTreeMap<&str, BTreeMap<String, Vec<String>>> = BTreeMap::new();
     for (from, to, kind) in &analysis.refs {
@@ -214,9 +241,9 @@ fn show_refs(k: &Knowledge, analysis: &Analysis, id: &Id, size: u32) -> bool {
     for (kind, label) in [("write", "written"), ("read", "read"), ("data", "address")] {
         let Some(functions) = by_kind.get(kind) else { continue };
         let mut list: Vec<String> =
-            functions.iter().take(REFS_SHOWN).map(|(f, at)| format!("{f} ({})", at.join(", "))).collect();
-        if functions.len() > REFS_SHOWN {
-            list.push(format!("and {} more functions", functions.len() - REFS_SHOWN));
+            functions.iter().take(shown).map(|(f, at)| format!("{f} ({})", at.join(", "))).collect();
+        if functions.len() > shown {
+            list.push(format!("and {} more functions (--all)", functions.len() - shown));
         }
         say(label, list.join("; "));
     }
@@ -226,25 +253,79 @@ fn show_refs(k: &Knowledge, analysis: &Analysis, id: &Id, size: u32) -> bool {
 /// Functions listed per kind of reference.
 const REFS_SHOWN: usize = 10;
 
-/// Clockwork's disassembly from `id`, following its control flow and the jump tables it finds
-/// (`clockwork listing`); lines and targets as IDs, named ones by name.
-fn clockwork_listing(repo: &Repo, k: &Knowledge, analysis: &Analysis, id: &Id) -> Result<String, String> {
+/// The analyzed program: an LE program's ELF file as `clockwork unpack` wrote it; a 16-bit one's load
+/// image (without its MZ header).
+fn file_image(repo: &Repo, analysis: &Analysis) -> Result<Vec<u8>, String> {
     let index = crate::analysis::Index::load(repo)?.ok_or("no analysis: rrc analyze")?;
     let program = Cache::open(&repo.local)?.get(&index.program)?;
-    let flat = !analysis.objects.is_empty();
-    // An LE program's ELF file as `clockwork unpack` wrote it; a 16-bit one's load image (without its
-    // MZ header).
-    let header = program.get(8..10).map_or(0, |w| usize::from(u16::from_le_bytes([w[0], w[1]])) * 16);
-    let image = if flat {
-        &program[..]
-    } else {
-        program.get(header..).ok_or("the analyzed program is shorter than its header")?
-    };
-    let path = repo.state()?.join("ghidra").join(if flat { "image.elf" } else { "image.bin" });
-    if std::fs::read(&path).ok().as_deref() != Some(image) {
-        std::fs::create_dir_all(path.parent().expect("a folder")).map_err(|e| e.to_string())?;
-        std::fs::write(&path, image).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !analysis.objects.is_empty() {
+        return Ok(program);
     }
+    let header = program.get(8..10).map_or(0, |w| usize::from(u16::from_le_bytes([w[0], w[1]])) * 16);
+    Ok(program.get(header..).ok_or("the analyzed program is shorter than its header")?.to_vec())
+}
+
+fn file_image_size(repo: &Repo, analysis: &Analysis) -> Result<u64, String> {
+    Ok(file_image(repo, analysis)?.len() as u64)
+}
+
+/// The 16-bit program's image in a session's memory, by tick `tick` or at its last snapshot (with what
+/// it made at run time), written for `clockwork listing`.
+fn session_image(repo: &Repo, name: &str, tick: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let session = crate::session::Session::load(repo, name)?;
+    let syncs = crate::trace::sync_points(&Knowledge::load(&repo.knowledge())?)?;
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let (mut clockwork, where_) = match tick {
+        Some(n) => {
+            let n: u64 = n.parse().map_err(|_| "--tick is a number")?;
+            if syncs.is_empty() {
+                return Err("--tick needs sync points (knowledge/ticks.toml)".into());
+            }
+            let (mut clockwork, _, from) = crate::watch::open(repo, &session, &syncs, n)?;
+            crate::watch::to_tick(&mut clockwork, n + 1, from.as_ref(), length_ms)?;
+            (clockwork, format!("by tick {n}"))
+        }
+        None => match crate::snapshots::before(repo, &session, &syncs, u64::MAX)? {
+            Some(taken) => {
+                let (clockwork, _) = crate::snapshots::load(repo, &session, &taken)?;
+                (clockwork, format!("at tick {} ({:.1} s)", taken.tick, taken.ms as f64 / 1000.0))
+            }
+            None => {
+                let (mut clockwork, _, _) = crate::trace::begin(repo, &session, &syncs)?;
+                clockwork.ask("run", serde_json::json!({ "until_ms": length_ms }))?;
+                (clockwork, "at the session's end".to_owned())
+            }
+        },
+    };
+    let dir = repo.state()?.join("images").join(name);
+    clockwork.ask("image", serde_json::json!({ "dir": crate::path_text(&dir) }))?;
+    say("memory", format!("{name}'s, {where_}"));
+    Ok(dir.join("image.bin"))
+}
+
+/// Clockwork's disassembly from `id`, following its control flow and the jump tables it finds
+/// (`clockwork listing`), from the analyzed program or `image` (a session's memory); lines and
+/// targets as IDs, named ones by name.
+fn clockwork_listing(
+    repo: &Repo,
+    k: &Knowledge,
+    analysis: &Analysis,
+    id: &Id,
+    image: Option<&std::path::Path>,
+) -> Result<String, String> {
+    let flat = !analysis.objects.is_empty();
+    let path = match image {
+        Some(image) => image.to_path_buf(),
+        None => {
+            let image = file_image(repo, analysis)?;
+            let path = repo.state()?.join("ghidra").join(if flat { "image.elf" } else { "image.bin" });
+            if std::fs::read(&path).ok().as_deref() != Some(&image[..]) {
+                std::fs::create_dir_all(path.parent().expect("a folder")).map_err(|e| e.to_string())?;
+                std::fs::write(&path, &image).map_err(|e| format!("{}: {e}", path.display()))?;
+            }
+            path
+        }
+    };
     let layout = analysis.layout();
     let entry = if flat {
         let linear = layout.linear(id).ok_or_else(|| format!("{id} isn't in the program's objects"))?;

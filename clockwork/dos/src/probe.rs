@@ -130,7 +130,7 @@ impl Bus for ProbeBus<'_, '_> {
             log.push(Access::Port);
         }
         if let Some(watch) = self.watch.as_deref_mut() {
-            watch.port_read(port);
+            watch.port_used(port, self.at, false, self.calls);
         }
         if let Some(late) = self.late.as_deref_mut()
             && port == crate::joystick::PORT
@@ -145,6 +145,9 @@ impl Bus for ProbeBus<'_, '_> {
     fn port_out_u8(&mut self, port: u16, value: u8) {
         if let Some(log) = self.log.as_deref_mut() {
             log.push(Access::Port);
+        }
+        if let Some(watch) = self.watch.as_deref_mut() {
+            watch.port_used(port, self.at, true, self.calls);
         }
         self.inner.port_out_u8(port, value);
     }

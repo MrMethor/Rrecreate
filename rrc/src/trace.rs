@@ -299,6 +299,14 @@ pub(crate) type Items = (Vec<SyncPoint>, Vec<Item>, Vec<Item>);
 /// What a trace follows, from the knowledge: the sync points, the boundary values and the named
 /// data (but an item that is an input at every tick: it is written once, as the input).
 pub(crate) fn items(k: &Knowledge, module: &str) -> Result<Items, String> {
+    for i in &k.ticks.inputs {
+        if let Some(sync) = i.sync.iter().find(|s| !k.ticks.syncs.iter().any(|t| t.name == **s)) {
+            return Err(format!(
+                "input {}: no sync point {sync} (rrc sync, or rrc input {} ... --sync)",
+                i.name, i.name
+            ));
+        }
+    }
     let inputs: Vec<Item> = k.ticks.inputs.iter().map(Item::from_input).collect();
     let is_input =
         |id: &str, size: Option<u32>| inputs.iter().any(|i| i.at == id && Some(i.size) == size && i.sync.is_empty());
@@ -515,7 +523,7 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let recorded = session.trace.ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
     let cache = Cache::open(&repo.local)?;
     if a.has("--path") {
-        say("path", cache.path(&recorded.hash).display());
+        println!("{}", crate::path_text(&cache.path(&recorded.hash)));
         return Ok(ExitCode::SUCCESS);
     }
     let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;

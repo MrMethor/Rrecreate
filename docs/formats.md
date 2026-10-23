@@ -191,7 +191,8 @@ A device's state is bytes, like memory (little-endian):
 
 ```toml
 description = "the first level, up the main corridor"
-inputs = "walk.inputs"          # an input script (clockwork run --input-file), beside it; or
+inputs = "walk.inputs"          # an input script (clockwork run --input-file), beside it (rrc session add
+                                # copies it here: edit this copy); or
 # replay = "play.session"       # play recorded by clockwork play --record
 seconds = 86.0                  # emulated seconds it runs
 options = []                    # optional: more `clockwork run` options (rrc session --clockwork)

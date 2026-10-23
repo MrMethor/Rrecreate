@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **3** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **4** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -48,7 +48,7 @@ A platform may add its own forms (`dos-pc`: `SEG:OFF`, `%PHYS`).
 
 ## Core operations
 
-**`hello`**: what the emulator is: `{"protocol": 3, "platform": "dos-pc", "emulator": "clockwork",
+**`hello`**: what the emulator is: `{"protocol": 4, "platform": "dos-pc", "emulator": "clockwork",
 "version": "0.1.0"}`. A tool refuses a revision or platform it doesn't speak.
 
 **Loading.** `load` `{"argv": [dir, program, options...]}`: a machine with the game's folder and program,
@@ -85,7 +85,9 @@ where `by` is `{"instruction"}`, `{"service", "ax"}` or `{"device": true}` and `
 innermost first (`{"entry", "from", "interrupt"}`); `dropped` counts what went past the limit. With
 `"summary": true`, who touched each byte instead, as runs of bytes touched alike (`bytes`: `{"at", "len",
 "read", "read_in_interrupt", "written", "interrupt_writer", "interrupt_write_by", "host"}`), with the services
-called (`services`) and ports read (`ports`) meanwhile. An interrupt handler is what runs for a hardware
+called (`services`) and ports read (`ports`) meanwhile, and each instruction's uses of each port
+(`port_uses`: `{"port", "at", "write", "interrupt", "n"}`, `interrupt` when it ran in an interrupt handler).
+The ranges may be empty, to find only the services and ports. An interrupt handler is what runs for a hardware
 interrupt (and what it calls).
 
 **Calls and coverage.** `calls` `{"on": true, "count": false}`: tracks calls from now on (so a watch started
@@ -140,7 +142,8 @@ An IBM PC with DOS (Clockwork).
   (`objects`: `[{"at", "size", "flags"}]`, or null) (D55, D57).
 - **`rebase`**: `+OFF` counts from the image of the program running now, or from `{"at", "len"}` (where a
   launcher's game will be loaded, D57).
-- **`image`** `{"dir"}`: the loaded image for analysis, with its segment or selector map.
+- **`image`** `{"dir"}`: the loaded image for analysis, with its segment or selector map; answers what it
+  wrote (`wrote`).
 
 ## Revisions
 
@@ -148,6 +151,7 @@ An IBM PC with DOS (Clockwork).
 2. `late_inputs`, `late_inputs_end` (D60).
 3. `screenshot`; counts may be written as whole floats; `input` refuses a line whose time has passed and
    reads lines as a script file; a TCP `serve` keeps one machine for every connection.
+4. A summary watch's `port_uses`; `image` answers what it wrote (it printed it, onto the answers).
 
 ## Changing the protocol
 

@@ -38,7 +38,7 @@ pub(crate) fn frame(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     std::fs::write(&out, picture.png()).map_err(|e| format!("{}: {e}", out.display()))?;
     let (number, cycle, mode) = (&frame[0], &frame[1], frame[2].as_u64().unwrap_or(0));
     say("frame", format!("{number} at cycle {cycle}, video mode {mode:X}h, {} × {}", picture.width, picture.height));
-    say("png", out.display());
+    say("png", crate::path_text(&out));
     Ok(ExitCode::SUCCESS)
 }
 

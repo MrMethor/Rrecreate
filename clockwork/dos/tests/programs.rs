@@ -3648,6 +3648,50 @@ fn a_watch_sees_an_interrupt_handler_and_reads() {
 }
 
 #[test]
+fn a_summary_watch_finds_the_code_that_uses_a_port() {
+    // Ten waits for the display's retrace (port 3DAh, bit 3), each followed by a DAC index write.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["poll", "write"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.mov(cx, 10)?;
+        a.here("again")?;
+        a.mov(dx, 0x3DA)?;
+        a.here("poll")?;
+        a.in_(al, dx)?;
+        a.test(al, 8)?;
+        let poll = a.l("poll");
+        a.jz(poll)?;
+        a.mov(dx, 0x3C8)?;
+        a.xor(al, al)?;
+        a.here("write")?;
+        a.out(dx, al)?;
+        a.mov(dx, 0x3DA)?;
+        a.here("over")?;
+        a.in_(al, dx)?;
+        a.test(al, 8)?;
+        let over = a.l("over");
+        a.jnz(over)?;
+        let again = a.l("again");
+        a.loop_(again)?;
+        exit(a, 0)
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("P.COM", &program)], "P.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    m.start_watch(dos::watch::Watch::summary(Vec::new(), false));
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let watch = m.take_watch().unwrap();
+    let uses: Vec<_> = watch.port_uses.iter().filter(|(u, _)| !u.in_interrupt).collect();
+    let poll = uses.iter().find(|(u, _)| u.port == 0x3DA && u.at == base + o["poll"]).expect("the retrace wait");
+    assert!(!poll.0.write && *poll.1 >= 10, "{uses:?}");
+    let write = uses.iter().find(|(u, _)| u.port == 0x3C8).expect("the DAC write");
+    assert_eq!((write.0.at - base, write.0.write, *write.1), (o["write"], true, 10));
+    assert!(watch.port_uses.keys().any(|u| u.in_interrupt && u.port == 0x20), "the timer's handler ends its IRQ");
+}
+
+#[test]
 fn a_summary_watch_tells_what_only_an_interrupt_handler_writes() {
     let (program, o) = timer_counting();
     let mut m = boot(&[("S.COM", &program)], "S.COM");

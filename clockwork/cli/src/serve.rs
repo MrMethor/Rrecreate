@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 3;
+pub const PROTOCOL: u64 = 4;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -481,8 +481,16 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                     watch.services.iter().map(|(id, n)| (format!("{id:02X}"), *n)).collect();
                 let ports: BTreeMap<String, u64> =
                     watch.port_reads.iter().map(|(port, n)| (format!("{port:X}"), *n)).collect();
+                let port_uses: Vec<Value> = watch
+                    .port_uses
+                    .iter()
+                    .map(|(u, n)| {
+                        json!({"port": format!("{:X}", u.port), "at": name(u.at), "write": u.write,
+                               "interrupt": u.in_interrupt, "n": n})
+                    })
+                    .collect();
                 let bytes = touch_runs(touches, &name, &name_physical);
-                return Ok(json!({ "bytes": bytes, "services": services, "ports": ports }));
+                return Ok(json!({ "bytes": bytes, "services": services, "ports": ports, "port_uses": port_uses }));
             }
             let hits: Vec<Value> = watch.hits.iter().map(|h| hit(h, &name, &name_physical)).collect();
             Ok(json!({"hits": hits, "dropped": watch.dropped}))
@@ -599,8 +607,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "image" => {
             let dir = std::path::PathBuf::from(text(r, "dir")?);
-            crate::run::dump_image(m, &dir)?;
-            Ok(json!({}))
+            Ok(json!({ "wrote": crate::run::dump_image(m, &dir)? }))
         }
         _ => Err(format!("unknown op {op:?}")),
     }

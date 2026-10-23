@@ -14,7 +14,9 @@
 //! or interrupt handlers, host services or devices. It scans large ranges: the memory a game's loop
 //! reads that only interrupt handlers write (its key states, its timer counts) is what the loop
 //! takes from outside. It also counts the services called and the ports read meanwhile: what those
-//! return stays in registers, where no watch looks (the mouse through INT 33h, the joystick's port).
+//! return stays in registers, where no watch looks (the mouse through INT 33h, the joystick's port);
+//! and which instructions read and write each port, to find the code that waits for the display's
+//! retrace or programs a sound card.
 //! An interrupt handler here is what runs for a hardware interrupt (and the software interrupts it
 //! makes: INT 1Ch from the timer's), asynchronously to the program; a software interrupt the program
 //! makes itself runs for it, as DOS's EXEC runs a launcher's game ([`Calls::interrupt_entry`]).
@@ -63,6 +65,16 @@ pub struct Hit {
     pub chain: Vec<Frame>,
 }
 
+/// An instruction's use of a port, in a summary watch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PortUse {
+    pub port: u16,
+    /// The instruction (linear), whether it wrote, and whether it ran in an interrupt handler.
+    pub at: u32,
+    pub write: bool,
+    pub in_interrupt: bool,
+}
+
 /// Who touched a byte, in a summary watch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Touch {
@@ -95,6 +107,8 @@ pub struct Watch {
     /// the mouse driver's is their interrupt) and the ports read, with how often.
     pub services: BTreeMap<u16, u64>,
     pub port_reads: BTreeMap<u16, u64>,
+    /// For a summary watch: each instruction's reads or writes of each port, with how often.
+    pub port_uses: BTreeMap<PortUse, u64>,
 }
 
 impl Watch {
@@ -111,6 +125,7 @@ impl Watch {
             touches: None,
             services: BTreeMap::new(),
             port_reads: BTreeMap::new(),
+            port_uses: BTreeMap::new(),
         }
     }
 
@@ -178,10 +193,14 @@ impl Watch {
         }
     }
 
-    /// A port was read (a summary watch counts them).
-    pub(crate) fn port_read(&mut self, port: u16) {
+    /// The instruction at `at` read or wrote a port (a summary watch counts them).
+    pub(crate) fn port_used(&mut self, port: u16, at: u32, write: bool, calls: Option<&Calls>) {
         if self.touches.is_some() {
-            *self.port_reads.entry(port).or_default() += 1;
+            if !write {
+                *self.port_reads.entry(port).or_default() += 1;
+            }
+            let in_interrupt = calls.is_some_and(Calls::in_hardware_interrupt);
+            *self.port_uses.entry(PortUse { port, at, write, in_interrupt }).or_default() += 1;
         }
     }
 

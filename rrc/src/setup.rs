@@ -50,8 +50,25 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
 ",
     )?;
     say("port", format!("{name} in {}", dir.display()));
+    // A port is a repository of its own (DESIGN.md §3).
+    if !dir.join(".git").exists() {
+        match std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status() {
+            Ok(status) if status.success() => say("git", "a new repository: commit rrc.toml, knowledge/ and sessions/"),
+            _ => say("git", "not found: make the port a git repository yourself (git init)"),
+        }
+    }
     say("next", "rrc game <the game's folder>");
     Ok(ExitCode::SUCCESS)
+}
+
+/// Whether `text` matches `pattern`, where `*` is any run of characters and `?` any one.
+fn matches(pattern: &[u8], text: &[u8]) -> bool {
+    match (pattern.first(), text.first()) {
+        (None, None) => true,
+        (Some(b'*'), _) => matches(&pattern[1..], text) || (!text.is_empty() && matches(pattern, &text[1..])),
+        (Some(&p), Some(&c)) if p == b'?' || p == c => matches(&pattern[1..], &text[1..]),
+        _ => false,
+    }
 }
 
 /// Writes `text` to `path` unless the file is there already.
@@ -131,8 +148,8 @@ pub(crate) fn status(repo: &Repo) -> Result<ExitCode, String> {
 }
 
 pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--add-version"], &[])?;
-    if let Some(folder) = a.positionals(0, 1, "game [FOLDER] [--add-version NAME]")?.first() {
+    let a = Args::parse(args, &["--add-version", "--without"], &[])?;
+    if let Some(folder) = a.positionals(0, 1, "game [FOLDER] [--add-version NAME [--without FILE,...]]")?.first() {
         let dir = std::path::absolute(folder).map_err(|e| format!("{folder}: {e}"))?;
         if !dir.is_dir() {
             return Err(format!("{} isn't a folder", dir.display()));
@@ -151,8 +168,29 @@ pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String>
         if repo.settings.versions.iter().any(|v| v.name == name) {
             return Err(format!("there is a version {name:?} already"));
         }
-        repo.settings.versions.push(Version { name: name.to_owned(), files: files.clone() });
+        // What isn't the game: saved games, a setup's configuration (names or paths, with * and ?; any
+        // case).
+        let without: Vec<String> = a
+            .value("--without")
+            .into_iter()
+            .flat_map(|w| w.split(','))
+            .map(|w| w.trim().to_ascii_uppercase())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let left_out = |path: &str| {
+            let path = path.to_ascii_uppercase();
+            let file = path.rsplit('/').next().unwrap_or(&path);
+            without.iter().any(|w| matches(w.as_bytes(), path.as_bytes()) || matches(w.as_bytes(), file.as_bytes()))
+        };
+        let kept: std::collections::BTreeMap<String, String> =
+            files.iter().filter(|(path, _)| !left_out(path)).map(|(p, h)| (p.clone(), h.clone())).collect();
+        if !without.is_empty() {
+            say("without", format!("{} files left out", files.len() - kept.len()));
+        }
+        repo.settings.versions.push(Version { name: name.to_owned(), files: kept });
         repo.save_settings()?;
+    } else if a.value("--without").is_some() {
+        return Err("--without goes with --add-version".into());
     }
     say("game", format!("{} ({} files)", dir.display(), files.len()));
     match game::identify(&repo.settings.versions, &files) {
@@ -203,4 +241,14 @@ fn next_after_setup(repo: &Repo) -> Result<String, String> {
         }
     }
     Ok("every session is recorded with the knowledge as it is; the state mapping and the port come with M3".into())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wildcards_match_names() {
+        let m = |p: &str, t: &str| super::matches(p.as_bytes(), t.as_bytes());
+        assert!(m("SAVEGAM*.WL1", "SAVEGAM0.WL1") && m("*.SAV", "A.SAV") && m("CONFIG.WL?", "CONFIG.WL1"));
+        assert!(!m("*.SAV", "A.SAVE") && !m("SAVEGAM?.WL1", "SAVEGAM10.WL1") && m("*", ""));
+    }
 }

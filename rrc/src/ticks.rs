@@ -119,8 +119,10 @@ pub(crate) fn input(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Err(format!("{at} isn't named data with a size: give --size N"));
     }
     let sync = list(a.value("--sync"));
-    if let Some(unknown) = sync.iter().find(|s| !k.ticks.syncs.iter().any(|t| t.name == **s)) {
-        return Err(format!("no sync point {unknown}"));
+    // A polling loop's gate names its inputs, so they come first: they may name its sync point before
+    // it is declared (rrc check and rrc record say if it never is).
+    for unknown in sync.iter().filter(|s| !k.ticks.syncs.iter().any(|t| t.name == **s)) {
+        say("note", format!("no sync point {unknown} yet: declare it (rrc sync) before recording"));
     }
     let input = Input {
         name: name.clone(),
