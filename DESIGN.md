@@ -262,6 +262,13 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
 - Uses: resume a comparison anywhere instead of from the start; bisect between checkpoints; scenario tests
   (a checkpoint plus seconds of input); start the port mid-game before menus and loading are ported; explore
   from many points; save anywhere for players.
+- **Scenario sessions** (D59): a session may set a scenario up instead of playing to it: from power-on or a
+  snapshot, at a tick it writes values into the original's memory (named data, through the knowledge's types),
+  then runs its input. The edits are part of the session, so its runs stay repeatable, and the trace lists
+  them. Only the original is edited; the port reaches the same scenario through the transplant. A game's own
+  cheats or debug modes, where it has them, reach a scenario through its own code and come first. An edited
+  state may be one play can't reach (a count changed without its list): edits go through the game's
+  structures, and a divergence right after one is suspected of the edit before the port.
 - **Session snapshots** (D51): `rrc record` keeps a snapshot every 10 emulated seconds in the cache, keyed by
   what makes the run and its ticks the same; questions about a tick (`rrc watch`, `rrc inputs`) start from
   the last one before it. Answers about a whole session (`rrc calls`, `rrc inputs`) are kept by the run and the
@@ -354,7 +361,7 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 | M0 Repository | Clockwork imported and cut down; workspace, tests, CI | Clockwork's tests pass; Wolf3D, Arena and Daggerfall reach their checkpoints as before |
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
 | M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | Recreate's Wolf3D knowledge loads (outside the port); a session of the Wolf3D port is traced |
-| M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, the comparison and its report | A toy port of a test program matches tick by tick |
+| M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, scenario sessions, the comparison and its report | A toy port of a test program matches tick by tick |
 | M4 Pilot | Wolf3D gameplay as a native simulation, from a transplant at the start of E1M1, compared per tick (a test of the toolkit, not a finished port: D52) | It matches through the pushwall session. id's released source stays out of the agent's reach and grades the result afterwards |
 | M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |
 | M6 Modern mode | Fixed-rate logic, free frame rate, resolution, the first quirk fixes | The modern toggles pass their own tests |

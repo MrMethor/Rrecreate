@@ -411,6 +411,24 @@ handshake already catches today's mistake of an `rrc` and a `clockwork` from dif
 because it is best shaped by a second platform in hand: a platform layer inside `rrc`, a core shared between
 emulators, a `platform` setting in `rrc.toml` (a later default of `dos-pc` needs no change to existing ports).
 
+### D59. Scenario sessions: a base, edits at ticks, then input. Accepted 2026-10-23, with the person.
+A session may set up the scenario it needs instead of playing to it: it starts from power-on or a snapshot,
+writes values into the original's memory at chosen ticks (named data through the knowledge's types where
+there is any, IDs otherwise), then runs its input. The edits are part of the session, in what makes its run
+the same (its snapshots, traces and kept answers follow them), and its trace lists them, so a divergence can
+be traced to an edit. Only the original is edited: the port gets the same scenario by a transplant at that
+tick (DESIGN.md §8). Where a game has its own cheats or debug modes, they come first: they reach the
+scenario through the game's own code.
+**Why:** reaching a scenario by play (input scripts found by trial) is the slowest part of the work, and the
+goal is to implement a game as efficiently as possible; the person proposed it. The risk is a state play
+can't reach (a count changed without the list it counts, a value the game derives from others left stale): a
+port matching from there proves little, and a divergence there may be a false alarm. Edits therefore go
+through the game's structures as the knowledge describes them, and are suspected first when a divergence
+follows one.
+**The emulator:** nothing new. The protocol's `write` already writes memory as the program sees it (through
+the page tables), Clockwork drops its decoded code at every run, and the edits are part of the state and its
+hash. rrc runs to the tick, writes, and goes on. Part of M3.
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the
