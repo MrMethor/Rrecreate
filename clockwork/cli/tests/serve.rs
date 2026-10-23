@@ -150,7 +150,7 @@ fn a_field_of_the_wrong_type_is_refused_not_defaulted() {
         json!({"id": 4, "op": "run", "ms": 100, "n": null}),
     ]);
     std::fs::remove_dir_all(&dir).ok();
-    assert_eq!(answers[1]["error"], "\"ms\" must be a number");
+    assert_eq!(answers[1]["error"], "\"ms\" must be a whole number");
     assert_eq!(answers[2]["error"], "\"reads\" must be true or false");
     assert_eq!(answers[3]["stop"], "exited with code 0", "null is absent");
 }

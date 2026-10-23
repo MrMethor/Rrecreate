@@ -9,13 +9,19 @@
 //! `{rshift}` `{ctrl}` `{rctrl}` `{alt}` `{ralt}` `{caps}`; `{click X Y}` (and `{rclick X Y}`)
 //! moves the mouse to X, Y in the mouse driver's coordinates, presses the button 100 ms later and
 //! releases it 250 ms after that (moving before pressing matters: some games, like Arena,
-//! put the cursor back where they last read it every frame); `{move X Y}` only moves;
+//! put the cursor back where they last read it every frame); `{move X Y}` only moves, to a place on
+//! the screen (the driver keeps the cursor in its range, and the motion stops with it); `{motion DX DY}`
+//! moves the mouse by DX, DY mickeys, as a hand does: the driver's motion counters take all of it, and
+//! the cursor follows within its range (a game that turns by the motion turns as far as asked);
 //! `{stick X Y BUTTONS}` puts the first joystick at X, Y (-32767 to 32767, left and up negative) with
 //! BUTTONS held (bit 0 button 1, bit 1 button 2) until the next such step, `{stick2 ...}` the second
 //! (`--joystick N` connects them);
 //! `{hold KEY MS}` holds a key (a named one or a character) down for MS ms, to walk in a game;
 //! `{keydown KEY}` and `{keyup KEY}` press and release one with other steps between (Ctrl held
 //! while walking, Alt+X); `{wait MS}` waits.
+//!
+//! MS counts from power-on. A line whose time has passed when it is given (`clockwork serve`'s
+//! `input`, between runs) is refused: its input would land later than the time it says.
 
 use dos::Machine;
 use dos::keyboard::{LEFT_SHIFT, ascii_to_scancode};
@@ -44,6 +50,11 @@ enum Step {
     Move {
         x: i16,
         y: i16,
+    },
+    /// Mouse motion in mickeys.
+    Motion {
+        dx: i16,
+        dy: i16,
     },
     /// A joystick (0 or 1) at a position with buttons held.
     Stick {
@@ -105,8 +116,9 @@ fn key(name: &str) -> Option<Vec<u8>> {
 }
 
 impl Script {
-    /// Parses `MS:KEYS`.
+    /// Parses `MS:KEYS` (a line from a file may end in CR LF: the line break isn't a key).
     pub fn parse(spec: &str) -> Result<Script, String> {
+        let spec = spec.trim_end_matches(['\r', '\n']);
         let (time, keys) = spec.split_once(':').ok_or_else(|| format!("--input {spec:?}: expected MS:KEYS"))?;
         let start_ms = time.trim().parse().map_err(|_| format!("--input {spec:?}: bad time {time:?}"))?;
         let mut steps = Vec::new();
@@ -120,6 +132,7 @@ impl Script {
                     ["click", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 1 },
                     ["rclick", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 2 },
                     ["move", x, y] => Step::Move { x: number(x)?, y: number(y)? },
+                    ["motion", dx, dy] => Step::Motion { dx: number(dx)?, dy: number(dy)? },
                     [which @ ("stick" | "stick2"), x, y, buttons] => {
                         let buttons = buttons.parse::<u8>().ok().filter(|&b| b <= 3);
                         Step::Stick {
@@ -154,9 +167,16 @@ impl Script {
         Ok(Script { start_ms, steps })
     }
 
-    /// Queues the script's input in the machine.
-    pub fn schedule(&self, m: &mut Machine) {
+    /// Queues the script's input in the machine; refused if its time has passed.
+    pub fn schedule(&self, m: &mut Machine) -> Result<(), String> {
         let mut at = m.cycle_at_ms(self.start_ms);
+        if at < m.cpu.cycles {
+            return Err(format!(
+                "input at {} ms: the machine is at {} ms already (times count from power-on)",
+                self.start_ms,
+                m.elapsed_ms()
+            ));
+        }
         let ms = |m: &Machine, ms: u64| m.cycle_at_ms(ms);
         for step in &self.steps {
             match step {
@@ -184,6 +204,10 @@ impl Script {
                     m.queue_mouse(at, x, y, 0);
                     at += ms(m, KEY_SPACING_MS);
                 }
+                &Step::Motion { dx, dy } => {
+                    m.queue_input(at, dos::Input::MouseMotion { dx, dy });
+                    at += ms(m, KEY_SPACING_MS);
+                }
                 &Step::Stick { stick, x, y, buttons } => {
                     m.queue_input(at, dos::Input::Joystick { stick, x, y, buttons });
                     at += ms(m, KEY_SPACING_MS);
@@ -200,6 +224,7 @@ impl Script {
                 &Step::Wait(wait) => at += ms(m, wait),
             }
         }
+        Ok(())
     }
 }
 
@@ -242,6 +267,8 @@ mod tests {
             [Step::Stick { stick: 0, x: -32767, y: 0, buttons: 1 }, Step::Stick { stick: 1, x: 5, y: 6, buttons: 0 }]
         );
         assert!(Script::parse("0:{stick 0 0 4}").is_err());
+        assert_eq!(Script::parse("5:{motion -900 12}").unwrap().steps, [Step::Motion { dx: -900, dy: 12 }]);
+        assert_eq!(Script::parse("5:a\r\n").unwrap().steps, [Step::Key(vec![0x1E])], "a line break isn't a key");
         assert!(Script::parse("12:{nope}").is_err());
         assert!(Script::parse("12:{keydown}").is_err());
         assert!(Script::parse("x:a").is_err());

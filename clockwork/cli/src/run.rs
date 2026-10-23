@@ -105,7 +105,7 @@ pub(crate) fn prepare(o: &Options) -> Result<(Machine, String, u64), String> {
         m.type_text(start, text, m.cycle_at_ms(60));
     }
     for script in &o.inputs {
-        script.schedule(&mut m);
+        script.schedule(&mut m)?;
     }
     if o.trace.is_some() {
         m.probes.service_trace = Some(Vec::new());

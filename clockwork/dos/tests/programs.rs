@@ -1279,6 +1279,27 @@ fn mouse_polling_reports_positions_with_text_mode_granularity() {
 }
 
 #[test]
+fn relative_motion_counts_every_mickey() {
+    // Reset the driver, then wait: the motion goes to the driver's counters.
+    let program = com(|a| {
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.here("wait")?;
+        let wait = a.l("wait");
+        a.jmp(wait)
+    });
+    let mut m = boot(&[("M.COM", &program)], "M.COM");
+    let words = |m: &Machine| -> Vec<i16> {
+        m.device_state(dos::Device::Mouse).chunks(2).take(5).map(|c| i16::from_le_bytes([c[0], c[1]])).collect()
+    };
+    assert_eq!(words(&m)[1..3], [320, 96], "the driver centres the cursor (in text mode, in 8-pixel cells)");
+    // Far past the right edge, as a hand turning: the cursor stops there, the motion doesn't.
+    m.queue_input(m.cpu.cycles + 1000, dos::Input::MouseMotion { dx: 5000, dy: -32 });
+    m.run(SECOND / 10);
+    assert_eq!(words(&m)[1..5], [632, 80, 5000, -32], "at the right edge, 16 pixels up, every mickey counted");
+}
+
+#[test]
 fn the_mouse_state_is_what_int_33h_reports() {
     // Forever: a wait (where the input arrives), then at `read` functions 03h, 0Bh, 05h and 06h (left
     // button) into `got` (11 words), then `done`.

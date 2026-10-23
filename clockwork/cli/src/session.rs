@@ -42,6 +42,7 @@ impl Session {
                 Input::Key(code) => writeln!(out, "{cycle} K {code:02X}"),
                 Input::Mouse { x, y, buttons } => writeln!(out, "{cycle} M {x} {y} {buttons}"),
                 Input::Joystick { stick, x, y, buttons } => writeln!(out, "{cycle} J {stick} {x} {y} {buttons}"),
+                Input::MouseMotion { dx, dy } => writeln!(out, "{cycle} R {dx} {dy}"),
             }
             .expect("writing to a String");
         }
@@ -95,6 +96,7 @@ fn parse_input(text: &str) -> Option<Input> {
         ["M", x, y, buttons] => {
             Some(Input::Mouse { x: x.parse().ok()?, y: y.parse().ok()?, buttons: buttons.parse().ok()? })
         }
+        ["R", dx, dy] => Some(Input::MouseMotion { dx: dx.parse().ok()?, dy: dy.parse().ok()? }),
         ["J", stick, x, y, buttons] => Some(Input::Joystick {
             stick: stick.parse().ok().filter(|&s: &u8| s < 2)?,
             x: x.parse().ok()?,
@@ -119,6 +121,7 @@ mod tests {
                 (100, Input::Key(0x1E)),
                 (180, Input::Mouse { x: 320, y: -1, buttons: 1 }),
                 (200, Input::Joystick { stick: 1, x: -32767, y: 400, buttons: 2 }),
+                (210, Input::MouseMotion { dx: -900, dy: 3 }),
                 (250, Input::Key(0x9E)),
             ],
         };

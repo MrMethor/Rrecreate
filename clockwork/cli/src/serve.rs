@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 2;
+pub const PROTOCOL: u64 = 3;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -54,6 +54,7 @@ pub const MACHINE_OPS: &[&str] = &[
     "frames",
     "sound",
     "image",
+    "screenshot",
 ];
 
 struct State {
@@ -66,9 +67,19 @@ struct State {
     watched: Vec<(Range<u32>, u32)>,
 }
 
+impl State {
+    fn new() -> State {
+        State { m: None, copies: BTreeMap::new(), image: 0..0, watched: Vec::new() }
+    }
+}
+
 /// Serves requests from `input` until it ends or a `quit`.
-pub fn session(input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-    let mut state = State { m: None, copies: BTreeMap::new(), image: 0..0, watched: Vec::new() };
+pub fn session(input: impl BufRead, output: impl Write) -> std::io::Result<()> {
+    serve(&mut State::new(), input, output)
+}
+
+/// Serves requests from `input` with the machine (and copies) in `state` until it ends or a `quit`.
+fn serve(state: &mut State, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
     for line in input.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -82,7 +93,7 @@ pub fn session(input: impl BufRead, mut output: impl Write) -> std::io::Result<(
                     writeln!(output, "{}", json!({"id": id, "ok": true}))?;
                     return Ok(());
                 }
-                (id, guarded(&mut state, |state| handle(state, &op, &request)))
+                (id, guarded(state, |state| handle(state, &op, &request)))
             }
             Err(e) => (Value::Null, Err(format!("not JSON: {e}"))),
         };
@@ -114,6 +125,41 @@ fn guarded(st: &mut State, f: impl FnOnce(&mut State) -> Result<Value, String>) 
     })
 }
 
+/// `clockwork ask --port N REQUEST...`: each request (a JSON object, or an op's name alone) to the
+/// `serve` on that port, in one connection; prints each answer. Fails if one is an error.
+pub fn cmd_ask(args: &[String]) -> Result<std::process::ExitCode, String> {
+    let [flag, port, requests @ ..] = args else { return Err("ask --port N REQUEST...".into()) };
+    if flag != "--port" || requests.is_empty() {
+        return Err("ask --port N REQUEST...".into());
+    }
+    let port: u16 = port.parse().map_err(|_| format!("bad port {port:?}"))?;
+    let answers = ask(port, requests)?;
+    answers.iter().for_each(|a| println!("{a}"));
+    let failed = answers.iter().any(|a| a.get("error").is_some());
+    Ok(if failed { std::process::ExitCode::from(1) } else { std::process::ExitCode::SUCCESS })
+}
+
+/// The answers of the `serve` on `port` to `requests` (JSON objects, or ops' names), in one connection.
+fn ask(port: u16, requests: &[String]) -> Result<Vec<Value>, String> {
+    let stream = std::net::TcpStream::connect(("127.0.0.1", port))
+        .map_err(|e| format!("no clockwork serve --port {port}: {e}"))?;
+    let mut reader = std::io::BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+    let mut writer = stream;
+    let mut answers = Vec::new();
+    for request in requests {
+        let request =
+            if request.trim_start().starts_with('{') { request.clone() } else { json!({"op": request}).to_string() };
+        writeln!(writer, "{request}").map_err(|e| e.to_string())?;
+        let mut answer = String::new();
+        reader.read_line(&mut answer).map_err(|e| e.to_string())?;
+        if answer.is_empty() {
+            return Err("the server closed the connection".into());
+        }
+        answers.push(serde_json::from_str(&answer).map_err(|e| format!("not JSON: {e}"))?);
+    }
+    Ok(answers)
+}
+
 /// `clockwork serve [--port N]`.
 pub fn cmd_serve(args: &[String]) -> Result<std::process::ExitCode, String> {
     match args {
@@ -125,17 +171,25 @@ pub fn cmd_serve(args: &[String]) -> Result<std::process::ExitCode, String> {
             let port: u16 = port.parse().map_err(|_| format!("bad port {port:?}"))?;
             let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| e.to_string())?;
             eprintln!("clockwork: serving on 127.0.0.1:{port}");
-            for stream in listener.incoming() {
-                let stream = stream.map_err(|e| e.to_string())?;
-                let reader = std::io::BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
-                if let Err(e) = session(reader, stream) {
-                    eprintln!("clockwork: connection: {e}");
-                }
-            }
+            serve_tcp(listener)?;
         }
         _ => return Err("usage: clockwork serve [--port N]".into()),
     }
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+/// One machine for every connection, one connection at a time: a tool may ask, close and come back
+/// (`clockwork ask`), and finds the machine as it left it. `quit` ends a connection, not the machine.
+fn serve_tcp(listener: std::net::TcpListener) -> Result<(), String> {
+    let mut state = State::new();
+    for stream in listener.incoming() {
+        let stream = stream.map_err(|e| e.to_string())?;
+        let reader = std::io::BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+        if let Err(e) = serve(&mut state, reader, stream) {
+            eprintln!("clockwork: connection: {e}");
+        }
+    }
+    Ok(())
 }
 
 fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
@@ -354,8 +408,11 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             }))
         }
         "input" => {
-            for line in strings(r, "lines")? {
-                crate::input_script::Script::parse(&line)?.schedule(m);
+            // As --input-file reads them: blank lines and comments are skipped.
+            let lines = strings(r, "lines")?;
+            let scripts = lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty() && !l.starts_with('#'));
+            for script in scripts.map(crate::input_script::Script::parse).collect::<Result<Vec<_>, _>>()? {
+                script.schedule(m)?;
             }
             Ok(json!({}))
         }
@@ -496,6 +553,14 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 .map(|l| json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at)}))
                 .collect();
             Ok(json!({"late": findings, "dropped": late.dropped}))
+        }
+        "screenshot" => {
+            let file = std::path::PathBuf::from(text(r, "file")?);
+            let (w, h, rgb) = m.screen_rgb();
+            let png = file.extension().is_some_and(|e| e.eq_ignore_ascii_case("png"));
+            let bytes = if png { crate::screenshot::png_image(w, h, &rgb) } else { crate::screenshot::bmp(w, h, &rgb) };
+            std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
+            Ok(json!({"width": w, "height": h, "frame": m.frames.last().map(|f| f.number)}))
         }
         "frames" => {
             let (from, to) = span(m, r)?;
@@ -651,8 +716,11 @@ fn flag(r: &Value, key: &str) -> Result<Option<bool>, String> {
     optional(r, key, Value::as_bool, "true or false")
 }
 
+/// A count: a whole number, which JSON may write as 16000.0.
 fn number(r: &Value, key: &str) -> Result<Option<u64>, String> {
-    optional(r, key, Value::as_u64, "a number")
+    let whole =
+        |v: &Value| v.as_u64().or_else(|| v.as_f64().filter(|f| f.fract() == 0.0 && *f >= 0.0).map(|f| f as u64));
+    optional(r, key, whole, "a whole number")
 }
 
 fn text<'a>(r: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -719,9 +787,55 @@ fn unhex(s: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
+    /// A folder with T.COM, a program that waits forever.
+    fn game(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("clockwork-serve-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("T.COM"), [0xEB, 0xFE]).unwrap();
+        dir
+    }
+
+    fn ask_state(st: &mut State, request: Value) -> Result<Value, String> {
+        let op = request["op"].as_str().unwrap().to_owned();
+        guarded(st, |st| handle(st, &op, &request))
+    }
+
+    #[test]
+    fn input_lines_read_as_a_file_does_and_a_time_past_is_refused() {
+        let dir = game("input");
+        let mut st = State::new();
+        ask_state(&mut st, json!({"op": "load", "argv": [dir.to_str().unwrap(), "T.COM"]})).unwrap();
+        ask_state(&mut st, json!({"op": "run", "until_ms": 100.0})).unwrap();
+        let past = ask_state(&mut st, json!({"op": "input", "lines": ["50:a"]})).unwrap_err();
+        assert!(past.contains("input at 50 ms: the machine is at 100 ms already"), "{past}");
+        let lines = json!({"op": "input", "lines": ["# a comment", "", "200:a\r"]});
+        assert!(ask_state(&mut st, lines).is_ok(), "a comment, a blank line and a CR are no keys");
+        assert!(ask_state(&mut st, json!({"op": "run", "until_ms": 100.5})).is_err(), "a whole number of ms");
+        ask_state(&mut st, json!({"op": "run", "until_ms": 400})).unwrap();
+        let file = dir.join("screen.png");
+        let shot = ask_state(&mut st, json!({"op": "screenshot", "file": file.to_str().unwrap()})).unwrap();
+        assert_eq!((shot["width"].as_u64(), shot["height"].as_u64()), (Some(720), Some(400)), "{shot}");
+        assert!(std::fs::read(&file).unwrap().starts_with(b"\x89PNG"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn connections_share_the_machine() {
+        let dir = game("tcp");
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || serve_tcp(listener));
+        let load = json!({"op": "load", "argv": [dir.to_str().unwrap(), "T.COM"]}).to_string();
+        let first = ask(port, &[load, r#"{"op": "run", "ms": 50}"#.into(), "quit".into()]).unwrap();
+        assert!(first.iter().all(|a| a["ok"] == true), "{first:?}");
+        let second = ask(port, &["regs".into()]).unwrap();
+        assert!(second[0]["cycles"].as_u64() > Some(0), "the machine the first connection ran: {second:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn a_panic_is_an_error_and_the_machine_goes() {
-        let mut st = State { m: None, copies: BTreeMap::new(), image: 0..0, watched: Vec::new() };
+        let mut st = State::new();
         st.m = Some(Machine::new(dos::Config::default(), dos::Vfs::new()));
         let reply = guarded(&mut st, |_| panic!("an invariant broke"));
         assert!(reply.is_err_and(|e| e.contains("an invariant broke")));

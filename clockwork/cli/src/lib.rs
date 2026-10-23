@@ -36,6 +36,7 @@ pub fn main() -> ExitCode {
         Some("unpack") => unpack::cmd_unpack(&args[1..]),
         Some("listing") => listing::cmd_listing(&args[1..]),
         Some("serve") => serve::cmd_serve(&args[1..]),
+        Some("ask") => serve::cmd_ask(&args[1..]),
         Some("gdb") => gdb::cmd_gdb(&args[1..]),
         Some("--version") => {
             println!("clockwork {}", env!("CARGO_PKG_VERSION"));

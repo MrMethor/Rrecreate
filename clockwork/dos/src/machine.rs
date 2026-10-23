@@ -118,6 +118,8 @@ pub enum Input {
     /// Joystick `stick` (0 or 1) is at (x, y), each -32767..=32767, with these buttons held
     /// (bit 0 button 1, bit 1 button 2).
     Joystick { stick: u8, x: i16, y: i16, buttons: u8 },
+    /// The mouse moved by (dx, dy) mickeys, its buttons as they were.
+    MouseMotion { dx: i16, dy: i16 },
 }
 
 /// An input device whose state a program reads through a service or a port, never from memory of
@@ -1417,6 +1419,7 @@ impl Machine {
             match input {
                 Input::Key(code) => self.devices.keyboard.push(code),
                 Input::Mouse { x, y, buttons } => mouse::input(self, i32::from(x), i32::from(y), buttons),
+                Input::MouseMotion { dx, dy } => mouse::motion(self, i32::from(dx), i32::from(dy)),
                 Input::Joystick { stick, x, y, buttons } => {
                     self.devices.game_port.set(usize::from(stick), Stick { x, y, buttons });
                 }

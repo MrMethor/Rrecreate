@@ -216,13 +216,36 @@ pub(crate) fn input(m: &mut Machine, x: i32, y: i32, buttons: u8) {
     if !m.mouse.enabled {
         return;
     }
-    let mouse = &mut m.mouse;
+    let mouse = &m.mouse;
     let (x, y) = (x.clamp(mouse.min_x, mouse.max_x), y.clamp(mouse.min_y, mouse.max_y));
+    // Mickeys: 8 pixels move the ratio's worth (defaults 8 horizontally, 16 vertically).
+    let (rx, ry) = mouse.mickeys_per_8_pixels;
+    let mickeys = ((x - mouse.x) * rx / 8, (y - mouse.y) * ry / 8);
+    update(m, (x, y), mickeys, buttons);
+}
+
+/// Host input: the mouse moved by (dx, dy) mickeys, as a hand moves it. The motion counters take all
+/// of it (DOSBox's driver counts relative motion the same way); the cursor moves by the pixels it is
+/// worth, within the driver's range.
+pub(crate) fn motion(m: &mut Machine, dx: i32, dy: i32) {
+    if !m.mouse.enabled {
+        return;
+    }
+    let mouse = &m.mouse;
+    let (rx, ry) = mouse.mickeys_per_8_pixels;
+    let x = (mouse.x + dx * 8 / rx).clamp(mouse.min_x, mouse.max_x);
+    let y = (mouse.y + dy * 8 / ry).clamp(mouse.min_y, mouse.max_y);
+    update(m, (x, y), (dx, dy), m.mouse.buttons);
+}
+
+/// The mouse is at `at` (in range), moved by `mickeys`, with `buttons`: the driver's state, the
+/// cursor and the user handler follow.
+fn update(m: &mut Machine, (x, y): (i32, i32), mickeys: (i32, i32), buttons: u8) {
+    let mouse = &mut m.mouse;
     let mut events = 0;
-    if (x, y) != (mouse.x, mouse.y) {
-        // Mickeys: 8 pixels move the ratio's worth (defaults 8 horizontally, 16 vertically).
-        mouse.mickeys.0 += (x - mouse.x) * mouse.mickeys_per_8_pixels.0 / 8;
-        mouse.mickeys.1 += (y - mouse.y) * mouse.mickeys_per_8_pixels.1 / 8;
+    if (x, y) != (mouse.x, mouse.y) || mickeys != (0, 0) {
+        mouse.mickeys.0 += mickeys.0;
+        mouse.mickeys.1 += mickeys.1;
         events |= event::MOVED;
     }
     let changed = buttons ^ mouse.buttons;

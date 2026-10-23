@@ -54,7 +54,10 @@ rrc session add first-level --seconds 51 --inputs first-level.inputs --descripti
 ```
 
 An input script presses keys, clicks and moves the mouse, and moves the joystick (`{stick X Y BUTTONS}`; the
-session then needs `--clockwork "--joystick 1"`): `clockwork/README.md` lists its steps.
+session then needs `--clockwork "--joystick 1"`): `clockwork/README.md` lists its steps. A game that turns by
+the mouse's motion turns with `{motion DX DY}` (mickeys), not `{move X Y}`, whose motion stops at the screen's
+edge. To find a script, explore the game step by step from a snapshot instead of rerunning it
+(`clockwork/README.md`, "Exploring a game"): the lines that worked are the script.
 
 A tick is one pass of the original's main loop; a sync point is the instruction where it ends. To find one:
 

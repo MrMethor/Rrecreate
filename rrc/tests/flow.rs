@@ -101,7 +101,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(repo.join(".gitattributes").is_file() && repo.join(".gitignore").is_file());
     rrc.ok(&["game", game.to_str().unwrap(), "--add-version", "1.0"]);
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 2, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 3, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);

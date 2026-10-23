@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **2** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **3** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -10,9 +10,11 @@ The protocol has a **core**, which any machine can answer, and a **platform exte
 
 ## Transport
 
-`<emulator> serve` reads requests on its standard input and writes answers on its standard output (Clockwork
-also listens on a local TCP port with `serve --port N`). A request is a JSON object on one line, with `op` and
-an optional `id`; each gets one line back, with the same `id`:
+`<emulator> serve` reads requests on its standard input and writes answers on its standard output. Clockwork
+also listens on a local TCP port with `serve --port N`: one connection at a time, all with the same machine, so
+a tool can come back to it (`clockwork ask --port N REQUEST...` sends requests and prints the answers); `quit`
+ends a connection there. A request is a JSON object on one line, with `op` and an optional `id`; each gets one
+line back, with the same `id`:
 
 ```json
 {"id": 7, "op": "run", "ms": 100}
@@ -22,7 +24,8 @@ an optional `id`; each gets one line back, with the same `id`:
 ```
 
 An answer is `{"ok": true, ...}` or `{"error": "..."}`. A field a request may leave out is absent or `null`;
-given with another type, it is an error, never its default. An emulator that panics while answering answers
+given with another type, it is an error, never its default. Counts (milliseconds, cycles, lengths) are whole
+numbers, which may be written `16000.0`. An emulator that panics while answering answers
 with an error and drops its machine (copies in memory stay). `quit` ends the session.
 
 ## What every emulator promises
@@ -45,7 +48,7 @@ A platform may add its own forms (`dos-pc`: `SEG:OFF`, `%PHYS`).
 
 ## Core operations
 
-**`hello`**: what the emulator is: `{"protocol": 2, "platform": "dos-pc", "emulator": "clockwork",
+**`hello`**: what the emulator is: `{"protocol": 3, "platform": "dos-pc", "emulator": "clockwork",
 "version": "0.1.0"}`. A tool refuses a revision or platform it doesn't speak.
 
 **Loading.** `load` `{"argv": [dir, program, options...]}`: a machine with the game's folder and program,
@@ -73,7 +76,8 @@ where nothing is mapped; a device's state is the bytes the platform defines for 
 machine's state hash, as the emulator's `run` prints it.
 
 **Input.** `input` `{"lines": ["MS:STEPS", ...]}`: scripted input at emulated times from power-on, in the
-platform's script language.
+platform's script language, read as a script file is (blank lines and `#` comments skipped, line ends
+trimmed). A line whose time has passed is refused: its input would land later than it says.
 
 **Watches.** `watch` `{"ranges": [{"at", "len"}], "reads": false, "limit": 10000}` ... `watch_end`: each
 write (and read) of the watched bytes: `hits`, each `{"at", "kind", "value", "old", "cycle", "by", "chain"}`,
@@ -108,7 +112,9 @@ driver, the instruction its call returns to), a source once a tick; `dropped`, w
 picture changed, handed over with each `tick` or by `take_frame_images` (`images`: `[[number, hex]]`). A
 picture is `FRM1`, the width and height (16-bit, little-endian) and a kind (0 indexed: a 256-entry palette of
 R, G, B at 0-63, then a byte a pixel; 1 RGB: 3 bytes a pixel), raw-deflated, pixels row by row from the top
-left. `sound` `{"from", "to"}`: the sound events then, by kind (the platform's kinds).
+left. `sound` `{"from", "to"}`: the sound events then, by kind (the platform's kinds). `screenshot` `{"file"}`:
+the screen now as a picture file (PNG for `.png`, the platform's other format otherwise), answering its
+`width`, `height` and the last `frame`'s number.
 
 ## The `dos-pc` platform
 
@@ -125,8 +131,8 @@ An IBM PC with DOS (Clockwork).
   sticks, 12 bytes); `docs/formats.md` has their layouts.
 - **Registers** (`regs`): `eax` ... `edi`, `es`, `cs`, `ss`, `ds`, `eip`, `flags`, `protected`.
 - **Services** in watches are by interrupt (`08`, `21`, `33`...); ports by number.
-- **Input scripts**: `clockwork/cli/src/input_script.rs` (keys on a US keyboard, `{click X Y}`, `{stick X Y
-  BUTTONS}`...).
+- **Input scripts**: `clockwork/cli/src/input_script.rs` (keys on a US keyboard, `{click X Y}`, `{motion DX
+  DY}` in mickeys, `{stick X Y BUTTONS}`...). `screenshot` writes BMP for any other extension.
 - **Sound events** (`sound`): `opl` (`[ns, register, value]`), `speaker` (`[pit_tick, wave]`), `pcm` (digitized
   sound starts: `[ns, rate, stereo]`), `midi` (`[pit_tick, byte]`), `cd` (`[ns, sector, sectors]`).
 - **`objects`** `{"program"}`: the running program, or the one named if it runs or started the one running: its
@@ -140,6 +146,8 @@ An IBM PC with DOS (Clockwork).
 
 1. The first (D58).
 2. `late_inputs`, `late_inputs_end` (D60).
+3. `screenshot`; counts may be written as whole floats; `input` refuses a line whose time has passed and
+   reads lines as a script file; a TCP `serve` keeps one machine for every connection.
 
 ## Changing the protocol
 

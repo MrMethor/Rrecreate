@@ -31,12 +31,15 @@ prints a short summary: why it stopped, console output, frame fingerprints, a st
 program used that isn't emulated yet (`--json` for tools). `clockwork --help` lists every option. The main
 ones:
 
-- `--input "25000:{enter}"` (repeatable) and `--input-file FILE` script keys and clicks at emulated times:
-  text, named keys (`{esc}`, `{up}`, `{f1}`, `{ctrl}`...), `{click X Y}` in the mouse driver's coordinates,
-  `{move X Y}`, `{stick X Y BUTTONS}` (the first joystick, with `--joystick 1`; `{stick2 ...}` the second),
-  `{hold KEY MS}`, `{keydown KEY}`/`{keyup KEY}`, `{wait MS}`. Run it, look at the `--screenshot`, add the
-  next step. `../testdata/inputs/` has walkthroughs that take Wolfenstein 3D into its first level and past a
-  pushwall, and Arena and Daggerfall to their first dungeons;
+- `--input "25000:{enter}"` (repeatable) and `--input-file FILE` script keys and clicks at emulated times
+  (from power-on): text, named keys (`{esc}`, `{up}`, `{f1}`, `{ctrl}`...), `{click X Y}` in the mouse
+  driver's coordinates, `{move X Y}` (to a place: the cursor stays in the driver's range, and the motion
+  stops with it), `{motion DX DY}` (by DX, DY mickeys, as a hand moves the mouse: a game that turns by the
+  motion turns as far as asked), `{stick X Y BUTTONS}` (the first joystick, with `--joystick 1`;
+  `{stick2 ...}` the second), `{hold KEY MS}`, `{keydown KEY}`/`{keyup KEY}`, `{wait MS}`. Run it, look at
+  the `--screenshot`, add the next step, or explore step by step (below, "Exploring a game").
+  `../testdata/inputs/` has walkthroughs that take Wolfenstein 3D into its first level and past a pushwall,
+  and Arena and Daggerfall to their first dungeons;
 - `--screenshot out.png` (or `.bmp`) saves the last screen in any video mode;
 - `--save-changes DIR` writes the files the program created or changed to DIR (the game folder is never
   touched): that's how to install a game with its own installer;
@@ -60,7 +63,8 @@ target/release/clockwork play "C:/Games/KEEN1" KEEN1.EXE --record keen.session
 `play` opens a window with keyboard, mouse and gamepad input and live sound (OPL, Sound Blaster and PC
 speaker through the sound output, MIDI through the computer's synthesizer: `--midi-out NAME`, `--no-audio`).
 With `--record`, the input is saved as a session that `run DIR --replay keen.session` reproduces exactly.
-Session files are text: `<cycle> K <scancode hex>` for keys and `<cycle> M <x> <y> <buttons>` for the mouse.
+Session files are text: `<cycle> K <scancode hex>` for keys, `<cycle> M <x> <y> <buttons>` for the mouse
+(`<cycle> R <dx> <dy>` for relative motion), `<cycle> J <stick> <x> <y> <buttons>` for a joystick.
 
 `unpack` undoes an executable packer (PKLITE, LZEXE, EXEPACK, DIET...) by running the program until the
 packer hands over; for a flat program under a DOS extender (an LE executable: CauseWay, DOS/4GW), it runs it
@@ -77,6 +81,28 @@ watched bytes comes back with its instruction, cycle and call chain. Bounds chec
 input read after it changed since a tick began (`late_inputs`) work the same way. Addresses are `+OFF` (image offsets), `SEG:OFF` or `@LINEAR`. The operations are the emulator
 protocol's, in `../docs/protocol.md` (its core, and the `dos-pc` platform's extension); `hello` says the
 revision. A request that makes Clockwork panic gets an error and drops the machine; the server goes on.
+
+### Exploring a game
+
+Finding the input that takes a game somewhere by reruns from power-on is slow. A `serve` on a TCP port keeps
+one machine for every connection, so a shell can step it with `clockwork ask`, which sends requests (JSON, or
+an operation's name alone) and prints the answers:
+
+```bash
+target/release/clockwork serve --port 4000
+```
+
+```bash
+target/release/clockwork ask --port 4000 '{"op": "load", "argv": ["C:/Games/WOLF3D", "WOLF3D.EXE"]}' '{"op": "run", "until_ms": 12000}' '{"op": "screenshot", "file": "now.png"}'
+```
+
+```bash
+target/release/clockwork ask --port 4000 '{"op": "snapshot", "name": "hall"}' '{"op": "input", "lines": ["12000:{hold up 900}"]}' '{"op": "run", "until_ms": 13500}' '{"op": "screenshot", "file": "now.png"}'
+```
+
+Look at the picture, then go on, or `restore` the copy and try another step. Input lines are a script's
+(`--input-file`'s): their times count from power-on, and a line whose time has passed is refused, since its
+input would land later than it says. The lines that worked, in order, are the session's script.
 
 `clockwork gdb [--port N] <dir> <program> [run's options]` starts the program stopped at its entry and waits
 for a debugger speaking GDB's remote protocol (`target remote 127.0.0.1:1234` in gdb, or Ghidra's debugger):

@@ -12,6 +12,9 @@ usage:
                                                  running it to its entry point; writes an MZ file
   clockwork serve [--port N]                     be driven by a tool: JSON requests, one per line,
                                                  on stdin or a local TCP port (see serve.rs)
+  clockwork ask --port N REQUEST...              send requests (JSON, or OP for {\"op\": OP}) to a
+                                                 serve on that port and print the answers: its
+                                                 machine stays between asks
   clockwork gdb [--port N] <game-dir> <program> [options]
                                                  the program stopped at its entry, for gdb or
                                                  Ghidra's debugger on 127.0.0.1:N (1234; gdb.rs)
@@ -34,7 +37,8 @@ options:
                      {ins} {del} {f1}..{f12} {shift} {rshift} {ctrl} {rctrl} {alt} {ralt} {caps},
                      {hold KEY MS} (held MS ms), {keydown KEY} {keyup KEY} (KEY a name or a
                      character), {click X Y} {rclick X Y} {move X Y} (mouse driver coordinates),
-                     {wait MS}; one step after the other, keys 120 ms apart
+                     {motion DX DY} (mickeys), {stick X Y BUTTONS} {stick2 ...}, {wait MS}; one step
+                     after the other, keys 120 ms apart; MS counts from power-on
   --input-file FILE  run: --input lines from FILE (# starts a comment)
   --replay FILE      run: replay a session recorded by play (program may be omitted)
   --screenshot FILE  run: save the final screen as a PNG (FILE.png) or a BMP
