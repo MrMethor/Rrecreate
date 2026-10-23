@@ -34,17 +34,24 @@ impl EditLock {
         loop {
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(_) => return Ok(EditLock { path }),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // On Windows, a lock being removed can't be created again for a moment: access is denied.
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::AlreadyExists
+                        || e.kind() == std::io::ErrorKind::PermissionDenied =>
+                {
                     let age = std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
                     if age.is_some_and(|age| age.as_secs() >= 60) {
                         let _ = std::fs::remove_file(&path);
                         continue;
                     }
                     if started.elapsed().as_secs() >= 30 {
-                        return Err(format!(
-                            "another rrc is changing the knowledge ({}; remove it if none runs)",
-                            path.display()
-                        ));
+                        return Err(match path.exists() {
+                            true => format!(
+                                "another rrc is changing the knowledge ({}; remove it if none runs)",
+                                path.display()
+                            ),
+                            false => format!("{}: {e}", path.display()),
+                        });
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
