@@ -91,9 +91,9 @@ python clockwork/tools/who_wrote.py "<game folder>" GAME.EXE --sync +0A31C --var
 ```
 
 ```text
-tick 2268 (from 77363 ms): 2 writes to +3C174
-  +3C174 = 01 (was 00)  by +135AB
-    called +1345B (from +12555) <- +124B5 (from +12ACC) <- +12AA9 (from +0D756) <- +0D6F5 (from +0D939) <- +0D881 (from +0C75A) <- ...
+tick 120 (from 4130 ms): 2 writes to +21C40
+  +21C40 = 01 (was 00)  by +0B2E4
+    called +0B2C0 (from +0A3F1) <- +0A350 (from +0A31F) <- ...
 ```
 
 ## Investigating a program
