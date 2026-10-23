@@ -25,7 +25,9 @@ use crate::say;
 use crate::session::{Recorded, Session};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
+/// The first version whose run hash is the one [`Trace::run_hash`] computes.
+const RUN_HASH_SINCE: u32 = 3;
 
 /// A memory item a trace follows, or an input device's state.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -106,6 +108,11 @@ pub struct Tick {
     /// (index in the header's `state`, value) for each item that changed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub state: Vec<(usize, Option<String>)>,
+    /// The inputs the tick's pass read with another value than the tick has, as (index in the header's,
+    /// the ID of the instruction that read it first; for a driver, the one its call returns to): they
+    /// changed after its sync point, before the read (D60).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub late: Vec<(usize, String)>,
     /// The frames shown during the tick: [number, cycle, video mode, fingerprint, picture (its hash in
     /// the cache)].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -241,6 +248,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let (trace, snapshots) = run(repo, &session, header)?;
     let cache = Cache::open(&repo.local)?;
     let text = trace.to_text();
+    let late = late_text(&trace);
     let hash = cache.put(text.as_bytes())?;
     let run = trace.run_hash();
     let ticks = trace.ticks.len() as u64;
@@ -248,6 +256,9 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let before = session.trace.replace(recorded);
     session.save(repo, name)?;
     say("trace", format!("{ticks} ticks, {} KB: {}", text.len() / 1024, trace.end.end));
+    if let Some(late) = late {
+        say("late", late);
+    }
     say(
         "snapshots",
         format!(
@@ -257,12 +268,13 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     );
     match before {
         Some(b) if b.hash == hash => say("same", "as the trace recorded before"),
-        Some(b) if b.run == run => say(
-            "same",
-            format!("run as before; the trace differs ({}, {} ticks): the knowledge changed", b.hash, b.ticks),
-        ),
+        Some(b) if b.run == run => {
+            let older = recorded_header(&cache, &b.hash).is_some_and(|h| h.version != VERSION);
+            let why = if older { "it was in an older format" } else { "the knowledge changed" };
+            say("same", format!("run as before; the trace differs ({}, {} ticks): {why}", b.hash, b.ticks))
+        }
         Some(b) if b.run.is_empty() => say("differs", "from the trace recorded before, which has no run hash"),
-        Some(b) if recorded_header(&cache, &b.hash).is_some_and(|h| h.version != VERSION) => say(
+        Some(b) if recorded_header(&cache, &b.hash).is_some_and(|h| h.version < RUN_HASH_SINCE) => say(
             "differs",
             format!("from the trace recorded before, in an older format: its run hash isn't comparable ({})", b.run),
         ),
@@ -365,6 +377,20 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
     let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
     // Tracked from power-on, so the snapshots give a watch from them whole call chains.
     clockwork.ask("calls", json!({"on": true}))?;
+    // Inputs a pass reads after they changed since its sync point (D60).
+    if !header.inputs.is_empty() {
+        let mut sources = Vec::new();
+        for item in &header.inputs {
+            let mut source = item.request(&places)?;
+            if !item.sync.is_empty() {
+                let at: Vec<&String> =
+                    syncs.iter().filter(|(_, name)| item.sync.contains(name)).map(|(at, _)| at).collect();
+                source["sync"] = json!(at);
+            }
+            sources.push(source);
+        }
+        clockwork.ask("late_inputs", json!({ "sources": sources }))?;
+    }
     // Each frame's picture, kept in the cache (D25).
     clockwork.ask("frame_images", json!({"on": true}))?;
     let writer = Cache::open(&repo.local)?.writer();
@@ -416,12 +442,28 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
             skipped,
             inputs: read,
             state: changed,
+            late: Vec::new(),
             frames,
             sound,
         });
         saver.tick(&mut clockwork, ticks.len() as u64, cycle, clockwork::number(&ran, "ms")?)?;
         last_cycle = cycle;
     };
+    if !header.inputs.is_empty() {
+        let found = clockwork.ask("late_inputs_end", Value::Null)?;
+        places.objects()?;
+        for late in found["late"].as_array().into_iter().flatten() {
+            let (Some(cycle), Some(input), Some(at)) =
+                (late["tick"].as_u64(), late["source"].as_u64(), late["at"].as_str())
+            else {
+                continue;
+            };
+            let at = places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
+            if let Ok(i) = ticks.binary_search_by_key(&cycle, |t: &Tick| t.cycle) {
+                ticks[i].late.push((input as usize, at));
+            }
+        }
+    }
     // What the run did after the last tick, and the machine's state at the end.
     let (stop, cycles) = stop;
     let span = json!({ "from": last_cycle });
@@ -508,6 +550,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         for (i, value) in &tick.state {
             say("changed", format!("{} = {}", h.state[*i].name, value_text(value.as_deref(), &ty(&h.state[*i]))));
         }
+        for (i, at) in &tick.late {
+            say("late", format!("{}: changed after the sync point, before {at} read it", h.inputs[*i].name));
+        }
         say("frames", tick.frames.len());
         for (device, events) in &tick.sound {
             say("sound", format!("{device}: {} events", events.as_array().map_or(0, Vec::len)));
@@ -535,6 +580,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         })
         .collect();
     say("syncs", syncs.join(", "));
+    if let Some(late) = late_text(&trace) {
+        say("late", late);
+    }
     let mut changes = vec![0usize; h.state.len()];
     for tick in trace.ticks.iter().skip(1) {
         for (i, _) in &tick.state {
@@ -549,6 +597,38 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let frames = trace.ticks.iter().map(|t| t.frames.len()).sum::<usize>();
     say("frames", format!("{frames}, then {} after the last tick", trace.end.frames.len()));
     Ok(ExitCode::SUCCESS)
+}
+
+/// The ticks whose pass read an input after it changed since their sync point, if any (D60): how
+/// many, and the reads that made them late, most first.
+fn late_text(trace: &Trace) -> Option<String> {
+    let ticks = trace.ticks.iter().filter(|t| !t.late.is_empty()).count();
+    if ticks == 0 {
+        return None;
+    }
+    // (input, instruction) -> (ticks, the first)
+    let mut reads: BTreeMap<(usize, &str), (usize, u64)> = BTreeMap::new();
+    for tick in &trace.ticks {
+        for (i, at) in &tick.late {
+            reads.entry((*i, at.as_str())).or_insert((0, tick.tick)).0 += 1;
+        }
+    }
+    let mut reads: Vec<_> = reads.into_iter().collect();
+    reads.sort_by_key(|(_, (n, first))| (std::cmp::Reverse(*n), *first));
+    let mut most: Vec<String> = reads
+        .iter()
+        .take(3)
+        .map(|((i, at), (n, first))| format!("{} at {at} in {n} (first tick {first})", trace.header.inputs[*i].name))
+        .collect();
+    if reads.len() > 3 {
+        most.push(format!("{} other reads", reads.len() - 3));
+    }
+    let ticks = if ticks == 1 { "1 tick reads".to_owned() } else { format!("{ticks} ticks read") };
+    Some(format!(
+        "{ticks} an input after it changed since the sync point: {}; the pass reads what the next tick records: \
+         move the sync point to the read (docs/porting.md, \"Input that arrives during the pass\")",
+        most.join(", ")
+    ))
 }
 
 /// An item's value over the ticks: each tick it changed (an input: of those that read it), as its
@@ -678,6 +758,7 @@ mod tests {
             skipped: None,
             inputs,
             state,
+            late: vec![],
             frames: vec![json!([n, n * 1000 - 10, 19, "61f5"])],
             sound: serde_json::Map::new(),
         };
@@ -710,6 +791,14 @@ mod tests {
         renamed.header.state.pop();
         renamed.ticks[0].state.truncate(1);
         renamed.ticks[2].inputs.clear();
+        assert_eq!(renamed.run_hash(), trace.run_hash());
+        assert_eq!(late_text(&trace), None);
+        renamed.ticks[1].late = vec![(0, "GAME.EXE+00123".into())];
+        assert_eq!(Trace::parse(&renamed.to_text()).unwrap(), renamed);
+        let late = late_text(&renamed).unwrap();
+        let first = "1 tick reads an input after it changed since the sync point: elapsed at GAME.EXE+00123 in 1 (first \
+                     tick 2); the pass";
+        assert!(late.starts_with(first), "{late}");
         assert_eq!(renamed.run_hash(), trace.run_hash());
         renamed.end.frames.clear();
         assert_ne!(renamed.run_hash(), trace.run_hash());

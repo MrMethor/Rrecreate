@@ -234,7 +234,8 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
 - **Sync points:** addresses in the original where a tick ends (one per loop: menus, play, demo playback),
   where the loop's wait is over and the pass hasn't read its inputs yet (D47); a session's timeline is its
   sequence of sync hits. A loop that polls as fast as the CPU runs, with no wait, has a gated sync point: a
-  hit is a tick only when what the loop reads changed since its last tick (D48). Hits count only while the
+  hit is a tick only when what the loop reads changed since its last tick (D48). Input that changes between
+  a sync point and the pass's read of it is flagged when recording (D60). Hits count only while the
   game's program runs, or a program it started (D57): a launcher may run other programs, whose code can sit
   at the same addresses, before the game.
 - **State mapping** (`mapping.toml` in the port): port field to original location and encoding (sizes,
@@ -323,8 +324,9 @@ at each it reads the boundary values and the named data, and takes the frames an
 tick. The trace is a file of JSON lines in the cache (`docs/formats.md`): a header naming the items, then one
 line per tick with the inputs and the data that changed, the frames (each with its picture, kept in the
 cache) and the sound events, then an end line with what the run did after the last tick and the machine's
-state hash. Besides the trace's hash, the session commits the run's (D54): of the frames, the sound and the
-end, whatever the knowledge reads, so a re-recording tells a knowledge change from a different run.
+state hash. Besides the trace's hash, the session commits the run's (D60): of the frames, the sound and the
+end, whatever the knowledge reads, so a re-recording tells a knowledge change from a different run. A tick
+also lists the inputs its pass read after they changed since its sync point (D60).
 
 ## 10. The agent's workflow
 

@@ -17,10 +17,12 @@ const POLLING: [u8; 24] = [
     0x4C, 0xCD, 0x21, 0xC3, 0x00,
 ];
 
-/// A COM program that resets the mouse driver, then forever waits (`mov cx, 10000; loop $`) and
-/// polls it: `poll` (+00009) is `mov ax, 3; int 33h`.
-const MOUSE_POLLING: [u8; 16] =
-    [0x31, 0xC0, 0xCD, 0x33, 0xB9, 0x10, 0x27, 0xE2, 0xFE, 0xB8, 0x03, 0x00, 0xCD, 0x33, 0xEB, 0xF4];
+/// A COM program that resets the mouse driver, then forever waits (+00004: `mov cx, 10000; loop $`),
+/// polls it (`poll`, +00009: `mov ax, 3; int 33h`) and works a while (`mov cx, 100; loop $`).
+const MOUSE_POLLING: [u8; 21] = [
+    0x31, 0xC0, 0xCD, 0x33, 0xB9, 0x10, 0x27, 0xE2, 0xFE, 0xB8, 0x03, 0x00, 0xCD, 0x33, 0xB9, 0x64, 0x00, 0xE2, 0xFE,
+    0xEB, 0xEF,
+];
 
 /// A COM program that reads the BIOS's timer count (0040:006C) forever: `mov ax, 40h; mov es, ax;
 /// mov ax, es:[6Ch]; call poll; jmp $-14`, `poll` (+0000E) a `ret`.
@@ -99,7 +101,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(repo.join(".gitattributes").is_file() && repo.join(".gitignore").is_file());
     rrc.ok(&["game", game.to_str().unwrap(), "--add-version", "1.0"]);
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 1, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 2, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
@@ -237,6 +239,15 @@ fn the_mouse_is_an_input_and_a_gate() {
     );
     let inputs = rrc.ok(&["inputs", "click"]);
     assert!(inputs.contains("unseen    INT 33h (the mouse driver) called"), "{inputs}");
+    // A sync point before the wait: each change lands in a pass's wait, which then reads it (D60).
+    std::fs::write(rrc.repo.join("knowledge/ticks.toml"), ticks.replace("T.COM+00009", "T.COM+00004")).unwrap();
+    let recorded = rrc.ok(&["record", "click"]);
+    let late = "late      3 ticks read an input after it changed since the sync point: mouse at T.COM+0000E in 3 (first \
+                tick 1)";
+    assert!(recorded.contains(late), "the instruction after INT 33h: {recorded}");
+    let tick = rrc.ok(&["trace", "click", "--tick", "2"]);
+    assert!(tick.contains("late      mouse: changed after the sync point, before T.COM+0000E read it"), "{tick}");
+    assert!(!rrc.ok(&["trace", "click", "--tick", "4"]).contains("late"));
     std::fs::remove_dir_all(&dir).ok();
 }
 

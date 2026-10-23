@@ -328,7 +328,7 @@ port's first-level: traces half the size, and the same run hash with and without
 ticks); the end state hash is `clockwork run`'s for the same input.
 **Supersedes:** D45.
 
-### D54. Traces, version 3: D50's, and every frame's picture. Accepted 2026-10-21, with the person.
+### D54. Traces, version 3: D50's, and every frame's picture. Superseded by D60.
 A trace writes an input when its value differs from when it was last read, as it does state, and an input may
 be read only at some sync points. An item that is an input at every tick isn't written again as state. The
 run ends at exactly the session's length, and the end line has the frames and sound after the last tick and
@@ -428,6 +428,37 @@ follows one.
 **The emulator:** nothing new. The protocol's `write` already writes memory as the program sees it (through
 the page tables), Clockwork drops its decoded code at every run, and the edits are part of the state and its
 hash. rrc runs to the tick, writes, and goes on. Part of M3.
+
+### D60. Input that changes within a tick is flagged; traces, version 4. Accepted 2026-10-23, with the person.
+A sync point is an instruction before the pass reads its inputs, and input arrives at any cycle: input that
+changes between the two is read by the pass but recorded with the next tick. Recording checks for it: from
+each tick's sync point on, Clockwork compares every read the program makes of an input (its memory; a device
+at each call of its driver or read of its port) with what the input held at the sync point, following the
+program's own writes and leaving out what interrupt handlers read and write. A tick that read another value
+lists that input with the instruction that read it (`late`); `rrc record` sums them up by that instruction,
+and `docs/porting.md` says where to put the sync point so it can't happen: on the instruction that reads the
+input. The wait that ends a tick (D47) is left out: late reads all made in the call the next hit comes in, the
+last at most 40 of the program's instructions before it, are the wait polling its timer count, which the next
+tick records. Otherwise traces are version
+3's: an input is written when its value differs from when it was last read, and may be read only at some sync
+points; an item that is an input at every tick isn't written again as state; the run ends at exactly the
+session's length, and the end line has the frames and sound after the last tick and Clockwork's state hash
+then; the session commits the run's hash beside the trace's; each frame names its picture, kept in the cache.
+**Why:** the second blind test (the Wolf3D blind port's notes/toolkit-report.md) found a joystick calibration
+loop that leaves on a button press without a tick that has the press: the press landed between a hit of the
+loop's gated sync point and its read of port 201h a few instructions later, so that pass read it and left the
+loop, while the loop's ticks all had the button up. A port fed the trace would have stayed in the loop, and
+nothing in the trace showed why. Recording each input where it is read instead would tie a tick's values to
+the pass's reads, which differ from pass to pass; the person chose to detect it and document the placement.
+Measured on the blind port's six sessions: the calibration tick is flagged, at the port read. Without the wait
+rule, 1005 of play-joystick's 1430 ticks were flagged, nearly all by the waits' reads of the timer count
+(their last read comes 3 to 22 instructions before the hit, the closest read of a pass 59); with it, 5 of the
+attract session's 5052. What stays flagged is real: the main menu loop reads the timer count at the end of its
+pass, before calling the function its sync point is at the entry of (160 to 496 ticks a session); a joystick
+routine time-stamps its reads with the timer count (226 ticks); keys arrive between the sync point and a later
+read of the play loop (12 ticks of play-keyboard). The runs are the same as before. D54's reasons stand for
+the rest.
+**Supersedes:** D54.
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the

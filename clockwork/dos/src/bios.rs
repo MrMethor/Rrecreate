@@ -1374,6 +1374,7 @@ fn system(m: &mut Machine) {
 
 /// INT 15h AH=84h: joystick buttons (DX=0) or positions (DX=1), as DOSBox answers it.
 fn joystick(m: &mut Machine) {
+    m.late_device_read(crate::Device::Joystick);
     let port = &m.devices.game_port;
     match m.cpu.regs.dx() {
         0 if port.connected() => {

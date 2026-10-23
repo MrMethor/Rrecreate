@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **1**; Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **2** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -32,8 +32,8 @@ with an error and drops its machine (copies in memory stay). `quit` ends the ses
   milliseconds counted from them), never the host's clock; there is no randomness. Floating point gives the
   same bits on every host.
 - **State and records.** `hash` covers the machine's state only. Frames, sound events and console output
-  are records, and the analysis tools (watches, call tracking, coverage, bounds and uninitialized-read
-  checks) never change what the machine does.
+  are records, and the analysis tools (watches, call tracking, coverage, bounds, uninitialized-read and
+  late-input checks) never change what the machine does.
 - **Snapshots.** `save` and `load_snapshot` (and `snapshot`/`restore` in memory) go on exactly as the run
   would have; a snapshot's file format is the emulator's own.
 
@@ -45,7 +45,7 @@ A platform may add its own forms (`dos-pc`: `SEG:OFF`, `%PHYS`).
 
 ## Core operations
 
-**`hello`**: what the emulator is: `{"protocol": 1, "platform": "dos-pc", "emulator": "clockwork",
+**`hello`**: what the emulator is: `{"protocol": 2, "platform": "dos-pc", "emulator": "clockwork",
 "version": "0.1.0"}`. A tool refuses a revision or platform it doesn't speak.
 
 **Loading.** `load` `{"argv": [dir, program, options...]}`: a machine with the game's folder and program,
@@ -91,7 +91,17 @@ n]]`). `coverage` ... `coverage_end`: where each instruction that ran started (`
 
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}]}` ... `uninit_end`: reads of memory nothing wrote
-(`reads`).
+(`reads`). `late_inputs` `{"sources": [{"at", "len"} or {"device"}, with "sync": [addr]]}` ...
+`late_inputs_end`: input read after it changed since a tick began (D60). A source's tick begins at each
+counted hit of its sync points (`sync`; left out, any sync point's), where its value is kept; until the next,
+each read the program makes of it (a device: each call of its driver, read of its port) is compared with
+that value, which the program's own writes change, and what interrupt handlers read and write is left out
+(the emulator tracks calls for it). The late reads of a source are the wait's, and left out, when the next hit
+of one of its sync points (counted or not) comes in the call all of them were made in (the innermost call or
+interrupt; for a driver, the one its call was made in), at most 40 of the program's instructions after the
+last (interrupt handlers' don't count). The answer: `late`, `[{"tick", "source", "cycle", "at"}]`, each a tick
+(the cycle of its hit), the source (its index), when it was first read late and by which instruction (for a
+driver, the instruction its call returns to), a source once a tick; `dropped`, what went past 10000.
 
 **Frames and sound.** `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as
 `[number, cycle, mode, hash]`. `frame_images` `{"on": true}`: from now on, the picture of each frame whose
@@ -126,9 +136,15 @@ An IBM PC with DOS (Clockwork).
   launcher's game will be loaded, D57).
 - **`image`** `{"dir"}`: the loaded image for analysis, with its segment or selector map.
 
+## Revisions
+
+1. The first (D58).
+2. `late_inputs`, `late_inputs_end` (D60).
+
 ## Changing the protocol
 
 Any change to the protocol, an operation added or a field changed, is a new revision: the revision in
-`clockwork/cli/src/serve.rs` (`PROTOCOL`) and in `rrc/src/clockwork.rs` change together, with this document.
+`clockwork/cli/src/serve.rs` (`PROTOCOL`) and in `rrc/src/clockwork.rs` change together, with this document
+and its list of revisions.
 `rrc` refuses an emulator of another revision, so a tool and an emulator from different builds stop with a
 clear message instead of misreading each other.

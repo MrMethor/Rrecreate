@@ -20,6 +20,9 @@ pub const AXIS_MAX: i16 = 32767;
 /// Bytes of [`GamePort::reported_state`].
 pub const STATE_SIZE: usize = 12;
 
+/// The game port's I/O port.
+pub const PORT: u16 = 0x201;
+
 /// One joystick: its position and buttons (bit 0: button 1, bit 1: button 2).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Stick {

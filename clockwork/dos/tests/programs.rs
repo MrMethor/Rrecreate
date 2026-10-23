@@ -3707,7 +3707,7 @@ fn a_launcher_s_program_runs_inside_no_interrupt_handler() {
 fn timer_counting() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
     let offsets = std::cell::RefCell::new(BTreeMap::new());
     let program = com(|a| {
-        for name in ["handler", "counter", "copy"] {
+        for name in ["wait", "handler", "counter", "copy"] {
             offsets.borrow_mut().insert(name, a.addr(name) as u32);
         }
         load_dx(a, "handler")?;
@@ -3733,6 +3733,110 @@ fn timer_counting() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
         a.dw(&[0])
     });
     (program, offsets.into_inner())
+}
+
+#[test]
+fn input_that_changes_between_a_sync_point_and_the_read_is_late() {
+    // The timer's handler (INT 1Ch) counts while the program waits (HLT at `wait`); then the pass reads
+    // the count (`read`), works a while, and waits again, until the count reaches 20.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["wait", "read", "counter"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        load_dx(a, "handler")?;
+        a.mov(ax, 0x251C)?;
+        a.int(0x21)?;
+        a.here("wait")?;
+        a.hlt()?;
+        a.here("read")?;
+        let counter = word_at(a, "counter");
+        a.mov(ax, counter)?;
+        a.mov(cx, 100)?;
+        a.here("work")?;
+        let work = a.l("work");
+        a.loop_(work)?;
+        a.cmp(ax, 20)?;
+        let wait = a.l("wait");
+        a.jb(wait)?;
+        exit(a, 0)?;
+        a.here("handler")?;
+        let counter = word_at(a, "counter");
+        a.inc(counter)?;
+        a.iret()?;
+        a.here("counter")?;
+        a.dw(&[0])
+    });
+    let o = offsets.into_inner();
+    let mut lates = Vec::new();
+    for point in [o["wait"], o["read"]] {
+        let mut m = boot(&[("T.COM", &program)], "T.COM");
+        let base = u32::from(m.dos.psp) << 4;
+        let counter = dos::late::LateSource::Memory { at: base + o["counter"], len: 2 };
+        m.start_late_inputs(dos::late::LateInputs::new(vec![(counter, vec![])]));
+        m.syncs.add(base + point, true);
+        assert_eq!(m.run(SECOND * 3), Stop::Exited(0));
+        let ticks = m.syncs.get(base + point).unwrap().cycles.clone().unwrap();
+        let late = m.take_late_inputs().unwrap();
+        assert!(m.probes.calls.is_none(), "call tracking goes with the probe that turned it on");
+        let late_ticks: Vec<u64> = late.findings.iter().map(|l| l.tick_cycle).collect();
+        assert!(late_ticks.iter().all(|t| ticks.contains(t)));
+        lates.push((ticks.len(), late_ticks.len()));
+    }
+    // Before the HLT the handler runs after the hit, every time; after it, before.
+    assert_eq!(lates, [(20, 20), (20, 0)]);
+
+    // A wait the sync point ends isn't the pass: with the hit right after the read, in the same code,
+    // the read is the wait's (the count it waits on, read with the next tick's value).
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let counter = dos::late::LateSource::Memory { at: base + o["counter"], len: 2 };
+    m.start_late_inputs(dos::late::LateInputs::new(vec![(counter, vec![])]));
+    m.syncs.add(base + o["read"] + 3, false); // the MOV CX after the read
+    assert_eq!(m.run(SECOND * 3), Stop::Exited(0));
+    assert_eq!(m.take_late_inputs().unwrap().findings, [], "the read is 1 instruction before the hit");
+}
+
+#[test]
+fn a_device_read_through_its_driver_is_checked_too() {
+    // Forever: a delay (where the mouse moves), then INT 33h function 03h at `read`, then some work.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["wait", "read"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.here("wait")?;
+        a.mov(cx, 5000)?;
+        a.here("delay")?;
+        let delay = a.l("delay");
+        a.loop_(delay)?;
+        a.here("read")?;
+        a.mov(ax, 3)?;
+        a.int(0x33)?;
+        a.mov(cx, 100)?;
+        a.here("work")?;
+        let work = a.l("work");
+        a.loop_(work)?;
+        let wait = a.l("wait");
+        a.jmp(wait)
+    });
+    let o = offsets.into_inner();
+    let mut lates = Vec::new();
+    for point in ["wait", "read"] {
+        let mut m = boot(&[("M.COM", &program)], "M.COM");
+        let base = u32::from(m.dos.psp) << 4;
+        let mouse = dos::late::LateSource::Device(dos::Device::Mouse);
+        m.start_late_inputs(dos::late::LateInputs::new(vec![(mouse, vec![base + o[point]])]));
+        m.syncs.add(base + o[point], false);
+        for (i, at) in [SECOND / 10, SECOND / 5, SECOND * 3 / 10].into_iter().enumerate() {
+            m.queue_mouse(at, 100 + 10 * i as i16, 50, 0);
+        }
+        assert_eq!(m.run(SECOND / 2), Stop::CycleLimit);
+        lates.push(m.take_late_inputs().unwrap().findings.len());
+    }
+    assert_eq!(lates, [3, 0], "each move lands in the delay");
 }
 
 /// A program that calls `step` ten times (from `again`); `step` counts its calls in `count`.

@@ -29,6 +29,14 @@ pub struct Frame {
     stack_base: u32,
 }
 
+#[cfg(test)]
+impl Frame {
+    /// A call of `entry`, for tests elsewhere.
+    pub(crate) fn for_tests(entry: u32) -> Frame {
+        Frame { entry, from: 0, interrupt: false, hardware: false, slot: 0, stack_base: 0 }
+    }
+}
+
 /// The instruction about to run, as [`Calls::before`] saw it.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Context {
@@ -74,6 +82,16 @@ impl Calls {
     pub fn interrupt_entry(&self) -> Option<u32> {
         let outermost = self.stack.iter().position(|f| f.hardware)?;
         self.stack[outermost..].iter().rev().find(|f| f.interrupt).map(|f| f.entry)
+    }
+
+    /// The call or interrupt `depth` levels out from the one running now (0), if there is one.
+    pub fn frame(&self, depth: usize) -> Option<Frame> {
+        self.stack.iter().rev().nth(depth).copied()
+    }
+
+    /// Whether an interrupt handler runs for a hardware interrupt now ([`Calls::interrupt_entry`]).
+    pub fn in_hardware_interrupt(&self) -> bool {
+        self.stack.iter().any(|f| f.hardware)
     }
 
     /// Before an instruction runs.

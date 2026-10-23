@@ -306,7 +306,7 @@ impl Devices {
             }
             0x330 => self.mpu.read_data(),
             0x331 => self.mpu.read_status(),
-            0x201 => self.game_port.read(self.clock.nanos(cycles)),
+            crate::joystick::PORT => self.game_port.read(self.clock.nanos(cycles)),
             // Absent cards read FFh.
             0x220..=0x22F | 0x388..=0x38B => 0xFF,
             _ => {
@@ -370,7 +370,7 @@ impl Devices {
             0x330 => self.mpu.write_data(value, now),
             0x331 => self.mpu.write_command(value),
             0x80 => {} // POST code port, written for short I/O delays
-            0x201 => self.game_port.write(self.clock.nanos(cycles)),
+            crate::joystick::PORT => self.game_port.write(self.clock.nanos(cycles)),
             0x220..=0x22F | 0x388..=0x38B => {}
             _ => {
                 self.unknown_ports.insert(port);
@@ -413,6 +413,11 @@ impl PcBus<'_> {
     /// A byte the way the CPU would read it, without side effects (no VGA latches loaded).
     pub(crate) fn peek_u8(&self, addr: u32) -> u8 {
         peek_device_u8(self.mem, self.dev, addr)
+    }
+
+    /// The game port's sticks as a program reads them ([`Device::Joystick`]).
+    pub(crate) fn joystick_state(&self) -> [u8; crate::joystick::STATE_SIZE] {
+        self.dev.game_port.reported_state()
     }
 
     /// Whether memory tracking writes saw this byte written (true when nothing is tracked).
@@ -682,6 +687,7 @@ impl Machine {
             || self.probes.watch.is_some()
             || self.probes.bounds.is_some()
             || self.probes.uninit.is_some()
+            || self.probes.late.is_some()
             || self.probes.calls.is_some();
         loop {
             if let Some(code) = self.exit_code {
@@ -725,12 +731,20 @@ impl Machine {
             }
             if syncs {
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-                if self.syncs.is_point(at)
-                    && self.syncs.program(at).is_none_or(|program| self.running_in(program))
-                    && self.syncs.reached(at, self.cpu.cycles, self.syncs.gate_sources(at).map(|s| self.gate_state(s)))
-                {
+                if self.syncs.is_point(at) && self.syncs.program(at).is_none_or(|program| self.running_in(program)) {
+                    if let Some(late) = self.probes.late.as_deref_mut() {
+                        late.hit(at, self.probes.calls.as_deref().and_then(|c| c.frame(0)));
+                    }
+                    let hits = self.syncs.get(at).map_or(0, |p| p.hits);
+                    let gate = self.syncs.gate_sources(at).map(|s| self.gate_state(s));
+                    let stop = self.syncs.reached(at, self.cpu.cycles, gate);
                     let hit = self.syncs.get(at).map_or(0, |p| p.hits);
-                    return Stop::Sync { address: at, hit };
+                    if hit != hits && self.probes.late.is_some() {
+                        self.late_tick(at);
+                    }
+                    if stop {
+                        return Stop::Sync { address: at, hit };
+                    }
                 }
             }
             if self.probes.exec_watch.is_some() {
@@ -758,6 +772,7 @@ impl Machine {
                     watch: self.probes.watch.as_deref_mut(),
                     bounds: self.probes.bounds.as_deref_mut(),
                     uninit: self.probes.uninit.as_deref_mut(),
+                    late: self.probes.late.as_deref_mut(),
                     calls: self.probes.calls.as_deref(),
                     cs: self.cpu.regs.cs(),
                     ip: self.cpu.regs.ip,
@@ -774,6 +789,11 @@ impl Machine {
             }
             if let Some(mut calls) = self.probes.calls.take() {
                 calls.after(&self.cpu, |at| self.peek_linear_u8(at));
+                if let Some(late) = self.probes.late.as_deref_mut()
+                    && !calls.in_hardware_interrupt()
+                {
+                    late.step();
+                }
                 self.probes.calls = Some(calls);
             }
             if let Some(coverage) = &mut self.probes.coverage {
@@ -1139,25 +1159,93 @@ impl Machine {
     /// tracking on if nothing did, for the calls made from now on.
     pub fn start_watch(&mut self, watch: crate::watch::Watch) {
         self.probes.watch = Some(Box::new(watch));
-        if self.probes.calls.is_none() {
-            self.probes.calls = Some(Box::default());
-            self.probes.calls_for_watch = true;
-        }
+        self.calls_for(crate::probe::CALLS_FOR_WATCH);
     }
 
     /// Ends the watch and returns it, with its hits.
     pub fn take_watch(&mut self) -> Option<crate::watch::Watch> {
-        if std::mem::take(&mut self.probes.calls_for_watch) {
-            self.probes.calls = None;
-        }
+        self.calls_done(crate::probe::CALLS_FOR_WATCH);
         self.probes.watch.take().map(|w| *w)
     }
 
     /// Tracks calls from now on (see [`crate::calls`]), so a watch started later knows the whole
     /// call chain; or stops tracking.
     pub fn track_calls(&mut self, on: bool) {
-        self.probes.calls_for_watch = false;
+        self.probes.calls_for = 0;
         self.probes.calls = on.then(|| self.probes.calls.take().unwrap_or_default());
+    }
+
+    /// A probe needs call tracking: on if it is off, until the probes that turned it on are done.
+    fn calls_for(&mut self, probe: u8) {
+        if self.probes.calls.is_none() || self.probes.calls_for != 0 {
+            self.probes.calls.get_or_insert_default();
+            self.probes.calls_for |= probe;
+        }
+    }
+
+    fn calls_done(&mut self, probe: u8) {
+        if self.probes.calls_for & probe != 0 {
+            self.probes.calls_for &= !probe;
+            if self.probes.calls_for == 0 {
+                self.probes.calls = None;
+            }
+        }
+    }
+
+    /// Starts looking for input that changes within a tick (see [`crate::late`]); what was on is
+    /// replaced. It turns call tracking on if nothing did.
+    pub fn start_late_inputs(&mut self, late: crate::late::LateInputs) {
+        self.probes.late = Some(Box::new(late));
+        self.calls_for(crate::probe::CALLS_FOR_LATE);
+    }
+
+    pub fn take_late_inputs(&mut self) -> Option<crate::late::LateInputs> {
+        self.calls_done(crate::probe::CALLS_FOR_LATE);
+        self.probes.late.take().map(|l| l.finish())
+    }
+
+    /// A counted hit of the sync point at `at`: the late-input sources it ticks keep what they hold.
+    fn late_tick(&mut self, at: u32) {
+        let Some(mut late) = self.probes.late.take() else { return };
+        let ticking: Vec<(usize, crate::late::LateSource)> = late.ticking(at).map(|(i, s)| (i, s.clone())).collect();
+        for (i, source) in ticking {
+            let (spans, values) = match source {
+                crate::late::LateSource::Memory { at, len } => {
+                    let mut spans: Vec<std::ops::Range<u32>> = Vec::new();
+                    let mut values = Vec::new();
+                    for linear in (0..len).map(|i| at.wrapping_add(i)) {
+                        let Some(physical) = self.cpu.peek_translate(|a| self.mem.read_u32(a), linear) else {
+                            continue;
+                        };
+                        values.push(self.peek_u8(physical));
+                        match spans.last_mut() {
+                            Some(span) if span.end == physical => span.end += 1,
+                            _ => spans.push(physical..physical + 1),
+                        }
+                    }
+                    (spans, values)
+                }
+                crate::late::LateSource::Device(device) => (Vec::new(), self.device_state(device)),
+            };
+            late.tick(i, self.cpu.cycles, spans, values);
+        }
+        self.probes.late = Some(late);
+    }
+
+    /// The program read `device` through a service (the call tracker has its call).
+    pub(crate) fn late_device_read(&mut self, device: Device) {
+        let Some(calls) = self.probes.calls.as_deref().filter(|_| self.probes.late.is_some()) else { return };
+        if calls.in_hardware_interrupt() {
+            return;
+        }
+        // The service's call, and the one it was called in.
+        let read = crate::late::Read {
+            cycle: self.cpu.cycles,
+            at: calls.frame(0).map_or(0, |f| f.from),
+            call: calls.frame(1),
+        };
+        let state = self.device_state(device);
+        self.probes.late.as_deref_mut().expect("checked").device_read(device, &state, read);
     }
 
     /// Starts bounds checks on these objects (physical addresses; see [`crate::bounds`]).
@@ -1253,6 +1341,9 @@ impl Machine {
         let call = traced.then(|| crate::trace::ServiceCall::begin(self, id));
         if let Some(watch) = self.probes.watch.as_deref_mut() {
             watch.service_called(id);
+        }
+        if id == bios::callback::MOUSE {
+            self.late_device_read(Device::Mouse);
         }
         let watched = self.watch_before();
         let ax = self.cpu.regs.ax();

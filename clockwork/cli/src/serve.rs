@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 1;
+pub const PROTOCOL: u64 = 2;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -49,6 +49,8 @@ pub const MACHINE_OPS: &[&str] = &[
     "bounds_end",
     "uninit",
     "uninit_end",
+    "late_inputs",
+    "late_inputs_end",
     "frames",
     "sound",
     "image",
@@ -466,6 +468,35 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 .collect();
             Ok(json!({"reads": reads, "dropped": uninit.dropped}))
         }
+        "late_inputs" => {
+            let items = r.get("sources").and_then(Value::as_array).ok_or("missing \"sources\"")?;
+            let mut sources = Vec::new();
+            for item in items {
+                let source = match spec(item, "sources")? {
+                    Spec::Memory(at, len) => dos::late::LateSource::Memory { at: addr(m, &at)?, len },
+                    Spec::Device(device) => dos::late::LateSource::Device(device),
+                };
+                let points = match optional(item, "sync", Value::as_array, "a list of addresses")? {
+                    Some(points) => points
+                        .iter()
+                        .map(|p| addr(m, p.as_str().ok_or("sources: \"sync\" lists addresses")?))
+                        .collect::<Result<_, _>>()?,
+                    None => Vec::new(),
+                };
+                sources.push((source, points));
+            }
+            m.start_late_inputs(dos::late::LateInputs::new(sources));
+            Ok(json!({}))
+        }
+        "late_inputs_end" => {
+            let late = m.take_late_inputs().ok_or("no late-input check on")?;
+            let findings: Vec<Value> = late
+                .findings
+                .iter()
+                .map(|l| json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at)}))
+                .collect();
+            Ok(json!({"late": findings, "dropped": late.dropped}))
+        }
         "frames" => {
             let (from, to) = span(m, r)?;
             let first = m.frames.partition_point(|f| f.cycle < from);
@@ -642,18 +673,19 @@ enum Spec {
 /// `[{"at": …, "len": n} or {"device": "mouse" | "joystick"}]`.
 fn specs(r: &Value, key: &str) -> Result<Vec<Spec>, String> {
     let items = r.get(key).and_then(Value::as_array).ok_or_else(|| format!("missing {key:?}"))?;
-    items
-        .iter()
-        .map(|item| match item.get("device").and_then(Value::as_str) {
-            Some(name) => dos::Device::parse(name).map(Spec::Device).ok_or_else(|| format!("no device {name:?}")),
-            None => {
-                let at = item.get("at").and_then(Value::as_str).ok_or_else(|| format!("{key}: each needs \"at\""))?;
-                let len =
-                    item.get("len").and_then(Value::as_u64).ok_or_else(|| format!("{key}: each needs \"len\""))?;
-                Ok(Spec::Memory(at.to_owned(), len as u32))
-            }
-        })
-        .collect()
+    items.iter().map(|item| spec(item, key)).collect()
+}
+
+/// One of [`specs`]' items (in the list `key`).
+fn spec(item: &Value, key: &str) -> Result<Spec, String> {
+    match item.get("device").and_then(Value::as_str) {
+        Some(name) => dos::Device::parse(name).map(Spec::Device).ok_or_else(|| format!("no device {name:?}")),
+        None => {
+            let at = item.get("at").and_then(Value::as_str).ok_or_else(|| format!("{key}: each needs \"at\""))?;
+            let len = item.get("len").and_then(Value::as_u64).ok_or_else(|| format!("{key}: each needs \"len\""))?;
+            Ok(Spec::Memory(at.to_owned(), len as u32))
+        }
+    }
 }
 
 /// `[{"at": …, <size>: n}]` as (address, n) pairs.

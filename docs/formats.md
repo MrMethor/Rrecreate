@@ -198,20 +198,20 @@ options = []                    # optional: more `clockwork run` options (rrc se
 
 [trace]                         # written by rrc record
 hash = "6e7f…"                  # the trace, in the cache
-run = "31ff…"                   # the run: what the machine did, whatever the knowledge read (D54)
+run = "31ff…"                   # the run: what the machine did, whatever the knowledge read (D60)
 ticks = 2770
 clockwork = "0.1.0"             # the Clockwork that recorded it
 ```
 
-Recording a session again must give the same run (D44, D54), and with the same knowledge the same trace:
+Recording a session again must give the same run (D44, D60), and with the same knowledge the same trace:
 `rrc record` says which of the two changed.
 
 ## Traces
 
-JSON lines (D54): a header, a line per tick, and an end line.
+JSON lines (D60): a header, a line per tick, and an end line.
 
 ```
-{"format":"rrc-trace","version":3,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
+{"format":"rrc-trace","version":4,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
  "syncs":[{"name":"play","at":"GAME.EXE+0A31C"},
           {"name":"menu","at":"GAME.EXE+0B1F0","when_changed":[{"name":"timer_count","at":"GAME.EXE+21C50","size":4}]}],
  "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2},
@@ -219,7 +219,7 @@ JSON lines (D54): a header, a line per tick, and an end line.
  "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":[[0,"0100"]],"state":[[0,"0000"], …],
  "frames":[[284,20380102,19,"61f5…","a3c0…"]],"sound":{"opl":[[2549120000,176,49]]}}
-{"tick":2,"sync":"play","cycle":20504101,"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
+{"tick":2,"sync":"play","cycle":20504101,"late":[[1,"GAME.EXE+0A3B2"]],"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
 {"end":"the session's end","cycles":688000000,"frames":[[6020,687990122,19,"0e3a…","77d1…"]],"state_hash":"9c2c680ec5356ad6"}
 ```
 
@@ -232,6 +232,12 @@ JSON lines (D54): a header, a line per tick, and an end line.
   size, but those that are inputs at every tick) that changed since the tick before; the first tick has them
   all. Values are the bytes memory holds, in hex (so little-endian; a device's state as its bytes); `null`
   where memory isn't mapped. Empty lists are left out.
+- `late`: `[index, ID]` for each input the tick's pass read with another value than the tick's, and the
+  instruction that first read it so (for a driver, the instruction after its call): it changed after the sync
+  point, before the program read it (D60), so the pass did what the next tick's values say. The program's own
+  writes are followed. Not counted: what interrupt handlers read, the wait that ends the next tick (late reads
+  all in the call the next hit comes in, the last at most 40 of the program's instructions before it), and
+  memory a host service reads for the program (the BIOS keyboard buffer through INT 16h).
 - `frames`: the frames Clockwork showed since the tick before (a display refresh each, 70 a second):
   `[number, cycle, BIOS video mode, fingerprint, picture]`, the picture's hash in the cache (below).
 - `sound`: the sound events since the tick before, by device, only those with events: `opl` `[ns, register,
