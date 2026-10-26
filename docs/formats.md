@@ -34,6 +34,15 @@ LF line ends on every platform).
 `[port] imports = false` makes `rrc import` refuse: an honest pilot's knowledge comes from its own analysis
 only (D46).
 
+```toml
+[port]
+command = ["cargo", "run", "--quiet", "-p", "toy-port", "--"]   # the port's program (D61)
+build = []                      # optional: what builds it first
+```
+
+`command` is a command line run in the port repository: `rrc compare` adds `run` and its options (below, "The
+port's files"). `build`, if given, runs before it.
+
 ## `rrc.local.toml`: this machine (not committed)
 
 ```toml
@@ -60,6 +69,7 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 - `knowledge.lock`: there while an `rrc` changes the knowledge files (from loading them to saving them), so
   two at once don't lose each other's changes; one older than a minute is taken over. The files themselves
   are written aside and renamed.
+- `compare/<session>/`: the files of the session's last `rrc compare` (below, "The port's files").
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
 
 ## Ghidra's export
@@ -187,6 +197,28 @@ A device's state is bytes, like memory (little-endian):
 - `joystick`, 12 bytes: for stick A, then B, whether it is connected (a byte, 1 or 0), its buttons (a byte:
   bit 0 button 1, bit 1 button 2, set while pressed), X and Y (signed 16-bit, -32767 to 32767).
 
+## `mapping.toml`: the port's state and the original's
+
+```toml
+[[map]]
+field = "player.x"              # a path in the port's serialized state: its field names, joined by .
+at = "player_x"                 # the original's item: a data name, or an ID
+type = "i16"                    # optional: how to read it, else data.tsv's type for it
+
+[[ignore]]                      # the original's memory that may differ (padding, caches, driver internals)
+at = "mouse_buffer"             # a data name, or an ID
+size = 0                        # bytes; 0: the data's size
+note = "the mouse driver's"
+```
+
+The original's bytes are read as the type (D62): `u8`, `i8`, `u16`, `i16`, `u32`, `i32` as numbers
+(little-endian), `T[N]` as an array (`T[N][M]` is M arrays of `T[N]`), a structure of `types.toml` as an object
+of its fields (a field with no type: an unsigned number of its size, or bytes), an enumeration as its number.
+The port's state, serialized as JSON, has the same numbers, arrays and objects at the mapped paths; what it has
+beyond them is its own. A mapped item is named data of the type's size, or an ID; an input can't be mapped (the
+port gets it with each tick's inputs). `rrc record` traces every mapped item (one that isn't named data under
+its field's name). `rrc check` checks the mapping.
+
 ## `sessions/<name>.toml`: a session
 
 ```toml
@@ -202,6 +234,11 @@ hash = "6e7f…"                  # the trace, in the cache
 run = "31ff…"                   # the run: what the machine did, whatever the knowledge read (D60)
 ticks = 2770
 clockwork = "0.1.0"             # the Clockwork that recorded it
+
+[[pair]]                        # written by rrc compare --pair: a paired checkpoint (D63)
+tick = 900
+port = "9d5f…"                  # the port's state at the tick (rrc-port-state), in the cache
+snapshot = "b9b3…"              # Clockwork's snapshot at the end of the tick, in the cache
 ```
 
 Recording a session again must give the same run (D44, D60), and with the same knowledge the same trace:
@@ -262,3 +299,34 @@ What a frame showed (D25), in the cache by SHA-256: raw deflate (RFC 1951) of
 
 Pixels go row by row from the top left; text modes are drawn with their font, as the screen shows them.
 `rrc frame SESSION --tick N` writes the picture shown by the end of a tick as a PNG.
+
+## The port's files
+
+`rrc compare` runs the port (`[port] command`) in the port repository with
+
+```
+run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK --save FILE] [--to TICK]
+```
+
+and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is
+shown when it fails. The state at tick t is what the original holds at its t-th sync point hit; a step with tick
+t's inputs makes tick t+1's. The port runs from the first tick (1, or the transplant's or the resumed state's)
+to the inputs' last (or `--to`'s), writing its state at each tick before stepping. All files are JSON; the
+inputs and the trace are JSON lines.
+
+- **Inputs** (`--inputs`, written by `rrc`): the header
+  `{"format":"rrc-inputs","version":1,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`,
+  then a line per tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
+  whose value changed since they were last read (index in the header's list, bytes in hex as the trace has
+  them); a value holds until it changes. The last line is `{"end":"the session's end","ticks":1400}`.
+- **Start state** (`--transplant`, written by `rrc`):
+  `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each
+  mapped field's value at the tick by its path. The runtime sets each over the port's start state's
+  serialization and deserializes that (`Simulation::transplant` may build the state otherwise).
+- **Port state** (`--save` writes it at `--save-at`'s tick, `--resume` reads it):
+  `{"format":"rrc-port-state","version":1,"tick":900,"state":{…}}`, the port's whole state as it serializes it,
+  at the tick (before its step).
+- **Port trace** (`--out`, written by the port): the header
+  `{"format":"rrc-port-trace","version":1,"session":"play","from":1}`, then a line per tick,
+  `{"tick":1,"state":{…}}`, with the top-level fields of the state that changed since the line before (all at the
+  first), and last `{"end":1400}`.

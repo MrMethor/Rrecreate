@@ -1,0 +1,14 @@
+# Structures and enumerations (docs/formats.md).
+
+[[struct]]
+name = "enemy"
+size = 10
+provenance = "map"
+fields = [
+    { offset = 0, size = 2, name = "x", type = "i16" },
+    { offset = 2, size = 2, name = "y", type = "i16" },
+    { offset = 4, size = 2, name = "dx", type = "i16" },
+    { offset = 6, size = 2, name = "dy", type = "i16" },
+    { offset = 8, size = 1, name = "alive", type = "u8" },
+    { offset = 9, size = 1, name = "hits", type = "u8" },
+]

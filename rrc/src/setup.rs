@@ -224,7 +224,7 @@ fn next_after_setup(repo: &Repo) -> Result<String, String> {
         return Ok(format!("find what a tick reads from outside: rrc inputs {first}; then rrc input ID NAME"));
     }
     let cache = crate::cache::Cache::open(&repo.local)?;
-    let (syncs, inputs, state) = crate::trace::items(&k, &repo.module())?;
+    let (syncs, inputs, state) = crate::trace::items(repo, &k, &repo.module())?;
     for name in &sessions {
         let Some(recorded) = crate::session::Session::load(repo, name)?.trace else {
             return Ok(format!("rrc record {name}"));
@@ -240,7 +240,17 @@ fn next_after_setup(repo: &Repo) -> Result<String, String> {
             Some(_) => {}
         }
     }
-    Ok("every session is recorded with the knowledge as it is; the state mapping and the port come with M3".into())
+    let mapped = crate::mapping::Mapping::load(repo)?.resolve(&k)?;
+    if mapped.is_empty() {
+        return Ok(format!(
+            "every session is recorded; map the state: {} names the port's fields and the original's items",
+            crate::mapping::MAPPING
+        ));
+    }
+    if repo.settings.port.command.is_empty() {
+        return Ok("rrc.toml: [port] command, the port's program (docs/formats.md)".into());
+    }
+    Ok(format!("rrc compare {first}: the port against the original, tick by tick"))
 }
 
 #[cfg(test)]

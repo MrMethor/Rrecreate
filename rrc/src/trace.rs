@@ -232,7 +232,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Err("no sync points in knowledge/ticks.toml: find where a tick ends first (docs/formats.md)".into());
     }
     let module = repo.module();
-    let (syncs, inputs, state) = items(&k, &module)?;
+    let (syncs, inputs, state) = items(repo, &k, &module)?;
     let exe = clockwork::find(&repo.local)?;
     let header = Header {
         format: FORMAT.into(),
@@ -296,9 +296,10 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 /// The sync points, inputs and state items of a trace.
 pub(crate) type Items = (Vec<SyncPoint>, Vec<Item>, Vec<Item>);
 
-/// What a trace follows, from the knowledge: the sync points, the boundary values and the named
-/// data (but an item that is an input at every tick: it is written once, as the input).
-pub(crate) fn items(k: &Knowledge, module: &str) -> Result<Items, String> {
+/// What a trace follows, from the knowledge: the sync points, the boundary values, the named data
+/// (but an item that is an input at every tick: it is written once, as the input) and the items the
+/// state mapping maps that aren't named data of their size (D62).
+pub(crate) fn items(repo: &Repo, k: &Knowledge, module: &str) -> Result<Items, String> {
     for i in &k.ticks.inputs {
         if let Some(sync) = i.sync.iter().find(|s| !k.ticks.syncs.iter().any(|t| t.name == **s)) {
             return Err(format!(
@@ -322,6 +323,13 @@ pub(crate) fn items(k: &Knowledge, module: &str) -> Result<Items, String> {
             ..Item::default()
         })
         .collect();
+    let mut state = state;
+    for m in crate::mapping::Mapping::load(repo)?.resolve(k)? {
+        let at = m.id.to_string();
+        if !state.iter().any(|item| item.at == at && item.size == m.size) {
+            state.push(Item { name: m.field, at, size: m.size, ..Item::default() });
+        }
+    }
     Ok((sync_points(k)?, inputs, state))
 }
 

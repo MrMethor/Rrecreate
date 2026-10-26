@@ -35,11 +35,18 @@ pub struct Port {
     /// Whether `rrc import` may bring in knowledge from elsewhere: not for an honest pilot (D46).
     #[serde(default = "yes")]
     pub imports: bool,
+    /// The port's program, as a command line run in the port repository: `rrc compare` adds `run` and
+    /// its options (D61).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
+    /// What builds it first, if anything (`cargo build --release`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build: Vec<String>,
 }
 
 impl Default for Port {
     fn default() -> Self {
-        Port { imports: true }
+        Port { imports: true, command: Vec::new(), build: Vec::new() }
     }
 }
 
@@ -221,7 +228,7 @@ mod tests {
     fn settings_read_back_as_written() {
         let settings = Settings {
             game: Game { name: "wolf3d".into(), title: "Wolfenstein 3-D".into() },
-            port: Port { imports: false },
+            port: Port { imports: false, ..Port::default() },
             original: Original {
                 program: "WOLF3D.EXE".into(),
                 options: vec!["--ems".into(), "0".into()],

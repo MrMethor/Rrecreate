@@ -1,0 +1,13 @@
+# id	name	size	type	provenance	confidence	evidence
+TOY.EXE+00AC4	rng_seed	4	u32	map		TOY.MAP
+TOY.EXE+00AC8	enemies	60	enemy[6]	map		TOY.MAP
+TOY.EXE+00B04	score	2	u16	map		TOY.MAP
+TOY.EXE+00B06	player_y	2	i16	map		TOY.MAP
+TOY.EXE+00B08	player_x	2	i16	map		TOY.MAP
+TOY.EXE+00B0A	pass_count	2	u16	map		TOY.MAP
+TOY.EXE+00B0E	last_count	2	u16	map		TOY.MAP
+TOY.EXE+00B10	elapsed	2	u16	map		TOY.MAP
+TOY.EXE+00B12	game_over	1	u8	map		TOY.MAP
+TOY.EXE+00B13	bombs	1	u8	map		TOY.MAP
+TOY.EXE+00B14	lives	1	u8	map		TOY.MAP
+TOY.EXE+00B15	bomb_held	1	u8	map		TOY.MAP

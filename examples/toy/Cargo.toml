@@ -1,0 +1,15 @@
+[package]
+name = "toy-port"
+description = "The toy game of testbins, ported: the example port rrc compare checks tick by tick"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+rrc-runtime = { path = "../../runtime" }
+serde.workspace = true
+
+[lints]
+workspace = true

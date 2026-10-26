@@ -12,7 +12,8 @@ The port's faithful mode is checked against the original for good; modernization
 **Status:** the emulator, Clockwork, runs and tools drive it (`clockwork/`, with its own
 [README](clockwork/README.md)). The toolkit, `rrc` (`rrc/`), keeps a port repository: the game's versions,
 analysis through Ghidra, knowledge files, sessions and per-tick traces of the original
-([`docs/porting.md`](docs/porting.md)). The port runtime and the comparison are next. The design is
+([`docs/porting.md`](docs/porting.md)), and runs a port against the original tick by tick: the runtime a Rust
+port builds on is `runtime/`, and [`examples/toy`](examples/toy) is a whole port of a toy game. The design is
 [`DESIGN.md`](DESIGN.md); the decisions and their reasons are in [`docs/decisions.md`](docs/decisions.md), the
 file formats in [`docs/formats.md`](docs/formats.md), and how tools drive an emulator in
 [`docs/protocol.md`](docs/protocol.md).
@@ -29,7 +30,8 @@ Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.
 |---|---|
 | `clockwork/` | The emulator (GPL-2.0-or-later) |
 | `rrc/` | The toolkit's command line, `rrc` |
-| `runtime/` | The crates a Rust port builds on (to come) |
+| `runtime/` | What a Rust port builds on: the simulation's step, and the files it exchanges with `rrc` |
+| `examples/toy/` | A port repository: the toy game of `testbins`, ported and compared |
 | `ghidra/` | The Ghidra scripts: export, and names written back |
 | `sigs/` | Library signature packs |
 | `testdata/inputs/` | Walkthroughs of the test games, as input scripts |

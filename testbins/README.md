@@ -15,6 +15,7 @@ Small C programs built with Open Watcom v2 for 16-bit DOS, each exercising one t
 | `TIMER.EXE` | small | an `__interrupt` handler on INT 08h, the PIT at 1000 Hz |
 | `FLOAT.EXE` | small | 8087 code (`-fpi87`): arithmetic, `sqrt`, `sin`, `exp`, `printf("%f")` |
 | `MEDIUM.EXE` | medium | two code segments with far calls, a switch compiled to a jump table, recursion |
+| `TOY.EXE` | small | a toy game to port (M3, `examples/toy/`): a 70 Hz timer and a keyboard handler of its own, a player, six enemies, a 32-bit random generator, text mode |
 | `FLAT32.EXE` | flat, 32-bit | an LE executable under the CauseWay extender: code and data objects the extender places, a call through a pointer |
 | `FLAT4GW.EXE` | flat, 32-bit | the same under DOS/4GW: its stub runs `DOS4GW.EXE`, which loads it; it waits a quarter of a second before and after its work |
 | `CLIB32.EXE` | flat, 32-bit | Open Watcom's 32-bit C runtime (`clib3r`, math, the 387 emulator) linked in by a table of 190 functions' addresses, for its signature pack |

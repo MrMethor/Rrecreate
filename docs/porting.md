@@ -1,7 +1,7 @@
 # Porting a game
 
-The agent's playbook (DESIGN.md §10). It grows with the toolkit: this is what `rrc` does so far (M2); the state
-mapping, the port itself and the comparison come with M3. Formats are in `docs/formats.md`.
+The agent's playbook (DESIGN.md §10). It grows with the toolkit: this is what `rrc` does so far (M3: the
+original's knowledge and traces, the mapping, the port and the comparison). Formats are in `docs/formats.md`.
 
 Run `rrc` inside the port repository. `rrc status` names the next step; `rrc doctor` says what's missing.
 
@@ -201,6 +201,30 @@ session's file with the new hashes.
 a run from power-on, with the whole call chains. Record a session before asking about its late ticks.
 `rrc calls` and `rrc inputs` keep their answers: asked again with the same session and knowledge, they answer at
 once (`kept`).
+
+## 5. Port and compare
+
+Map the state first: `mapping.toml` names each field of the port's state and the original's item it is
+(`docs/formats.md`); record again, so the trace follows every mapped item. Then name the port's program in
+`rrc.toml` (`[port] command`). A Rust port builds on `runtime/` (the crate `rrc-runtime`): its state is one
+struct serde serializes, its fields named as the mapping says; it implements `Simulation` (`start`: the state at
+the first tick; `step`: one pass with the tick's inputs) and its `main` calls `rrc_runtime::main`. `examples/toy`
+is a whole port repository to copy from: the knowledge, a session, the mapping and the port of a toy game.
+
+```bash
+rrc compare first-level
+rrc compare first-level --transplant 500
+rrc compare first-level --pair 900
+rrc compare first-level --resume 900
+```
+
+`rrc compare` says `match`, or where the port first differs: the tick, each field with both values, and who wrote
+the original's value between the previous tick's sync point and this one's (the instruction and its call chain:
+read that code). Fix the port and compare again. A divergence at the port's first tick means its start state
+isn't the original's, or a transplant misses a field (map it). Work on a subsystem from a transplant at a tick
+where it is in use, so what comes before needn't be ported first. Where the port matches through a tick, `--pair
+N` keeps a paired checkpoint, and `--resume N` compares from it without the ticks before. `unmapped` lists the
+named data the mapping neither maps nor ignores: the state nothing compares yet.
 
 ## Naming
 

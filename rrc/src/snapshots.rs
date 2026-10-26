@@ -130,6 +130,19 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     Ok((clockwork, loaded))
 }
 
+/// A snapshot of the session's original at the end of tick `tick`, in the cache (a paired checkpoint's,
+/// D63): from the last one `rrc record` kept before, run on to there.
+pub fn at_tick(repo: &Repo, session: &Session, k: &crate::knowledge::Knowledge, tick: u64) -> Result<String, String> {
+    let syncs = crate::trace::sync_points(k)?;
+    let (mut clockwork, _, from) = crate::watch::open(repo, session, &syncs, tick + 1)?;
+    crate::watch::to_tick(&mut clockwork, tick + 1, from.as_ref(), (session.seconds * 1000.0) as u64)?;
+    let file = repo.state()?.join(format!("snapshot-{}.tmp", std::process::id()));
+    clockwork.ask("save", json!({ "file": file }))?;
+    let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let _ = std::fs::remove_file(&file);
+    Cache::open(&repo.local)?.put(&bytes)
+}
+
 thread_local! {
     /// What `say` printed while a result is being kept.
     static CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };

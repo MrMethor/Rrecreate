@@ -7,10 +7,12 @@ mod args;
 pub mod cache;
 mod calls;
 pub mod clockwork;
+mod compare;
 pub mod frames;
 pub mod game;
 pub mod import;
 pub mod knowledge;
+pub mod mapping;
 mod naming;
 pub mod places;
 pub mod repo;
@@ -21,6 +23,7 @@ pub mod snapshots;
 mod ticks;
 pub mod tools;
 pub mod trace;
+pub mod values;
 mod watch;
 
 use std::process::ExitCode;
@@ -105,6 +108,14 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          a recorded trace: a summary, one tick, or one item over the ticks, values
                          read as data.tsv's types (an array as its elements that aren't zero);
                          --path: where the trace file is (the path alone), to read it whole
+  compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK]
+                         run the port ([port] command in rrc.toml) with the session's inputs and compare
+                         its state with the original's trace at every tick, field by field as
+                         mapping.toml maps them: the first tick that differs, the fields and values, and
+                         who wrote the original's value; from the port's start state, or the original's
+                         mapped values at a tick (--transplant), or a paired checkpoint (--resume);
+                         --pair keeps one at the end of tick N (the port's state and Clockwork's
+                         snapshot) if the port matched to there. Exits 1 if it diverges
   import recreate DIR [--without PROVENANCE,...]
                          Recreate's knowledge files (its games/<game>/knowledge), leaving out the
                          items of the provenances named
@@ -115,7 +126,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   sigs name MAP          name the map's functions in the knowledge (provenance map), so that rrc
                          analyze adds those Ghidra didn't find: for a port made to build a pack
 
-Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/ (docs/formats.md).
+Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/, mapping.toml
+(docs/formats.md).
 Environment: RRC_CLOCKWORK (the clockwork program), RRC_CACHE (the cache folder), GHIDRA_INSTALL_DIR and
 JAVA_HOME (for analysis).";
 
@@ -151,6 +163,7 @@ pub fn main() -> ExitCode {
         Some("ports") => here().and_then(|repo| watch::ports(&repo, rest)),
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
+        Some("compare") => here().and_then(|repo| compare::compare(&repo, rest)),
         Some("import") => here().and_then(|repo| import::import(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),

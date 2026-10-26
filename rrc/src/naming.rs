@@ -37,7 +37,13 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         let sizes: Vec<String> = objects.iter().enumerate().map(|(i, size)| format!("#{} {size}", i + 1)).collect();
         say("objects", format!("{} bytes", sizes.join(", ")));
     }
-    let problems = k.problems(&repo.module(), image_size.ok(), objects.as_deref());
+    let mut problems = k.problems(&repo.module(), image_size.ok(), objects.as_deref());
+    let mapping = crate::mapping::Mapping::load(repo)?;
+    match mapping.resolve(&k).and_then(|mapped| Ok((mapped, mapping.ignored(&k)?))) {
+        Ok((mapped, _)) if !mapped.is_empty() => say("mapping", format!("{} fields mapped", mapped.len())),
+        Ok(_) => {}
+        Err(e) => problems.push(e),
+    }
     for problem in &problems {
         say("problem", problem);
     }

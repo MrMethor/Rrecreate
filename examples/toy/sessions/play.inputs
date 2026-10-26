@@ -1,0 +1,8 @@
+# TOY.EXE: left, right and up with the arrow keys, and the three bombs.
+500:{hold left 1500}
+2200:{hold right 3000}
+5500:{hold up 800}{space}
+7000:{hold left 2000}
+9500:{space}{hold down 600}
+11000:{hold right 1500}{space}
+13000:{hold up 1000}

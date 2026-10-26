@@ -1,0 +1,50 @@
+# The port's state and the original's items it is (docs/formats.md): rrc compare compares them at
+# every tick, and a transplant builds the port's state from them.
+
+[[map]]
+field = "last_count"
+at = "last_count"
+
+[[map]]
+field = "elapsed"
+at = "elapsed"
+
+[[map]]
+field = "pass_count"
+at = "pass_count"
+
+[[map]]
+field = "player.x"
+at = "player_x"
+
+[[map]]
+field = "player.y"
+at = "player_y"
+
+[[map]]
+field = "score"
+at = "score"
+
+[[map]]
+field = "lives"
+at = "lives"
+
+[[map]]
+field = "bombs"
+at = "bombs"
+
+[[map]]
+field = "bomb_held"
+at = "bomb_held"
+
+[[map]]
+field = "game_over"
+at = "game_over"
+
+[[map]]
+field = "rng_seed"
+at = "rng_seed"
+
+[[map]]
+field = "enemies"
+at = "enemies"

@@ -32,24 +32,31 @@ const BIOS_TIMER: [u8; 15] = [0xB8, 0x40, 0x00, 0x8E, 0xC0, 0x26, 0xA1, 0x6C, 0x
 /// again`, `poll` (+00009) a `ret`.
 const GAME_PORT: [u8; 10] = [0xBA, 0x01, 0x02, 0xEC, 0xE8, 0x02, 0x00, 0xEB, 0xFA, 0xC3];
 
-/// The workspace's `clockwork`, built if it isn't.
-fn clockwork() -> PathBuf {
+/// The workspace's program `name` (of package `package`), built if it isn't, or always (`fresh`).
+fn built(package: &str, name: &str, fresh: bool) -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("target"));
-    let exe = target.join("debug").join(if cfg!(windows) { "clockwork.exe" } else { "clockwork" });
-    if !exe.is_file() {
+    let exe = target.join("debug").join(if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() });
+    if fresh || !exe.is_file() {
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let built = Command::new(cargo).args(["build", "-p", "clockwork"]).status().expect("cargo");
-        assert!(built.success(), "building clockwork");
+        let built = Command::new(cargo).args(["build", "-p", package]).status().expect("cargo");
+        assert!(built.success(), "building {package}");
     }
     exe
+}
+
+/// The workspace's `clockwork`, built if it isn't.
+fn clockwork() -> PathBuf {
+    built("clockwork", "clockwork", false)
 }
 
 struct Rrc {
     repo: PathBuf,
     cache: PathBuf,
     clockwork: PathBuf,
+    /// More environment variables for it.
+    env: Vec<(&'static str, &'static str)>,
 }
 
 impl Rrc {
@@ -62,6 +69,7 @@ impl Rrc {
             .env("RRC_CLOCKWORK", &self.clockwork)
             .env("RRC_SNAPSHOT_MS", "1")
             .env_remove("RRC_BY")
+            .envs(self.env.iter().copied())
             .output()
             .expect("rrc");
         let text = String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr);
@@ -88,7 +96,7 @@ fn setup_file(name: &str, file: &str, program: &[u8]) -> (PathBuf, Rrc) {
     std::fs::create_dir_all(game.join(file).parent().unwrap()).unwrap();
     std::fs::write(game.join(file), program).unwrap();
     std::fs::create_dir_all(&repo).unwrap();
-    let rrc = Rrc { repo, cache: dir.join("cache"), clockwork: clockwork() };
+    let rrc = Rrc { repo, cache: dir.join("cache"), clockwork: clockwork(), env: Vec::new() };
     (dir, rrc)
 }
 
@@ -182,7 +190,7 @@ fn a_session_is_traced_tick_by_tick() {
     let status = rrc.ok(&["status"]);
     assert!(status.contains("rrc record short: the knowledge changed since it was recorded"), "{status}");
     assert!(rrc.ok(&["record", "short"]).contains("same      run as before"));
-    assert!(rrc.ok(&["status"]).contains("every session is recorded with the knowledge as it is"));
+    assert!(rrc.ok(&["status"]).contains("every session is recorded; map the state: mapping.toml"));
     let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other"]);
     assert!(!ok && refused.contains("give --size N"), "{refused}");
     assert!(rrc.ok(&["input", "tally", "--remove"]).contains("removed   tally"));
@@ -341,7 +349,7 @@ fn a_flat_program_s_objects_have_ids() {
     let last = squares.lines().last().unwrap_or("");
     assert!(last.starts_with("16        [0x1]=1 [0x2]=4 [0x3]=9") && last.ends_with("[0xE]=196"), "{squares}");
     let watched = rrc.ok(&["watch", "run", "squares", "--tick", "3", "--ticks", "1"]);
-    assert!(watched.contains("write squares[+4] = 1 (was 0) by FLAT32.EXE#1+"), "an element: {watched}");
+    assert!(watched.contains("write squares[1] = 1 (was 0) by FLAT32.EXE#1+"), "an element: {watched}");
     let inputs = rrc.ok(&["inputs", "run"]);
     assert!(inputs.contains("scanned   FLAT32.EXE#2+00000, 66960 bytes"), "its data object: {inputs}");
     // Calls in 32-bit code, the program's listed and the extender's counted.
@@ -475,5 +483,82 @@ fn a_launcher_s_program_is_the_module() {
     assert!(watched.contains("write count = 2 (was 1) by T.COM+00000"), "as its type reads: {watched}");
     let check = rrc.ok(&["check"]);
     assert!(check.contains("image     ") && !check.contains("unknown"), "{check}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_port_matches_the_original_tick_by_tick() {
+    // The example port (examples/toy) of the toy game (testbins/src/toy.c), built here.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, mut rrc) = setup_file("toy", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
+    let port = built("toy-port", "toy-port", true);
+    let example = root.join("examples/toy");
+    for file in [
+        "mapping.toml",
+        "knowledge/functions.tsv",
+        "knowledge/data.tsv",
+        "knowledge/types.toml",
+        "knowledge/ticks.toml",
+        "sessions/play.toml",
+        "sessions/play.inputs",
+    ] {
+        std::fs::create_dir_all(rrc.repo.join(file).parent().unwrap()).unwrap();
+        std::fs::copy(example.join(file), rrc.repo.join(file)).unwrap();
+    }
+    let settings = std::fs::read_to_string(example.join("rrc.toml")).unwrap();
+    let command = format!("command = [{:?}]", port.to_str().unwrap());
+    let settings: Vec<String> =
+        settings.lines().map(|l| if l.starts_with("command = ") { command.clone() } else { l.to_owned() }).collect();
+    std::fs::write(
+        rrc.repo.join("rrc.toml"),
+        settings.join(
+            "
+",
+        ),
+    )
+    .unwrap();
+    rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
+    assert!(rrc.ok(&["game", dir.join("game").to_str().unwrap()]).contains("version   1.0"));
+    assert!(rrc.ok(&["check"]).contains("mapping   12 fields mapped"));
+    // Three seconds: through the first bounce, at tick 194.
+    rrc.ok(&["session", "set", "play", "--seconds", "3"]);
+    let recorded = rrc.ok(&["record", "play"]);
+    assert!(recorded.contains("trace     209 ticks"), "{recorded}");
+
+    let compared = rrc.ok(&["compare", "play"]);
+    assert!(compared.contains("compare   play, ticks 1-209 of 209: 12 fields mapped (80 bytes)"), "{compared}");
+    assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
+    // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value.
+    rrc.env.push(("TOY_BUG", "1"));
+    let (diverged, ok) = rrc.run(&["compare", "play"]);
+    assert!(!ok, "a divergence fails: {diverged}");
+    assert!(diverged.contains("diverges  at tick 194 (play): 1 field differ"), "{diverged}");
+    assert!(diverged.contains("enemies[1].hits: original 1, port 0"), "{diverged}");
+    assert!(diverged.contains("write enemies[1].hits = 1 (was 0) by TOY.EXE+002A0 in update < main"), "{diverged}");
+    rrc.env.pop();
+
+    // From the original's values at a tick; a paired checkpoint, and from it.
+    let transplanted = rrc.ok(&["compare", "play", "--transplant", "100"]);
+    assert!(transplanted.contains("match     every mapped field at all 110 ticks"), "{transplanted}");
+    let paired = rrc.ok(&["compare", "play", "--pair", "150", "--to", "160"]);
+    assert!(paired.contains("pair      kept at tick 150"), "{paired}");
+    let session = std::fs::read_to_string(rrc.repo.join("sessions/play.toml")).unwrap();
+    assert!(
+        session.contains(
+            "[[pair]]
+tick = 150"
+        ),
+        "{session}"
+    );
+    let resumed = rrc.ok(&["compare", "play", "--resume", "150"]);
+    assert!(resumed.contains("ticks 150-209 of 209") && resumed.contains("match "), "{resumed}");
+
+    // A field the port's state hasn't: missing at the first tick.
+    let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
+    std::fs::write(rrc.repo.join("mapping.toml"), mapping.replace("field = \"lives\"", "field = \"lifes\"")).unwrap();
+    rrc.ok(&["record", "play"]);
+    let (missing, ok) = rrc.run(&["compare", "play"]);
+    assert!(!ok && missing.contains("lifes: original 3, port missing"), "{missing}");
+    assert!(missing.contains("start     at the port's first tick"), "{missing}");
     std::fs::remove_dir_all(&dir).ok();
 }

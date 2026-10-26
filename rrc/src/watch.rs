@@ -59,35 +59,40 @@ impl<'a> Names<'a> {
         id.as_ref().and_then(|id| self.k.functions.get(id)).map_or_else(|| self.plain(address), |d| d.name.clone())
     }
 
-    /// A data item's name (`name[+N]` inside one), or the address.
-    /// The bytes `hex` at `address` as their named data's type reads them, if they are one element
-    /// of it (a `u16` whole, an element of a `u8[256]`).
+    /// The bytes `hex` at `address` as their named data's type reads them, if they are one primitive
+    /// element or field of it (a `u16` whole, an element of a `u8[256]`, a structure's `i16`).
     fn typed(&self, address: &str, hex: &str) -> Option<String> {
+        let (d, offset) = self.datum(address)?;
+        let (_, leaf, 0) = crate::values::place(&d.ty, offset, &self.k.types)? else { return None };
+        let width = crate::values::primitive(&leaf)?;
+        (hex.len() == 2 * width as usize).then(|| crate::trace::value_text(Some(hex), &leaf))
+    }
+
+    /// The name of the data `len` bytes at `address` are (0: as long as they are): a data item's
+    /// name, or the element or field inside one its type says (`enemies[1].hits`, `name[+N]` without
+    /// a type); else the address.
+    fn data(&self, address: &str, len: u32) -> String {
+        let Some(id) = self.id(address) else { return address.to_owned() };
+        let Some((d, offset)) = self.datum(address) else { return id.to_string() };
+        let name = &d.decision.name;
+        if offset == 0 && (len == 0 || d.size.is_none_or(|size| len >= size)) {
+            return name.clone();
+        }
+        match crate::values::place(&d.ty, offset, &self.k.types) {
+            Some((path, _, 0)) if !path.is_empty() => format!("{name}{path}"),
+            Some((path, _, inner)) if !path.is_empty() => format!("{name}{path}+{inner}"),
+            _ if offset == 0 => name.clone(),
+            _ => format!("{name}[+{offset}]"),
+        }
+    }
+
+    /// The named data `address` is in, and the offset in it.
+    fn datum(&self, address: &str) -> Option<(&crate::knowledge::Datum, u32)> {
         let id = self.id(address)?;
         let (start, d) =
             self.k.data.range(..=id.clone()).next_back().filter(|(start, _)| start.module() == id.module())?;
-        let element = d.ty.split('[').next()?;
-        let width = match element {
-            "u8" | "i8" => 1,
-            "u16" | "i16" => 2,
-            "u32" | "i32" => 4,
-            _ => return None,
-        };
         let offset = id.offset() - start.offset();
-        let inside = d.size.is_none_or(|size| offset < size);
-        (inside && offset % width == 0 && hex.len() == 2 * width as usize)
-            .then(|| crate::trace::value_text(Some(hex), element))
-    }
-
-    fn data(&self, address: &str) -> String {
-        let Some(id) = self.id(address) else { return address.to_owned() };
-        match self.k.data.range(..=id.clone()).next_back().filter(|(start, _)| start.module() == id.module()) {
-            Some((start, d)) if *start == id => d.decision.name.clone(),
-            Some((start, d)) if d.size.is_some_and(|size| id.offset() - start.offset() < size) => {
-                format!("{}[+{}]", d.decision.name, id.offset() - start.offset())
-            }
-            _ => id.to_string(),
-        }
+        (offset == 0 || d.size.is_some_and(|size| offset < size)).then_some((d, offset))
     }
 
     /// An ID for an address in the image or outside it, the address otherwise (paged memory).
@@ -141,7 +146,7 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let watched = clockwork.ask("watch_end", Value::Null)?;
     let names = Names::new(&k, repo, &session)?;
     let span = if syncs.is_empty() { "the whole session".to_owned() } else { ticks_text(first, ends.len() as u64) };
-    say("watch", format!("{} ({id}, {len} bytes), {span}", names.data(&at)));
+    say("watch", format!("{} ({id}, {len} bytes), {span}", names.data(&at, len)));
     // Each tick's accesses, those alike counted once (with --cycles, each on its own line). What runs
     // before the first sync point hit (loading, unpacking, the first screens) is "start".
     let mut lines: Vec<(String, String, usize)> = Vec::new();
@@ -271,7 +276,12 @@ impl Access {
             chain.push("…".into());
         }
         let chain = if chain.is_empty() { String::new() } else { format!(" in {}", chain.join(" < ")) };
-        format!("{} {} = {}{was} by {by}{chain}", self.kind, names.data(&self.at), value(&self.value))
+        format!(
+            "{} {} = {}{was} by {by}{chain}",
+            self.kind,
+            names.data(&self.at, self.value.len() as u32),
+            value(&self.value)
+        )
     }
 }
 
@@ -454,7 +464,7 @@ fn candidate_text(c: &Candidate, names: &Names, k: &Knowledge, analysis: Option<
             .into_iter()
             .flat_map(|a| a.refs.iter())
             .filter(|(from, to, _)| *from == by && near(to))
-            .map(|(_, to, _)| names.data(&format!("+{:05X}", to.offset())))
+            .map(|(_, to, _)| names.data(&format!("+{:05X}", to.offset()), 0))
             .collect();
         if !refers.is_empty() {
             text += &format!(" (Ghidra: it refers to {})", refers.join(", "));

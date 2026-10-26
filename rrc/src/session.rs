@@ -26,6 +26,9 @@ pub struct Session {
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<Recorded>,
+    /// Paired checkpoints (D63): where the port matched, its state and the original's snapshot.
+    #[serde(default, rename = "pair", skip_serializing_if = "Vec::is_empty")]
+    pub pairs: Vec<Pair>,
 }
 
 /// The session's recorded trace.
@@ -39,6 +42,17 @@ pub struct Recorded {
     pub ticks: u64,
     /// The Clockwork that recorded it.
     pub clockwork: String,
+}
+
+/// A paired checkpoint: the port's state and the original's snapshot at the end of a tick both matched
+/// at.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Pair {
+    pub tick: u64,
+    /// The port's state (`rrc-port-state`), in the cache.
+    pub port: String,
+    /// Clockwork's snapshot there, in the cache.
+    pub snapshot: String,
 }
 
 impl Session {
@@ -148,7 +162,7 @@ fn add_session(repo: &Repo, a: &Args, name: &str) -> Result<ExitCode, String> {
     };
     let description = a.value("--description").unwrap_or_default().to_owned();
     let options = a.value("--clockwork").map(clockwork_options).unwrap_or_default();
-    Session { description, inputs, replay, seconds, options, trace: None }.save(repo, name)?;
+    Session { description, inputs, replay, seconds, options, trace: None, pairs: Vec::new() }.save(repo, name)?;
     say("session", format!("{name}: {seconds} s"));
     say("next", format!("rrc record {name}"));
     Ok(ExitCode::SUCCESS)

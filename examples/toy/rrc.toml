@@ -1,0 +1,16 @@
+[game]
+name = "toy"
+title = "The toy game of testbins (testbins/src/toy.c)"
+
+[original]
+program = "TOY.EXE"
+
+[[version]]
+name = "1.0"
+
+[version.files]
+"TOY.EXE" = "6c1cefbc1c4afd2c38820cb892227551cfe725d0281e68f78a3b50bf6c56bc3f"
+
+[port]
+# The port's program (src/main.rs); rrc compare runs it with `run` and its options.
+command = ["cargo", "run", "--quiet", "-p", "toy-port", "--"]

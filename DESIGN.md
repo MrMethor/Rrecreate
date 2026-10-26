@@ -4,12 +4,11 @@
 > status). When a decision changes, both files change in the same commit, and nothing here may describe a
 > superseded decision.
 
-**Status (2026-10-21):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
-serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. A fresh
-agent tested the toolkit on the Wolf3D port with the playbook alone, and what it found is in (D46-D51). The
-Wolf3D port (local for now) has its version, its own analysis, two ticks (play, demo playback), its boundary
-values and three traced sessions. Next: a second such test (the menus' tick, the mouse), then M3, the runtime
-and the comparison. Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
+**Status (2026-10-26):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
+serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. Two blind
+tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 is under way: the
+runtime (`runtime/`), the mapping, transplants, the comparison with who wrote, and paired checkpoints work
+(D61-D63), and the toy port (`examples/toy`) matches its session tick by tick. Next: scenario sessions (D59). Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
 over (§11).
 
 ## 1. The product

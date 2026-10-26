@@ -1,0 +1,19 @@
+[package]
+name = "rrc-runtime"
+description = "What a Rust port builds on: the port contract with rrc (D61), the session's inputs, transplants, the port's trace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "rrc_runtime"
+
+# Never Clockwork's crates: a port talks to the toolkit through files (DESIGN.md §3, D12, D38).
+[dependencies]
+serde.workspace = true
+serde_json = "1"
+
+[lints]
+workspace = true

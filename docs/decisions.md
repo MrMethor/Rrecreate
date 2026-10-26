@@ -460,6 +460,50 @@ read of the play loop (12 ticks of play-keyboard). The runs are the same as befo
 the rest.
 **Supersedes:** D54.
 
+### D61. A port is a program `rrc` runs, and they exchange files. Accepted 2026-10-26.
+A port repository names its port's program in `rrc.toml` (`[port] command`, a command line run in the
+repository, with an optional `[port] build` run first). `rrc compare` writes the session's inputs, tick by tick,
+from the original's trace (`rrc-inputs`) and runs the port with `run --inputs FILE --out FILE`, and with
+`--transplant FILE`, `--resume FILE`, `--save-at TICK --save FILE` or `--to TICK` when asked; the port writes its
+state at every tick (`rrc-port-trace`: the top-level fields of its serialized state that changed). The state at
+tick t is what the original holds at its t-th sync point hit; a step with tick t's inputs makes tick t+1's. A
+Rust port gets all of this from `runtime/` (the crate `rrc-runtime`): it implements `Simulation` (`start`,
+`step`, and `transplant` when its state isn't the mapped fields alone) on one serializable struct and calls
+`rrc_runtime::main`.
+**Why:** D38: files a port in any language can read and write, and `rrc` needs to know nothing of how a port is
+built. A program per run keeps the port's process apart from `rrc`'s, as Clockwork's is (a crash is the port's).
+The toy port (`examples/toy`) is about 200 lines with its test, none of them for the contract.
+
+### D62. The mapping: the port's fields as paths, the original's items as typed values. Accepted 2026-10-26.
+`mapping.toml` maps each field of the port's state (a dotted path in its serialization: `player.x`) to the
+original's item (a data name or an ID) and reads that item as the knowledge's type for it, or the one given:
+primitives as numbers, arrays as arrays, the structures of `types.toml` as objects of their fields, enumerations
+as their numbers. Both sides compare as these values, leaf by leaf; what the port's state has beyond them is
+its own. `[[ignore]]` names the original's memory that may differ. `rrc record` traces every mapped item; a
+transplant writes the mapped values at a tick (`rrc-state`), and the runtime sets them over the port's start
+state's serialization. `rrc check` checks the mapping, and `rrc compare` lists the named data neither mapped
+nor ignored.
+**Why:** DESIGN.md §7: one mapping for comparison and transplant, so a gap shows as a divergence. The
+knowledge's types already say how memory reads; with the port's serialization as the meeting point, a port in
+any language maps by naming its fields. **Not yet:** encodings the types don't have (a pointer as an index,
+packed bits, a flag as a boolean): until the mapping has them, a port serializes such a field the original's
+way (in Rust, a serde attribute on the field).
+
+### D63. The comparison reports the first divergence and who wrote it; paired checkpoints. Accepted 2026-10-26.
+`rrc compare SESSION` reads the original's trace from the cache, runs the port and compares every mapped field
+at every tick. At the first tick one differs it shows the differing leaves (up to 8) with both values, notes
+late inputs in the pass before (D60), and watches the first leaf's bytes in that pass (from the session's
+snapshots) for the instruction that wrote the original's value; at the port's first tick it says the start or
+the transplant is what differs instead. It exits 1 on a divergence. `--transplant N` starts the port from the
+original's mapped values at tick N. `--pair N` keeps a paired checkpoint when the port matched through tick N:
+its own state there (`rrc-port-state`) and Clockwork's snapshot at the end of tick N, in the cache, listed in
+the session's file (`[[pair]]`); `--resume N` starts the port from it.
+**Why:** DESIGN.md §7, §8: the first divergence localizes a bug, and who wrote it says which original code to
+read. Comparing needs no emulator (D26): only the watch and a pair's snapshot run Clockwork. Measured on the toy
+port: its 20-second session matches at all 1400 ticks; with a bounce left uncounted it diverges at tick 194, and
+the report names `update`'s instruction that wrote the count. **Not yet:** the port's own call trace for the
+divergent tick (DESIGN.md §7), frames and sound (M5).
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the
