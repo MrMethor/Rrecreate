@@ -50,8 +50,9 @@ functions past the program's file image, which Ghidra can't see. `rrc show ID` s
 --asm --session NAME [--tick N]` disassembles it from the session's memory, by tick N or at its last
 snapshot. Port what the generator makes, not the bytes (DESIGN.md §6).
 
-Look for prior art (D32): source releases, reimplementations, format documentation, bug lists. For a pilot
-whose source is released, the source stays out of reach (D3, D46).
+Look for prior art (D32): source releases, reimplementations, format documentation, bug lists, the knowledge
+of earlier projects (`rrc import`). For a test bench whose source is released, used to grade the toolkit, the
+source stays out of reach (D46, below).
 
 ## 3. Sessions and ticks
 
@@ -270,10 +271,10 @@ refuses to start alone). Start the launcher (`program`) and name the game's prog
 about a session runs it once to find where the game's program goes (kept afterwards); from then on IDs work as
 if the game had started alone, and the launcher's code is memory outside it (`MEM+...`).
 
-## An honest pilot
+## An honest test bench
 
-A pilot whose source is released (Wolf3D, D3) proves the approach only if nothing from that source helps.
-For such a port:
+A port of a game whose source is released, made to test the toolkit with the source as its grade (Wolf3D's,
+D46), proves the approach only if nothing from that source helps. For such a port:
 
 - don't read the game's source release, reimplementations, wikis or anything derived from them, nor the web
   about the game's code;

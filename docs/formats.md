@@ -31,8 +31,8 @@ and find where it puts the game's program (`index/places`, below).
 A port repository also has `.gitignore` (`rrc.local.toml`, `.rrc/`, `target/`) and `.gitattributes` (text with
 LF line ends on every platform).
 
-`[port] imports = false` makes `rrc import` refuse: an honest pilot's knowledge comes from its own analysis
-only (D46).
+`[port] imports = false` makes `rrc import` refuse: an honest test bench's knowledge comes from its own
+analysis only (D46).
 
 ```toml
 [port]

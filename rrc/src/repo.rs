@@ -32,7 +32,7 @@ pub struct Game {
 /// The port's own rules.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Port {
-    /// Whether `rrc import` may bring in knowledge from elsewhere: not for an honest pilot (D46).
+    /// Whether `rrc import` may bring in knowledge from elsewhere: not for an honest test bench (D46).
     #[serde(default = "yes")]
     pub imports: bool,
     /// The port's program, as a command line run in the port repository: `rrc compare` adds `run` and

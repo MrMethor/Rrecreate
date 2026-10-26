@@ -8,7 +8,8 @@
 serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. Two blind
 tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 done: the runtime
 (`runtime/`), the mapping, transplants, the comparison with who wrote, paired checkpoints and scenario edits
-(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4. Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
+(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4, the Arena
+pilot (D65). Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
 over (§11).
 
 ## 1. The product
@@ -351,8 +352,8 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 - The Ghidra export script, the library signature packs and how they are made (`rec sigs build`, now `rrc sigs
   build`, with its linker map parser), the test programs built with Open Watcom.
 - Recreate's Wolf3D knowledge (names transferred from id's released source, globals, its 46 overrides written
-  from that source) stays outside the Wolf3D port: it grades the pilot afterwards, like the source itself (D3,
-  D46).
+  from that source) stays outside the Wolf3D port, a test bench (D46). Recreate's Arena knowledge is prior art
+  for the Arena port (D32, D65): `rrc import recreate` brings it in as evidence.
 - Not taken: the Python `rec` toolkit and its SQLite store, the task queue and packets, `rec submit`/`rec land`,
   Python ports. Their ideas are reused where they fit.
 
@@ -364,10 +365,9 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
 | M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | Recreate's Wolf3D knowledge loads (outside the port); a session of the Wolf3D port is traced |
 | M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, scenario sessions, the comparison and its report | A toy port of a test program matches tick by tick |
-| M4 Pilot | Wolf3D gameplay as a native simulation, from a transplant at the start of E1M1, compared per tick (a test of the toolkit, not a finished port: D52) | It matches through the pushwall session. id's released source stays out of the agent's reach and grades the result afterwards |
+| M4 Pilot: Arena | Arena's gameplay in its first dungeon as a native simulation (the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock), from a transplant at the dungeon's start, compared per tick (D65). The presentation is M5's | A session of play in the first dungeon (walking, doors, a fight) matches tick by tick from the transplant: the approach works on a game without a source release |
 | M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |
 | M6 Modern mode | Fixed-rate logic, free frame rate, resolution, the first quirk fixes | The modern toggles pass their own tests |
-| M7 A game without source | The same on a small real-mode game with no source release (not Arena or Daggerfall, which the person ports with the finished toolkit) | Honest evidence that the approach works where it's needed |
 
-32-bit protected-mode programs (Daggerfall and later) are designed in from M1 (IDs, protocol, mapping);
-porting one comes after M7.
+M5 and M6 continue Arena's port. 32-bit protected-mode programs (Daggerfall and later) are designed in from M1
+(IDs, protocol, mapping); porting one comes after M6.

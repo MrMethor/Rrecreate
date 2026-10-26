@@ -41,11 +41,26 @@ Ghidra's output is read for how the original does something; nothing is translat
 **Why:** it is partly wrong (missed functions, lost segments, dropped flags, guessed types) and incomplete (no
 hardware layer, no runtime), so a function-by-function translation can't produce a working program.
 
-### D3. The honest pilot. Accepted 2026-10-19, with the person.
+### D3. The honest pilot. Superseded by D65.
 The pilot is Wolf3D, with id's released source kept out of the agent's reach and used only to grade the result
 afterwards; the real test follows on a small game with no source release. Arena and Daggerfall are not test
 ports: the person ports them with the finished toolkit (decided 2026-10-17).
 **Why:** a source release lets the agent take shortcuts, even unintentionally, and then the pilot proves nothing.
+
+### D65. The pilot is Arena. Accepted 2026-10-26, with the person.
+M4 ports Arena's gameplay (`ACD.EXE`, the CD version) instead of Wolf3D's: its first dungeon, from a transplant
+at its start, compared tick by tick. Arena has no source release, so the pilot is also the test where the
+approach is needed, which M7 was to be; M7 goes. Like any port it starts from prior art (D32): Recreate's Arena
+knowledge (`rrc import recreate`), the person's earlier Arena project (its notes and names as evidence; copying
+its code needs the person's OK) and what OpenTESArena documents of the formats. Nothing grades it but the
+comparison with the original. The pilot is the start of Arena's port (D39), not a throwaway test, though M4
+covers only the first dungeon's gameplay. Wolf3D stays what the toolkit's tests have used (D46-D51, D60): a
+test bench outside the plan.
+**Why:** the person doesn't care about a Wolf3D port and chose Arena. A source-graded pilot showed whether an
+agent kept away from the source; the comparison already shows whether a port behaves as the original does, and
+Arena's port is wanted for itself. Arena already runs in Clockwork to its first dungeon
+(`testdata/inputs/arena-first-dungeon.inputs`), with its mouse as a boundary value (D49).
+**Supersedes:** D3.
 
 ## The emulator
 

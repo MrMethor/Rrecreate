@@ -21,7 +21,7 @@ pub(crate) fn import(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Err(format!("usage: rrc {usage}"));
     }
     if !repo.settings.port.imports {
-        return Err("this port takes no imports ([port] imports = false in rrc.toml): an honest pilot's knowledge \
+        return Err("this port takes no imports ([port] imports = false in rrc.toml): a test bench's knowledge \
                     comes from its own analysis (D46)"
             .into());
     }
