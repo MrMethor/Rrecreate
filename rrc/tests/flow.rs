@@ -114,7 +114,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 4, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 5, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
@@ -552,6 +552,22 @@ tick = 150"
     );
     let resumed = rrc.ok(&["compare", "play", "--resume", "150"]);
     assert!(resumed.contains("ticks 150-209 of 209") && resumed.contains("match "), "{resumed}");
+
+    // A scenario (D64): edits at tick 100. The trace lists them, a watch names the edit as the writer,
+    // and the port gets them with the inputs.
+    let edited = rrc.ok(&["session", "edit", "play", "100", "score", "5000"]);
+    assert!(edited.contains("edit      tick 100: score = 5000 (TOY.EXE+00B04 8813)"), "{edited}");
+    rrc.ok(&["session", "edit", "play", "100", "enemies[0]", r#"{"alive": 0}"#]);
+    let (refused, ok) = rrc.run(&["session", "edit", "play", "100", "lives", "300"]);
+    assert!(!ok && refused.contains("isn't in 0 to 255"), "{refused}");
+    let recorded = rrc.ok(&["record", "play"]);
+    assert!(recorded.contains("edits     2") && recorded.contains("pairs     1 dropped"), "{recorded}");
+    let tick = rrc.ok(&["trace", "play", "--tick", "100"]);
+    assert!(tick.contains("edit      score = 5000 (TOY.EXE+00B04: 8813)"), "{tick}");
+    let watched = rrc.ok(&["watch", "play", "score", "--tick", "100", "--ticks", "1"]);
+    assert!(watched.contains("write score = 5000 (was 99) by the session's edit"), "{watched}");
+    let compared = rrc.ok(&["compare", "play"]);
+    assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
 
     // A field the port's state hasn't: missing at the first tick.
     let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();

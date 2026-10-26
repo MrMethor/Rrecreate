@@ -741,8 +741,11 @@ impl Machine {
                     let gate = self.syncs.gate_sources(at).map(|s| self.gate_state(s));
                     let stop = self.syncs.reached(at, self.cpu.cycles, gate);
                     let hit = self.syncs.get(at).map_or(0, |p| p.hits);
-                    if hit != hits && self.probes.late.is_some() {
-                        self.late_tick(at);
+                    if hit != hits {
+                        self.edit();
+                        if self.probes.late.is_some() {
+                            self.late_tick(at);
+                        }
                     }
                     if stop {
                         return Stop::Sync { address: at, hit };
@@ -1084,6 +1087,10 @@ impl Machine {
         self.drive.hash(&mut h);
         let flags = (self.halted, self.waiting_for_input, self.keyboard_e0, self.returned_flags);
         (flags, self.exit_code, self.next_event, self.next_frame).hash(&mut h);
+        // A scenario's edits still to come (D64); none leaves the hash as it was before edits.
+        if !self.syncs.edits().is_empty() {
+            self.syncs.edits().hash(&mut h);
+        }
         h.finish()
     }
 
@@ -1377,6 +1384,28 @@ impl Machine {
         // To the next device event.
         self.cpu.cycles = self.cpu.cycles.max(self.next_event.min(limit));
         None
+    }
+
+    /// Writes a scenario's edits due at the tick just counted (D64), as the program sees memory; a
+    /// byte where nothing is mapped is left out.
+    fn edit(&mut self) {
+        let due = self.syncs.due_edits();
+        if due.is_empty() {
+            return;
+        }
+        let watched = self.watch_before();
+        for edit in due {
+            for (i, &byte) in edit.bytes.iter().enumerate() {
+                let linear = edit.at.wrapping_add(i as u32);
+                match self.cpu.peek_translate(|at| self.mem.read_u32(at), linear) {
+                    Some(physical) => self.write_u8(physical, byte),
+                    None => self.diagnostic(format!("edit at tick {}: @{linear:X} isn't mapped", edit.tick)),
+                }
+            }
+        }
+        if let Some(video) = watched {
+            self.watch_changes(video, crate::watch::By::Edit);
+        }
     }
 
     /// Before the host acts (a service, a device event) with a watch on: memory logs its writes, and

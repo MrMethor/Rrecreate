@@ -411,7 +411,7 @@ handshake already catches today's mistake of an `rrc` and a `clockwork` from dif
 because it is best shaped by a second platform in hand: a platform layer inside `rrc`, a core shared between
 emulators, a `platform` setting in `rrc.toml` (a later default of `dos-pc` needs no change to existing ports).
 
-### D59. Scenario sessions: a base, edits at ticks, then input. Accepted 2026-10-23, with the person.
+### D59. Scenario sessions: a base, edits at ticks, then input. Accepted 2026-10-23, with the person; how edits run: D64.
 A session may set up the scenario it needs instead of playing to it: it starts from power-on or a snapshot,
 writes values into the original's memory at chosen ticks (named data through the knowledge's types where
 there is any, IDs otherwise), then runs its input. The edits are part of the session, in what makes its run
@@ -503,6 +503,27 @@ read. Comparing needs no emulator (D26): only the watch and a pair's snapshot ru
 port: its 20-second session matches at all 1400 ticks; with a bounce left uncounted it diverges at tick 194, and
 the report names `update`'s instruction that wrote the count. **Not yet:** the port's own call trace for the
 divergent tick (DESIGN.md §7), frames and sound (M5).
+
+### D64. Scenario edits: written by the emulator at counted ticks, and given to the port with the inputs. Accepted 2026-10-26.
+A session's edits (`[[edit]]` in its file, or `rrc session edit`) name named data or an ID, a path into it as
+its type reads (`enemies[2].alive`) and a value (a number, an array, some of a structure's fields, an
+enumeration's value name), written as the type's bytes. Clockwork writes them when the session's tick is
+counted (the hits of every sync point), before that instruction runs, so the tick's state has them: they are
+part of the machine's state (its hash while some are to come, its snapshots), and every run of the session
+gets them, whichever `rrc` command makes it (protocol revision 5, `edits`; a watch names their writes "the
+session's edit"). They are part of what makes the run the same (D51's key), and the trace's header lists them.
+The port gets each as the mapped leaves it wrote, set to the original's values at its tick (`set` in the inputs
+file): a transplant of those fields alone, so a scenario compares from the first tick, from a transplant or from
+a paired checkpoint alike. Re-recording a session whose run changed drops its paired checkpoints. A divergence
+after an edit names the last edit before it, to be suspected first. **Not yet:** a session based on a snapshot
+(D59's "or a snapshot"): a session reaches the scenario by its input and edits from power-on.
+**Why:** D59 planned rrc to run to each edit's tick and write it, with nothing new in the emulator. But every
+command runs sessions its own way (a recording tick by tick, a watch from a snapshot, a scan by milliseconds),
+and a snapshot taken before an edit must still make it: in the emulator, one place covers them all, and its
+snapshots carry the edits still to come. The port can't be edited by rrc, so it gets the edits as values, by
+the same mapping that compares it. Measured on the toy port: edits at tick 100 (a score, an enemy gone) and at
+tick 120 (the lives); the session matches from tick 1.
+**Supersedes:** D59's paragraph "The emulator" (the rest of D59 stands).
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the

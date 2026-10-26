@@ -226,7 +226,9 @@ fn next_after_setup(repo: &Repo) -> Result<String, String> {
     let cache = crate::cache::Cache::open(&repo.local)?;
     let (syncs, inputs, state) = crate::trace::items(repo, &k, &repo.module())?;
     for name in &sessions {
-        let Some(recorded) = crate::session::Session::load(repo, name)?.trace else {
+        let session = crate::session::Session::load(repo, name)?;
+        let edits = crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?);
+        let Some(recorded) = session.trace else {
             return Ok(format!("rrc record {name}"));
         };
         match crate::trace::recorded_header(&cache, &recorded.hash) {
@@ -236,6 +238,9 @@ fn next_after_setup(repo: &Repo) -> Result<String, String> {
             }
             Some(h) if (&h.syncs, &h.inputs, &h.state) != (&syncs, &inputs, &state) => {
                 return Ok(format!("rrc record {name}: the knowledge changed since it was recorded"));
+            }
+            Some(h) if h.edits != edits => {
+                return Ok(format!("rrc record {name}: its edits changed since it was recorded"));
             }
             Some(_) => {}
         }

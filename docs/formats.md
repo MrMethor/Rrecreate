@@ -235,6 +235,13 @@ run = "31ff…"                   # the run: what the machine did, whatever the 
 ticks = 2770
 clockwork = "0.1.0"             # the Clockwork that recorded it
 
+[[edit]]                        # a scenario's edit (D64): rrc session edit writes these, or by hand
+tick = 100                      # at this tick's sync point, before its pass reads
+at = "enemies[2]"               # named data, or an ID, with a path into it as its type reads
+type = ""                       # optional: how to read it, else data.tsv's type
+note = "the third enemy gone"   # optional
+value = { alive = 0 }           # a number, an array, some of a structure's fields, an enumeration's value name
+
 [[pair]]                        # written by rrc compare --pair: a paired checkpoint (D63)
 tick = 900
 port = "9d5f…"                  # the port's state at the tick (rrc-port-state), in the cache
@@ -254,7 +261,8 @@ JSON lines (D60): a header, a line per tick, and an end line.
           {"name":"menu","at":"GAME.EXE+0B1F0","when_changed":[{"name":"timer_count","at":"GAME.EXE+21C50","size":4}]}],
  "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2},
            {"name":"mouse","device":"mouse","size":46,"sync":["menu"]}],
- "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …]}
+ "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …],
+ "edits":[{"tick":100,"at":"GAME.EXE+1E0A4","hex":"0200","edit":"door_state = 2"}]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":[[0,"0100"]],"state":[[0,"0000"], …],
  "frames":[[284,20380102,19,"61f5…","a3c0…"]],"sound":{"opl":[[2549120000,176,49]]}}
 {"tick":2,"sync":"play","cycle":20504101,"late":[[1,"GAME.EXE+0A3B2"]],"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
@@ -270,6 +278,8 @@ JSON lines (D60): a header, a line per tick, and an end line.
   size, but those that are inputs at every tick) that changed since the tick before; the first tick has them
   all. Values are the bytes memory holds, in hex (so little-endian; a device's state as its bytes); `null`
   where memory isn't mapped. Empty lists are left out.
+- `edits` (in the header, only if the session has any): the scenario's writes, each at an ID with its bytes
+  and the edit as the session has it (D64). A tick's state has its edits written.
 - `late`: `[index, ID]` for each input the tick's pass read with another value than the tick's, and the
   instruction that first read it so (for a driver, the instruction after its call): it changed after the sync
   point, before the program read it (D60), so the pass did what the next tick's values say. The program's own
@@ -318,7 +328,10 @@ inputs and the trace are JSON lines.
   `{"format":"rrc-inputs","version":1,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`,
   then a line per tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
   whose value changed since they were last read (index in the header's list, bytes in hex as the trace has
-  them); a value holds until it changes. The last line is `{"end":"the session's end","ticks":1400}`.
+  them); a value holds until it changes. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
+  mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
+  port sets in its state before writing the tick (D64). The last line is
+  `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each
   mapped field's value at the tick by its path. The runtime sets each over the port's start state's

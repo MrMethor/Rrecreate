@@ -3964,6 +3964,36 @@ fn a_run_stops_at_the_next_hit_of_any_sync_point() {
     assert_eq!(m.exit_code(), Some(0));
 }
 
+#[test]
+fn a_scenario_s_edits_write_memory_when_their_ticks_are_counted() {
+    let (program, o) = ten_steps();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let count = base + o["count"];
+    // Ticks alternate: the loop's call (1, 3, ...), then the step it calls (2, 4, ...).
+    m.syncs.add(base + o["again"], false);
+    m.syncs.add(base + o["step"], false);
+    let hash = m.state_hash();
+    m.syncs.set_edits(vec![dos::sync::Edit { tick: 4, at: count, bytes: vec![100, 0] }]).unwrap();
+    assert_ne!(m.state_hash(), hash, "edits still to come are state");
+    for _ in 0..3 {
+        assert!(matches!(m.run_to_next_sync(SECOND), Stop::Sync { .. }));
+    }
+    assert_eq!((m.syncs.ticks(), m.mem.read_u16(count)), (3, 1));
+    let before = m.clone();
+    assert!(matches!(m.run_to_next_sync(SECOND), Stop::Sync { .. }));
+    assert_eq!(m.mem.read_u16(count), 100, "written when tick 4 was counted, before its instruction ran");
+    assert!(m.syncs.edits().is_empty());
+    let late = m.syncs.set_edits(vec![dos::sync::Edit { tick: 4, at: count, bytes: vec![0] }]);
+    assert!(late.is_err(), "tick 4 has been counted");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    assert_eq!(m.mem.read_u16(count), 109, "the step's 8 calls after it");
+    // A snapshot from before the tick has the edit still to come.
+    let mut again = before;
+    assert_eq!(again.run(SECOND), Stop::Exited(0));
+    assert_eq!(again.mem.read_u16(count), 109);
+}
+
 /// A busy-polling loop: 1000 calls of `poll`; every 128th pass changes the byte at `input`.
 fn busy_poll() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
     let offsets = std::cell::RefCell::new(BTreeMap::new());

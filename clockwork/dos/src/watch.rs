@@ -49,6 +49,8 @@ pub enum By {
     Service { id: u16, ax: u16 },
     /// A device event (DMA, the mouse cursor).
     Device,
+    /// A scenario's edit at a tick (D64).
+    Edit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -112,8 +112,8 @@ impl Mapping {
     }
 }
 
-/// The ID a mapping names: an ID, or a data name.
-fn item(k: &Knowledge, at: &str) -> Result<Id, String> {
+/// The ID a mapping (or an edit) names: an ID, or a data name.
+pub(crate) fn item(k: &Knowledge, at: &str) -> Result<Id, String> {
     if let Ok(id) = parse_id(at) {
         return Ok(id);
     }

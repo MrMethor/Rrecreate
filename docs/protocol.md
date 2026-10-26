@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **4** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **5** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -68,7 +68,10 @@ the pictures recorded meanwhile (`images`).
 **Sync points.** `sync` `{"at", "log": false, "gate": [...]}`: counts the hits of the instruction at `at`
 (`log`: their cycles too). With a gate (D48), a hit counts only when the gate's sources changed since the
 point's last counted hit; a source is `{"at", "len"}` (memory) or `{"device"}`. `syncs` `{"at"}`: its hits (and
-cycles).
+cycles), and the hits counted at every point (`ticks`). `edits` `{"edits": [{"tick", "at", "hex"}]}`: writes into
+memory (as the program sees it) when the session's `tick`-th hit is counted, before that instruction runs,
+replacing the edits set before; an edit at a tick counted already is refused (D64). They are part of the
+machine's state: a snapshot keeps those still to come. A watch names their writes `{"edit": true}`.
 
 **Memory and registers.** `read` `{"ranges": [{"at", "len"} or {"device"}]}`: hex strings (`data`), or null
 where nothing is mapped; a device's state is the bytes the platform defines for it (D49). `write` `{"at",
@@ -152,6 +155,7 @@ An IBM PC with DOS (Clockwork).
 3. `screenshot`; counts may be written as whole floats; `input` refuses a line whose time has passed and
    reads lines as a script file; a TCP `serve` keeps one machine for every connection.
 4. A summary watch's `port_uses`; `image` answers what it wrote (it printed it, onto the answers).
+5. `edits`; `syncs` answers `ticks`; a watch's `by` may be `{"edit": true}`.
 
 ## Changing the protocol
 

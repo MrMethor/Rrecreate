@@ -226,6 +226,20 @@ where it is in use, so what comes before needn't be ported first. Where the port
 N` keeps a paired checkpoint, and `--resume N` compares from it without the ticks before. `unmapped` lists the
 named data the mapping neither maps nor ignores: the state nothing compares yet.
 
+A scenario is set up by edits instead of play (D59, D64): where the game has a cheat or a debug mode, use it
+first (it goes through the game's own code); otherwise
+
+```bash
+rrc session edit first-level 300 player_health 5
+rrc session edit first-level 300 "actors[3]" "{\"state\": 2}"
+rrc record first-level
+```
+
+writes the values into the original's memory at tick 300's sync point, in every run of the session; the port
+gets the mapped fields they wrote at that tick with its inputs. Edit through the game's structures, whole (a
+count with the list it counts): a state play can't reach makes a divergence after it a false alarm, and
+`rrc compare` names the last edit before a divergence for that reason.
+
 ## Naming
 
 ```bash

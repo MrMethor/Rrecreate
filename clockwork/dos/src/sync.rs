@@ -13,6 +13,10 @@
 //!
 //! A point may belong to a program (D56): it counts only while that program runs, or a program it
 //! started (an extender it runs). A launcher's other programs may run code at the same address.
+//!
+//! The hits counted at every point are the session's ticks. A scenario's edits (D59, D64) are
+//! writes into memory at a tick: when that tick's hit is counted, before its instruction runs. They
+//! are part of the machine's state, so a snapshot carries those still to come.
 
 use std::collections::BTreeMap;
 
@@ -50,9 +54,21 @@ pub struct Point {
     passed: u64,
 }
 
+/// A write into memory at a tick: `bytes` at linear address `at`, as the program sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Edit {
+    pub tick: u64,
+    pub at: u32,
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Syncs {
     points: BTreeMap<u32, Point>,
+    /// The hits counted at every point: the ticks so far.
+    ticks: u64,
+    /// The edits still to come, by tick.
+    edits: Vec<Edit>,
     bits: Vec<u64>,
     any_high: bool,
     /// Stop just before this point's hit number.
@@ -112,6 +128,33 @@ impl Syncs {
         self.points.get(&at)
     }
 
+    /// The hits counted at every point so far: the session's ticks.
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
+
+    /// The edits to make at ticks still to come, replacing those set before; refused if one is at a
+    /// tick that has been counted already.
+    pub fn set_edits(&mut self, mut edits: Vec<Edit>) -> Result<(), String> {
+        if let Some(late) = edits.iter().find(|e| e.tick <= self.ticks) {
+            return Err(format!("an edit at tick {}, and {} ticks have been counted", late.tick, self.ticks));
+        }
+        edits.sort_by_key(|e| e.tick);
+        self.edits = edits;
+        Ok(())
+    }
+
+    /// The edits still to come.
+    pub fn edits(&self) -> &[Edit] {
+        &self.edits
+    }
+
+    /// Takes the edits due at the tick just counted.
+    pub(crate) fn due_edits(&mut self) -> Vec<Edit> {
+        let due = self.edits.iter().take_while(|e| e.tick <= self.ticks).count();
+        self.edits.drain(..due).collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.points.is_empty()
     }
@@ -163,6 +206,7 @@ impl Syncs {
             gate.last = Some(state);
         }
         point.hits += 1;
+        self.ticks += 1;
         point.skipped = std::mem::take(&mut point.passed);
         if let Some(cycles) = &mut point.cycles {
             cycles.push(cycle);

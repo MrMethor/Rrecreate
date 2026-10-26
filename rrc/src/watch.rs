@@ -260,6 +260,8 @@ impl Access {
             names.plain(at)
         } else if let Some(service) = self.by["service"].as_str() {
             format!("a host service ({service}h, AX={})", self.by["ax"].as_str().unwrap_or("?"))
+        } else if self.by["edit"].as_bool() == Some(true) {
+            "the session's edit".to_owned()
         } else {
             "a device".to_owned()
         };

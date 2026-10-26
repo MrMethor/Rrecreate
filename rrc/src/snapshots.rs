@@ -53,10 +53,15 @@ pub fn run_identity(repo: &Repo, session: &Session) -> Result<String, String> {
         }
     };
     let original = &repo.settings.original;
-    let identity = json!({
+    let mut identity = json!({
         "clockwork": exe, "files": files, "program": original.program, "options": original.options,
         "session": session.options, "inputs": input(&session.inputs)?, "replay": input(&session.replay)?,
     });
+    // The scenario's edits, as the bytes they write (D64); none leaves the identity as before.
+    if !session.edits.is_empty() {
+        let k = crate::knowledge::Knowledge::load(&repo.knowledge())?;
+        identity["edits"] = json!(crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?));
+    }
     Ok(sha256(identity.to_string().as_bytes()))
 }
 

@@ -14,12 +14,14 @@ pub struct InputsFile {
     pub ticks: Vec<InputsLine>,
 }
 
-/// A tick of the inputs file: the inputs whose values changed (a value holds until it changes).
+/// A tick of the inputs file: the inputs whose values changed (a value holds until it changes), and
+/// the fields a scenario's edit set at this tick (D64), by path, with the original's values.
 #[derive(Debug, Default, PartialEq)]
 pub struct InputsLine {
     pub tick: u64,
     pub sync: String,
     pub inputs: Vec<(String, Vec<u8>)>,
+    pub set: Vec<(String, Value)>,
 }
 
 impl InputsFile {
@@ -50,7 +52,10 @@ impl InputsFile {
                 let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
                 inputs.push((name.clone(), unhex(pair[1].as_str().unwrap_or_default())?));
             }
-            file.ticks.push(InputsLine { tick, sync: v["sync"].as_str().unwrap_or_default().to_owned(), inputs });
+            let set =
+                v["set"].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect();
+            let sync = v["sync"].as_str().unwrap_or_default().to_owned();
+            file.ticks.push(InputsLine { tick, sync, inputs, set });
         }
         Ok(file)
     }
@@ -79,24 +84,52 @@ impl StartState {
     /// `base` (the port's start state, serialized) with every field of this state set at its path.
     pub fn overlay(&self, mut base: Value) -> Result<Value, String> {
         for (path, value) in &self.state {
-            let parts: Vec<&str> = path.split('.').collect();
-            set(&mut base, &parts, value.clone())
-                .map_err(|()| format!("{path}: the port's state has no object there"))?;
+            set_path(&mut base, path, value.clone())?;
         }
         Ok(base)
     }
 }
 
-/// Sets `value` at `parts` in `at`, making the objects on the way.
-fn set(at: &mut Value, parts: &[&str], value: Value) -> Result<(), ()> {
-    let object = at.as_object_mut().ok_or(())?;
-    match parts {
-        [] => Ok(()),
-        [last] => {
-            object.insert((*last).to_owned(), value);
+/// A step of a path: a field, or an element.
+enum Step<'a> {
+    Field(&'a str),
+    Element(usize),
+}
+
+/// Sets `value` at `path` (`player.x`, `enemies[2].alive`) in a serialized state, making the objects
+/// on the way; an element must be there already.
+pub fn set_path(state: &mut Value, path: &str, value: Value) -> Result<(), String> {
+    let wrong = || format!("{path}: not a path of field names and [index]es");
+    let mut steps = Vec::new();
+    for part in path.split('.') {
+        let (field, mut rest) = part.split_at(part.find('[').unwrap_or(part.len()));
+        if field.is_empty() {
+            return Err(wrong());
+        }
+        steps.push(Step::Field(field));
+        while let Some(after) = rest.strip_prefix('[') {
+            let (index, tail) = after.split_once(']').ok_or_else(wrong)?;
+            steps.push(Step::Element(index.parse().map_err(|_| wrong())?));
+            rest = tail;
+        }
+        if !rest.is_empty() {
+            return Err(wrong());
+        }
+    }
+    set(state, &steps, value).map_err(|()| format!("{path}: the port's state has no place there"))
+}
+
+fn set(at: &mut Value, steps: &[Step], value: Value) -> Result<(), ()> {
+    match steps {
+        [] => {
+            *at = value;
             Ok(())
         }
-        [first, rest @ ..] => set(object.entry((*first).to_owned()).or_insert_with(|| json!({})), rest, value),
+        [Step::Field(field), rest @ ..] => {
+            let object = at.as_object_mut().ok_or(())?;
+            set(object.entry((*field).to_owned()).or_insert_with(|| json!({})), rest, value)
+        }
+        [Step::Element(i), rest @ ..] => set(at.as_array_mut().ok_or(())?.get_mut(*i).ok_or(())?, rest, value),
     }
 }
 

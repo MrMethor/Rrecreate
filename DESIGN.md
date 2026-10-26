@@ -6,9 +6,9 @@
 
 **Status (2026-10-26):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
 serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. Two blind
-tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 is under way: the
-runtime (`runtime/`), the mapping, transplants, the comparison with who wrote, and paired checkpoints work
-(D61-D63), and the toy port (`examples/toy`) matches its session tick by tick. Next: scenario sessions (D59). Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
+tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 done: the runtime
+(`runtime/`), the mapping, transplants, the comparison with who wrote, paired checkpoints and scenario edits
+(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4. Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
 over (§11).
 
 ## 1. The product
@@ -265,7 +265,8 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
 - **Scenario sessions** (D59): a session may set a scenario up instead of playing to it: from power-on or a
   snapshot, at a tick it writes values into the original's memory (named data, through the knowledge's types),
   then runs its input. The edits are part of the session, so its runs stay repeatable, and the trace lists
-  them. Only the original is edited; the port reaches the same scenario through the transplant. A game's own
+  them. Clockwork writes them when their ticks are counted, so every run of the session makes them (D64). Only
+  the original is edited; the port reaches the same scenario through a transplant of the fields they wrote. A game's own
   cheats or debug modes, where it has them, reach a scenario through its own code and come first. An edited
   state may be one play can't reach (a count changed without its list): edits go through the game's
   structures, and a divergence right after one is suspected of the edit before the port.

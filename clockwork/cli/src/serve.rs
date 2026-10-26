@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 4;
+pub const PROTOCOL: u64 = 5;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -31,6 +31,7 @@ pub const MACHINE_OPS: &[&str] = &[
     "run",
     "sync",
     "syncs",
+    "edits",
     "read",
     "write",
     "hash",
@@ -346,7 +347,17 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         "syncs" => {
             let at = addr(m, text(r, "at")?)?;
             let point = m.syncs.get(at).ok_or("not a sync point")?;
-            Ok(json!({"hits": point.hits, "cycles": point.cycles}))
+            Ok(json!({"hits": point.hits, "cycles": point.cycles, "ticks": m.syncs.ticks()}))
+        }
+        "edits" => {
+            let mut edits = Vec::new();
+            for edit in r.get("edits").and_then(Value::as_array).ok_or("missing \"edits\" (a list)")? {
+                let tick = edit.get("tick").and_then(Value::as_u64).filter(|&t| t > 0).ok_or("an edit's tick")?;
+                let at = addr(m, text(edit, "at")?)?;
+                edits.push(dos::sync::Edit { tick, at, bytes: unhex(text(edit, "hex")?)? });
+            }
+            m.syncs.set_edits(edits)?;
+            Ok(json!({"ticks": m.syncs.ticks(), "pending": m.syncs.edits().len()}))
         }
         "read" => {
             let mut data = Vec::new();
@@ -662,6 +673,7 @@ fn hit(h: &dos::watch::Hit, name: &impl Fn(u32) -> String, name_physical: &impl 
         dos::watch::By::Instruction { linear, .. } => json!({"instruction": name(linear)}),
         dos::watch::By::Service { id, ax } => json!({"service": format!("{id:02X}"), "ax": format!("{ax:04X}")}),
         dos::watch::By::Device => json!({"device": true}),
+        dos::watch::By::Edit => json!({"edit": true}),
     };
     let chain: Vec<Value> = h
         .chain

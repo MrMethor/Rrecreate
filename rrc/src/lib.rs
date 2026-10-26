@@ -8,6 +8,7 @@ pub mod cache;
 mod calls;
 pub mod clockwork;
 mod compare;
+pub mod edits;
 pub mod frames;
 pub mod game;
 pub mod import;
@@ -78,6 +79,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          --clockwork: more `clockwork run` options for it (\"--joystick 1\")
   session set NAME [--seconds N] [--description TEXT] [--clockwork OPTIONS]
                          change a session
+  session edit NAME TICK AT (VALUE [--type T] [--note TEXT] | --remove)
+                         a scenario's edit: at tick TICK's sync point, write VALUE (JSON: a number, an
+                         array, {\"field\": value, ...} for some of a structure's fields; or an
+                         enumeration's value name) at AT, named data or an ID with a path into it as its
+                         type reads (enemies[2].alive); every run of the session makes it
   record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound;
                          keeps snapshots for rrc watch and rrc inputs to start from

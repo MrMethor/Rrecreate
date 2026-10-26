@@ -89,6 +89,9 @@ pub struct Header {
     /// Named data (but the inputs): a tick has those that changed since the tick before (the first,
     /// all).
     pub state: Vec<Item>,
+    /// The scenario's edits (D64): `{"tick", "at" (an ID), "hex", "edit" (as the session has it)}`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -233,6 +236,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     let module = repo.module();
     let (syncs, inputs, state) = items(repo, &k, &module)?;
+    let edits = crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?);
     let exe = clockwork::find(&repo.local)?;
     let header = Header {
         format: FORMAT.into(),
@@ -244,6 +248,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         syncs,
         inputs,
         state,
+        edits,
     };
     let (trace, snapshots) = run(repo, &session, header)?;
     let cache = Cache::open(&repo.local)?;
@@ -254,8 +259,16 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let ticks = trace.ticks.len() as u64;
     let recorded = Recorded { hash: hash.clone(), run: run.clone(), ticks, clockwork: trace.header.clockwork.clone() };
     let before = session.trace.replace(recorded);
+    // Paired checkpoints are of the run they were taken in (D63).
+    let pairs = session.pairs.len();
+    if pairs > 0 && before.as_ref().is_none_or(|b| b.run != run) {
+        session.pairs.clear();
+    }
     session.save(repo, name)?;
     say("trace", format!("{ticks} ticks, {} KB: {}", text.len() / 1024, trace.end.end));
+    if !session.edits.is_empty() {
+        say("edits", format!("{}, the scenario's (rrc trace {name} lists them)", session.edits.len()));
+    }
     if let Some(late) = late {
         say("late", late);
     }
@@ -287,6 +300,12 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             ),
         ),
         None => {}
+    }
+    if pairs > 0 && session.pairs.is_empty() {
+        say(
+            "pairs",
+            format!("{pairs} dropped: they were of the run before (rrc compare {name} --pair N keeps new ones)"),
+        );
     }
     say("hash", hash);
     say("run", run);
@@ -362,10 +381,23 @@ pub(crate) fn begin(
         requests.push(request);
         names.insert(at, s.name.clone());
     }
+    // The scenario's edits, written when their ticks are counted (D64).
+    let mut edits = Vec::new();
+    if !session.edits.is_empty() {
+        let k = Knowledge::load(&repo.knowledge())?;
+        for w in crate::edits::resolve(&k, &session.edits)? {
+            edits.push(
+                json!({"tick": w.tick, "at": places.address(&w.id.to_string())?, "hex": crate::edits::hex(&w.bytes)}),
+            );
+        }
+    }
     // The places first: finding where the game's program goes may take a run of its own.
     let (mut clockwork, loaded) = Clockwork::session(repo, session)?;
     for request in requests {
         clockwork.ask("sync", request)?;
+    }
+    if !edits.is_empty() {
+        clockwork.ask("edits", json!({ "edits": edits }))?;
     }
     Ok((clockwork, loaded, names))
 }
@@ -569,6 +601,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         for (i, at) in &tick.late {
             say("late", format!("{}: changed after the sync point, before {at} read it", h.inputs[*i].name));
         }
+        for edit in h.edits.iter().filter(|e| e["tick"].as_u64() == Some(n)) {
+            say("edit", edit_text(edit));
+        }
         say("frames", tick.frames.len());
         for (device, events) in &tick.sound {
             say("sound", format!("{device}: {} events", events.as_array().map_or(0, Vec::len)));
@@ -598,6 +633,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     say("syncs", syncs.join(", "));
     if let Some(late) = late_text(&trace) {
         say("late", late);
+    }
+    for edit in &h.edits {
+        say("edit", format!("tick {}: {}", edit["tick"], edit_text(edit)));
     }
     let mut changes = vec![0usize; h.state.len()];
     for tick in trace.ticks.iter().skip(1) {
@@ -649,6 +687,12 @@ fn late_text(trace: &Trace) -> Option<String> {
 
 /// An item's value over the ticks: each tick it changed (an input: of those that read it), as its
 /// type reads.
+/// An edit as the trace lists it: `lives = 1 (TOY.EXE+00B14: 01)`.
+pub(crate) fn edit_text(edit: &Value) -> String {
+    let field = |key: &str| edit[key].as_str().unwrap_or("?").to_owned();
+    format!("{} ({}: {})", field("edit"), field("at"), field("hex"))
+}
+
 fn show_item(trace: &Trace, name: &str, ty: &dyn Fn(&Item) -> String, lines: usize) -> Result<ExitCode, String> {
     let h = &trace.header;
     let (values, item): (Vec<Option<String>>, &Item) = if let Some(i) = h.inputs.iter().position(|i| i.name == name) {
@@ -766,6 +810,7 @@ mod tests {
             syncs: vec![SyncPoint { name: "play".into(), at: "GAME.EXE+00100".into(), when_changed: vec![] }],
             inputs: vec![item("elapsed", "GAME.EXE+20000")],
             state: vec![item("x", "GAME.EXE+20002"), item("y", "GAME.EXE+20004")],
+            edits: vec![json!({"tick": 2, "at": "GAME.EXE+20002", "hex": "0100", "edit": "x = 1"})],
         };
         let tick = |n: u64, inputs: Vec<(usize, Option<String>)>, state: Vec<(usize, Option<String>)>| Tick {
             tick: n,

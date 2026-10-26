@@ -200,6 +200,14 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
         if request.to.is_some_and(|to| line.tick > to) {
             break;
         }
+        // A scenario's edit at this tick (D64): the original's values of the fields it set.
+        if !line.set.is_empty() {
+            let mut value = serialize(&state)?;
+            for (path, v) in &line.set {
+                files::set_path(&mut value, path, v.clone())?;
+            }
+            state = S::transplant(value)?;
+        }
         let value = serialize(&state)?;
         out.tick(line.tick, value.clone())?;
         if let Some((at, file)) = &request.save
@@ -313,6 +321,27 @@ mod tests {
         let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
         let first: Value = serde_json::from_str(trace.lines().nth(1).unwrap()).unwrap();
         assert_eq!(first, serde_json::json!({"tick": 3, "state": {"count": 40, "keys": [], "player": {"x": -2}}}));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_scenario_s_edit_sets_fields_at_its_tick() {
+        let d = dir("edit");
+        let inputs = INPUTS.replace(
+            r#"{"tick":2,"sync":"play","inputs":[[1,"0001"]]}"#,
+            r#"{"tick":2,"sync":"play","inputs":[[1,"0001"]],"set":{"count":100,"keys[0]":9}}"#,
+        );
+        std::fs::write(d.join("inputs.jsonl"), inputs).unwrap();
+        let path = |f: &str| d.join(f).to_string_lossy().into_owned();
+        let request = Request { inputs: path("inputs.jsonl"), out: path("port.jsonl"), ..Request::default() };
+        run::<Counter>(&request).unwrap();
+        let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
+        let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines[2], serde_json::json!({"tick": 2, "state": {"count": 100, "keys": [9]}}), "set, then written");
+        assert_eq!(lines[3]["state"]["count"], 101, "and stepped from there");
+        let mut state = serde_json::json!({"a": [{"b": 1}]});
+        assert!(files::set_path(&mut state, "a[1].b", serde_json::json!(2)).is_err(), "no such element");
+        assert!(files::set_path(&mut state, "a[0]x", serde_json::json!(2)).is_err());
         std::fs::remove_dir_all(&d).ok();
     }
 
