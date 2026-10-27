@@ -9,6 +9,7 @@ mod calls;
 pub mod clockwork;
 mod compare;
 pub mod edits;
+mod files;
 pub mod frames;
 pub mod game;
 pub mod knowledge;
@@ -48,11 +49,12 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          version it is; --add-version records its files as a version the port supports
                          (--without: but these, with * and ? as wildcards: saved games, a setup's
                          configuration)
-  analyze [--no-decompile] [--again]
+  analyze [--session NAME] [--no-decompile] [--again]
                          the program, unpacked by Clockwork, analyzed by Ghidra into the cache (an
                          analysis of the same program on this machine is reused unless --again);
                          library functions the signature packs know get their names; functions the
-                         knowledge names that Ghidra didn't find are added
+                         knowledge names that Ghidra didn't find are added, and with --session,
+                         those the session's run called (reached through vectors and pointers)
   check                  the knowledge files: IDs, names, sizes, ticks, types (and against the image)
   name ID NAME           name a function (--evidence TEXT, --confidence 0-1, --by WHO: who decided,
                          else RRC_BY, else agent)
@@ -125,6 +127,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          mapped values at a tick (--transplant), or a paired checkpoint (--resume);
                          --pair keeps one at the end of tick N (the port's state and Clockwork's
                          snapshot) if the port matched to there. Exits 1 if it diverges
+  files SESSION [--file NAME] [--lines N]
+                         the files the original reads and writes in the session: by file, how often,
+                         how much, by which code; with --file, each read or write: where in the file,
+                         how many bytes, where in memory, by which code, when
   search SESSION CONDITION... [--type T] [--step N] [--at ID --len N] [--lines N]
                          the places in the data segment (LE: the data objects; or the range given)
                          whose values, read as T (u16 unless --type says), meet every condition over
@@ -184,6 +190,7 @@ pub fn main() -> ExitCode {
         Some("quirk") => here().and_then(|repo| quirks::quirk(&repo, rest)),
         Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),
         Some("search") => here().and_then(|repo| search::search(&repo, rest)),
+        Some("files") => here().and_then(|repo| files::files(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

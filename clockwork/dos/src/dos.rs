@@ -1142,6 +1142,7 @@ fn read(m: &mut Machine) {
             let start = (pos as usize).min(data.len());
             let end = (start + usize::from(r.cx())).min(data.len());
             let chunk = data[start..end].to_vec();
+            crate::trace::FileAccess::record(m, false, &path, start as u32, chunk.len() as u32);
             write_bytes(m, r.ds(), r.dx(), &chunk);
             set_position(m, r.bx(), pos + chunk.len() as u32);
             m.cpu.regs.set_ax(chunk.len() as u16);
@@ -1164,6 +1165,7 @@ fn write(m: &mut Machine) {
             if data.is_empty() {
                 m.drive.set_len(&path, pos as usize);
             } else {
+                crate::trace::FileAccess::record(m, true, &path, pos, data.len() as u32);
                 m.drive.write_at(&path, pos as usize, &data);
                 set_position(m, r.bx(), pos + data.len() as u32);
             }

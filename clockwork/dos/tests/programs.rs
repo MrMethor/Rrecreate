@@ -215,6 +215,55 @@ fn file_io_on_the_virtual_drive() {
 }
 
 #[test]
+fn file_reads_and_writes_are_traced() {
+    let program = com(|a| {
+        load_dx(a, "in_name")?;
+        a.mov(ax, 0x3D00)?;
+        a.int(0x21)?;
+        a.mov(bx, ax)?;
+        // Skip 2 bytes, read 3 into the buffer.
+        a.mov(ax, 0x4200)?;
+        a.xor(cx, cx)?;
+        a.mov(dx, 2)?;
+        a.int(0x21)?;
+        load_dx(a, "buffer")?;
+        a.mov(cx, 3)?;
+        a.mov(ah, 0x3F)?;
+        a.int(0x21)?;
+        // And write them to a new file.
+        load_dx(a, "out_name")?;
+        a.xor(cx, cx)?;
+        a.mov(ah, 0x3C)?;
+        a.int(0x21)?;
+        a.mov(bx, ax)?;
+        load_dx(a, "buffer")?;
+        a.mov(cx, 3)?;
+        a.mov(ah, 0x40)?;
+        a.int(0x21)?;
+        exit(a, 0)?;
+        a.here("in_name")?;
+        a.db(b"in.dat\0")?;
+        a.here("out_name")?;
+        a.db(b"out.dat\0")?;
+        a.here("buffer")?;
+        a.db(&[0; 4])
+    });
+    let mut m = boot(&[("T.COM", &program), ("IN.DAT", b"12345678")], "T.COM");
+    m.start_files();
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let files = m.take_files().unwrap();
+    // The COM program is at PSP:0100; its buffer follows the two names.
+    let names = program.windows(15).position(|w| w == b"in.dat\0out.dat\0").unwrap() as u32;
+    let code = u32::from(m.dos.psp) * 16 + 0x100;
+    let buffer = code + names + 15;
+    let summary: Vec<(bool, &str, u32, u32, u32)> =
+        files.iter().map(|f| (f.write, f.path.as_str(), f.offset, f.len, f.at)).collect();
+    assert_eq!(summary, [(false, "IN.DAT", 2, 3, buffer), (true, "OUT.DAT", 0, 3, buffer)]);
+    assert!((code..code + names).contains(&files[0].caller), "the call returns into the program");
+    assert_eq!(m.drive.file("OUT.DAT"), Some(&b"345"[..]));
+}
+
+#[test]
 fn missing_file_sets_carry_and_error_code() {
     let program = com(|a| {
         load_dx(a, "name")?;

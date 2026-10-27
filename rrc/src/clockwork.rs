@@ -12,7 +12,7 @@ use crate::repo::{Local, Repo};
 use crate::session::Session;
 
 /// The protocol's revision rrc speaks (`docs/protocol.md`).
-pub const PROTOCOL: u64 = 5;
+pub const PROTOCOL: u64 = 6;
 
 /// The platform rrc knows.
 pub const PLATFORM: &str = "dos-pc";

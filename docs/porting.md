@@ -64,7 +64,7 @@ the original judges the port, not the code it was read from.
 | What does this value mean? | `rrc show DATUM`: who reads and writes it; their `--c` | sources on the subsystem | `rrc watch` at a tick |
 | Where is X kept? | the code that does X, from the loop down | format and engine documentation | `rrc search`, `rrc watch` |
 | How does rule X work? | the function that applies it, `--c` | sources, bug lists | a session that exercises it; `rrc compare` |
-| Where are things in a level? | the level's file and the code that loads it | maps and walkthroughs | frames, the state at the place |
+| Where are things in a level? | the level's file (`rrc files --file`) and the code that loads it | maps and walkthroughs | frames, the state at the place |
 | Why does the port differ? | `rrc compare`: the original's writer and the port's code | the writer's `--c` | `rrc watch`, `rrc trace` |
 
 ## 1. Set up
@@ -102,10 +102,25 @@ following the jumps and listing each table's cases. For data, it lists the instr
 it or take its address, by function (ten functions a kind; `--all` lists them all).
 Decompiled code is a hint, not a source (D2): it is partly wrong.
 
-Ghidra misses code that only a vector or a pointer reaches, such as interrupt handlers (`rrc inputs` names
-them by their entry). `rrc show ID --asm` then disassembles it with Clockwork, following its jumps; once you
-name it (`rrc name`), `rrc analyze` adds it to Ghidra's analysis as a function, with its calls, references
-and decompiled code (Ghidra opens its analysis again for that: a minute or so).
+Ghidra misses code that only a vector or a pointer reaches: interrupt handlers (`rrc inputs` names them
+by their entry), and in many games most of the per-frame logic, called through far pointers. Once a session
+is recorded, `rrc analyze --session NAME` adds every function its run called to Ghidra's analysis, with calls,
+references and decompiled code (D79; Ghidra opens its analysis again: a few minutes). One function at a
+time: `rrc show ID --asm` disassembles it with Clockwork, following its jumps, and once named (`rrc name`)
+`rrc analyze` adds it. Code the program loaded at run time (drivers) is past its file: read it with
+`rrc show ID --asm --session NAME`.
+
+The game's files are a source too (D78):
+
+```bash
+rrc files first-level
+rrc files first-level --file LEVEL1.MAP
+```
+
+`rrc files` says which files the original read and wrote, how much, and by which code (with the functions it
+was called from). With `--file` it lists each read or write: where in the file, how many bytes, where in
+memory (named), by which code, when. A structure in memory leads to the file and offset it came from, the
+file to the function that reads it, and a save routine's writes to which memory each part of a save is.
 
 Some games make code at run time (drawing routines generated for each size, say): `rrc calls` then counts
 functions past the program's file image, which Ghidra can't see. `rrc show ID` says so, and `rrc show ID

@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **5** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **6** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -98,6 +98,11 @@ later sees the whole chain); with `count`, `call_counts` gives the calls made si
 n]]`). `coverage` ... `coverage_end`: where each instruction that ran started (`executed`) and the calls made
 (`calls`: `[[site, target, n]]`).
 
+**Files.** `files` ... `files_end`: each read and write of a file the program made through the system
+(`accesses`: `{"cycle", "write", "file", "offset", "len", "at", "by", "chain"}`: the file's name as the
+program opened it, where in it and how many bytes, the program's buffer, where the call returns to, and the
+functions it was made in, innermost first, while `calls` is on) (D78).
+
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}]}` ... `uninit_end`: reads of memory nothing wrote
 (`reads`). `late_inputs` `{"sources": [{"at", "len"} or {"device"}, with "sync": [addr]]}` ...
@@ -156,6 +161,7 @@ An IBM PC with DOS (Clockwork).
    reads lines as a script file; a TCP `serve` keeps one machine for every connection.
 4. A summary watch's `port_uses`; `image` answers what it wrote (it printed it, onto the answers).
 5. `edits`; `syncs` answers `ticks`; a watch's `by` may be `{"edit": true}`.
+6. `files`, `files_end` (D78).
 
 ## Changing the protocol
 

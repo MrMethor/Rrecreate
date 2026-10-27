@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 5;
+pub const PROTOCOL: u64 = 6;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -46,6 +46,8 @@ pub const MACHINE_OPS: &[&str] = &[
     "coverage_end",
     "watch",
     "watch_end",
+    "files",
+    "files_end",
     "bounds",
     "bounds_end",
     "uninit",
@@ -505,6 +507,22 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             }
             let hits: Vec<Value> = watch.hits.iter().map(|h| hit(h, &name, &name_physical)).collect();
             Ok(json!({"hits": hits, "dropped": watch.dropped}))
+        }
+        "files" => {
+            m.start_files();
+            Ok(json!({}))
+        }
+        "files_end" => {
+            let files = m.take_files().ok_or("no file tracing on")?;
+            let accesses: Vec<Value> = files
+                .iter()
+                .map(|f| {
+                    let chain: Vec<String> = f.chain.iter().map(|frame| name(frame.entry)).collect();
+                    json!({"cycle": f.cycle, "write": f.write, "file": f.path, "offset": f.offset, "len": f.len,
+                           "at": name(f.at), "by": name(f.caller), "chain": chain})
+                })
+                .collect();
+            Ok(json!({ "accesses": accesses }))
         }
         "bounds" => {
             let mut objects = Vec::new();

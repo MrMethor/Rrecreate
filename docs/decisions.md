@@ -686,7 +686,24 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
-### D78. A game's assets are a source of the toolkit; M5 extracts them. Accepted 2026-10-27, with the person.
+### D79. Runs feed the analysis: `rrc analyze --session`, and file tracing (`rrc files`) built ahead of M5. Accepted 2026-10-27.
+- **`rrc analyze --session NAME`** runs the session with call counting and adds every function the run
+  called that Ghidra lacks to Ghidra's analysis (as the knowledge's named functions are added), so they get
+  calls, references and decompiled code. Code past the program's file (drivers it loaded) can't be
+  added; it is read with `rrc show ID --asm --session NAME`.
+- **`rrc files SESSION`** is D78's file tracing, built now:
+  - Clockwork's `files` probe records each read and write through DOS: the file, the offset, the length,
+    the buffer, the return address, and the call chain while `calls` is on (protocol revision 6).
+  - `rrc files` lists them by file, or one file's accesses with `--file`, naming the buffers and the code.
+  - It is kept by the run, so asking again runs nothing.
+
+**Why:** both came from Arena (M4), under D77's order.
+- Most of what a pass of Arena's world loop runs is reached through far pointers: 24 of the 27 functions
+  that run once a pass had no decompiled code until a session added 150 functions.
+- The level's file led to its loader in one question: `START.MIF`'s chunks, read by `+0E930` from
+  `+0E880`, the 61-byte header into `+47D42` and the compressed map layers through `MEM+E0000`.
+
+### D78. A game's assets are a source of the toolkit; M5 extracts them. Accepted 2026-10-27, with the person; file tracing built: D79.
 A game's files are knowledge (D77) and what a port loads: archives, compressed data, level maps, pictures with
 their palettes, fonts, texts, sounds and music. M5 gives the toolkit:
 - **File tracing** (`rrc files SESSION`): which files the program opens and reads, at which tick, and where in

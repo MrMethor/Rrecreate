@@ -99,9 +99,9 @@ what an earlier run made from given inputs:
 - `index/memory/<key>`: the memory `rrc search` read at every tick of a span (`[[span]]` with `first`, `last`,
   the `ranges` read and the memory's `hash`: the first tick's bytes, then each tick's changes, deflated), keyed
   by the session's run, its sync points and the range asked for (D76);
-- `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, keyed by the build of `rrc` that gave
-  it (its program's hash), the command, its arguments, the session's run (as above, without the sync points),
-  the knowledge files and the analysis;
+- `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, and the file accesses `rrc files`
+  found (JSON), keyed by the build of `rrc` that gave it (its program's hash), the command, its arguments, the
+  session's run (as above, without the sync points), the knowledge files and the analysis;
 - `index/places/<key>`: where a session's run puts the game's program, when it isn't simply loaded where
   `+OFF` counts from (an LE program, or one a launcher starts): `image BASE:SIZE`, then `object
   BASE:SIZE:FLAGS` for each LE object, a line each, in hex; keyed by the session's run, the module and the

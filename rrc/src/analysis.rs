@@ -5,7 +5,8 @@
 //!
 //! Functions the knowledge names that Ghidra didn't find (an interrupt handler only a vector
 //! reaches, code called through a pointer) are added to it, so they get calls, references and
-//! decompiled code too: Ghidra's project of the analysis is kept in the cache, and opened again
+//! decompiled code too; with `--session NAME`, so are all the functions that session's run called
+//! (DESIGN.md §5, "Dynamic"; D79): Ghidra's project of the analysis is kept in the cache, and opened again
 //! (read only, without analysing it again) to create them and export just their records, which are
 //! read after the analysis's own.
 //!
@@ -76,8 +77,8 @@ impl Index {
 }
 
 pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &["--no-decompile", "--again"])?;
-    a.positionals(0, 0, "analyze [--no-decompile] [--again]")?;
+    let a = Args::parse(args, &["--session"], &["--no-decompile", "--again"])?;
+    a.positionals(0, 0, "analyze [--session NAME] [--no-decompile] [--again]")?;
     let cache = Cache::open(&repo.local)?;
     let original = repo.game_dir()?.join(repo.module_file());
     let original_hash = sha256_file(&original)?;
@@ -92,17 +93,32 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let analyse = || run_ghidra(repo, &cache, &original, &original_hash, decompile, &project);
     let mut index = kept_or_run(repo, &cache, &key, again, analyse)?;
     let mut analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
-    // Then the functions the knowledge names that Ghidra didn't find, added to it.
+    // Then the functions the knowledge names that Ghidra didn't find, added to it; and those a
+    // session's run called, which a vector or a pointer reached (D79).
     let k = Knowledge::load(&repo.knowledge())?;
-    let missing: Vec<Id> = k
+    let mut missing: Vec<Id> = k
         .functions
         .keys()
         .filter(|id| id.module() == module && !analysis.functions.contains_key(*id))
         .cloned()
         .collect();
+    let named = missing.len();
+    if let Some(name) = a.value("--session") {
+        let session = crate::session::Session::load(repo, name)?;
+        let places = crate::places::Places::new(repo, &session);
+        places.objects()?;
+        for target in crate::calls::called(repo, &session, &k)? {
+            let Some(id) = places.id(&target) else { continue };
+            if places.in_program(&target) && !analysis.functions.contains_key(&id) && !missing.contains(&id) {
+                missing.push(id);
+            }
+        }
+        missing.sort();
+        say("called", format!("{} functions {name} called that Ghidra didn't find", missing.len() - named));
+    }
     if !missing.is_empty() {
         let entries: Vec<String> = missing.iter().map(ToString::to_string).collect();
-        say("adding", format!("{} functions the knowledge names that Ghidra didn't find", missing.len()));
+        say("adding", format!("{} functions Ghidra didn't find ({named} the knowledge names)", missing.len()));
         let added = sha256(format!("{key}\n{}", entries.join("\n")).as_bytes());
         let additions = match cache.recall("additions", &added).filter(|hash| !again && cache.has(hash)) {
             Some(hash) => hash,
@@ -125,8 +141,17 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         };
         index.additions = Some(additions);
         analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
-        for id in missing.iter().filter(|id| !analysis.functions.contains_key(*id)) {
-            say("missing", format!("{id}: Ghidra made no function there"));
+        let left: Vec<String> =
+            missing.iter().filter(|id| !analysis.functions.contains_key(*id)).map(ToString::to_string).collect();
+        if !left.is_empty() {
+            let more = if left.len() > 5 { format!(" and {} more", left.len() - 5) } else { String::new() };
+            say(
+                "missing",
+                format!(
+                    "Ghidra made no function at {}{more}: code the program loaded at run time, past its file,                      or bytes Ghidra took for data (rrc show ID --asm, with --session NAME for loaded code)",
+                    left[..left.len().min(5)].join(", ")
+                ),
+            );
         }
     }
     write_toml(&repo.state()?.join(INDEX), &index)?;

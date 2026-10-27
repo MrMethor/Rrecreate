@@ -287,7 +287,7 @@ fn count(n: usize, what: &str) -> String {
 
 /// An instruction's ID with the function Ghidra's analysis found it in (`TOY.EXE+002FF in update`), as
 /// the knowledge names that.
-fn code_text(places: &Places, k: &Knowledge, analysis: Option<&Analysis>, address: &str) -> String {
+pub(crate) fn code_text(places: &Places, k: &Knowledge, analysis: Option<&Analysis>, address: &str) -> String {
     let Some(id) = places.id(address) else { return address.to_owned() };
     match analysis.and_then(|a| a.containing(&id)) {
         Some((entry, _)) => {
@@ -298,12 +298,12 @@ fn code_text(places: &Places, k: &Knowledge, analysis: Option<&Analysis>, addres
 }
 
 /// When a cycle of the session's run was, by its recorded trace's ticks: the pass to tick N.
-struct When {
+pub(crate) struct When {
     cycles: Vec<u64>,
 }
 
 impl When {
-    fn new(repo: &Repo, session: &Session) -> When {
+    pub(crate) fn new(repo: &Repo, session: &Session) -> When {
         let trace = session.trace.as_ref().and_then(|recorded| {
             let cache = crate::cache::Cache::open(&repo.local).ok()?;
             Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash).ok()?)).ok()
@@ -311,7 +311,7 @@ impl When {
         When { cycles: trace.map(|t| t.ticks.iter().map(|tick| tick.cycle).collect()).unwrap_or_default() }
     }
 
-    fn text(&self, cycle: u64) -> String {
+    pub(crate) fn text(&self, cycle: u64) -> String {
         if self.cycles.is_empty() {
             return format!("at cycle {cycle} (rrc record gives ticks)");
         }

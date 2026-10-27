@@ -40,6 +40,14 @@ const OVERRUN: [u8; 25] = [
     0x21, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// A COM program that reads a file: `mov dx, name; mov ax, 3D00h; int 21h; mov bx, ax; mov dx, buffer;
+/// mov cx, 4; mov ah, 3Fh; int 21h` (returning to +00014), then exits; `name` "DATA.BIN" at +0001A, the
+/// buffer at +00023.
+const READS_A_FILE: [u8; 39] = [
+    0xBA, 0x1A, 0x01, 0xB8, 0x00, 0x3D, 0xCD, 0x21, 0x89, 0xC3, 0xBA, 0x23, 0x01, 0xB9, 0x04, 0x00, 0xB4, 0x3F, 0xCD,
+    0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21, 0x00, b'D', b'A', b'T', b'A', b'.', b'B', b'I', b'N', 0, 0, 0, 0, 0,
+];
+
 /// The workspace's program `name` (of package `package`), built if it isn't, or always (`fresh`).
 fn built(package: &str, name: &str, fresh: bool) -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
@@ -122,7 +130,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 5, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 6, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
@@ -200,6 +208,25 @@ fn a_session_is_traced_tick_by_tick() {
     let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other"]);
     assert!(!ok && refused.contains("give --size N"), "{refused}");
     assert!(rrc.ok(&["input", "tally", "--remove"]).contains("removed   tally"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_files_a_program_reads_are_traced() {
+    // D78: which file, where in it, where in memory, by which code.
+    let (dir, rrc) = setup("files", &READS_A_FILE);
+    std::fs::write(dir.join("game/DATA.BIN"), b"abcdefgh").unwrap();
+    rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    rrc.ok(&["data", "T.COM+00023", "buffer", "--size", "4"]);
+    rrc.ok(&["session", "add", "s", "--seconds", "0.1"]);
+    let all = rrc.ok(&["files", "s"]);
+    assert!(all.contains("files     s: 1 files read, 0 written"), "{all}");
+    assert!(all.contains("read      DATA.BIN: 1 times, 4 bytes, by T.COM+00014, first at "), "{all}");
+    let one = rrc.ok(&["files", "s", "--file", "data.bin"]);
+    assert!(one.contains("read      +0, 4 bytes, to buffer by T.COM+00014, at "), "{one}");
+    let (none, ok) = rrc.run(&["files", "s", "--file", "OTHER.DAT"]);
+    assert!(!ok && none.contains("reads or writes no file named OTHER.DAT"), "{none}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -19,6 +19,8 @@ pub struct Probes {
     /// When set, every host service call is recorded here (BIOS, DOS, EMS, MSCDEX); timer and
     /// keyboard interrupts are left out.
     pub service_trace: Option<Vec<crate::trace::ServiceCall>>,
+    /// When set, every read and write of a file through DOS is recorded here (D78).
+    pub files: Option<Vec<crate::trace::FileAccess>>,
     /// Hardware interrupts delivered to the CPU, per IRQ line (0-15).
     pub irq_counts: [u64; 16],
     /// When set, every instruction that starts inside this linear range is recorded in

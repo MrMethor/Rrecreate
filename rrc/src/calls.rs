@@ -90,6 +90,14 @@ fn count_calls(repo: &Repo, a: &Args, positionals: &[String], session: &Session)
 }
 
 /// The session's calls, phase by phase.
+/// The functions the session's run called (Clockwork's addresses), in any phase.
+pub(crate) fn called(repo: &Repo, session: &Session, k: &Knowledge) -> Result<Vec<String>, String> {
+    let mut targets: Vec<String> = phases(repo, session, k)?.into_iter().flat_map(|p| p.counts.into_keys()).collect();
+    targets.sort();
+    targets.dedup();
+    Ok(targets)
+}
+
 fn phases(repo: &Repo, session: &Session, k: &Knowledge) -> Result<Vec<Phase>, String> {
     let syncs = sync_points(k)?;
     let (mut clockwork, _, names) = begin(repo, session, &syncs)?;

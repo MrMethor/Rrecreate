@@ -1258,6 +1258,15 @@ impl Machine {
     }
 
     /// Starts bounds checks on these objects (physical addresses; see [`crate::bounds`]).
+    /// Starts recording the program's reads and writes of files (see [`crate::trace::FileAccess`]).
+    pub fn start_files(&mut self) {
+        self.probes.files = Some(Vec::new());
+    }
+
+    pub fn take_files(&mut self) -> Option<Vec<crate::trace::FileAccess>> {
+        self.probes.files.take()
+    }
+
     pub fn start_bounds(&mut self, objects: &[crate::bounds::Object]) {
         self.probes.bounds = Some(Box::new(crate::bounds::Bounds::new(objects)));
     }

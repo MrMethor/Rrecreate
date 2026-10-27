@@ -42,6 +42,44 @@ impl ServiceCall {
     }
 }
 
+/// A read or a write of a file the program made through DOS (D78): which file, where in it and how
+/// much, where in memory the bytes went or came from, and where the call returns to. The file tracing
+/// of `rrc files` links a structure in memory to its file, and the file to the code that reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileAccess {
+    pub cycle: u64,
+    pub write: bool,
+    pub path: String,
+    /// Where in the file, and how many bytes were read or written.
+    pub offset: u32,
+    pub len: u32,
+    /// Linear address of the program's buffer.
+    pub at: u32,
+    /// Linear address the call returns to (the interrupt frame's return address).
+    pub caller: u32,
+    /// The call chain then, innermost first, if call tracking is on.
+    pub chain: Vec<crate::calls::Frame>,
+}
+
+impl FileAccess {
+    /// Records one, if file tracing is on (the call's registers are DS:DX, CX as DOS takes them).
+    pub(crate) fn record(m: &mut Machine, write: bool, path: &str, offset: u32, len: u32) {
+        if m.probes.files.is_none() {
+            return;
+        }
+        let regs = m.cpu.regs;
+        let frame = m.cpu.linear(cpu::seg::SS, regs.sp());
+        let (ip, cs) = (m.mem.read_u16(frame), m.mem.read_u16(frame + 2));
+        let caller = m.peek_address(cs, u32::from(ip)).map_or(Machine::lin(cs, ip), |(linear, _)| linear);
+        let at = Machine::lin(regs.ds(), regs.dx());
+        let chain = m.probes.calls.as_deref().map(crate::calls::Calls::chain).unwrap_or_default();
+        let access = FileAccess { cycle: m.cpu.cycles, write, path: path.to_owned(), offset, len, at, caller, chain };
+        if let Some(files) = m.probes.files.as_mut() {
+            files.push(access);
+        }
+    }
+}
+
 impl fmt::Display for ServiceCall {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (b, a) = (&self.before, &self.after);

@@ -121,7 +121,8 @@ named, its boundary values), which it has for DOS only. Operations:
 
 A GDB remote-protocol face lets gdb and Ghidra's debugger attach to the running original.
 
-**Built:** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on disk,
+**Built:** `clockwork serve` (stdin or a local TCP port) with loading and snapshots in memory and on disk, file
+tracing (each read and write through DOS, with its code: D79),
 runs for a time, to a sync point's next hit or to the next tick (any sync point's next hit), gated sync points
 (D48), memory and registers, the input devices' state (D49), input, the frames (with their pictures as
 indexed pixels and palette) and sound events of a span of time, watches with call chains, bounds checks,
@@ -143,7 +144,9 @@ the session.
   export (functions, calls, disassembly, decompiled code) lands in the knowledge files. A pack is made from a
   program built with the compiler and its linker map (`rrc sigs build`, `sigs/README.md`).
 - **Dynamic:** sessions give coverage, call edges with counts (code Ghidra missed, calls through pointers),
-  and per-function memory use (which functions read and write each global).
+  and per-function memory use (which functions read and write each global); `rrc analyze --session` adds the
+  functions a session called that Ghidra lacks to its analysis (D79), and `rrc files` says which file bytes
+  went where, read or written by which code (D78, D79).
 - **Outside sources (D32, D77):** for every game, look for source releases, reimplementations, format
   documentation, wikis, walkthroughs and community bug lists, and use what licences allow. They are
   expected, and not relied upon: evidence named with its provenance (`prior-art:<source>`), which the
@@ -318,7 +321,7 @@ process through `clockwork serve`. Its commands are short and print little: `ini
 next step), `game` (the game's folder and its version), `analyze`, `check`, `name`, `data`, `sync`, `input`,
 `show`, `session`, `record`, `calls` (how often a session calls each function: loops and their ticks), `inputs`
 (what the program reads that interrupt handlers or services write: boundary value candidates), `watch` (who
-writes or reads a value, with the call chain), `search` (memory by how it behaves over ticks), `ports`,
+writes or reads a value, with the call chain), `search` (memory by how it behaves over ticks), `files` (which file bytes went where), `ports`,
 `frame`, `trace`, `compare`, `quirk`, `suspects` (quirk candidates) and `sigs`.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
