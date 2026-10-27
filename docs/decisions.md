@@ -47,7 +47,7 @@ afterwards; the real test follows on a small game with no source release. Arena 
 ports: the person ports them with the finished toolkit (decided 2026-10-17).
 **Why:** a source release lets the agent take shortcuts, even unintentionally, and then the pilot proves nothing.
 
-### D65. The pilot is Arena. Accepted 2026-10-26, with the person; its prior art: D66.
+### D65. The pilot is Arena. Accepted 2026-10-26, with the person; its prior art: D66; its purpose: D70.
 M4 ports Arena's gameplay (`ACD.EXE`, the CD version) instead of Wolf3D's: its first dungeon, from a transplant
 at its start, compared tick by tick. Arena has no source release, so the pilot is also the test where the
 approach is needed, which M7 was to be; M7 goes. Like any port it starts from prior art (D32): Recreate's Arena
@@ -61,6 +61,18 @@ agent kept away from the source; the comparison already shows whether a port beh
 Arena's port is wanted for itself. Arena already runs in Clockwork to its first dungeon
 (`testdata/inputs/arena-first-dungeon.inputs`), with its mouse as a boundary value (D49).
 **Supersedes:** D3.
+
+### D70. The goal is the complete toolkit; Arena is a game it is tested on. Accepted 2026-10-27, with the person.
+Rrecreate's goal is the toolkit: everything an agent needs to port a DOS game whose source was never released,
+from analysis to a faithful port and its modern mode. No game's port is a goal of its own. Arena is where M4 to
+M6 test the toolkit, because it has no source release and already runs in Clockwork; like Wolf3D's (D52), its
+port goes only as far as those tests need and doesn't have to become a finished game. A milestone is done when
+the toolkit can do its part, shown on a game; work that would only advance a game's port isn't planned. M7 is
+now 32-bit protected-mode games, tested on Daggerfall: most DOS games the toolkit is for need it.
+**Why:** the person: Arena is not the goal, the complete toolkit is; Arena is used where it helps finish the
+toolkit.
+**Supersedes:** D65's "the pilot is the start of Arena's port (D39), not a throwaway test" and "Arena's port is
+wanted for itself" (the rest of D65 stands).
 
 ## The emulator
 

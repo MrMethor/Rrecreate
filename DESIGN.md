@@ -8,9 +8,9 @@
 serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. Two blind
 tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 done: the runtime
 (`runtime/`), the mapping, transplants, the comparison with who wrote, paired checkpoints and scenario edits
-(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4, the Arena
-pilot (D65). Rrecreate began from Recreate's emulator and parts of its tooling (§11); Recreate itself is
-disregarded (D69).
+(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4, the toolkit on
+a real game, tested on Arena (D65, D70). Rrecreate began from Recreate's emulator and parts of its tooling
+(§11); Recreate itself is disregarded (D69).
 
 ## 1. The product
 
@@ -30,8 +30,9 @@ What Rrecreate produces for each game is a **Rust port of the original game**:
   - **portability:** a new platform is a new platform layer.
 - **Modernizations are toggles on top** (§6.4); the faithful mode stays checkable against the original for good.
 
-The games it is for are those whose source was never released (D52). A game whose source is out, such as
-Wolf3D, is a test bench: its source grades the toolkit, and its port goes only as far as the tests need.
+The games it is for are those whose source was never released (D52). The goal is the complete toolkit, not a
+particular game's port (D70): the games it is tested on (Wolf3D, whose released source grades it; Arena;
+Daggerfall for 32-bit programs) get ports only as far as the tests need.
 
 Rrecreate is the toolkit an AI agent uses to make such ports:
 
@@ -368,9 +369,10 @@ disregarded (D69): nothing more is taken from it, and nothing is read from it.
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
 | M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | A session of the Wolf3D port is traced |
 | M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, scenario sessions, the comparison and its report | A toy port of a test program matches tick by tick |
-| M4 Pilot: Arena | Arena's gameplay in its first dungeon as a native simulation (the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock), from a transplant at the dungeon's start, compared per tick (D65), from its own analysis (D66). The presentation is M5's | A session of play in the first dungeon (walking, doors, a fight) matches tick by tick from the transplant: the approach works on a game without a source release |
-| M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |
-| M6 Modern mode | Fixed-rate logic, free frame rate, resolution, the first quirk fixes | The modern toggles pass their own tests |
+| M4 A real game's logic | The toolkit through a real game's gameplay, from its own analysis (D66): finding and mapping its state, a transplant at a checkpoint, the comparison and who wrote on a large state, and each gap the port work finds, fixed as a general feature. Tested on Arena's first dungeon (D65, D70): the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock. The presentation is M5's | A session of play in Arena's first dungeon (walking, doors, a fight) matches tick by tick from the transplant, and the gaps found are fixed in the toolkit: the approach works on a game without a source release |
+| M5 Faithful presentation | Frame and sound-event comparison, the runtime's presentation seams (§6.1), a faithful renderer and sound, tested on Arena | A port's frames and sound events are compared with the original's and a difference is located; Arena's frames match through the session |
+| M6 Modern mode | The runtime's fixed-rate logic, free frame rate and resolution, the quirk register and toggles (§6.4), tested on Arena | The modern toggles pass their own tests, and the faithful mode still matches |
+| M7 32-bit games | The whole flow on protected-mode programs (DOS extenders, LE/LX objects): analysis, sessions, sync points, mapping, transplant, comparison, tested on Daggerfall (D70) | A session of Daggerfall's gameplay matches tick by tick from a transplant |
 
-M5 and M6 continue Arena's port. 32-bit protected-mode programs (Daggerfall and later) are designed in from M1
-(IDs, protocol, mapping); porting one comes after M6.
+The games are where the toolkit is tested: their ports go only as far as the tests need (D70). 32-bit
+protected-mode programs are designed in from M1 (IDs, protocol, mapping).
