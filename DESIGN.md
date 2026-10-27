@@ -8,8 +8,8 @@
 serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. Two blind
 tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 done: the runtime
 (`runtime/`), the mapping, transplants, the comparison with who wrote, paired checkpoints and scenario edits
-(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4, the toolkit on
-a real game, tested on Arena (D65, D70). Rrecreate began from Recreate's emulator and parts of its tooling
+(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4, a real
+game's logic, tested on Arena (§12, D70, D71). Rrecreate began from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
 ## 1. The product
@@ -143,7 +143,8 @@ the session.
 - **Dynamic:** sessions give coverage, call edges with counts (code Ghidra missed, calls through pointers),
   and per-function memory use (which functions read and write each global).
 - **Prior art first:** for every game, look for source releases, reimplementations, format documentation
-  and community bug lists; import what licences allow, as evidence, not truth.
+  and community bug lists; what licences allow is evidence, not truth, and is named with its provenance
+  (`prior-art:<source>`).
 - **IDs:** `<MODULE>[#<n>]+<offset>`, where `#n` is an overlay (MZ) or an object (LE/LX) and the offset is in
   the loaded image, uppercase hex, 5 to 8 digits. The same form names functions and data. The module `MEM`
   is memory outside the programs' images, by linear address (`MEM+0046C`, the BIOS's timer count; D53).
@@ -305,10 +306,10 @@ sessions/           a TOML file per session (its inputs, its length, its recorde
 
 **The toolkit, `rrc`**, is one Rust program run inside a port repository. It drives Clockwork as a child
 process through `clockwork serve`. Its commands are short and print little: `init`, `doctor`, `status` (the
-next step), `game` (the game's folder and its version), `check`, `name`, `show`, `analyze`, `import`,
-`session`, `calls` (how often a session calls each function: loops and their ticks), `inputs` (what the
-program reads that interrupt handlers or services write: boundary value candidates), `watch` (who writes or
-reads a value, with the call chain), `record`, `trace`.
+next step), `game` (the game's folder and its version), `analyze`, `check`, `name`, `data`, `sync`, `input`,
+`show`, `session`, `record`, `calls` (how often a session calls each function: loops and their ticks), `inputs`
+(what the program reads that interrupt handlers or services write: boundary value candidates), `watch` (who
+writes or reads a value, with the call chain), `ports`, `frame`, `trace`, `compare` and `sigs`.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees
@@ -335,12 +336,15 @@ also lists the inputs its pass read after they changed since its sync point (D60
 The agent follows `docs/porting.md` (to be written with the toolkit) and drives `rrc`:
 
 1. Set up the port repository (`rrc init`); `rrc doctor` names what's missing.
-2. Identify and load the game (`rrc game`), analyse it (`rrc analyze`), import prior art.
+2. Identify and load the game (`rrc game`), analyse it (`rrc analyze`), look for prior art (§5).
 3. Record sessions; find the main loop and the sync points; record the boundary values (`rrc record`).
 4. Name the state and build the mapping, starting with what the first subsystem reads.
 5. Port a subsystem; compare from a transplanted checkpoint; at each divergence, *who wrote*, then fix the
    port or register a quirk.
-6. Faithful presentation, compared frame by frame and by sound events; then modern mode.
+6. The game's data and the rest of the program: the port loads the game's files itself and runs from
+   power-on through its menus and loading.
+7. Faithful presentation, compared frame by frame and by sound events, and the platform layer, so the port
+   plays; then modern mode.
 
 Subagents work in parallel on separate subsystems. Output is short: agents read it.
 
@@ -369,10 +373,13 @@ disregarded (D69): nothing more is taken from it, and nothing is read from it.
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
 | M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | A session of the Wolf3D port is traced |
 | M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, scenario sessions, the comparison and its report | A toy port of a test program matches tick by tick |
-| M4 A real game's logic | The toolkit through a real game's gameplay, from its own analysis (D66): finding and mapping its state, a transplant at a checkpoint, the comparison and who wrote on a large state, and each gap the port work finds, fixed as a general feature. Tested on Arena's first dungeon (D65, D70): the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock. The presentation is M5's | A session of play in Arena's first dungeon (walking, doors, a fight) matches tick by tick from the transplant, and the gaps found are fixed in the toolkit: the approach works on a game without a source release |
-| M5 Faithful presentation | Frame and sound-event comparison, the runtime's presentation seams (§6.1), a faithful renderer and sound, tested on Arena | A port's frames and sound events are compared with the original's and a difference is located; Arena's frames match through the session |
-| M6 Modern mode | The runtime's fixed-rate logic, free frame rate and resolution, the quirk register and toggles (§6.4), tested on Arena | The modern toggles pass their own tests, and the faithful mode still matches |
-| M7 32-bit games | The whole flow on protected-mode programs (DOS extenders, LE/LX objects): analysis, sessions, sync points, mapping, transplant, comparison, tested on Daggerfall (D70) | A session of Daggerfall's gameplay matches tick by tick from a transplant |
+| M4 A real game's logic | The toolkit through a real game's gameplay, from its own analysis (D66): finding and mapping its state (with the encodings D62 left for later: a pointer as an index, data on the heap, packed bits), a transplant at a checkpoint, the comparison and who wrote on a large state, the port's own call trace at a divergence, the quirk register's tools (§6.5), and each gap the port work finds, fixed as a general feature. Tested on Arena's first dungeon (D65, D70): the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock. The presentation is M6's | A session of play in Arena's first dungeon (walking, doors, a fight) matches tick by tick from the transplant, and the gaps found are fixed in the toolkit: the approach works on a game without a source release |
+| M5 The game's data and the whole program | Sessions from power-on through several loops (menus, loading, play), compared as one; which bytes of which file end up where in memory, to work out the game's formats; the runtime's file access, so a port reads the person's copy of the game. Tested on a test program, and on Arena where that isn't enough (D70) | A port of a test program that loads its data files matches from power-on through two loops; the file tracing shows which file bytes an Arena structure came from |
+| M6 Faithful and playable | Frame and sound-event comparison, the presentation seams (§6.1), a faithful renderer and sound, and the platform layer: window, input devices turned into actions, audio output, the game's folder, saved games. Tested on Arena | A port's frames and sound events are compared with the original's and a difference is located; Arena's dungeon port plays in a window with sound, its frames matching through the session |
+| M7 Modern mode | Fixed-rate logic with interpolation, free frame rate and resolution, toggles (§6.4) and quirk fixes, tested on Arena | The modern toggles pass their own tests, and the faithful mode still matches |
+| M8 32-bit games | The whole flow on protected-mode programs (LE/LX objects) under CauseWay and DOS/4GW: analysis, sessions, mapping, transplant, comparison, frames. Tested on Daggerfall and Ultimate Doom (a test bench: its source is released, D52) | A session of each game's play matches tick by tick from a transplant |
+| M9 Acceptance | An agent with `docs/porting.md` alone, as in the blind tests (D46), ports a stretch of a game without a source release that the toolkit wasn't developed on, chosen by the person (D71) | Its port matches a session of play, state and frames, and plays; what the agent needed and didn't find is in the toolkit: the toolkit is complete |
 
-The games are where the toolkit is tested: their ports go only as far as the tests need (D70). 32-bit
-protected-mode programs are designed in from M1 (IDs, protocol, mapping).
+The games are where the toolkit is tested: their ports go only as far as the tests need (D70). M9's game stays
+out of the toolkit's development until then. 32-bit protected-mode programs are designed in from M1 (IDs,
+protocol, mapping).

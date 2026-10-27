@@ -4,7 +4,7 @@ A toolkit an AI agent uses to port DOS games to modern systems: the original run
 emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN.md` §1, §2).
 **Status:** Clockwork is in `clockwork/`, driven by tools through `clockwork serve` (M0, M1); the toolkit, `rrc`,
 is in `rrc/` (M2); the runtime, in `runtime/`, and the comparison are M3's (`DESIGN.md` §12). The goal is the
-complete toolkit: games only test it (D70).
+complete toolkit, and games only test it (D70); the plan to it is `DESIGN.md` §12 (D71).
 
 - **Porting a game:** follow `docs/porting.md`, inside the game's port repository (`rrc status` names the next
   step).

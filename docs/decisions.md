@@ -62,7 +62,7 @@ Arena's port is wanted for itself. Arena already runs in Clockwork to its first 
 (`testdata/inputs/arena-first-dungeon.inputs`), with its mouse as a boundary value (D49).
 **Supersedes:** D3.
 
-### D70. The goal is the complete toolkit; Arena is a game it is tested on. Accepted 2026-10-27, with the person.
+### D70. The goal is the complete toolkit; Arena is a game it is tested on. Accepted 2026-10-27, with the person; its milestones: D71.
 Rrecreate's goal is the toolkit: everything an agent needs to port a DOS game whose source was never released,
 from analysis to a faithful port and its modern mode. No game's port is a goal of its own. Arena is where M4 to
 M6 test the toolkit, because it has no source release and already runs in Clockwork; like Wolf3D's (D52), its
@@ -73,6 +73,28 @@ now 32-bit protected-mode games, tested on Daggerfall: most DOS games the toolki
 toolkit.
 **Supersedes:** D65's "the pilot is the start of Arena's port (D39), not a throwaway test" and "Arena's port is
 wanted for itself" (the rest of D65 stands).
+
+### D71. The plan to a complete toolkit: M4 to M9. Accepted 2026-10-27, with the person.
+- **M4, a real game's logic** (Arena's first dungeon), now with the mapping's encodings D62 left for later
+  (a pointer as an index, data on the heap, packed bits), the port's own call trace at a divergence, and the
+  quirk register's tools.
+- **M5, the game's data and the whole program:** sessions from power-on through several loops (menus,
+  loading, play), which bytes of which file end up where in memory, and the runtime's file access; tested on
+  a test program where one is enough.
+- **M6, faithful and playable:** frames and sound compared, and the platform layer (window, input devices,
+  audio, the game's folder, saved games).
+- **M7, modern mode.**
+- **M8, 32-bit games** under CauseWay (Daggerfall) and DOS/4GW (Ultimate Doom, a test bench: its source is
+  released).
+- **M9, acceptance:** an agent with the playbook alone ports a stretch of a game without a source release that
+  the toolkit wasn't developed on, chosen by the person.
+
+**Why:** set against the porting flow end to end, M4 to M7 had nothing for loading the game's data or running
+from power-on (a transplant skips both), nothing for a port that can be played, and every test on one game:
+that would shape the toolkit around Arena and leave "complete" (D70) without a finish line. The blind Wolf3D
+tests showed that an agent with the playbook alone finds what the toolkit's authors don't (D46-D51).
+**Supersedes:** D70's milestone numbers (32-bit games were M7; Arena tests M4, M6 and M7, and M5 where a test
+program isn't enough).
 
 ## The emulator
 
