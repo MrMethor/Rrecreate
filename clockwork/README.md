@@ -35,7 +35,8 @@ ones:
   (from power-on): text, named keys (`{esc}`, `{up}`, `{f1}`, `{ctrl}`...), `{click X Y}` in the mouse
   driver's coordinates, `{move X Y}` (to a place: the cursor stays in the driver's range, and the motion
   stops with it), `{motion DX DY}` (by DX, DY mickeys, as a hand moves the mouse: a game that turns by the
-  motion turns as far as asked), `{stick X Y BUTTONS}` (the first joystick, with `--joystick 1`;
+  motion turns as far as asked), `{mouse X Y BUTTONS}` (the mouse there with those buttons held until the next
+  mouse step: a drag is a press, moves with the button held and a release), `{stick X Y BUTTONS}` (the first joystick, with `--joystick 1`;
   `{stick2 ...}` the second), `{hold KEY MS}`, `{keydown KEY}`/`{keyup KEY}`, `{wait MS}`. Run it, look at
   the `--screenshot`, add the next step, or explore step by step (below, "Exploring a game").
   `../testdata/inputs/` has walkthroughs that take Wolfenstein 3D into its first level and past a pushwall,

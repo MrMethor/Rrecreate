@@ -39,7 +39,8 @@ options:
                      {ins} {del} {f1}..{f12} {shift} {rshift} {ctrl} {rctrl} {alt} {ralt} {caps},
                      {hold KEY MS} (held MS ms), {keydown KEY} {keyup KEY} (KEY a name or a
                      character), {click X Y} {rclick X Y} {move X Y} (mouse driver coordinates),
-                     {motion DX DY} (mickeys), {stick X Y BUTTONS} {stick2 ...}, {wait MS}; one step
+                     {mouse X Y BUTTONS} (buttons held until the next: a drag), {motion DX DY}
+                     (mickeys), {stick X Y BUTTONS} {stick2 ...}, {wait MS}; one step
                      after the other, keys 120 ms apart; MS counts from power-on
   --input-file FILE  run: --input lines from FILE (# starts a comment)
   --replay FILE      run: replay a session recorded by play (program may be omitted)

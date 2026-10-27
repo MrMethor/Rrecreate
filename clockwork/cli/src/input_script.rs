@@ -13,6 +13,9 @@
 //! the screen (the driver keeps the cursor in its range, and the motion stops with it); `{motion DX DY}`
 //! moves the mouse by DX, DY mickeys, as a hand does: the driver's motion counters take all of it, and
 //! the cursor follows within its range (a game that turns by the motion turns as far as asked);
+//! `{mouse X Y BUTTONS}` puts the mouse at X, Y with BUTTONS held (bit 0 left, bit 1 right, bit 2
+//! middle) until the next mouse step: a drag is a press, moves with the button held, a release
+//! (`{mouse 320 60 2}{mouse 320 140 2}{mouse 320 140 0}`: Arena's swing);
 //! `{stick X Y BUTTONS}` puts the first joystick at X, Y (-32767 to 32767, left and up negative) with
 //! BUTTONS held (bit 0 button 1, bit 1 button 2) until the next such step, `{stick2 ...}` the second
 //! (`--joystick N` connects them);
@@ -50,6 +53,12 @@ enum Step {
     Move {
         x: i16,
         y: i16,
+    },
+    /// The mouse at a place with buttons held.
+    Mouse {
+        x: i16,
+        y: i16,
+        buttons: u8,
     },
     /// Mouse motion in mickeys.
     Motion {
@@ -132,6 +141,14 @@ impl Script {
                     ["click", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 1 },
                     ["rclick", x, y] => Step::Click { x: number(x)?, y: number(y)?, button: 2 },
                     ["move", x, y] => Step::Move { x: number(x)?, y: number(y)? },
+                    ["mouse", x, y, buttons] => {
+                        let buttons = buttons.parse::<u8>().ok().filter(|&b| b <= 7);
+                        Step::Mouse {
+                            x: number(x)?,
+                            y: number(y)?,
+                            buttons: buttons.ok_or_else(|| format!("--input {spec:?}: buttons are 0 to 7"))?,
+                        }
+                    }
                     ["motion", dx, dy] => Step::Motion { dx: number(dx)?, dy: number(dy)? },
                     [which @ ("stick" | "stick2"), x, y, buttons] => {
                         let buttons = buttons.parse::<u8>().ok().filter(|&b| b <= 3);
@@ -204,6 +221,10 @@ impl Script {
                     m.queue_mouse(at, x, y, 0);
                     at += ms(m, KEY_SPACING_MS);
                 }
+                &Step::Mouse { x, y, buttons } => {
+                    m.queue_mouse(at, x, y, buttons);
+                    at += ms(m, KEY_SPACING_MS);
+                }
                 &Step::Motion { dx, dy } => {
                     m.queue_input(at, dos::Input::MouseMotion { dx, dy });
                     at += ms(m, KEY_SPACING_MS);
@@ -268,6 +289,9 @@ mod tests {
         );
         assert!(Script::parse("0:{stick 0 0 4}").is_err());
         assert_eq!(Script::parse("5:{motion -900 12}").unwrap().steps, [Step::Motion { dx: -900, dy: 12 }]);
+        let drag = Script::parse("5:{mouse 320 60 2}{mouse 320 140 2}{mouse 320 140 0}").unwrap();
+        assert_eq!(drag.steps[1], Step::Mouse { x: 320, y: 140, buttons: 2 });
+        assert!(Script::parse("5:{mouse 1 2 8}").unwrap_err().contains("buttons are 0 to 7"));
         assert_eq!(Script::parse("5:a\r\n").unwrap().steps, [Step::Key(vec![0x1E])], "a line break isn't a key");
         assert!(Script::parse("12:{nope}").is_err());
         assert!(Script::parse("12:{keydown}").is_err());
