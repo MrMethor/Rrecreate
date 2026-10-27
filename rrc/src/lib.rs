@@ -11,7 +11,6 @@ mod compare;
 pub mod edits;
 pub mod frames;
 pub mod game;
-pub mod import;
 pub mod knowledge;
 pub mod mapping;
 mod naming;
@@ -122,9 +121,6 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          mapped values at a tick (--transplant), or a paired checkpoint (--resume);
                          --pair keeps one at the end of tick N (the port's state and Clockwork's
                          snapshot) if the port matched to there. Exits 1 if it diverges
-  import recreate DIR [--without PROVENANCE,...]
-                         Recreate's knowledge files (its games/<game>/knowledge), leaving out the
-                         items of the provenances named
   sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]
                          a library signature pack (sigs/README.md) from this analysis and the linker
                          map of the same build: the library functions the map names, by their
@@ -170,7 +166,6 @@ pub fn main() -> ExitCode {
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
         Some("compare") => here().and_then(|repo| compare::compare(&repo, rest)),
-        Some("import") => here().and_then(|repo| import::import(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

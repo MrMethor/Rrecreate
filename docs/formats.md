@@ -31,7 +31,7 @@ and find where it puts the game's program (`index/places`, below).
 A port repository also has `.gitignore` (`rrc.local.toml`, `.rrc/`, `target/`) and `.gitattributes` (text with
 LF line ends on every platform).
 
-`[port] imports = false` makes `rrc import` refuse: an honest test bench's knowledge comes from its own
+`[port] imports = false` makes `rrc sigs name` refuse: an honest test bench's knowledge comes from its own
 analysis only (D46).
 
 ```toml
@@ -129,7 +129,7 @@ GAME.EXE+21C40	tick_elapsed	2	u16	human
 - **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a primitive (`u8`,
   `i16`, `u32`, ...), an array (`u8[256]`), or empty.
 - **provenance:** who decided, and from what: `human`, `agent:<model>`, `ghidra`, `library:<pack>`,
-  `prior-art:<source>`, `recreate:<its provenance>` for what came from Recreate, `map` for a linker map's
+  `prior-art:<source>`, `map` for a linker map's
   names (`rrc sigs name`, in a port made to build a signature pack).
 - **confidence:** 0 to 1, or empty. **evidence:** free text (IDs, sessions, sources), no tabs.
 

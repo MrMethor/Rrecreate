@@ -551,6 +551,12 @@ decided itself stay, on its own evidence.
 session again without them gave the same run.
 **Supersedes:** D65's sentences on prior art (the rest of D65 stands).
 
+### D67. `rrc` has no import of Recreate's knowledge. Accepted 2026-10-27, with the person.
+`rrc import recreate` goes, with its provenance `recreate:`. `[port] imports = false` still makes `rrc sigs name`
+refuse (a linker map's names). The person deletes Recreate's and the earlier Arena project's folders.
+**Why:** D66: their knowledge confuses the project, and no port uses it any more; the command would only bring
+it back.
+
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
 sync point, the cycle, every input, the data that changed since the last tick (all of it at the first), the

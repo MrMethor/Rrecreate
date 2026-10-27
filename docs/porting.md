@@ -280,7 +280,7 @@ D46), proves the approach only if nothing from that source helps. For such a por
   about the game's code;
 - keep the game's copy in a folder of its own, away from projects that hold derived knowledge;
 - don't read Rrecreate's git history: its commit messages carry names from the project before it;
-- set `[port] imports = false` in `rrc.toml`, so `rrc import` refuses;
+- set `[port] imports = false` in `rrc.toml`, so `rrc sigs name` refuses;
 - give it a cache of its own (`cache` in `rrc.local.toml`): the cache is shared by the ports on a machine,
   and `rrc analyze` reuses an analysis of the same program, with the functions other ports' knowledge added
   to Ghidra's;

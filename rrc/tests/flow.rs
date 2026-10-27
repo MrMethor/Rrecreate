@@ -126,8 +126,6 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["sync"]).contains("sync      loop T.COM+0000E (human)"));
     let settings = std::fs::read_to_string(repo.join("rrc.toml")).unwrap();
     std::fs::write(repo.join("rrc.toml"), format!("{settings}\n[port]\nimports = false\n")).unwrap();
-    let (refused, ok) = rrc.run(&["import", "recreate", "."]);
-    assert!(!ok && refused.contains("takes no imports"), "{refused}");
     let map = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testbins/bin/FLAT32.MAP");
     let (refused, ok) = rrc.run(&["sigs", "name", map.to_str().unwrap()]);
     assert!(!ok && refused.contains("takes no imports"), "a map is a build's truth: {refused}");

@@ -352,8 +352,8 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 - The Ghidra export script, the library signature packs and how they are made (`rec sigs build`, now `rrc sigs
   build`, with its linker map parser), the test programs built with Open Watcom.
 - Recreate's Wolf3D knowledge (names transferred from id's released source, globals, its 46 overrides written
-  from that source) stays outside the Wolf3D port, a test bench (D46). Neither Recreate's Arena knowledge nor
-  the person's earlier Arena project goes into the Arena port (D66).
+  from that source) and its Arena knowledge aren't used, and `rrc` has no import of them (D46, D66, D67);
+  nor is the person's earlier Arena project.
 - Not taken: the Python `rec` toolkit and its SQLite store, the task queue and packets, `rec submit`/`rec land`,
   Python ports. Their ideas are reused where they fit.
 
