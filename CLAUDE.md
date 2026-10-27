@@ -6,8 +6,8 @@ emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN
 is in `rrc/` (M2); the runtime, in `runtime/`, and the comparison are M3's (`DESIGN.md` §12). The goal is the
 complete toolkit, and games only test it (D70); the plan to it is `DESIGN.md` §12 (D71).
 
-- **Porting a game:** follow `docs/porting.md`, inside the game's port repository (`rrc status` names the next
-  step).
+- **Porting a game:** follow `docs/porting.md`, its rules first ("How to work"), inside the game's port
+  repository (`rrc status` names the next step).
 - **Working on Rrecreate itself:** the notes below.
 
 ## Notes for agents working on Rrecreate

@@ -36,7 +36,7 @@ poor localization; per-tick state comparison through the mapping (D16), "who wro
 (D17) are what localize a difference now.
 **Supersedes:** Recreate's "hybrid port, verified per function".
 
-### D2. Decompiled code is a hint, not a source. Accepted 2026-10-19, with the person.
+### D2. Decompiled code is a hint, not a source. Accepted 2026-10-19, with the person; how it works, not how it runs: D77.
 Ghidra's output is read for how the original does something; nothing is translated from it mechanically.
 **Why:** it is partly wrong (missed functions, lost segments, dropped flags, guessed types) and incomplete (no
 hardware layer, no runtime), so a function-by-function translation can't produce a working program.
@@ -644,7 +644,7 @@ the same mapping that compares it. Measured on the toy port: edits at tick 100 (
 tick 120 (the lives); the session matches from tick 1.
 **Supersedes:** D59's paragraph "The emulator" (the rest of D59 stands).
 
-### D66. The Arena port uses no knowledge from Recreate or the person's earlier Arena project. Accepted 2026-10-27, with the person.
+### D66. The Arena port uses no knowledge from Recreate or the person's earlier Arena project. Accepted 2026-10-27, with the person; other outside sources: D77.
 The Arena port's knowledge comes from its own analysis and runs only: nothing from Recreate (its Arena
 knowledge, with what it imported from OpenTESArena) or from the person's earlier Arena project
 (`MrMethor/tesa-decomp`), which D65 had it start from. What was imported (141 function names, 390 data names)
@@ -660,6 +660,50 @@ session again without them gave the same run.
 refuse (a linker map's names). The person deletes Recreate's and the earlier Arena project's folders.
 **Why:** D66: their knowledge confuses the project, and no port uses it any more; the command would only bring
 it back.
+
+### D77. How to work: the analysis, outside sources and the game's files first, runs to confirm. Accepted 2026-10-27, with the person.
+The playbook opens with rules for using the toolkit (`docs/porting.md`, "How to work"). Every question about a
+game draws on four sources, in this order:
+1. the analysis (decompiled code, disassembly, calls, who reads and writes what);
+2. outside sources (format documentation, reimplementations, wikis, walkthroughs, bug lists);
+3. the game's files;
+4. runs of the original, which confirm.
+
+- **Outside sources are expected, not relied upon.** Look before working out what others have written
+  down, and treat each as evidence named with its source, which the original confirms or overrules.
+  Projects the person excludes stay out (for Arena: Recreate and tesa-decomp).
+- **The decompiled code shows how the program works, not how it runs.** It gives the logic and the data it
+  uses. It doesn't give which paths run, with which values, in which order, nor what interrupt handlers,
+  code made at run time and timing do: runs settle those.
+- **Rules:** plan before running; don't play the game to find things; two kinds of evidence for each finding
+  (code or a source, and a run); name what is learned at once; use the tool that fits the question; the
+  original is the specification.
+
+**Why:** on Arena (M4), finding the map, a door and a fight by memory searches, watches and walking with
+screenshots took hours and missed what was close by. The decompiled code of the functions already found leads
+to the level, the doors and the creatures. A walkthrough answered at once what the screenshots couldn't (the
+cell's key). The person: "It's a toolkit, all the tools are meant to be used as they are fit."
+**Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
+D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
+
+### D78. A game's assets are a source of the toolkit; M5 extracts them. Accepted 2026-10-27, with the person.
+A game's files are knowledge (D77) and what a port loads: archives, compressed data, level maps, pictures with
+their palettes, fonts, texts, sounds and music. M5 gives the toolkit:
+- **File tracing** (`rrc files SESSION`): which files the program opens and reads, at which tick, and where in
+  memory each read's bytes went (Clockwork's DOS file services report them). A structure in memory then leads
+  to its file and offset, and the file to the function that reads it.
+- **Formats as knowledge** (`knowledge/formats.toml`): each kind of file, its layout in the knowledge's types,
+  its compression, the function that reads it, and the provenance (the analysis, or a source).
+- **Extraction** (`rrc asset FILE`): a file, or a member of an archive, decoded by its format and shown as
+  values. Pictures are written as PNG with their palettes, sounds as WAV, music as MIDI. Common compressions
+  (RLE and LZ variants) are decoded by the toolkit; a game's own is described by its format.
+- **The original as the check.** What the original's reader put in memory (from file tracing) is the expected
+  output of an extraction and of a port's loader, so a decoder is compared with the original as the logic is.
+
+Extracted assets are the person's: they go to the cache or the port's `.rrc/`, never into a repository (D33).
+**Why:** the person: assets are part of porting. Arena's level map, its doors and where its creatures are
+come from its files, and reading those with the code that loads them is faster and surer than finding them in
+memory. A port loads the person's copy of the game, so it needs the formats anyway.
 
 ### D69. Recreate is disregarded. Accepted 2026-10-27, with the person.
 Nothing more is taken from Recreate and nothing is read from it: not its code, its design (`PROJECT.md`) or its

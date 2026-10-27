@@ -1,9 +1,71 @@
 # Porting a game
 
-The agent's playbook (DESIGN.md §10). It grows with the toolkit: this is what `rrc` does so far (M3: the
-original's knowledge and traces, the mapping, the port and the comparison). Formats are in `docs/formats.md`.
+The agent's playbook (DESIGN.md §10). It grows with the toolkit: this is what `rrc` does so far (M3 and M4:
+the original's knowledge and traces, the mapping, the port and the comparison). Formats are in
+`docs/formats.md`. Read "How to work" first: its rules decide how each step below is used.
 
 Run `rrc` inside the port repository. `rrc status` names the next step; `rrc doctor` says what's missing.
+
+## How to work
+
+These rules come before the steps below (D77). Every question about the game is answered the same way:
+what a value means, where something is kept, how a rule works, where things are in a level, or why the port
+differs.
+
+**The sources, in this order:**
+
+1. **The analysis: how the program works.** Start from what is already known (a named function, a datum, the
+   loop) and read the program. `rrc show NAME` gives callers, calls, and who reads and writes a datum;
+   `rrc show ID --c` gives the decompiled code with your names; `--asm` covers what the decompiled code gets
+   wrong or misses. Follow the calls from the loop down to the subsystem in question.
+2. **Outside sources: what others found.** Format documentation, reimplementations, wikis, walkthroughs, bug
+   lists (D32). They are expected: look before working out what others have already written down. They are
+   not relied upon: each is evidence, named with its source (`prior-art:<source>`), and the original decides
+   where they disagree with it.
+3. **The game's files: its data.** Levels, tables, texts, pictures and sounds are in the files the program
+   reads. A structure in memory often comes from one: the code that reads the file says which, and so does
+   the file itself, decoded with what the code and the sources say of its format.
+4. **Runs: how the program runs.** Confirm with the original running:
+   - `rrc watch`: who writes and reads a value, at which tick, from where;
+   - `rrc search`: memory by how it behaves over ticks;
+   - `rrc trace` and `rrc frame`: values and pictures by tick;
+   - a `clockwork serve`: exploring step by step.
+
+**The decompiled code shows how the program works, not how it runs.** It shows the logic and the data it
+uses. It doesn't show:
+- which paths run, with which values, how often and in which order;
+- what interrupt handlers and code made at run time do;
+- what the timing does.
+
+It is partly wrong too (D2). Read it to understand; runs settle what actually happens. The comparison with
+the original judges the port, not the code it was read from.
+
+**Rules:**
+
+1. **Plan before running.** Write the question down and the cheapest way to answer it from the sources
+   above. A run checks an answer; it is not how to look for one.
+2. **Don't play the game to find things.** Script a session from what the analysis, the sources and the
+   game's files say: the level's layout, where the doors and the creatures are, how a door opens. Explore
+   from a snapshot only for what they don't say. At each step read the state (the player's position, the
+   value in question) instead of judging by pictures alone.
+3. **Every finding has two kinds of evidence:** what the code or a source says, and what a run shows. One
+   alone is a guess.
+4. **Name what you learn as you learn it** (`rrc name`, `rrc data`, `notes/`), with its evidence and
+   provenance: the next question starts from the names.
+5. **Use the whole toolkit.** Pick the tool that answers the question at hand, not the one used last. If a
+   few tries of one approach haven't answered, change the source, not the number of tries.
+6. **The original is the specification.** Code, sources and files explain it; where they disagree with how
+   the original runs, the run wins, and a disagreement worth keeping is a note or a quirk.
+
+**Where to start, by question:**
+
+| Question | Start from | Then | Confirm with |
+|---|---|---|---|
+| What does this value mean? | `rrc show DATUM`: who reads and writes it; their `--c` | sources on the subsystem | `rrc watch` at a tick |
+| Where is X kept? | the code that does X, from the loop down | format and engine documentation | `rrc search`, `rrc watch` |
+| How does rule X work? | the function that applies it, `--c` | sources, bug lists | a session that exercises it; `rrc compare` |
+| Where are things in a level? | the level's file and the code that loads it | maps and walkthroughs | frames, the state at the place |
+| Why does the port differ? | `rrc compare`: the original's writer and the port's code | the writer's `--c` | `rrc watch`, `rrc trace` |
 
 ## 1. Set up
 
@@ -50,9 +112,10 @@ functions past the program's file image, which Ghidra can't see. `rrc show ID` s
 --asm --session NAME [--tick N]` disassembles it from the session's memory, by tick N or at its last
 snapshot. Port what the generator makes, not the bytes (DESIGN.md §6).
 
-Look for prior art (D32): source releases, reimplementations, format documentation, bug lists, where the
-person wants them used (the Arena port uses none: D66). For a test bench whose source is released, used to
-grade the toolkit, the source stays out of reach (D46, below).
+Look for prior art (D32, D77): source releases, reimplementations, format documentation, wikis,
+walkthroughs, bug lists. It is expected, and not relied upon: evidence, named with its source, that the
+original confirms. Projects the person excluded stay out (for Arena, Recreate and tesa-decomp: D66, D69). For a
+test bench whose source is released, used to grade the toolkit, the source stays out of reach (D46, below).
 
 ## 3. Sessions and ticks
 
