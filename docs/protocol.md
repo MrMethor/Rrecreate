@@ -93,15 +93,24 @@ called (`services`) and ports read (`ports`) meanwhile, and each instruction's u
 The ranges may be empty, to find only the services and ports. An interrupt handler is what runs for a hardware
 interrupt (and what it calls).
 
-**Calls and coverage.** `calls` `{"on": true, "count": false}`: tracks calls from now on (so a watch started
-later sees the whole chain); with `count`, `call_counts` gives the calls made since, by target (`[[addr,
-n]]`). `coverage` ... `coverage_end`: where each instruction that ran started (`executed`) and the calls made
+**Calls and coverage.** `calls` `{"on": true, "count": false, "log": false, "limit": 100000}`: tracks calls
+from now on (so a watch started later sees the whole chain); with `count`, `call_counts` gives the calls made
+since, by target (`[[addr, n]]`); with `log`, `call_log` gives the calls and interrupts made since, in order,
+and starts again (`calls`: `[[depth, site, target, kind]]`, the depth the frames open before it and the kind
+`call`, `int` or `irq`; `start`: the chain when the log began, innermost first; `dropped`: those past
+`limit`) (D83). `coverage` ... `coverage_end`: where each instruction that ran started (`executed`) and the calls made
 (`calls`: `[[site, target, n]]`).
 
 **Files.** `files` ... `files_end`: each read and write of a file the program made through the system
 (`accesses`: `{"cycle", "write", "file", "offset", "len", "at", "by", "chain"}`: the file's name as the
 program opened it, where in it and how many bytes, the program's buffer, where the call returns to, and the
 functions it was made in, innermost first, while `calls` is on) (D78).
+
+**Contracts.** `contracts` ... `contracts_end`: each function the program called since, as its calls used it
+(`functions`: `{"at", "calls", "inputs", "flags_in", "outputs", "flags_out", "preserved", "pops", "returns",
+"arg_bytes", ...}`: the registers and flags read before written, those the code after a call read as its
+results, those every call kept, the bytes popped with the return, how it returned and the stack argument
+bytes read; `clockwork run --contracts` writes the same, `clockwork/dos/src/contracts.rs`). Real mode (D81).
 
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}]}` ... `uninit_end`: reads of memory nothing wrote
@@ -162,6 +171,7 @@ An IBM PC with DOS (Clockwork).
 4. A summary watch's `port_uses`; `image` answers what it wrote (it printed it, onto the answers).
 5. `edits`; `syncs` answers `ticks`; a watch's `by` may be `{"edit": true}`.
 6. `files`, `files_end` (D78).
+7. `contracts`, `contracts_end` (D81); `calls` takes `log` and `limit`, and `call_log` (D83).
 
 ## Changing the protocol
 

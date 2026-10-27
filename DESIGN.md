@@ -145,8 +145,9 @@ the session.
   program built with the compiler and its linker map (`rrc sigs build`, `sigs/README.md`).
 - **Dynamic:** sessions give coverage, call edges with counts (code Ghidra missed, calls through pointers),
   and per-function memory use (which functions read and write each global); `rrc analyze --session` adds the
-  functions a session called that Ghidra lacks to its analysis (D79), and `rrc files` says which file bytes
-  went where, read or written by which code (D78, D79).
+  functions a session called that Ghidra lacks to its analysis (D79) and the register contracts its run showed
+  (D81), `rrc pass` shows one pass's calls in order (D83), and `rrc files` says which file bytes went where,
+  read or written by which code (D78, D79).
 - **Outside sources (D32, D77):** for every game, look for source releases, reimplementations, format
   documentation, wikis, walkthroughs and community bug lists, and use what licences allow. They are
   expected, and not relied upon: evidence named with its provenance (`prior-art:<source>`), which the

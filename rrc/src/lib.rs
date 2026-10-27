@@ -8,6 +8,7 @@ pub mod cache;
 mod calls;
 pub mod clockwork;
 mod compare;
+mod contracts;
 pub mod edits;
 mod files;
 pub mod frames;
@@ -16,6 +17,7 @@ pub mod knowledge;
 pub mod mapping;
 mod memory;
 mod naming;
+mod pass;
 pub mod places;
 pub mod quirks;
 pub mod repo;
@@ -103,6 +105,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          who writes (and with --reads, reads) it during the session, or from tick N
                          for N ticks: the instruction, the value, and the call chain (start: before
                          the first sync point hit); at most --limit accesses (10000), --lines lines
+  pass SESSION --tick N [--depth N] [--in ID|NAME] [--interrupts] [--lines N]
+                         what tick N's pass runs, in order: the calls from tick N-1's sync point to
+                         tick N's as a tree of named functions, --depth levels (2), a call repeated
+                         in a row once with a count; --in: under each call of that function
   inputs SESSION [--tick N] [--ticks N | --from-ms MS [--to-ms MS]] [--at ID|SEG:OFF --len N]
                          boundary value candidates: memory the program reads that only interrupt
                          handlers or host services write (the key states, the timer counts), in the
@@ -191,6 +197,7 @@ pub fn main() -> ExitCode {
         Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),
         Some("search") => here().and_then(|repo| search::search(&repo, rest)),
         Some("files") => here().and_then(|repo| files::files(&repo, rest)),
+        Some("pass") => here().and_then(|repo| pass::pass(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

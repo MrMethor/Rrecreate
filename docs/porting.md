@@ -66,6 +66,10 @@ the original judges the port, not the code it was read from.
 | How does rule X work? | the function that applies it, `--c` | sources, bug lists | a session that exercises it; `rrc compare` |
 | Where are things in a level? | the level's file (`rrc files --file`) and the code that loads it | maps and walkthroughs | frames, the state at the place |
 | Why does the port differ? | `rrc compare`: the original's writer and the port's code | the writer's `--c` | `rrc watch`, `rrc trace` |
+| What does a pass run, in what order? | `rrc pass SESSION --tick N`, `--in FUNCTION` | the loop's `--c` | `rrc watch` of a value it changes |
+
+A pass's order matters as much as its code: `rrc pass SESSION --tick N` shows the calls one pass makes, in
+order, by name (`--in FUNCTION` for one function's), which is the outline of the port's step (D83).
 
 ## 1. Set up
 
@@ -105,7 +109,11 @@ Decompiled code is a hint, not a source (D2): it is partly wrong.
 Ghidra misses code that only a vector or a pointer reaches: interrupt handlers (`rrc inputs` names them
 by their entry), and in many games most of the per-frame logic, called through far pointers. Once a session
 is recorded, `rrc analyze --session NAME` adds every function its run called to Ghidra's analysis, with calls,
-references and decompiled code (D79; Ghidra opens its analysis again: a few minutes). One function at a
+references and decompiled code (D79; Ghidra opens its analysis again: a few minutes). It also gives Ghidra the
+register contracts the run showed (D81): hand-written assembly's register parameters (`update_actor(word si)`
+instead of `unaff_SI`) and results, a carry flag among them (`bVar = FUN_1000_1cee()` instead of a lost
+flag). A register only an untaken path reads isn't one, so a session that runs the code you read gives the
+best contracts. One function at a
 time: `rrc show ID --asm` disassembles it with Clockwork, following its jumps, and once named (`rrc name`)
 `rrc analyze` adds it. Code the program loaded at run time (drivers) is past its file: read it with
 `rrc show ID --asm --session NAME`.

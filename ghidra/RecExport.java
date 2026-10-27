@@ -1,10 +1,15 @@
 // Exports an analyzed program as JSON lines, for the toolkit's knowledge files (DESIGN.md §5).
 // Run through Ghidra's headless analyzer:
-//   analyzeHeadless ... -postScript RecExport.java <out.jsonl> [decompile] [functions <file> [only]]
+//   analyzeHeadless ... -postScript RecExport.java <out.jsonl> [decompile] [functions <file>]
+//       [signatures <file>] [only]
 // With a functions file (a linear address a line: entries found some other way, such as interrupt
-// handlers only a vector reaches), functions are created there first and the changes analyzed; with
-// "only", the export has just those functions' records (to add to an export of the program made
-// before, from the same analysis: no program or block records).
+// handlers only a vector reaches), functions are created there first where there are none and the
+// changes analyzed; with "only", the export has just those functions' records (to add to an export of
+// the program made before, from the same analysis: no program or block records).
+// A signatures file gives functions their register contracts, as a run showed them (D81): a line is
+// "<linear address> <inputs> <output>", inputs register names joined by commas and output a register,
+// "DX:AX" or "CF" (each "-" for none). The inputs become register parameters (beside the stack ones
+// Ghidra found) and the output the return, so callers' code uses them.
 // One JSON object per line: a "program" record, then "block", "function", "call" and "ref" records
 // (an instruction's reference to data: "read", "write" or "data" for an address taken), then one
 // "code" record per function with its disassembly (and its decompilation when asked).
@@ -31,19 +36,32 @@ import ghidra.feature.fid.service.FidService;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.SegmentedAddress;
+import ghidra.program.model.data.BooleanDataType;
+import ghidra.program.model.data.ByteDataType;
+import ghidra.program.model.data.DWordDataType;
+import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.WordDataType;
+import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Function.FunctionUpdateType;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
+import ghidra.program.model.listing.Parameter;
+import ghidra.program.model.listing.ParameterImpl;
+import ghidra.program.model.listing.ReturnParameterImpl;
+import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 
 public class RecExport extends GhidraScript {
 
 	private BufferedWriter out;
 
-	/** The functions created from the functions file. */
-	private final Set<Address> created = new HashSet<>();
+	/** The functions the functions file lists (created or there before). */
+	private final Set<Address> listed = new HashSet<>();
 
 	@Override
 	public void run() throws Exception {
@@ -53,6 +71,8 @@ public class RecExport extends GhidraScript {
 		}
 		boolean decompile = false;
 		boolean only = false;
+		Path functions = null;
+		Path signatures = null;
 		for (int i = 1; i < args.length; i++) {
 			if (args[i].equals("decompile")) {
 				decompile = true;
@@ -61,8 +81,17 @@ public class RecExport extends GhidraScript {
 				only = true;
 			}
 			else if (args[i].equals("functions") && i + 1 < args.length) {
-				createFunctions(Path.of(args[++i]));
+				functions = Path.of(args[++i]);
 			}
+			else if (args[i].equals("signatures") && i + 1 < args.length) {
+				signatures = Path.of(args[++i]);
+			}
+		}
+		if (functions != null) {
+			createFunctions(functions);
+		}
+		if (signatures != null) {
+			applySignatures(signatures);
 		}
 		out = new BufferedWriter(new FileWriter(args[0]));
 		try {
@@ -96,7 +125,7 @@ public class RecExport extends GhidraScript {
 		}
 	}
 
-	/** The functions' records (with "only", the created functions'). */
+	/** The functions' records (with "only", the listed functions'). */
 	private void exportFunctions(boolean decompile, boolean only) throws Exception {
 		List<Function> functions = new ArrayList<>();
 		FidService fid = new FidService();
@@ -104,7 +133,7 @@ public class RecExport extends GhidraScript {
 			if (monitor.isCancelled()) {
 				return;
 			}
-			if (only && !created.contains(f.getEntryPoint())) {
+			if (only && !listed.contains(f.getEntryPoint())) {
 				continue;
 			}
 			functions.add(f);
@@ -173,26 +202,91 @@ public class RecExport extends GhidraScript {
 
 	/** Creates a function at each entry the file lists where Ghidra has none, then analyzes them. */
 	private void createFunctions(Path file) throws Exception {
+		int created = 0;
 		for (String line : Files.readAllLines(file)) {
 			if (line.isBlank()) {
 				continue;
 			}
 			Address address = toAddr(Long.parseLong(line.trim()));
 			if (getFunctionAt(address) != null) {
+				listed.add(address);
 				continue;
 			}
 			if (getInstructionAt(address) == null) {
 				disassemble(address);
 			}
 			if (createFunction(address, null) != null) {
-				created.add(address);
+				listed.add(address);
+				created++;
 			}
 			else {
 				println("RecExport: no function could be made at " + address);
 			}
 		}
 		analyzeChanges(currentProgram);
-		println("RecExport: created " + created.size() + " functions");
+		println("RecExport: created " + created + " functions");
+	}
+
+	/** Gives the functions the file lists their register parameters and returns (custom storage). */
+	private void applySignatures(Path file) throws Exception {
+		int applied = 0;
+		for (String line : Files.readAllLines(file)) {
+			String[] parts = line.trim().split(" ");
+			if (parts.length != 3) {
+				continue;
+			}
+			Function f = getFunctionAt(toAddr(Long.parseLong(parts[0])));
+			if (f == null) {
+				continue;
+			}
+			try {
+				List<Variable> params = new ArrayList<>();
+				if (!parts[1].equals("-")) {
+					for (String name : parts[1].split(",")) {
+						Register r = currentProgram.getRegister(name);
+						if (r != null) {
+							params.add(new ParameterImpl(name.toLowerCase(), sized(r.getMinimumByteSize()), r,
+								currentProgram));
+						}
+					}
+				}
+				for (Parameter p : f.getParameters()) {
+					if (p.isStackVariable()) {
+						params.add(new ParameterImpl(p.getName(), p.getDataType(), p.getVariableStorage(),
+							currentProgram));
+					}
+				}
+				Parameter old = f.getReturn();
+				ReturnParameterImpl ret =
+					new ReturnParameterImpl(old.getDataType(), old.getVariableStorage(), currentProgram);
+				if (!parts[2].equals("-")) {
+					String[] regs = parts[2].split(":");
+					Register[] storage = new Register[regs.length];
+					int size = 0;
+					for (int i = 0; i < regs.length; i++) {
+						storage[i] = currentProgram.getRegister(regs[i]);
+						size += storage[i].getMinimumByteSize();
+					}
+					DataType type = parts[2].equals("CF") ? BooleanDataType.dataType : sized(size);
+					ret = new ReturnParameterImpl(type, new VariableStorage(currentProgram, storage), currentProgram);
+				}
+				f.updateFunction(f.getCallingConventionName(), ret, params, FunctionUpdateType.CUSTOM_STORAGE, true,
+					SourceType.ANALYSIS);
+				applied++;
+			}
+			catch (Exception e) {
+				println("RecExport: no signature for " + f.getEntryPoint() + ": " + e.getMessage());
+			}
+		}
+		println("RecExport: " + applied + " signatures");
+	}
+
+	private static DataType sized(int bytes) {
+		return switch (bytes) {
+			case 1 -> ByteDataType.dataType;
+			case 4 -> DWordDataType.dataType;
+			default -> WordDataType.dataType;
+		};
 	}
 
 	/** The kind of a data reference: "write", "read", or "data" (an address taken). */

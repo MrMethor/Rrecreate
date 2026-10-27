@@ -18,8 +18,12 @@
 //!
 //! fn main() -> std::process::ExitCode { rrc_runtime::main::<Game>() }
 //! ```
+//!
+//! What the port loads from the person's copy of the game (the program's static data, the game's
+//! files) is in [`original`] (D82).
 
 mod files;
+pub mod original;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;

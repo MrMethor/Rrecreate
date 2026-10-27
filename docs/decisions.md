@@ -686,6 +686,39 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D83. `rrc pass`: what one pass runs, in order. Accepted 2026-10-27.
+`rrc pass SESSION --tick N` prints the calls made between tick N-1's sync point and tick N's as a tree of named
+functions in the order they ran: `--depth` levels (2), a call repeated in a row once with a count, how many
+calls lie under the last level shown, `--in FUNCTION` for what one function runs, hardware interrupts' handlers
+left out unless asked for. Clockwork's call tracker keeps an ordered log for it (`calls {"log": true}`,
+`call_log`; protocol revision 7).
+**Why:** a port's step is one pass, and its order decides values. In Arena, the acceleration of walking is
+raised by the input code and lowered by the command-key code; the traced values fit only one order, which no
+tool showed: call counts have no order, and the decompiled loop dispatches through far pointers. One
+`rrc pass cell --tick 404` showed it: `update_actors` first, the 3D view, `move_player`, then the command keys.
+
+### D82. A port reads the original's static data from the person's copy. Accepted 2026-10-27.
+When `rrc` runs a port it gives it `RRC_PROGRAM`, the program as the analysis unpacked it, and `RRC_GAME`, the
+game's folder. `rrc_runtime::original::program()` reads the program's load image at the offsets IDs use
+(`program().i16s(0x46A3C, 640)` for `ACD.EXE+46A3C`), so tables the code reads are loaded, not copied into the
+port's source. A port played without `rrc` (M6) will need the unpacking itself.
+**Why:** Arena's walking multiplies by a 640-word sine table at `ACD.EXE+46A3C` that no rounding of `sin`
+gives; ACD.EXE is packed with PKLITE, so the table is only in the unpacked image. Copying it into the port would
+put the game's data in a repository (D78 keeps extracted data out of them), and every port has such tables.
+
+### D81. Contracts from a run give Ghidra register parameters and results. Accepted 2026-10-27.
+`rrc analyze --session NAME` runs the session once with Clockwork's contract inference (kept by the run) and
+gives Ghidra each called function's contract before decompiling: the registers it read before writing them
+become register parameters, beside the stack ones Ghidra found, and the result its callers used (`AX`, `DX:AX`,
+`EAX`, the carry flag, another register) its return. The functions with a contract and their callers are
+decompiled again. A contract is what the run's calls did: a register only an untaken path reads isn't in it.
+Contract inference counts a flag a call set as its result even when it kept its value (`CLC` on a clear carry).
+Clockwork's serve has `contracts`/`contracts_end` (protocol revision 7). Real mode only.
+**Why:** Arena's hand-written assembly passes the actor in SI and answers in the carry flag. Ghidra's code read
+`unaff_SI`, and `bVar8 = false; FUN_1000_1cee(); if (bVar8)` for a carry it lost, and it dropped the random draw
+`update_actor` makes (`(rand >> 13) + angle`, a random turn). With 716 contracts from `cell` (55 of them a
+carry), `update_actor(word si, word es)` reads `bVar8 = FUN_1000_1cee()` and uses the draw.
+
 ### D80. A segment alone is a pointer kind. Accepted 2026-10-27.
 `types.toml`'s pointers have a third kind, `segment`, and `segment` is built in: 2 bytes, pointing at
 segment × 16. A mapped item `via` one is the block it starts, `offset` bytes in. Edits write it as

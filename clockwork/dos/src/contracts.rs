@@ -7,7 +7,8 @@
 //! stack pointer rises above the return address. Per function, over all its calls:
 //! - inputs: registers and flags read before anything in the call wrote them, and the stack
 //!   argument bytes read. A register only pushed (saved) counts if the call didn't restore it;
-//! - outputs: registers and flags a call changed that the code after it read before writing;
+//! - outputs: registers a call changed, and flags it set, that the code after it read before
+//!   writing (a flag set to the value it had is a result too: `CLC` returning a clear carry);
 //! - preserved: registers equal at every return;
 //! - the bytes popped besides the return address, and the return (near, far, IRET);
 //! - memory it read before writing and memory it wrote, itself (not its callees): load-image
@@ -599,9 +600,12 @@ impl Contracts {
             return;
         }
         let offset = frame.entry - self.base;
-        // What it changed now holds its result; what it kept has its earlier producer.
+        // What it changed now holds its result, and the flags it set (flags aren't saved and
+        // restored as registers are); what it kept has its earlier producer.
+        let set_flags = (0..COUNT).filter(|&u| FLAGS & 1 << u != 0 && self.reg_seq[u] >= frame.start);
+        let results = set_flags.fold(changed, |m, u| m | 1 << u);
         for u in 0..COUNT {
-            self.producer[u] = if changed & 1 << u == 0 { frame.producer[u] } else { returned.map(|_| offset) };
+            self.producer[u] = if results & 1 << u == 0 { frame.producer[u] } else { returned.map(|_| offset) };
         }
         let c = self.functions.entry(offset).or_default();
         c.inputs |= frame.inputs | frame.saves & changed;

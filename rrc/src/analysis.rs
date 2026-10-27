@@ -8,7 +8,9 @@
 //! decompiled code too; with `--session NAME`, so are all the functions that session's run called
 //! (DESIGN.md §5, "Dynamic"; D79): Ghidra's project of the analysis is kept in the cache, and opened again
 //! (read only, without analysing it again) to create them and export just their records, which are
-//! read after the analysis's own.
+//! read after the analysis's own. That run also gives Ghidra the register contracts the session's run
+//! showed (D81, `contracts.rs`): register parameters and results, a carry flag among them; the functions
+//! with one and their callers are decompiled again.
 //!
 //! The scripts and packs are built into `rrc`, so a port repository needs no Rrecreate checkout.
 
@@ -103,6 +105,8 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         .cloned()
         .collect();
     let named = missing.len();
+    // Register contracts from the session's run, by function (D81).
+    let mut signed: BTreeMap<Id, String> = BTreeMap::new();
     if let Some(name) = a.value("--session") {
         let session = crate::session::Session::load(repo, name)?;
         let places = crate::places::Places::new(repo, &session);
@@ -115,11 +119,39 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         }
         missing.sort();
         say("called", format!("{} functions {name} called that Ghidra didn't find", missing.len() - named));
+        if index.objects.is_empty() {
+            for s in crate::contracts::signatures(repo, &session)? {
+                if let Some(id) = places.id(&s.at).filter(|_| places.in_program(&s.at)) {
+                    signed.insert(id, s.text());
+                }
+            }
+            let carry = signed.values().filter(|s| s.ends_with(" CF")).count();
+            say(
+                "contracts",
+                format!(
+                    "{} functions with register parameters or results in {name}'s run ({carry} a carry flag)",
+                    signed.len()
+                ),
+            );
+        } else {
+            say("contracts", "none: contract inference is real mode only");
+        }
     }
-    if !missing.is_empty() {
-        let entries: Vec<String> = missing.iter().map(ToString::to_string).collect();
-        say("adding", format!("{} functions Ghidra didn't find ({named} the knowledge names)", missing.len()));
-        let added = sha256(format!("{key}\n{}", entries.join("\n")).as_bytes());
+    if !missing.is_empty() || !signed.is_empty() {
+        // Exported again: the added functions, those with a contract and their callers (whose code
+        // the contracts change).
+        let mut exported: Vec<Id> = missing.clone();
+        exported.extend(signed.keys().cloned());
+        exported
+            .extend(analysis.calls.iter().filter(|(_, _, callee)| signed.contains_key(callee)).map(|c| c.0.clone()));
+        exported.sort();
+        exported.dedup();
+        let entries: Vec<String> = exported.iter().map(ToString::to_string).collect();
+        let contracts: Vec<String> = signed.iter().map(|(id, s)| format!("{id} {s}")).collect();
+        if !missing.is_empty() {
+            say("adding", format!("{} functions Ghidra didn't find ({named} the knowledge names)", missing.len()));
+        }
+        let added = sha256(format!("{key}\n{}\n{}", entries.join("\n"), contracts.join("\n")).as_bytes());
         let additions = match cache.recall("additions", &added).filter(|hash| !again && cache.has(hash)) {
             Some(hash) => hash,
             None => {
@@ -133,8 +165,10 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                     analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
                 }
                 let layout = analysis.layout();
-                let linear: Vec<u64> = missing.iter().filter_map(|id| layout.linear(id)).collect();
-                let hash = add_functions(repo, &cache, &project, &linear, decompile)?;
+                let linear: Vec<u64> = exported.iter().filter_map(|id| layout.linear(id)).collect();
+                let signatures: Vec<String> =
+                    signed.iter().filter_map(|(id, s)| Some(format!("{} {s}", layout.linear(id)?))).collect();
+                let hash = add_functions(repo, &cache, &project, &linear, &signatures, decompile)?;
                 cache.remember("additions", &added, &hash)?;
                 hash
             }
@@ -148,7 +182,7 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             say(
                 "missing",
                 format!(
-                    "Ghidra made no function at {}{more}: code the program loaded at run time, past its file,                      or bytes Ghidra took for data (rrc show ID --asm, with --session NAME for loaded code)",
+                    "Ghidra made no function at {}{more}: code the program loaded at run time, past its file, or bytes Ghidra took for data (rrc show ID --asm, with --session NAME for loaded code)",
                     left[..left.len().min(5)].join(", ")
                 ),
             );
@@ -278,13 +312,15 @@ fn elf_objects(bytes: &[u8]) -> Option<Vec<(u32, u32)>> {
     (0..count).map(|i| Some((word(table + i * size + 8)?, word(table + i * size + 20)?))).collect()
 }
 
-/// Functions created at `functions` (Ghidra's linear addresses) in the analysis kept at `project`,
-/// opened read only and not analysed again: their records, in the cache.
+/// Functions created at `functions` (Ghidra's linear addresses) in the analysis kept at `project`
+/// where it has none, opened read only and not analysed again, with the register contracts in
+/// `signatures` ("linear inputs output" lines) applied: their records, in the cache.
 fn add_functions(
     repo: &Repo,
     cache: &Cache,
     project: &Path,
     functions: &[u64],
+    signatures: &[String],
     decompile: bool,
 ) -> Result<String, String> {
     let (ghidra, java) = (tools::ghidra(&repo.local)?, tools::java(&repo.local)?);
@@ -297,7 +333,13 @@ fn add_functions(
     std::fs::write(&list, text).map_err(|e| format!("{}: {e}", list.display()))?;
     let out = work.join("additions.jsonl");
     let _ = std::fs::remove_file(&out);
-    say("program", "Ghidra adds them to the analysis (a minute or so)");
+    let contracts = work.join("signatures.txt");
+    std::fs::write(&contracts, signatures.iter().map(|s| format!("{s}\n")).collect::<String>())
+        .map_err(|e| format!("{}: {e}", contracts.display()))?;
+    say(
+        "program",
+        format!("Ghidra adds them to the analysis and decompiles {} functions again (minutes)", functions.len()),
+    );
     let mut command = headless(&ghidra);
     command
         .env("JAVA_HOME", &java)
@@ -313,7 +355,7 @@ fn add_functions(
         command.arg("decompile");
     }
     // Not `functions=FILE`: Windows' cmd splits arguments at `=`.
-    command.arg("functions").arg(&list).arg("only");
+    command.arg("functions").arg(&list).arg("signatures").arg(&contracts).arg("only");
     let log = work.join("ghidra-additions.log");
     let output = command.output().map_err(|e| format!("Ghidra: {e}"))?;
     std::fs::write(&log, [output.stdout.as_slice(), &output.stderr].concat()).map_err(|e| e.to_string())?;
@@ -465,6 +507,11 @@ impl Analysis {
                 _ => {}
             }
         }
+        // A function exported again (an addition's caller) lists its calls and references twice.
+        analysis.calls.sort();
+        analysis.calls.dedup();
+        analysis.refs.sort();
+        analysis.refs.dedup();
         Ok(analysis)
     }
 }

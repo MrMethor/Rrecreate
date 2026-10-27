@@ -2973,7 +2973,7 @@ fn reading_no_bytes_from_the_console_does_not_wait() {
 fn contracts_from_a_run() {
     let offsets = std::cell::RefCell::new(BTreeMap::new());
     let program = com(|a| {
-        for name in ["add_arg", "get_flag", "keeps", "pascal_one", "read_global", "result"] {
+        for name in ["add_arg", "get_flag", "clear_flag", "keeps", "pascal_one", "read_global", "result"] {
             offsets.borrow_mut().insert(name, (a.addr(name) as u32).wrapping_sub(0x100));
         }
         // The stack starts at the top of the segment: the first push wraps SP to FFFEh.
@@ -2992,6 +2992,12 @@ fn contracts_from_a_run() {
         let target = a.l("after_flag");
         a.jc(target)?;
         a.here("after_flag")?;
+        a.clc()?;
+        let target = a.l("clear_flag");
+        a.call(target)?;
+        let target = a.l("after_clear");
+        a.jc(target)?;
+        a.here("after_clear")?;
         let target = a.l("keeps");
         a.call(target)?;
         a.xor(ax, ax)?; // (a result is seen when it changes)
@@ -3011,6 +3017,10 @@ fn contracts_from_a_run() {
         // get_flag: CF set
         a.here("get_flag")?;
         a.stc()?;
+        a.ret()?;
+        // clear_flag: CF clear, as it was
+        a.here("clear_flag")?;
+        a.clc()?;
         a.ret()?;
         // keeps: uses SI, but saves it
         a.here("keeps")?;
@@ -3047,6 +3057,8 @@ fn contracts_from_a_run() {
     assert_eq!((add.arg_bytes, add.pops.iter().copied().collect::<Vec<_>>()), (2, vec![0]));
     let flag = contract("get_flag");
     assert_eq!((register_names(flag.inputs).len(), flag_names(flag.outputs)), (0, vec!["CF"]));
+    let clear = contract("clear_flag");
+    assert_eq!(flag_names(clear.outputs), ["CF"], "set to the value it had, and read after the call");
     let keeps = contract("keeps");
     let si_units = dos::contracts::units::word(6);
     assert!(keeps.inputs == 0 && keeps.preserved & si_units == si_units, "{keeps:?}");
@@ -4379,4 +4391,42 @@ fn calls_tracked_from_the_start_give_a_later_watch_the_whole_chain() {
     };
     assert_eq!(chain_seen(true), [(o["setter"], o["after_setter"]), (o["outer"], o["after_outer"])]);
     assert_eq!(chain_seen(false), [], "without tracking, only the calls made since the watch began");
+}
+
+#[test]
+fn a_call_log_keeps_the_calls_in_order_with_their_depth() {
+    // outer calls first then second; second calls first. Logged from outer's entry.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["outer", "first", "second"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        let outer = a.l("outer");
+        a.call(outer)?;
+        exit(a, 0)?;
+        a.here("outer")?;
+        let first = a.l("first");
+        a.call(first)?;
+        let second = a.l("second");
+        a.call(second)?;
+        a.ret()?;
+        a.here("first")?;
+        a.ret()?;
+        a.here("second")?;
+        let first = a.l("first");
+        a.call(first)?;
+        a.ret()
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("L.COM", &program)], "L.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    m.track_calls(true);
+    assert!(matches!(m.run_to_sync(base + o["outer"], 1, SECOND), Stop::Sync { .. }));
+    m.probes.calls.as_deref_mut().unwrap().log(Some(2));
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let log = m.probes.calls.as_deref_mut().unwrap().take_log().unwrap();
+    assert_eq!(log.start.iter().map(|f| f.entry - base).collect::<Vec<_>>(), [o["outer"]]);
+    let calls: Vec<(u32, u32, u32)> = log.calls.iter().map(|c| (c.depth, c.site - base, c.entry - base)).collect();
+    assert_eq!(calls, [(1, o["outer"], o["first"]), (1, o["outer"] + 3, o["second"])]);
+    assert!(log.dropped >= 1, "second's call of first, past the limit, and DOS's exit");
 }

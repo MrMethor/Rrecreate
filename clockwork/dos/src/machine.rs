@@ -918,7 +918,12 @@ impl Machine {
 
     /// Starts contract inference ([`crate::contracts`]) for the program the machine started with.
     pub fn start_contracts(&mut self) {
-        let image = self.image_range();
+        self.start_contracts_in(self.image_range());
+    }
+
+    /// Starts contract inference for the code in `image` (linear addresses): a program a launcher
+    /// started, say.
+    pub fn start_contracts_in(&mut self, image: std::ops::Range<u32>) {
         self.probes.contracts = Some(Box::new(crate::contracts::Contracts::new(image.start, image.len() as u32)));
     }
 

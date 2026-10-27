@@ -292,11 +292,21 @@ fn write_start(session: &str, mapped: &[Mapped], original: &[Vec<Value>], tick: 
 /// repository.
 fn run_port(repo: &Repo, args: &[String]) -> Result<(), String> {
     let port = &repo.settings.port;
+    // The person's copy of the game, for what the port loads from it (D82, `rrc_runtime::original`):
+    // its folder, and the program as the analysis unpacked it (its static data).
+    let mut original: Vec<(&str, std::path::PathBuf)> = Vec::new();
+    if let Ok(dir) = repo.game_dir() {
+        original.push(("RRC_GAME", dir.to_path_buf()));
+    }
+    if let Some(index) = crate::analysis::Index::load(repo)? {
+        original.push(("RRC_PROGRAM", crate::cache::Cache::open(&repo.local)?.path(&index.program)));
+    }
     let run = |what: &str, command: &[String], args: &[String]| -> Result<(), String> {
         let (program, rest) = command.split_first().ok_or(format!("[port] {what} is empty"))?;
         let output = Command::new(program)
             .args(rest)
             .args(args)
+            .envs(original.iter().cloned())
             .current_dir(&repo.root)
             .output()
             .map_err(|e| format!("[port] {what} ({program}): {e}"))?;

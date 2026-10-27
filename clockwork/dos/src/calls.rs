@@ -6,7 +6,8 @@
 //!
 //! Memory watches report the chain at each access. Tracking from the start of a run gives the whole
 //! chain to a watch started later ([`crate::machine::Machine::track_calls`]); a watch started
-//! without it only sees the calls made since.
+//! without it only sees the calls made since. A log ([`Calls::log`]) keeps every call and interrupt
+//! in order, with its depth: what a pass of a game's loop runs, as a tree.
 
 use cpu::{Cpu, seg};
 
@@ -37,6 +38,39 @@ impl Frame {
     }
 }
 
+/// One call or interrupt, as a log keeps it ([`Calls::log`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Logged {
+    /// Frames open when it was made (the chain's length before it).
+    pub depth: u32,
+    /// Linear address of the instruction that made it (the interrupted one, for a hardware interrupt).
+    pub site: u32,
+    /// Linear address it went to.
+    pub entry: u32,
+    pub interrupt: bool,
+    pub hardware: bool,
+}
+
+/// A log of calls: those kept, at most `limit`, and how many more were made.
+#[derive(Debug, Clone, Default)]
+pub struct Log {
+    pub calls: Vec<Logged>,
+    pub limit: usize,
+    pub dropped: u64,
+    /// The chain when the log began, innermost first.
+    pub start: Vec<Frame>,
+}
+
+impl Log {
+    fn push(&mut self, logged: Logged) {
+        if self.calls.len() < self.limit {
+            self.calls.push(logged);
+        } else {
+            self.dropped += 1;
+        }
+    }
+}
+
 /// The instruction about to run, as [`Calls::before`] saw it.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Context {
@@ -57,12 +91,27 @@ pub struct Calls {
     /// kept by snapshots). Interrupts aren't calls.
     #[serde(skip)]
     counts: Option<std::collections::BTreeMap<u32, u64>>,
+    /// When logging: the calls and interrupts made since, in order (not kept by snapshots).
+    #[serde(skip)]
+    log: Option<Log>,
 }
 
 impl Calls {
     /// Counts the calls made from now on, by target (`on`), or stops counting.
     pub fn count(&mut self, on: bool) {
         self.counts = on.then(|| self.counts.take().unwrap_or_default());
+    }
+
+    /// Logs the calls and interrupts made from now on, at most `limit` (`Some`), or stops logging.
+    pub fn log(&mut self, limit: Option<usize>) {
+        self.log = limit.map(|limit| Log { limit, start: self.chain(), ..Log::default() });
+    }
+
+    /// The log so far, which goes on empty; none if not logging.
+    pub fn take_log(&mut self) -> Option<Log> {
+        let log = self.log.as_mut()?;
+        let start = self.stack.iter().rev().copied().collect();
+        Some(std::mem::replace(log, Log { limit: log.limit, start, ..Log::default() }))
     }
 
     /// The calls counted, by target, if counting.
@@ -138,6 +187,11 @@ impl Calls {
                 // Control went elsewhere, by a CALL or INT: not a PUSH of a value that happens to look
                 // like a return address (a small count, in code at the start of its segment).
                 if linear_ip != from && calls_or_interrupts(&peek, c.code_base.wrapping_add(c.ip)) {
+                    if let Some(log) = self.log.as_mut() {
+                        let depth = self.stack.len() as u32;
+                        let site = c.code_base.wrapping_add(c.ip);
+                        log.push(Logged { depth, site, entry: linear_ip, interrupt, hardware: false });
+                    }
                     self.stack.push(Frame {
                         entry: linear_ip,
                         from,
@@ -171,6 +225,10 @@ impl Calls {
     pub(crate) fn interrupt(&mut self, cpu: &Cpu, from: u32) {
         let entry = cpu.segment_base(seg::CS).wrapping_add(cpu.regs.ip);
         let stack_base = cpu.segment_base(seg::SS);
+        if let Some(log) = self.log.as_mut() {
+            let depth = self.stack.len() as u32;
+            log.push(Logged { depth, site: from, entry, interrupt: true, hardware: true });
+        }
         self.stack.push(Frame { entry, from, interrupt: true, hardware: true, slot: stack_top(cpu), stack_base });
     }
 

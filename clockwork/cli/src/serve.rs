@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 6;
+pub const PROTOCOL: u64 = 7;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -40,6 +40,7 @@ pub const MACHINE_OPS: &[&str] = &[
     "input",
     "calls",
     "call_counts",
+    "call_log",
     "frame_images",
     "take_frame_images",
     "coverage",
@@ -48,6 +49,8 @@ pub const MACHINE_OPS: &[&str] = &[
     "watch_end",
     "files",
     "files_end",
+    "contracts",
+    "contracts_end",
     "bounds",
     "bounds_end",
     "uninit",
@@ -433,8 +436,30 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             m.track_calls(flag(r, "on")?.unwrap_or(true));
             if let Some(calls) = m.probes.calls.as_deref_mut() {
                 calls.count(flag(r, "count")?.unwrap_or(false));
+                let limit = r.get("limit").and_then(Value::as_u64).unwrap_or(100_000) as usize;
+                calls.log(flag(r, "log")?.unwrap_or(false).then_some(limit));
             }
             Ok(json!({}))
+        }
+        "call_log" => {
+            let log = m.probes.calls.as_deref_mut().and_then(|c| c.take_log());
+            let log = log.ok_or(r#"no calls logged: calls {"log": true} first"#)?;
+            let calls: Vec<Value> = log
+                .calls
+                .iter()
+                .map(|c| {
+                    let kind = if c.hardware {
+                        "irq"
+                    } else if c.interrupt {
+                        "int"
+                    } else {
+                        "call"
+                    };
+                    json!([c.depth, name(c.site), name(c.entry), kind])
+                })
+                .collect();
+            let start: Vec<String> = log.start.iter().map(|f| name(f.entry)).collect();
+            Ok(json!({ "calls": calls, "dropped": log.dropped, "start": start }))
         }
         "call_counts" => {
             let counts = m.probes.calls.as_deref().and_then(|c| c.counts());
@@ -523,6 +548,22 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 })
                 .collect();
             Ok(json!({ "accesses": accesses }))
+        }
+        "contracts" => {
+            // For the image `+OFF` counts from (a launcher's game, after `rebase`).
+            m.start_contracts_in(image.clone());
+            Ok(json!({}))
+        }
+        "contracts_end" => {
+            let contracts = m.probes.contracts.take().ok_or("no contract inference on")?;
+            let mut found: Value = serde_json::from_str(&contracts.to_json("")).map_err(|e| e.to_string())?;
+            // Each function by its address, not its offset in the image inference started with.
+            let mut functions = found["functions"].take();
+            for f in functions.as_array_mut().into_iter().flatten() {
+                let offset = f["offset"].as_u64().unwrap_or(0) as u32;
+                f["at"] = json!(name(contracts.base + offset));
+            }
+            Ok(json!({ "functions": functions }))
         }
         "bounds" => {
             let mut objects = Vec::new();
