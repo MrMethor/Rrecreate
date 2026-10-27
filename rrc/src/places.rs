@@ -127,12 +127,15 @@ pub(crate) struct Places<'a> {
     le: bool,
     /// The LE program's objects in the session, once looked up.
     objects: OnceCell<Vec<(u32, u32, u32)>>,
+    /// A 16-bit program's image in the session (linear base, size), once looked up.
+    image: OnceCell<(u32, u32)>,
 }
 
 impl<'a> Places<'a> {
     pub(crate) fn new(repo: &'a Repo, session: &'a Session) -> Places<'a> {
         let image_module = if launched_16bit(repo) { repo.module() } else { repo.program_module() };
-        Places { repo, session, module: repo.module(), image_module, le: is_le(repo), objects: OnceCell::new() }
+        let (module, le) = (repo.module(), is_le(repo));
+        Places { repo, session, module, image_module, le, objects: OnceCell::new(), image: OnceCell::new() }
     }
 
     /// The LE program's objects in the session (linear base, size, LE flags); none for a 16-bit one.
@@ -159,6 +162,30 @@ impl<'a> Places<'a> {
     pub(crate) fn id(&self, address: &str) -> Option<Id> {
         let objects = self.objects.get().map_or(&[][..], Vec::as_slice);
         id_of(&self.module, &self.image_module, objects, Address::parse(address)?)
+    }
+
+    /// The ID at a linear address (a far pointer's target, D72), as Clockwork names it in the session:
+    /// in the program's image (a 16-bit program's: the memory DOS gave it at load, or where a launcher's
+    /// run loads it) or its LE objects, else memory outside them.
+    pub(crate) fn linear_id(&self, linear: u32) -> Result<Id, String> {
+        if self.le {
+            self.objects()?;
+            return self.id(&Address::Linear(linear).to_string()).ok_or_else(|| format!("@{linear:X} has no ID"));
+        }
+        if self.image.get().is_none() {
+            let image = if launched_16bit(self.repo) {
+                placement(self.repo, self.session)?.image
+            } else {
+                let (_, loaded) = Clockwork::original(self.repo, &self.session.options(self.repo))?;
+                (clockwork::linear(&loaded, "image")?, clockwork::number(&loaded, "image_size")? as u32)
+            };
+            let _ = self.image.set(image);
+        }
+        let &(base, size) = self.image.get().expect("just set");
+        match linear.checked_sub(base).filter(|&offset| offset < size) {
+            Some(offset) => Id::new(&self.module, None, offset).map_err(|e| e.to_string()),
+            None => Ok(Id::memory(linear)),
+        }
     }
 
     /// Whether `address` is the program's own: in its image, or in an LE program's objects (whose

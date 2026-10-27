@@ -1,6 +1,7 @@
-//! The state mapping (DESIGN.md §7, D16, D62): `mapping.toml` in the port repository. Each `[[map]]` is
-//! a field of the port's state (a path in its serialization, `player.x`) and the original's item it
-//! is: a data name or an ID, read as the knowledge's type for it or the one given. `[[ignore]]` is the
+//! The state mapping (DESIGN.md §7, D16, D62, D72): `mapping.toml` in the port repository. Each
+//! `[[map]]` is a field of the port's state (a path in its serialization, `player.x`) and the
+//! original's item it is: a data name or an ID, read as the knowledge's type for it or the one given;
+//! or, `via` a pointer, what the pointer points to at each tick (data on the heap). `[[ignore]]` is the
 //! original's memory that may differ (padding, caches, driver internals), named so that nothing is left
 //! out silently. `rrc record` traces every mapped item; `rrc compare` compares them, and a transplant
 //! builds the port's state from them.
@@ -9,7 +10,7 @@ use ids::Id;
 
 use crate::knowledge::{Knowledge, parse_id};
 use crate::repo::{Repo, read_toml};
-use crate::values;
+use crate::values::{self, PointerKind};
 
 pub const MAPPING: &str = "mapping.toml";
 
@@ -21,17 +22,29 @@ pub struct Mapping {
     pub ignores: Vec<Ignore>,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Map {
     /// The port's field: a path in its state's serialization.
     pub field: String,
-    /// The original's item: a data name or an ID.
+    /// The original's item: a data name or an ID; or
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub at: String,
-    /// How to read it; empty: the knowledge's type for the data.
+    /// a pointer (a data name or an ID, with a path into it as its type reads: `world.level`): the
+    /// item is where it points at each tick,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub via: String,
+    /// moved by this many bytes.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset: u32,
+    /// How to read it; empty: the knowledge's type for the data (an item `via` a pointer needs one).
     #[serde(default, rename = "type", skip_serializing_if = "String::is_empty")]
     pub ty: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -45,13 +58,44 @@ pub struct Ignore {
     pub note: String,
 }
 
-/// A mapped field resolved against the knowledge.
+/// A mapped field resolved against the knowledge: its item's ID, type and size; for an item `via` a
+/// pointer, `id` is the pointer's.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mapped {
     pub field: String,
     pub id: Id,
     pub ty: String,
     pub size: u32,
+    pub via: Option<Via>,
+}
+
+/// How a mapped item is found through a pointer: the pointer as the mapping names it, how it points,
+/// and how far past where it points the item is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Via {
+    pub name: String,
+    pub pointer: PointerKind,
+    pub offset: u32,
+}
+
+impl Via {
+    /// What the trace calls the item: `*trail`, `*world.level+4`.
+    pub fn item_name(&self) -> String {
+        match self.offset {
+            0 => format!("*{}", self.name),
+            n => format!("*{}+{n}", self.name),
+        }
+    }
+}
+
+impl Mapped {
+    /// The original's memory the field covers: the item, or the pointer it is found through.
+    pub fn covers(&self) -> (&Id, u32) {
+        match &self.via {
+            Some(via) => (&self.id, via.pointer.size()),
+            None => (&self.id, self.size),
+        }
+    }
 }
 
 impl Mapping {
@@ -71,23 +115,13 @@ impl Mapping {
             if mapped.iter().any(|other| other.field == m.field) {
                 return Err(at("mapped twice".into()));
             }
-            let id = item(k, &m.at).map_err(at)?;
-            let datum = k.data.get(&id);
-            let ty = match (&m.ty, datum) {
-                (ty, _) if !ty.is_empty() => ty.clone(),
-                (_, Some(d)) if !d.ty.is_empty() => d.ty.clone(),
-                _ => return Err(at(format!("{}: no type: give one, or one in data.tsv", m.at))),
+            let resolved = match (m.at.is_empty(), m.via.is_empty()) {
+                (false, true) => direct(k, m),
+                (true, false) => via(k, m),
+                (false, false) => Err("at or via, not both".into()),
+                (true, true) => Err("no at: the original's item (or via: a pointer to it)".into()),
             };
-            let size = values::size(&ty, &k.types).map_err(at)?;
-            if let Some(known) = datum.and_then(|d| d.size)
-                && known != size
-            {
-                return Err(at(format!("{ty} is {size} bytes, and data.tsv says {} is {known}", m.at)));
-            }
-            if k.ticks.inputs.iter().any(|i| i.at == id.to_string()) {
-                return Err(at(format!("{} is an input: the port gets it with each tick's inputs", m.at)));
-            }
-            mapped.push(Mapped { field: m.field.clone(), id, ty, size });
+            mapped.push(resolved.map_err(at)?);
         }
         Ok(mapped)
     }
@@ -112,6 +146,52 @@ impl Mapping {
     }
 }
 
+/// A field mapped to an item `at` an ID.
+fn direct(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
+    if m.offset != 0 {
+        return Err("offset goes with via; give the item's own ID".into());
+    }
+    let id = item(k, &m.at)?;
+    let datum = k.data.get(&id);
+    let ty = match (&m.ty, datum) {
+        (ty, _) if !ty.is_empty() => ty.clone(),
+        (_, Some(d)) if !d.ty.is_empty() => d.ty.clone(),
+        _ => return Err(format!("{}: no type: give one, or one in data.tsv", m.at)),
+    };
+    let size = values::size(&ty, &k.types)?;
+    if let Some(known) = datum.and_then(|d| d.size)
+        && known != size
+    {
+        return Err(format!("{ty} is {size} bytes, and data.tsv says {} is {known}", m.at));
+    }
+    if k.ticks.inputs.iter().any(|i| i.at == id.to_string()) {
+        return Err(format!("{} is an input: the port gets it with each tick's inputs", m.at));
+    }
+    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None })
+}
+
+/// A field mapped to what a pointer points to (D72).
+fn via(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
+    let (name, path) = crate::edits::split(&m.via);
+    let id = item(k, name)?;
+    let holder = k.data.get(&id).map(|d| d.ty.clone()).unwrap_or_default();
+    if holder.is_empty() {
+        return Err(format!("via {name}: no type in data.tsv: give it one (a pointer type, or one holding it)"));
+    }
+    let (offset, pointer_ty) =
+        values::locate(&holder, path, &k.types).ok_or_else(|| format!("via: {holder} has no {path}"))?;
+    let pointer = PointerKind::of_type(&pointer_ty, &k.types).ok_or_else(|| {
+        format!("via {}: {pointer_ty} isn't a pointer type (far, or a [[pointer]] of types.toml)", m.via)
+    })??;
+    if m.ty.is_empty() {
+        return Err("an item via a pointer needs a type: what it points to".into());
+    }
+    let size = values::size(&m.ty, &k.types)?;
+    let id = values::moved(&id, offset).ok_or("past the address space")?;
+    let via = Via { name: m.via.clone(), pointer, offset: m.offset };
+    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: Some(via) })
+}
+
 /// The ID a mapping (or an edit) names: an ID, or a data name.
 pub(crate) fn item(k: &Knowledge, at: &str) -> Result<Id, String> {
     if let Ok(id) = parse_id(at) {
@@ -123,7 +203,7 @@ pub(crate) fn item(k: &Knowledge, at: &str) -> Result<Id, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knowledge::{Datum, Decision};
+    use crate::knowledge::{Datum, Decision, Field, Pointer, Struct};
 
     fn knowledge() -> Knowledge {
         let mut k = Knowledge::default();
@@ -139,11 +219,34 @@ mod tests {
         };
         k.data.insert("GAME.EXE+00100".parse().unwrap(), datum("score", 2, "u16"));
         k.data.insert("GAME.EXE+00102".parse().unwrap(), datum("player_x", 2, ""));
+        k.data.insert("GAME.EXE+00110".parse().unwrap(), datum("trail", 4, "far"));
+        k.data.insert("GAME.EXE+00120".parse().unwrap(), datum("world", 6, "world"));
+        k.types.structs.push(Struct {
+            name: "world".into(),
+            size: 6,
+            fields: vec![
+                Field { offset: 0, size: 2, name: "turn".into(), ty: "u16".into() },
+                Field { offset: 2, size: 2, name: "level".into(), ty: "level_ptr".into() },
+            ],
+            provenance: String::new(),
+        });
+        k.types.pointers.push(Pointer {
+            name: "level_ptr".into(),
+            kind: "near".into(),
+            size: 2,
+            base: "GAME.EXE+00000".into(),
+            into: String::new(),
+            provenance: String::new(),
+        });
         k
     }
 
     fn map(field: &str, at: &str, ty: &str) -> Map {
-        Map { field: field.into(), at: at.into(), ty: ty.into(), note: String::new() }
+        Map { field: field.into(), at: at.into(), ty: ty.into(), ..Map::default() }
+    }
+
+    fn via(field: &str, via: &str, offset: u32, ty: &str) -> Map {
+        Map { field: field.into(), via: via.into(), offset, ty: ty.into(), ..Map::default() }
     }
 
     #[test]
@@ -164,5 +267,28 @@ mod tests {
         assert!(wrong(vec![map("s", "score", "u32")]).contains("data.tsv says score is 2"));
         assert!(wrong(vec![map("s", "nothing", "u8")]).contains("no data named nothing"));
         assert!(wrong(vec![map("a", "score", ""), map("a", "player_x", "i16")]).contains("mapped twice"));
+    }
+
+    #[test]
+    fn an_item_is_found_through_a_pointer() {
+        let k = knowledge();
+        let m = Mapping {
+            maps: vec![via("trail", "trail", 0, "i16[32]"), via("level.cells", "world.level", 4, "u8[64]")],
+            ignores: vec![],
+        };
+        let mapped = m.resolve(&k).unwrap();
+        assert_eq!((mapped[0].id.to_string(), mapped[0].size), ("GAME.EXE+00110".into(), 64));
+        assert_eq!(mapped[0].via, Some(Via { name: "trail".into(), pointer: PointerKind::Far, offset: 0 }));
+        assert_eq!(mapped[1].via.as_ref().unwrap().item_name(), "*world.level+4");
+        assert_eq!(mapped[0].covers(), (&mapped[0].id, 4), "the pointer");
+        assert_eq!(mapped[1].id.to_string(), "GAME.EXE+00122", "the field holding the pointer");
+        let near = PointerKind::Near { base: "GAME.EXE+00000".parse().unwrap(), size: 2 };
+        assert_eq!(mapped[1].via, Some(Via { name: "world.level".into(), pointer: near, offset: 4 }));
+        let wrong = |maps| Mapping { maps, ignores: vec![] }.resolve(&k).unwrap_err();
+        assert!(wrong(vec![via("t", "trail", 0, "")]).contains("needs a type"));
+        assert!(wrong(vec![via("t", "score", 0, "u8")]).contains("u16 isn't a pointer type"));
+        assert!(wrong(vec![via("t", "world.turn", 0, "u8")]).contains("isn't a pointer type"));
+        assert!(wrong(vec![Map { at: "score".into(), ..via("t", "trail", 0, "u8") }]).contains("not both"));
+        assert!(wrong(vec![Map { offset: 2, ..map("s", "score", "") }]).contains("offset goes with via"));
     }
 }

@@ -216,6 +216,11 @@ struct serde serializes, its fields named as the mapping says; it implements `Si
 the first tick; `step`: one pass with the tick's inputs) and its `main` calls `rrc_runtime::main`. `examples/toy`
 is a whole port repository to copy from: the knowledge, a session, the mapping and the port of a toy game.
 
+The original's pointers, heap and flag bytes map too (D72): declare a pointer type in `types.toml` with `into`
+the array it points into, and the port's field is an index (or none); map a heap block `via` the pointer that
+finds it, and the port's field is its contents; declare a flag byte as `[[bits]]`, and the port's field is a
+structure of named numbers and booleans.
+
 ```bash
 rrc compare first-level
 rrc compare first-level --transplant 500

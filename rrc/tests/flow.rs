@@ -517,14 +517,14 @@ fn a_port_matches_the_original_tick_by_tick() {
     .unwrap();
     rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
     assert!(rrc.ok(&["game", dir.join("game").to_str().unwrap()]).contains("version   1.0"));
-    assert!(rrc.ok(&["check"]).contains("mapping   12 fields mapped"));
+    assert!(rrc.ok(&["check"]).contains("mapping   15 fields mapped"));
     // Three seconds: through the first bounce, at tick 194.
     rrc.ok(&["session", "set", "play", "--seconds", "3"]);
     let recorded = rrc.ok(&["record", "play"]);
     assert!(recorded.contains("trace     209 ticks"), "{recorded}");
 
     let compared = rrc.ok(&["compare", "play"]);
-    assert!(compared.contains("compare   play, ticks 1-209 of 209: 12 fields mapped (80 bytes)"), "{compared}");
+    assert!(compared.contains("compare   play, ticks 1-209 of 209: 15 fields mapped (147 bytes)"), "{compared}");
     assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
     // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value.
     rrc.env.push(("TOY_BUG", "1"));
@@ -532,7 +532,13 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(!ok, "a divergence fails: {diverged}");
     assert!(diverged.contains("diverges  at tick 194 (play): 1 field differ"), "{diverged}");
     assert!(diverged.contains("enemies[1].hits: original 1, port 0"), "{diverged}");
-    assert!(diverged.contains("write enemies[1].hits = 1 (was 0) by TOY.EXE+002A0 in update < main"), "{diverged}");
+    assert!(diverged.contains("write enemies[1].hits = 1 (was 0) by TOY.EXE+002FF in update < main"), "{diverged}");
+    rrc.env.pop();
+    // Another, in the trail on the heap (D72): who wrote it, where the far pointer pointed then.
+    rrc.env.push(("TOY_BUG", "trail"));
+    let (diverged, ok) = rrc.run(&["compare", "play"]);
+    assert!(!ok && diverged.contains("trail[1]: original 2560, port 3168"), "{diverged}");
+    assert!(diverged.contains("write TOY.EXE+01CCA = 000A (was 0000) by TOY.EXE+00236 in update < main"), "{diverged}");
     rrc.env.pop();
 
     // From the original's values at a tick; a paired checkpoint, and from it.
@@ -554,14 +560,14 @@ tick = 150"
     // A scenario (D64): edits at tick 100. The trace lists them, a watch names the edit as the writer,
     // and the port gets them with the inputs.
     let edited = rrc.ok(&["session", "edit", "play", "100", "score", "5000"]);
-    assert!(edited.contains("edit      tick 100: score = 5000 (TOY.EXE+00B04 8813)"), "{edited}");
+    assert!(edited.contains("edit      tick 100: score = 5000 (TOY.EXE+0147A 8813)"), "{edited}");
     rrc.ok(&["session", "edit", "play", "100", "enemies[0]", r#"{"alive": 0}"#]);
     let (refused, ok) = rrc.run(&["session", "edit", "play", "100", "lives", "300"]);
     assert!(!ok && refused.contains("isn't in 0 to 255"), "{refused}");
     let recorded = rrc.ok(&["record", "play"]);
     assert!(recorded.contains("edits     2") && recorded.contains("pairs     1 dropped"), "{recorded}");
     let tick = rrc.ok(&["trace", "play", "--tick", "100"]);
-    assert!(tick.contains("edit      score = 5000 (TOY.EXE+00B04: 8813)"), "{tick}");
+    assert!(tick.contains("edit      score = 5000 (TOY.EXE+0147A: 8813)"), "{tick}");
     let watched = rrc.ok(&["watch", "play", "score", "--tick", "100", "--ticks", "1"]);
     assert!(watched.contains("write score = 5000 (was 99) by the session's edit"), "{watched}");
     let compared = rrc.ok(&["compare", "play"]);

@@ -23,9 +23,10 @@ use crate::places::Places;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::{Recorded, Session};
+use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
 const RUN_HASH_SINCE: u32 = 3;
 
@@ -43,12 +44,51 @@ pub struct Item {
     /// An input read only at these sync points (else at all).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sync: Vec<String>,
+    /// An item read where a pointer points at each tick (D72), not at `at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<ItemVia>,
+}
+
+/// Where an item read through a pointer is: the pointer's ID and how it points, and how far past
+/// where it points.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ItemVia {
+    pub at: String,
+    /// `near` (an offset of `size` bytes from `base`) or `far` (offset, segment: 4 bytes).
+    pub pointer: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub base: String,
+    pub size: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl ItemVia {
+    fn of(m: &crate::mapping::Mapped, via: &crate::mapping::Via) -> ItemVia {
+        let (pointer, base) = match &via.pointer {
+            PointerKind::Near { base, .. } => ("near", base.to_string()),
+            PointerKind::Far => ("far", String::new()),
+        };
+        ItemVia { at: m.id.to_string(), pointer: pointer.into(), base, size: via.pointer.size(), offset: via.offset }
+    }
+
+    pub fn kind(&self) -> Result<PointerKind, String> {
+        match self.pointer.as_str() {
+            "near" => Ok(PointerKind::Near { base: crate::knowledge::parse_id(&self.base)?, size: self.size }),
+            "far" => Ok(PointerKind::Far),
+            other => Err(format!("a trace's pointer is near or far, not {other:?}")),
+        }
+    }
 }
 
 impl Item {
     fn from_input(i: &crate::knowledge::Input) -> Item {
         let (name, at, device) = (i.name.clone(), i.at.clone(), i.device.clone());
-        Item { name, at, device, size: i.bytes(), sync: i.sync.clone() }
+        Item { name, at, device, size: i.bytes(), sync: i.sync.clone(), via: None }
     }
 
     /// Whether an input is read at sync point `sync`.
@@ -318,7 +358,8 @@ pub(crate) type Items = (Vec<SyncPoint>, Vec<Item>, Vec<Item>);
 
 /// What a trace follows, from the knowledge: the sync points, the boundary values, the named data
 /// (but an item that is an input at every tick: it is written once, as the input) and the items the
-/// state mapping maps that aren't named data of their size (D62).
+/// state mapping maps that aren't named data of their size (D62); an item mapped via a pointer, read
+/// where it points, with the pointer (D72).
 pub(crate) fn items(repo: &Repo, k: &Knowledge, module: &str) -> Result<Items, String> {
     for i in &k.ticks.inputs {
         if let Some(sync) = i.sync.iter().find(|s| !k.ticks.syncs.iter().any(|t| t.name == **s)) {
@@ -344,10 +385,21 @@ pub(crate) fn items(repo: &Repo, k: &Knowledge, module: &str) -> Result<Items, S
         })
         .collect();
     let mut state = state;
-    for m in crate::mapping::Mapping::load(repo)?.resolve(k)? {
-        let at = m.id.to_string();
-        if !state.iter().any(|item| item.at == at && item.size == m.size) {
-            state.push(Item { name: m.field, at, size: m.size, ..Item::default() });
+    let mapped = crate::mapping::Mapping::load(repo)?.resolve(k)?;
+    for m in &mapped {
+        let (id, size) = m.covers();
+        let at = id.to_string();
+        if !state.iter().any(|item| item.at == at && item.size == size) {
+            let name = m.via.as_ref().map_or_else(|| m.field.clone(), |via| via.name.clone());
+            state.push(Item { name, at, size, ..Item::default() });
+        }
+    }
+    for m in &mapped {
+        if let Some(via) = &m.via {
+            let (name, size) = (via.item_name(), m.size);
+            if !state.iter().any(|item| item.name == name && item.size == size) {
+                state.push(Item { name, size, via: Some(ItemVia::of(m, via)), ..Item::default() });
+            }
         }
     }
     Ok((sync_points(k)?, inputs, state))
@@ -446,9 +498,10 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
     let mut picture = Value::Null;
     let start = clockwork::number(&loaded, "cycles")?;
     let mut ranges = Vec::new();
-    for item in header.inputs.iter().chain(&header.state) {
+    for item in header.inputs.iter().chain(header.state.iter().filter(|item| item.via.is_none())) {
         ranges.push(item.request(&places)?);
     }
+    let pointers = Pointers::new(&header.state)?;
     let ranges = json!({ "ranges": ranges });
     let length_ms = (session.seconds * 1000.0) as u64;
     let mut last_cycle = start;
@@ -466,7 +519,8 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
         let sync = syncs.get(at).cloned().unwrap_or_else(|| at.to_owned());
         let values: Vec<Option<String>> =
             ran["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
-        let (inputs, state) = values.split_at(header.inputs.len().min(values.len()));
+        let (inputs, direct) = values.split_at(header.inputs.len().min(values.len()));
+        let state = pointers.read(&mut clockwork, &places, &header.state, direct)?;
         let mut read = Vec::new();
         for (i, value) in inputs.iter().enumerate() {
             if header.inputs[i].read_at(&sync) && last_input[i].as_ref() != Some(value) {
@@ -480,7 +534,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
             .filter(|(i, v)| ticks.is_empty() || previous[*i] != **v)
             .map(|(i, v)| (i, v.clone()))
             .collect();
-        previous = state.to_vec();
+        previous = state;
         let frames = pictures(&writer, &ran["frames"], &ran["images"], &mut picture);
         let sound = sound_events(&ran["sound"]);
         let skipped = ran["sync"]["skipped"].as_u64();
@@ -541,6 +595,62 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
     let state_hash = clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
     let end = if stop == "time limit reached" { "the session's end".to_owned() } else { stop };
     Ok((Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } }, saver.finish()?))
+}
+
+/// The items read through pointers (D72): each one's index in the state, where it is past where its
+/// pointer points, how the pointer points, and the pointer's index.
+struct Pointers(Vec<(usize, u32, PointerKind, usize)>);
+
+impl Pointers {
+    fn new(state: &[Item]) -> Result<Pointers, String> {
+        let mut found = Vec::new();
+        for (i, item) in state.iter().enumerate() {
+            let Some(via) = &item.via else { continue };
+            let pointer = state
+                .iter()
+                .position(|p| p.via.is_none() && p.at == via.at && p.size == via.size)
+                .ok_or_else(|| format!("{}: its pointer {} isn't traced", item.name, via.at))?;
+            found.push((i, via.offset, via.kind()?, pointer));
+        }
+        Ok(Pointers(found))
+    }
+
+    /// The state at a tick: `direct`, what Clockwork read of the items at IDs, with the items read
+    /// where their pointers point (null for a null pointer).
+    fn read(
+        &self,
+        clockwork: &mut Clockwork,
+        places: &Places,
+        state: &[Item],
+        direct: &[Option<String>],
+    ) -> Result<Vec<Option<String>>, String> {
+        let mut values = direct.iter().cloned();
+        let mut all: Vec<Option<String>> =
+            state.iter().map(|item| if item.via.is_none() { values.next().flatten() } else { None }).collect();
+        let (mut ranges, mut which) = (Vec::new(), Vec::new());
+        for (i, offset, kind, pointer) in &self.0 {
+            let bytes = all[*pointer].as_deref().map(unhex).unwrap_or_default();
+            let at = match kind.target(&bytes, *offset) {
+                None => continue,
+                Some(Target::Id(id)) => places.address(&id.to_string())?,
+                Some(Target::Linear(linear)) => clockwork::Address::Linear(linear).to_string(),
+            };
+            ranges.push(json!({"at": at, "len": state[*i].size}));
+            which.push(*i);
+        }
+        if !ranges.is_empty() {
+            let read = clockwork.ask("read", json!({ "ranges": ranges }))?;
+            for (i, value) in which.into_iter().zip(read["data"].as_array().into_iter().flatten()) {
+                all[i] = value.as_str().map(str::to_owned);
+            }
+        }
+        Ok(all)
+    }
+}
+
+/// Hex as bytes (what isn't hex is left out).
+pub(crate) fn unhex(hex: &str) -> Vec<u8> {
+    (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect()
 }
 
 /// Clockwork's frames (`[number, cycle, mode, fingerprint]`) with their pictures' hashes: `images`,
@@ -707,7 +817,7 @@ fn late_text(trace: &Trace) -> Option<String> {
 
 /// An item's value over the ticks: each tick it changed (an input: of those that read it), as its
 /// type reads.
-/// An edit as the trace lists it: `lives = 1 (TOY.EXE+00B14: 01)`.
+/// An edit as the trace lists it: `lives = 1 (TOY.EXE+0148B: 01)`.
 pub(crate) fn edit_text(edit: &Value) -> String {
     let field = |key: &str| edit[key].as_str().unwrap_or("?").to_owned();
     format!("{} ({}: {})", field("edit"), field("at"), field("hex"))

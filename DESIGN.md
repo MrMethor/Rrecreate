@@ -241,9 +241,10 @@ a table returns its neighbour) reproduces that neighbour's data deliberately.
   game's program runs, or a program it started (D57): a launcher may run other programs, whose code can sit
   at the same addresses, before the game.
 - **State mapping** (`mapping.toml` in the port): port field to original location and encoding (sizes,
-  signedness, fixed point, packed bits, arrays); pointers in the original become indices or references in the
-  port and are translated both ways; fields that may differ (padding, caches, driver internals) are declared
-  `ignore`, so nothing differs silently. The mapping works both ways: it reads the original's state for
+  signedness, fixed point, packed bits, arrays); a pointer in the original becomes the index of the element it
+  points to or the ID there, and data on the heap is mapped through the pointer that finds it at each tick
+  (D72); fields that may differ (padding, caches, driver internals) are declared `ignore`, so nothing differs
+  silently. The mapping works both ways: it reads the original's state for
   comparison and builds the port's state for a transplant.
 - **Traces:** per tick, the mapped state of the original (recorded once per session through Clockwork, cached
   outside git) and of the port; comparing two traces needs no emulator.

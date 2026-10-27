@@ -93,6 +93,57 @@ pub struct Types {
     pub structs: Vec<Struct>,
     #[serde(default, rename = "enum", skip_serializing_if = "Vec::is_empty")]
     pub enums: Vec<Enum>,
+    #[serde(default, rename = "pointer", skip_serializing_if = "Vec::is_empty")]
+    pub pointers: Vec<Pointer>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bits: Vec<Bits>,
+}
+
+/// A pointer type (D72): its bytes read as what they point to, the ID there or, with `into`, the
+/// index of an element of an array.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Pointer {
+    pub name: String,
+    /// `near`: an offset of `size` bytes (2 or 4) from `base`; `far`: an offset, then a segment (4
+    /// bytes), the address segment × 16 + offset (real mode).
+    pub kind: String,
+    #[serde(default)]
+    pub size: u32,
+    /// A near pointer's: the ID its offset 0 is (its segment's start; `MEM+00000` for a flat one).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub base: String,
+    /// Named data, an array: the pointer read as the index of the element it points to.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub into: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provenance: String,
+}
+
+/// Packed bits (D72): a number of `size` bytes whose bits are fields, read as an object of them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Bits {
+    pub name: String,
+    pub size: u32,
+    #[serde(default)]
+    pub fields: Vec<BitField>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provenance: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BitField {
+    /// The lowest bit, from 0.
+    pub bit: u32,
+    #[serde(default = "one")]
+    pub width: u32,
+    pub name: String,
+    /// Empty: an unsigned number; `bool`: one bit, true or false.
+    #[serde(default, rename = "type", skip_serializing_if = "String::is_empty")]
+    pub ty: String,
+}
+
+fn one() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -416,6 +467,70 @@ impl Knowledge {
                 }
             }
         }
+        problems.extend(self.type_problems());
+        problems
+    }
+
+    /// What's wrong with the pointer and bits types, and type names taken twice.
+    fn type_problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let t = &self.types;
+        let mut names: Vec<&str> = crate::values::BUILT_IN.to_vec();
+        let all = t.structs.iter().map(|s| &s.name).chain(t.enums.iter().map(|e| &e.name));
+        for name in all.chain(t.pointers.iter().map(|p| &p.name)).chain(t.bits.iter().map(|b| &b.name)) {
+            if names.contains(&name.as_str()) {
+                problems.push(format!("type {name}: named twice, or a built-in type's name"));
+            }
+            names.push(name);
+        }
+        for p in &t.pointers {
+            let wrong = |e: String| format!("pointer {}: {e}", p.name);
+            match (p.kind.as_str(), p.size) {
+                ("near", 2 | 4) => match parse_id(&p.base) {
+                    Ok(_) => {}
+                    Err(_) if p.base.is_empty() => problems.push(wrong("a near pointer needs a base (an ID)".into())),
+                    Err(e) => problems.push(wrong(format!("base: {e}"))),
+                },
+                ("near", n) => problems.push(wrong(format!("a near pointer is 2 or 4 bytes, not {n}"))),
+                ("far", 0 | 4) => {}
+                ("far", n) => problems.push(wrong(format!("a far pointer is 4 bytes, not {n}"))),
+                (kind, _) => problems.push(wrong(format!("kind {kind:?}: near or far"))),
+            }
+            if !p.into.is_empty() {
+                let array = self.named(&p.into).and_then(|id| self.data.get(id)).map(|d| d.ty.as_str());
+                match array {
+                    None => problems.push(wrong(format!("into: no data named {}", p.into))),
+                    Some(ty) if !ty.ends_with(']') => {
+                        problems.push(wrong(format!("into: {} isn't an array ({ty:?})", p.into)));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        for b in &t.bits {
+            if ![1, 2, 4].contains(&b.size) {
+                problems.push(format!("bits {}: 1, 2 or 4 bytes, not {}", b.name, b.size));
+            }
+            let mut taken = 0u64;
+            for f in &b.fields {
+                let wrong = |e: &str| format!("bits {}: field {}: {e}", b.name, f.name);
+                if f.width == 0 || f.bit + f.width > 8 * b.size {
+                    problems.push(wrong("runs past its size"));
+                    continue;
+                }
+                let mask = ((1u64 << f.width) - 1) << f.bit;
+                if taken & mask != 0 {
+                    problems.push(wrong("overlaps another"));
+                }
+                taken |= mask;
+                match f.ty.as_str() {
+                    "" => {}
+                    "bool" if f.width == 1 => {}
+                    "bool" => problems.push(wrong("a bool is one bit")),
+                    ty => problems.push(wrong(&format!("type {ty:?}: none (a number) or bool"))),
+                }
+            }
+        }
         problems
     }
 }
@@ -558,6 +673,48 @@ mod tests {
             problems,
             ["FLAT.EXE#1+03181: past object 1's end (3181h bytes)", "FLAT.EXE#3+00000: FLAT.EXE has 2 objects"]
         );
+    }
+
+    #[test]
+    fn pointer_and_bits_types_are_checked() {
+        let mut k = Knowledge::default();
+        k.data.insert(id("GAME.EXE+00200"), Datum { decision: decision("score"), size: Some(2), ty: "u16".into() });
+        let pointer = |name: &str, kind: &str, size, base: &str, into: &str| Pointer {
+            name: name.into(),
+            kind: kind.into(),
+            size,
+            base: base.into(),
+            into: into.into(),
+            provenance: String::new(),
+        };
+        k.types.pointers = vec![
+            pointer("good", "near", 2, "GAME.EXE+00000", ""),
+            pointer("no_base", "near", 2, "", ""),
+            pointer("wide", "far", 2, "", ""),
+            pointer("odd", "huge", 4, "", ""),
+            pointer("into_number", "near", 2, "GAME.EXE+00000", "score"),
+            pointer("u16", "far", 4, "", ""),
+        ];
+        let bit = |bit, width, name: &str, ty: &str| BitField { bit, width, name: name.into(), ty: ty.into() };
+        k.types.bits.push(Bits {
+            name: "flags".into(),
+            size: 1,
+            fields: vec![bit(0, 2, "a", "bool"), bit(1, 1, "b", ""), bit(7, 2, "c", ""), bit(3, 1, "d", "i8")],
+            provenance: String::new(),
+        });
+        let problems = k.problems("GAME.EXE", None, None);
+        let expected = [
+            "type u16: named twice, or a built-in type's name",
+            "pointer no_base: a near pointer needs a base (an ID)",
+            "pointer wide: a far pointer is 4 bytes, not 2",
+            "pointer odd: kind \"huge\": near or far",
+            "pointer into_number: into: score isn't an array (\"u16\")",
+            "bits flags: field a: a bool is one bit",
+            "bits flags: field b: overlaps another",
+            "bits flags: field c: runs past its size",
+            "bits flags: field d: type \"i8\": none (a number) or bool",
+        ];
+        assert_eq!(problems, expected);
     }
 
     #[test]

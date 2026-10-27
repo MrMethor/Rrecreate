@@ -23,7 +23,7 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
             "{} functions, {} data, {} types, {} sync points, {} inputs",
             k.functions.len(),
             k.data.len(),
-            k.types.structs.len() + k.types.enums.len(),
+            k.types.structs.len() + k.types.enums.len() + k.types.pointers.len() + k.types.bits.len(),
             ticks.syncs.len(),
             ticks.inputs.len()
         ),

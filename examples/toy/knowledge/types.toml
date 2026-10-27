@@ -1,4 +1,4 @@
-# Structures and enumerations (docs/formats.md).
+# Structures, enumerations, pointers and packed bits (docs/formats.md).
 
 [[struct]]
 name = "enemy"
@@ -11,4 +11,21 @@ fields = [
     { offset = 6, size = 2, name = "dy", type = "i16" },
     { offset = 8, size = 1, name = "alive", type = "u8" },
     { offset = 9, size = 1, name = "hits", type = "u8" },
+]
+
+[[pointer]]
+name = "enemy_ptr"
+kind = "near"
+size = 2
+base = "TOY.EXE+01340"
+into = "enemies"
+provenance = "map"
+
+[[bits]]
+name = "status"
+size = 1
+provenance = "map"
+fields = [
+    { bit = 0, name = "moving", type = "bool" },
+    { bit = 1, width = 2, name = "facing" },
 ]

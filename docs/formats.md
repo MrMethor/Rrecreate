@@ -126,8 +126,8 @@ GAME.EXE+21C40	tick_elapsed	2	u16	human
   `MEM+<linear address>` for memory outside the program's image (the BIOS's data, the interrupt vectors).
 - **name:** letters, digits, `_`, and the `@` and `$` of compilers' runtime names, not starting with a digit;
   unique across both tables.
-- **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a primitive (`u8`,
-  `i16`, `u32`, ...), an array (`u8[256]`), or empty.
+- **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a number (`u8`,
+  `i16`, `u32`, ...), `bool`, `far` (a far pointer), an array (`u8[256]`), or empty.
 - **provenance:** who decided, and from what: `human`, `agent:<model>`, `ghidra`, `library:<pack>`,
   `prior-art:<source>`, `map` for a linker map's
   names (`rrc sigs name`, in a port made to build a signature pack).
@@ -151,7 +151,25 @@ fields = [
 name = "direction"
 size = 2
 values = { north = 0, east = 1 }
+
+[[pointer]]                     # a pointer type (D72)
+name = "actor_ptr"
+kind = "near"                   # an offset of `size` bytes from `base`; or "far": offset, then segment
+size = 2
+base = "GAME.EXE+20000"         # a near pointer's: the ID its offset 0 is (its segment's start)
+into = "actors"                 # optional: named data, an array: read as the element's index
+
+[[bits]]                        # packed bits (D72)
+name = "status"
+size = 1
+fields = [
+    { bit = 0, name = "moving", type = "bool" },
+    { bit = 1, width = 2, name = "facing" },   # an unsigned number of `width` bits
+]
 ```
+
+A type's name is unique and isn't a built-in one (the numbers, `bool`, `far`). A far pointer (`far`, or a
+`[[pointer]]` of kind `far`) is 4 bytes, segment × 16 + offset (real mode).
 
 ## `knowledge/ticks.toml`: where ticks end and what they read
 
@@ -205,19 +223,29 @@ field = "player.x"              # a path in the port's serialized state: its fie
 at = "player_x"                 # the original's item: a data name, or an ID
 type = "i16"                    # optional: how to read it, else data.tsv's type for it
 
+[[map]]
+field = "level.cells"
+via = "level_map"               # or: a pointer (named data, an ID, a path into one: world.level); the item
+offset = 0                      # is where it points at each tick, this many bytes past (optional)
+type = "u8[4096]"               # needed: what it points to
+
 [[ignore]]                      # the original's memory that may differ (padding, caches, driver internals)
 at = "mouse_buffer"             # a data name, or an ID
 size = 0                        # bytes; 0: the data's size
 note = "the mouse driver's"
 ```
 
-The original's bytes are read as the type (D62): `u8`, `i8`, `u16`, `i16`, `u32`, `i32` as numbers
-(little-endian), `T[N]` as an array (`T[N][M]` is M arrays of `T[N]`), a structure of `types.toml` as an object
-of its fields (a field with no type: an unsigned number of its size, or bytes), an enumeration as its number.
+The original's bytes are read as the type (D62, D72): `u8`, `i8`, `u16`, `i16`, `u32`, `i32` as numbers
+(little-endian), `bool` as true (not 0) or false, `T[N]` as an array (`T[N][M]` is M arrays of `T[N]`), a
+structure of `types.toml` as an object of its fields (a field with no type: an unsigned number of its size, or
+bytes), an enumeration as its number, packed bits as an object of their fields, a pointer as null (0), the
+index of the element it points to (`into`), or the ID it points to (`GAME.EXE+20104`; a far pointer whose ID
+isn't known, `SEGMENT:OFFSET`).
 The port's state, serialized as JSON, has the same numbers, arrays and objects at the mapped paths; what it has
 beyond them is its own. A mapped item is named data of the type's size, or an ID; an input can't be mapped (the
-port gets it with each tick's inputs). `rrc record` traces every mapped item (one that isn't named data under
-its field's name). `rrc check` checks the mapping.
+port gets it with each tick's inputs). An item `via` a pointer is found at each tick: null while the pointer is.
+`rrc record` traces every mapped item (one that isn't named data under its field's name, and an item via a
+pointer as `*POINTER`, with the pointer). `rrc check` checks the mapping.
 
 ## `sessions/<name>.toml`: a session
 
@@ -253,10 +281,10 @@ Recording a session again must give the same run (D44, D60), and with the same k
 
 ## Traces
 
-JSON lines (D68): a header, a line per tick, and an end line.
+JSON lines (D72): a header, a line per tick, and an end line.
 
 ```
-{"format":"rrc-trace","version":5,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
+{"format":"rrc-trace","version":6,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
  "syncs":[{"name":"play","at":"GAME.EXE+0A31C"},
           {"name":"menu","at":"GAME.EXE+0B1F0","when_changed":[{"name":"timer_count","at":"GAME.EXE+21C50","size":4}]}],
  "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2},
@@ -276,7 +304,9 @@ JSON lines (D68): a header, a line per tick, and an end line.
   the tick's sync point) that differs from what it was when last read: an input's value at a tick is the
   last one written. `state`: `[index, value]` for each named data item (`knowledge/data.tsv`, those with a
   size, but those that are inputs at every tick) that changed since the tick before; the first tick has them
-  all. Values are the bytes memory holds, in hex (so little-endian; a device's state as its bytes); `null`
+  all. An item the mapping finds through a pointer (D72) has `via` in the header instead of `at`:
+  `{"name":"*trail","size":64,"via":{"at":"GAME.EXE+01430","pointer":"far","size":4}}` (a near pointer's also
+  has `base`, and `offset` the bytes past where it points); its value is read where the pointer points then. Values are the bytes memory holds, in hex (so little-endian; a device's state as its bytes); `null`
   where memory isn't mapped. Empty lists are left out.
 - `edits` (in the header, only if the session has any): the scenario's writes, each at an ID with its bytes
   and the edit as the session has it (D64). A tick's state has its edits written.

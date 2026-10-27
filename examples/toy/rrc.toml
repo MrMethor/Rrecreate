@@ -9,7 +9,7 @@ program = "TOY.EXE"
 name = "1.0"
 
 [version.files]
-"TOY.EXE" = "6c1cefbc1c4afd2c38820cb892227551cfe725d0281e68f78a3b50bf6c56bc3f"
+"TOY.EXE" = "269b00785e3977324105337ba0149ab3b81e77928f5b228e7cdc34cb82ba3edc"
 
 [port]
 # The port's program (src/main.rs); rrc compare runs it with `run` and its options.

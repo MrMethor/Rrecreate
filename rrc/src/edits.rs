@@ -38,7 +38,8 @@ pub fn resolve(k: &Knowledge, edits: &[Edit]) -> Result<Vec<Write>, String> {
         };
         let (offset, leaf) =
             crate::values::locate(&ty, path, &k.types).ok_or_else(|| wrong(format!("{ty} has no {path}")))?;
-        for (at, bytes) in crate::values::encode(&edit.value, &leaf, &k.types).map_err(wrong)? {
+        let reader = crate::values::Reader::of(k);
+        for (at, bytes) in crate::values::encode(&edit.value, &leaf, &reader).map_err(wrong)? {
             let id = Id::new(id.module(), id.part(), id.offset() + offset + at).map_err(|e| wrong(e.to_string()))?;
             writes.push(Write { tick: edit.tick, id, bytes, what: what.clone() });
         }
@@ -48,7 +49,7 @@ pub fn resolve(k: &Knowledge, edits: &[Edit]) -> Result<Vec<Write>, String> {
 
 /// `name.path` as the item and the path into it; an ID's path starts after its offset
 /// (`GAME.EXE+00100[2]`).
-fn split(at: &str) -> (&str, &str) {
+pub(crate) fn split(at: &str) -> (&str, &str) {
     let from = at.find('+').unwrap_or(0);
     let end = at[from..].find(['[', '.']).map_or(at.len(), |e| from + e);
     (&at[..end], &at[end..])

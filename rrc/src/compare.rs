@@ -21,11 +21,12 @@ use crate::args::Args;
 use crate::cache::Cache;
 use crate::knowledge::{Knowledge, Types};
 use crate::mapping::{MAPPING, Mapped, Mapping};
+use crate::places::Places;
 use crate::repo::Repo;
 use crate::say;
 use crate::session::{Pair, Session};
 use crate::trace::Trace;
-use crate::values::{at_path, decode, differences};
+use crate::values::{Reader, Target, at_path, decode, differences};
 
 /// Fields shown of a divergence.
 const SHOWN: usize = 8;
@@ -54,7 +55,12 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     }
     let cache = Cache::open(&repo.local)?;
     let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
-    let original = original_values(&trace, &mapped, &k.types, name)?;
+    let original = {
+        // A far pointer's target is named where the session put the program (D72).
+        let places = Places::new(repo, &session);
+        let linear = |linear: u32| places.linear_id(linear).ok();
+        original_values(&trace, &mapped, &Reader::of(&k).with_linear(&linear), name)?
+    };
     let ticks = trace.ticks.len() as u64;
     for t in [transplant, resume, to, pair].into_iter().flatten() {
         if t > ticks {
@@ -152,7 +158,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
 }
 
 /// Each mapped field's value at each tick of the original's trace.
-fn original_values(trace: &Trace, mapped: &[Mapped], types: &Types, name: &str) -> Result<Vec<Vec<Value>>, String> {
+fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> Result<Vec<Vec<Value>>, String> {
     let mut all = Vec::new();
     for m in mapped {
         let at = m.id.to_string();
@@ -160,7 +166,12 @@ fn original_values(trace: &Trace, mapped: &[Mapped], types: &Types, name: &str) 
             .header
             .state
             .iter()
-            .position(|item| item.at == at && item.size == m.size)
+            .position(|item| match &m.via {
+                Some(via) => {
+                    item.via.as_ref().is_some_and(|v| v.at == at && v.offset == via.offset) && item.size == m.size
+                }
+                None => item.via.is_none() && item.at == at && item.size == m.size,
+            })
             .ok_or_else(|| format!("the trace of {name} lacks {} ({at}): rrc record {name}", m.field))?;
         let mut last: Option<(Option<String>, Value)> = None;
         let mut values = Vec::with_capacity(trace.ticks.len());
@@ -168,7 +179,7 @@ fn original_values(trace: &Trace, mapped: &[Mapped], types: &Types, name: &str) 
             let value = match &last {
                 Some((h, v)) if *h == hex => v.clone(),
                 _ => match &hex {
-                    Some(h) => decode(&unhex(h)?, &m.ty, types).map_err(|e| format!("{}: {e}", m.field))?,
+                    Some(h) => decode(&unhex(h)?, &m.ty, r).map_err(|e| format!("{}: {e}", m.field))?,
                     None => Value::Null,
                 },
             };
@@ -203,7 +214,8 @@ fn edit_sets(
         let (start, end) = (id.offset(), id.offset() + hex.len() as u32 / 2);
         let mut covered = 0;
         for (m, values) in mapped.iter().zip(original) {
-            if (m.id.module(), m.id.part()) != (id.module(), id.part()) {
+            // An edit is at an ID: an item through a pointer is the pointer's target, elsewhere.
+            if m.via.is_some() || (m.id.module(), m.id.part()) != (id.module(), id.part()) {
                 continue;
             }
             let (mut offset, to) = (start.max(m.id.offset()), end.min(m.id.offset() + m.size));
@@ -358,7 +370,33 @@ fn report(
     let Some((m, offset, size)) = mapped.iter().find_map(|m| locate(m, path, types).map(|(o, s)| (m, o, s))) else {
         return Ok(());
     };
-    let id = Id::new(m.id.module(), m.id.part(), m.id.offset() + offset).map_err(|e| e.to_string())?;
+    let id = match &m.via {
+        None => Id::new(m.id.module(), m.id.part(), m.id.offset() + offset).map_err(|e| e.to_string())?,
+        // Where its pointer pointed at the tick (D72).
+        Some(via) => {
+            let size = via.pointer.size();
+            let column = trace
+                .header
+                .state
+                .iter()
+                .position(|item| item.via.is_none() && item.at == m.id.to_string() && item.size == size);
+            let bytes = column
+                .and_then(|c| trace.values(c)[(t - 1) as usize].clone())
+                .map(|hex| crate::trace::unhex(&hex))
+                .unwrap_or_default();
+            match via.pointer.target(&bytes, via.offset + offset) {
+                None => {
+                    say("wrote", format!("{path}: its pointer ({}) is null at tick {t}", m.id));
+                    return Ok(());
+                }
+                Some(Target::Id(id)) => id,
+                Some(Target::Linear(linear)) => {
+                    let session = Session::load(repo, name)?;
+                    Places::new(repo, &session).linear_id(linear)?
+                }
+            }
+        }
+    };
     say("wrote", format!("{path} ({id}), between the sync points of ticks {} and {t}:", t - 1));
     let args: Vec<String> =
         [name, &id.to_string(), "--len", &size.to_string(), "--tick", &t.to_string(), "--ticks", "1", "--lines", "6"]
@@ -414,7 +452,7 @@ fn unmapped(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<(), String>
                 && at.offset() <= id.offset()
                 && id.offset() + size <= at.offset() + n
         };
-        mapped.iter().any(|m| inside(&m.id, m.size)) || ignored.iter().any(|(at, n)| inside(at, *n))
+        mapped.iter().any(|m| inside(m.covers().0, m.covers().1)) || ignored.iter().any(|(at, n)| inside(at, *n))
     };
     let inputs: Vec<String> = k.ticks.inputs.iter().map(|i| i.at.clone()).collect();
     let left: Vec<&str> = k
@@ -452,16 +490,21 @@ mod tests {
                 fields: vec![field(0, 2, "x", "i16"), field(2, 2, "y", "i16"), field(8, 1, "alive", "u8")],
                 provenance: String::new(),
             }],
-            enums: vec![],
+            ..Types::default()
         };
-        let m =
-            Mapped { field: "enemies".into(), id: "GAME.EXE+00100".parse().unwrap(), ty: "enemy[6]".into(), size: 60 };
+        let mapped = |field: &str, id: &str, ty: &str, size| Mapped {
+            field: field.into(),
+            id: id.parse().unwrap(),
+            ty: ty.into(),
+            size,
+            via: None,
+        };
+        let m = mapped("enemies", "GAME.EXE+00100", "enemy[6]", 60);
         assert_eq!(locate(&m, "enemies[3].y", &types), Some((32, 2)));
         assert_eq!(locate(&m, "enemies[1]", &types), Some((10, 10)));
         assert_eq!(locate(&m, "enemies", &types), Some((0, 60)));
         assert_eq!(locate(&m, "enemiesx", &types), None);
-        let score =
-            Mapped { field: "player.score".into(), id: "GAME.EXE+00200".parse().unwrap(), ty: "u16".into(), size: 2 };
+        let score = mapped("player.score", "GAME.EXE+00200", "u16", 2);
         assert_eq!(locate(&score, "player.score", &types), Some((0, 2)));
     }
 }

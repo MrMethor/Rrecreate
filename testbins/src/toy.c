@@ -1,4 +1,4 @@
-/* A toy game to port: what Rrecreate's runtime and comparison are tested on (M3).
+/* A toy game to port: what Rrecreate's runtime and comparison are tested on (M3, M4).
  *
  * The timer runs at 70 Hz (INT 08h counts), the keyboard handler (INT 09h) keeps a key-state
  * array, and the main loop waits for the timer, then runs a pass: the player moves by the arrow
@@ -7,10 +7,13 @@
  * shows it. Esc, or the last life, ends the game; the exit code is the score's low byte.
  *
  * Positions are in 1/16 pixel of a 320x200 field. The game's state is in the named globals below,
- * so the linker map gives every item's address. */
+ * so the linker map gives every item's address; and, as in real games, some of it is a pointer (the
+ * nearest enemy), on the heap (the player's trail, through a far pointer) or packed bits (the
+ * player's status). */
 #include <conio.h>
 #include <dos.h>
 #include <i86.h>
+#include <malloc.h>
 
 #define ENEMIES 6
 #define FIELD_W (320 * 16)
@@ -19,6 +22,7 @@
 #define PLAYER_SPEED 24
 #define BOMB_RADIUS (40 * 16)
 #define HIT_RANGE (8 * 16)
+#define TRAIL 32
 
 struct enemy {
     short x, y;
@@ -42,6 +46,9 @@ unsigned char bomb_held;
 unsigned char game_over;
 unsigned long rng_seed;
 struct enemy enemies[ENEMIES];
+struct enemy *target;       /* the nearest enemy alive, or none */
+short __far *trail;         /* on the heap: the player's x at the last TRAIL passes */
+unsigned char status;       /* bit 0: moving; bits 1-2: facing (0 left, 1 right, 2 up, 3 down) */
 
 static void (__interrupt __far *old_timer)(void);
 static void (__interrupt __far *old_keyboard)(void);
@@ -93,6 +100,8 @@ void update(void)
 {
     int i;
     struct enemy *e;
+    unsigned char moving = 0, facing = (status >> 1) & 3;
+    long nearest = 0;
 
     elapsed = timer_count - last_count;
     if (elapsed > MAX_ELAPSED) {
@@ -101,14 +110,18 @@ void update(void)
     last_count = timer_count;
     pass_count++;
 
-    if (key_down[0x4B]) player_x -= PLAYER_SPEED * elapsed;
-    if (key_down[0x4D]) player_x += PLAYER_SPEED * elapsed;
-    if (key_down[0x48]) player_y -= PLAYER_SPEED * elapsed;
-    if (key_down[0x50]) player_y += PLAYER_SPEED * elapsed;
+    if (key_down[0x4B]) { player_x -= PLAYER_SPEED * elapsed; facing = 0; moving = 1; }
+    if (key_down[0x4D]) { player_x += PLAYER_SPEED * elapsed; facing = 1; moving = 1; }
+    if (key_down[0x48]) { player_y -= PLAYER_SPEED * elapsed; facing = 2; moving = 1; }
+    if (key_down[0x50]) { player_y += PLAYER_SPEED * elapsed; facing = 3; moving = 1; }
+    status = moving | (facing << 1);
     if (player_x < 0) player_x = 0;
     if (player_x > FIELD_W - 16) player_x = FIELD_W - 16;
     if (player_y < 0) player_y = 0;
     if (player_y > FIELD_H - 16) player_y = FIELD_H - 16;
+    if (trail) {
+        trail[pass_count % TRAIL] = player_x;
+    }
 
     if (key_down[0x39] && !bomb_held && bombs > 0) {
         bombs--;
@@ -148,6 +161,18 @@ void update(void)
             e->alive = 0;
             if (--lives == 0) {
                 game_over = 1;
+            }
+        }
+    }
+
+    target = 0;
+    for (i = 0; i < ENEMIES; i++) {
+        e = &enemies[i];
+        if (e->alive) {
+            long d = (long)distance(e->x, player_x) + distance(e->y, player_y);
+            if (!target || d < nearest) {
+                target = e;
+                nearest = d;
             }
         }
     }
@@ -208,6 +233,12 @@ int main(void)
     for (i = 0; i < ENEMIES; i++) {
         spawn(&enemies[i]);
     }
+    trail = _fmalloc(TRAIL * sizeof(short));
+    if (trail) {
+        for (i = 0; i < TRAIL; i++) {
+            trail[i] = 0;
+        }
+    }
 
     old_timer = _dos_getvect(0x08);
     old_keyboard = _dos_getvect(0x09);
@@ -228,5 +259,8 @@ int main(void)
     _dos_setvect(0x08, old_timer);
     _dos_setvect(0x09, old_keyboard);
     _enable();
+    if (trail) {
+        _ffree(trail);
+    }
     return score & 0xFF;
 }

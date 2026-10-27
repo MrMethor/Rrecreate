@@ -48,3 +48,17 @@ at = "rng_seed"
 [[map]]
 field = "enemies"
 at = "enemies"
+
+[[map]]
+field = "target"
+at = "target"
+
+[[map]]
+field = "trail"
+via = "trail"
+type = "i16[32]"
+note = "on the heap: trail is a far pointer to it"
+
+[[map]]
+field = "status"
+at = "status"

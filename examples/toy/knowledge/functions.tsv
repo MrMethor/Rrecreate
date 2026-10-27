@@ -1,7 +1,7 @@
 # id	name	provenance	confidence	evidence
-TOY.EXE+0006A	random	map		TOY.MAP
-TOY.EXE+000A0	spawn	map		TOY.MAP
-TOY.EXE+000E8	wait_tick	map		TOY.MAP
-TOY.EXE+0010C	update	map		TOY.MAP
-TOY.EXE+003AC	draw	map		TOY.MAP
-TOY.EXE+0049D	main	map		TOY.MAP
+TOY.EXE+00072	random	map		TOY.MAP
+TOY.EXE+000A8	spawn	map		TOY.MAP
+TOY.EXE+000F0	wait_tick	map		TOY.MAP
+TOY.EXE+00114	update	map		TOY.MAP
+TOY.EXE+0046C	draw	map		TOY.MAP
+TOY.EXE+0055D	main	map		TOY.MAP

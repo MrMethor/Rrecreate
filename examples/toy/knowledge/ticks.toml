@@ -1,14 +1,14 @@
 # Sync points and boundary values (docs/formats.md).
 [[sync]]
 name = "play"
-at = "TOY.EXE+000F7"
+at = "TOY.EXE+000FF"
 provenance = "map"
 evidence = "TOY.MAP"
 note = "where wait_tick returns: the wait is over and update hasn't read the timer count or the keys yet"
 
 [[input]]
 name = "timer_count"
-at = "TOY.EXE+00B0C"
+at = "TOY.EXE+01486"
 size = 2
 provenance = "map"
 evidence = "TOY.MAP"
@@ -16,7 +16,7 @@ note = "INT 08h's count, 70 Hz"
 
 [[input]]
 name = "key_down"
-at = "TOY.EXE+00A3C"
+at = "TOY.EXE+013AC"
 size = 128
 provenance = "map"
 evidence = "TOY.MAP"

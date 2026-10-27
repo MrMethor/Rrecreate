@@ -523,7 +523,7 @@ Rust port gets all of this from `runtime/` (the crate `rrc-runtime`): it impleme
 built. A program per run keeps the port's process apart from `rrc`'s, as Clockwork's is (a crash is the port's).
 The toy port (`examples/toy`) is about 200 lines with its test, none of them for the contract.
 
-### D62. The mapping: the port's fields as paths, the original's items as typed values. Accepted 2026-10-26.
+### D62. The mapping: the port's fields as paths, the original's items as typed values. Accepted 2026-10-26; pointers, heap data and packed bits: D72.
 `mapping.toml` maps each field of the port's state (a dotted path in its serialization: `player.x`) to the
 original's item (a data name or an ID) and reads that item as the knowledge's type for it, or the one given:
 primitives as numbers, arrays as arrays, the structures of `types.toml` as objects of their fields, enumerations
@@ -537,6 +537,23 @@ knowledge's types already say how memory reads; with the port's serialization as
 any language maps by naming its fields. **Not yet:** encodings the types don't have (a pointer as an index,
 packed bits, a flag as a boolean): until the mapping has them, a port serializes such a field the original's
 way (in Rust, a serde attribute on the field).
+
+### D72. Pointers, data on the heap and packed bits in the mapping; traces, version 6. Accepted 2026-10-27.
+`types.toml` declares pointer types (`[[pointer]]`: `near`, an offset of 2 or 4 bytes from a base ID; `far`,
+an offset then a segment, real mode) and packed bits (`[[bits]]`: fields of bits, each a number or a `bool`);
+`bool` and `far` are built in. A pointer reads as null, as the index of the element it points to (`into` an array
+of named data), or as the ID it points to; a far pointer's ID is named as Clockwork names that address in the
+session. A mapped field may be `via` a pointer: the item is where the pointer points at each tick, `offset`
+bytes past it (data on the heap). The trace reads it there at every tick, beside the pointer, as `*POINTER`;
+the who-wrote of a divergence in it watches where the pointer pointed at that tick. An edit writes packed bits
+only whole, with every bit declared, so it never clears bits nobody named. **Not yet:** a pointer found through
+another (a list's links on the heap), and `into` an array on the heap: when a game needs them.
+**Why:** real games keep state behind pointers (a target, a current level), on the heap and in flag bytes,
+which D62 left for later; a port holds an index, an array and named booleans for them, and the mapping meets
+them field by field. Measured on the toy game, now with a pointer to the nearest enemy, a 32-entry trail on
+the far heap and status bits: its port matches all 1400 ticks, and a bug in the trail diverges at tick 2 and
+names the instruction that wrote there.
+**Supersedes:** D62's "Not yet" for these encodings (the rest of D62 stands).
 
 ### D63. The comparison reports the first divergence and who wrote it; paired checkpoints. Accepted 2026-10-26.
 `rrc compare SESSION` reads the original's trace from the cache, runs the port and compares every mapped field
