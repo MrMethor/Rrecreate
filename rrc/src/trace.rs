@@ -27,6 +27,8 @@ use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
 pub const VERSION: u32 = 6;
+/// The oldest version this rrc reads: version 6 only added items read through pointers (D72).
+const OLDEST: u32 = 5;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
 const RUN_HASH_SINCE: u32 = 3;
 
@@ -206,8 +208,11 @@ impl Trace {
         let mut lines = text.lines().filter(|l| !l.is_empty());
         let header: Header = serde_json::from_str(lines.next().ok_or("an empty trace")?)
             .map_err(|e| format!("the trace's header: {e}"))?;
-        if header.format != FORMAT || header.version != VERSION {
-            return Err(format!("not a trace this rrc reads ({} {})", header.format, header.version));
+        if header.format != FORMAT || !(OLDEST..=VERSION).contains(&header.version) {
+            return Err(format!(
+                "not a trace this rrc reads ({} {}; it reads versions {OLDEST} to {VERSION}): rrc record again",
+                header.format, header.version
+            ));
         }
         let rest: Vec<&str> = lines.collect();
         let (last, ticks) = rest.split_last().ok_or("the trace has no end")?;

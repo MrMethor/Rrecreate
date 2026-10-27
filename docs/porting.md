@@ -209,7 +209,19 @@ once (`kept`).
 
 ## 5. Port and compare
 
-Map the state first: `mapping.toml` names each field of the port's state and the original's item it is
+Find the state first. What the player changes is found by how it behaves over the session's ticks (D75):
+
+```bash
+rrc trace first-level --item key_down
+rrc search first-level changed:78-88 same:90-93 same:65-75 --type u16
+rrc search first-level less:64-76 more:123-130 same:78-88 --type u16
+```
+
+`rrc trace --item` gives the ticks each key is held; a position changes while walking and stays put while
+turning or standing, an angle goes one way turning left and the other turning right. Each condition narrows
+the places; watch the few left (`rrc watch`) to see the code that keeps them, and name them.
+
+Then map it: `mapping.toml` names each field of the port's state and the original's item it is
 (`docs/formats.md`); record again, so the trace follows every mapped item. Then name the port's program in
 `rrc.toml` (`[port] command`). A Rust port builds on `runtime/` (the crate `rrc-runtime`): its state is one
 struct serde serializes, its fields named as the mapping says; it implements `Simulation` (`start`: the state at

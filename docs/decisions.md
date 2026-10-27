@@ -570,6 +570,19 @@ the far heap and status bits: its port matches all 1400 ticks, and a bug in the 
 names the instruction that wrote there.
 **Supersedes:** D62's "Not yet" for these encodings (the rest of D62 stands).
 
+### D75. `rrc search`: the original's memory found by how it behaves over ticks. Accepted 2026-10-27.
+`rrc search SESSION CONDITION...` reads every place of the data segment (an LE program's data objects, or a
+range given) as a number type at the ticks its conditions name, and lists those that meet them all, with their
+values: `changed:A-B`, `same:A-B` (at every tick between), `more:A-B`, `less:A-B`, `is:T=V`. A tick's values are
+memory at its sync point, read from the session's snapshots on. Traces of version 5 are read as well (version
+6 only added items read through pointers).
+**Why:** found on Arena (M4): the state worth mapping is the state the player changes, and nothing named
+pointed at it. Memory scanners find a game's values the same way (what changed while the player walked, stayed
+put while they stood); with ticks and the session's inputs, the conditions come from the trace. On Arena's
+`cell` session, the player's position (changed while walking, the same while turning or standing) is 43 places
+of 64 KB, 24 with more spans, and a watch on them shows the copy `world_loop` makes; the facing angle (less while
+turning left, more while turning right) is one place among 6.
+
 ### D63. The comparison reports the first divergence and who wrote it; paired checkpoints. Accepted 2026-10-26.
 `rrc compare SESSION` reads the original's trace from the cache, runs the port and compares every mapped field
 at every tick. At the first tick one differs it shows the differing leaves (up to 8) with both values, notes

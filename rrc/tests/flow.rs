@@ -566,6 +566,10 @@ fn a_port_matches_the_original_tick_by_tick() {
 
     let compared = rrc.ok(&["compare", "play"]);
     assert!(compared.contains("compare   play, ticks 1-209 of 209: 15 fields mapped (147 bytes)"), "{compared}");
+    // The player's x found by how it behaves (D75): still before the keys, less while left is held, more
+    // while right is.
+    let found = rrc.ok(&["search", "play", "same:2-30", "less:40-130", "more:160-200", "--type", "i16"]);
+    assert!(found.contains("found     player_x  2: 2560, 30: 2560, 40: "), "{found}");
     assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
     // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value; a quirk
     // registered at that code is named (D74).

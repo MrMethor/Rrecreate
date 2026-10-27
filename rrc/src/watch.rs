@@ -71,7 +71,7 @@ impl<'a> Names<'a> {
     /// The name of the data `len` bytes at `address` are (0: as long as they are): a data item's
     /// name, or the element or field inside one its type says (`enemies[1].hits`, `name[+N]` without
     /// a type); else the address.
-    fn data(&self, address: &str, len: u32) -> String {
+    pub(crate) fn data(&self, address: &str, len: u32) -> String {
         let Some(id) = self.id(address) else { return address.to_owned() };
         let Some((d, offset)) = self.datum(address) else { return id.to_string() };
         let name = &d.decision.name;
@@ -96,7 +96,7 @@ impl<'a> Names<'a> {
     }
 
     /// An ID for an address in the image or outside it, the address otherwise (paged memory).
-    fn plain(&self, address: &str) -> String {
+    pub(crate) fn plain(&self, address: &str) -> String {
         self.id(address).map_or_else(|| address.to_owned(), |id| id.to_string())
     }
 }

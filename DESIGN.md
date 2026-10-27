@@ -312,8 +312,8 @@ process through `clockwork serve`. Its commands are short and print little: `ini
 next step), `game` (the game's folder and its version), `analyze`, `check`, `name`, `data`, `sync`, `input`,
 `show`, `session`, `record`, `calls` (how often a session calls each function: loops and their ticks), `inputs`
 (what the program reads that interrupt handlers or services write: boundary value candidates), `watch` (who
-writes or reads a value, with the call chain), `ports`, `frame`, `trace`, `compare`, `quirk`, `suspects`
-(quirk candidates) and `sigs`.
+writes or reads a value, with the call chain), `search` (memory by how it behaves over ticks), `ports`,
+`frame`, `trace`, `compare`, `quirk`, `suspects` (quirk candidates) and `sigs`.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees
