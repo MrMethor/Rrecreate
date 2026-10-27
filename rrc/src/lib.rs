@@ -20,6 +20,7 @@ pub mod session;
 mod setup;
 mod sigs;
 pub mod snapshots;
+mod sources;
 mod ticks;
 pub mod tools;
 pub mod trace;

@@ -499,6 +499,7 @@ fn a_port_matches_the_original_tick_by_tick() {
         "knowledge/ticks.toml",
         "sessions/play.toml",
         "sessions/play.inputs",
+        "src/main.rs",
     ] {
         std::fs::create_dir_all(rrc.repo.join(file).parent().unwrap()).unwrap();
         std::fs::copy(example.join(file), rrc.repo.join(file)).unwrap();
@@ -533,6 +534,8 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(diverged.contains("diverges  at tick 194 (play): 1 field differ"), "{diverged}");
     assert!(diverged.contains("enemies[1].hits: original 1, port 0"), "{diverged}");
     assert!(diverged.contains("write enemies[1].hits = 1 (was 0) by TOY.EXE+002FF in update < main"), "{diverged}");
+    // The port's code for the function that wrote it (D73).
+    assert!(diverged.contains("port      update (TOY.EXE+00114) is src/main.rs:"), "{diverged}");
     rrc.env.pop();
     // Another, in the trail on the heap (D72): who wrote it, where the far pointer pointed then.
     rrc.env.push(("TOY_BUG", "trail"));

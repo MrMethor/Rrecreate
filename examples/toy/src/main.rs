@@ -7,6 +7,9 @@
 //! original's pointer to the nearest enemy is an index here, its trail on the heap an array, and its
 //! status bits a structure (mapping.toml).
 //!
+//! Each function names the original's it reimplements by its ID (DESIGN.md §6.6), which `rrc compare`
+//! finds when that one wrote a value the port has otherwise.
+//!
 //! `TOY_BUG=1` leaves a bug in: a bounce doesn't count; `TOY_BUG=trail`, another: the trail keeps y.
 //! `rrc`'s tests use them to see a divergence found, and who wrote the original's value.
 
@@ -72,12 +75,13 @@ struct Enemy {
 }
 
 impl Toy {
-    /// The generator: a 32-bit linear congruential one, its high word modulo `range`.
+    /// random (TOY.EXE+00072): a 32-bit linear congruential generator, its high word modulo `range`.
     fn random(&mut self, range: u16) -> u16 {
         self.rng_seed = self.rng_seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
         (self.rng_seed >> 16) as u16 % range
     }
 
+    /// spawn (TOY.EXE+000A8).
     fn spawn(&mut self, i: usize) {
         let x = self.random(320).wrapping_mul(16) as i16;
         let y = self.random(100).wrapping_mul(16) as i16;
@@ -91,6 +95,7 @@ impl Toy {
 }
 
 impl Simulation for Toy {
+    /// main (TOY.EXE+0055D), to its loop.
     fn start() -> Toy {
         let mut toy = Toy {
             player: Player { x: FIELD_W / 2, y: FIELD_H - 32 },
@@ -105,6 +110,7 @@ impl Simulation for Toy {
         toy
     }
 
+    /// update (TOY.EXE+00114): one pass.
     fn step(&mut self, tick: &Tick) {
         let timer_count = tick.inputs.u16("timer_count");
         let key = |code| tick.inputs.u8_at("key_down", code) != 0;

@@ -76,8 +76,8 @@ wanted for itself" (the rest of D65 stands).
 
 ### D71. The plan to a complete toolkit: M4 to M9. Accepted 2026-10-27, with the person.
 - **M4, a real game's logic** (Arena's first dungeon), now with the mapping's encodings D62 left for later
-  (a pointer as an index, data on the heap, packed bits), the port's own call trace at a divergence, and the
-  quirk register's tools.
+  (a pointer as an index, data on the heap, packed bits), the port's own call trace at a divergence (the
+  port's code for the original's writer instead: D73), and the quirk register's tools.
 - **M5, the game's data and the whole program:** sessions from power-on through several loops (menus,
   loading, play), which bytes of which file end up where in memory, and the runtime's file access; tested on
   a test program where one is enough.
@@ -567,8 +567,20 @@ the session's file (`[[pair]]`); `--resume N` starts the port from it.
 **Why:** DESIGN.md §7, §8: the first divergence localizes a bug, and who wrote it says which original code to
 read. Comparing needs no emulator (D26): only the watch and a pair's snapshot run Clockwork. Measured on the toy
 port: its 20-second session matches at all 1400 ticks; with a bounce left uncounted it diverges at tick 194, and
-the report names `update`'s instruction that wrote the count. **Not yet:** the port's own call trace for the
-divergent tick (DESIGN.md §7), frames and sound (M5).
+the report names `update`'s instruction that wrote the count. **Not yet:** the port's side of the divergence
+(D73), frames and sound (M6).
+
+### D73. The port's side of a divergence is its code for the original's writer, found by ID. Accepted 2026-10-27.
+After who wrote the original's value, `rrc compare` names the port's code for the function that wrote it: the
+lines of the port's files that name that function's ID (`port      update (GAME.EXE+00114) is
+src/main.rs:113`), else a caller's in the chain, else that no code names them. It reads files of any language,
+not the repository's knowledge, sessions, notes, settings or build output.
+**Why:** a call trace of the port would need tracing put into every port, in each language, and the agent
+would still have to find the code from it. The code rules already have each function name the original it
+reimplements (DESIGN.md §6.6), so one ID finds both sides, and the comparison stays a matter of files (D61).
+Where a game shows a divergence this can't place (a field written from many places), the runtime can add a
+trace then. Measured on the toy port: a bounce left uncounted names `update` and the line of `step`.
+**Supersedes:** the port's own call trace at a divergence (DESIGN.md §7, D63's "Not yet", D71's M4).
 
 ### D64. Scenario edits: written by the emulator at counted ticks, and given to the port with the inputs. Accepted 2026-10-26.
 A session's edits (`[[edit]]` in its file, or `rrc session edit`) name named data or an ID, a path into it as

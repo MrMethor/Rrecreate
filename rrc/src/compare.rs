@@ -146,7 +146,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             ExitCode::SUCCESS
         }
         Some((t, found)) => {
-            report(repo, name, &trace, &mapped, &k.types, t, first, transplant.is_some(), &found)?;
+            report(repo, name, &trace, &mapped, &k, t, first, transplant.is_some(), &found)?;
             ExitCode::from(1)
         }
     };
@@ -317,14 +317,15 @@ fn run_port(repo: &Repo, args: &[String]) -> Result<(), String> {
     run("command", &port.command, args)
 }
 
-/// The first divergence: the fields, the tick's late inputs, and who wrote the original's value.
+/// The first divergence: the fields, the tick's late inputs, who wrote the original's value, and the
+/// port's code for the function that did.
 #[allow(clippy::too_many_arguments)]
 fn report(
     repo: &Repo,
     name: &str,
     trace: &Trace,
     mapped: &[Mapped],
-    types: &Types,
+    k: &Knowledge,
     t: u64,
     first: u64,
     transplanted: bool,
@@ -367,7 +368,7 @@ fn report(
     // Who wrote the first differing value: in the pass from tick t-1's sync point to tick t's, which a
     // watch numbers t.
     let (path, _, _) = &found[0];
-    let Some((m, offset, size)) = mapped.iter().find_map(|m| locate(m, path, types).map(|(o, s)| (m, o, s))) else {
+    let Some((m, offset, size)) = mapped.iter().find_map(|m| locate(m, path, &k.types).map(|(o, s)| (m, o, s))) else {
         return Ok(());
     };
     let id = match &m.via {
@@ -403,7 +404,40 @@ fn report(
             .iter()
             .map(|s| s.to_string())
             .collect();
-    crate::watch::watch(repo, &args).map(|_| ())
+    let writers = crate::watch::watched(repo, &args)?;
+    port_code(repo, k, &writers);
+    Ok(())
+}
+
+/// Where the port does what the original's writing function did (D73): its code that names that
+/// function's ID (DESIGN.md §6.6), or, if none does, a caller's in the chain.
+fn port_code(repo: &Repo, k: &Knowledge, chain: &[Id]) {
+    let Some(writer) = chain.first() else { return };
+    let named = |id: &Id| {
+        let name = k.functions.get(id).map_or_else(|| id.to_string(), |d| d.name.clone());
+        if name == id.to_string() { name } else { format!("{name} ({id})") }
+    };
+    for (i, id) in chain.iter().enumerate() {
+        let found = crate::sources::naming(&repo.root, id, 3);
+        if found.is_empty() {
+            continue;
+        }
+        let at: Vec<String> = found.iter().map(|(file, line)| format!("{file}:{line}")).collect();
+        let text = match i {
+            0 => format!("{} is {}", named(id), at.join(", ")),
+            _ => format!("{} isn't named; its caller {} is {}", named(writer), named(id), at.join(", ")),
+        };
+        say("port", text);
+        return;
+    }
+    say(
+        "port",
+        format!(
+            "no code names {} or its callers: name the original each function reimplements, by its ID, in a \
+             comment (DESIGN.md §6.6)",
+            named(writer)
+        ),
+    );
 }
 
 /// Where a differing path (`enemies[3].x`) is in its mapped item: its offset and size.

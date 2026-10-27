@@ -102,6 +102,12 @@ impl<'a> Names<'a> {
 }
 
 pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
+    watched(repo, args).map(|_| ExitCode::SUCCESS)
+}
+
+/// Does what `rrc watch` does; and says the call chain of the last write, as the functions' IDs,
+/// innermost first (none if nothing wrote).
+pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Vec<Id>, String> {
     let a = Args::parse(args, &["--len", "--tick", "--ticks", "--limit", "--lines"], &["--reads", "--cycles"])?;
     let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles] [--limit N] \
                  [--lines N]";
@@ -150,7 +156,8 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     // Each tick's accesses, those alike counted once (with --cycles, each on its own line). What runs
     // before the first sync point hit (loading, unpacking, the first screens) is "start".
     let mut lines: Vec<(String, String, usize)> = Vec::new();
-    for access in group(watched["hits"].as_array().cloned().unwrap_or_default()) {
+    let accesses = group(watched["hits"].as_array().cloned().unwrap_or_default());
+    for access in &accesses {
         let tick = match ends.iter().position(|&end| access.cycle <= end) {
             Some(0) if first == 1 => "start".to_owned(),
             Some(i) => (first + i as u64).to_string(),
@@ -184,7 +191,9 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             format!("{dropped} accesses past the limit of {limit} (--limit N): the counts above stop there"),
         );
     }
-    Ok(ExitCode::SUCCESS)
+    let last = accesses.iter().rev().find(|access| access.kind == "write");
+    let frames = last.and_then(|access| access.chain.as_array()).cloned().unwrap_or_default();
+    Ok(frames.iter().filter_map(|f| f["entry"].as_str().and_then(|entry| names.id(entry))).collect())
 }
 
 /// `--tick N` (default 1) and `--ticks N` (default: to the session's end).
