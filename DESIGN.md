@@ -218,7 +218,9 @@ happens, the evidence, the original's code and the port's site) and an explicit 
 default, with a behaviour toggle that fixes it. Comparisons always keep every quirk. Sources: differences
 where the port did what the code clearly means and the original didn't; Clockwork's bounds checks and
 uninitialized reads; known bug lists. A quirk whose effect depends on the original's memory layout (a read past
-a table returns its neighbour) reproduces that neighbour's data deliberately.
+a table returns its neighbour) reproduces that neighbour's data deliberately. `rrc suspects` lists a session's
+candidates from Clockwork's checks, `rrc quirk` keeps the register and finds each quirk's branch by its name, and
+the port branches on `rrc_runtime::keeps(NAME)` (D74).
 
 ### 6.6 Code rules
 
@@ -310,7 +312,8 @@ process through `clockwork serve`. Its commands are short and print little: `ini
 next step), `game` (the game's folder and its version), `analyze`, `check`, `name`, `data`, `sync`, `input`,
 `show`, `session`, `record`, `calls` (how often a session calls each function: loops and their ticks), `inputs`
 (what the program reads that interrupt handlers or services write: boundary value candidates), `watch` (who
-writes or reads a value, with the call chain), `ports`, `frame`, `trace`, `compare` and `sigs`.
+writes or reads a value, with the call chain), `ports`, `frame`, `trace`, `compare`, `quirk`, `suspects`
+(quirk candidates) and `sigs`.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees

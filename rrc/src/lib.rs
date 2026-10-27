@@ -15,6 +15,7 @@ pub mod knowledge;
 pub mod mapping;
 mod naming;
 pub mod places;
+pub mod quirks;
 pub mod repo;
 pub mod session;
 mod setup;
@@ -122,6 +123,12 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          mapped values at a tick (--transplant), or a paired checkpoint (--resume);
                          --pair keeps one at the end of tick N (the port's state and Clockwork's
                          snapshot) if the port matched to there. Exits 1 if it diverges
+  quirk [NAME (--at ID --what TEXT [--fix TEXT] [--evidence TEXT] [--by WHO] | --remove)]
+                         the quirk register (quirks.toml): the original's bugs the port keeps, each
+                         with the port's code that names it; or one added, changed or removed
+  suspects SESSION [--lines N]
+                         quirk candidates in the session's run: the original's instructions that
+                         reach past named data's ends, and that read memory nothing wrote
   sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]
                          a library signature pack (sigs/README.md) from this analysis and the linker
                          map of the same build: the library functions the map names, by their
@@ -129,8 +136,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   sigs name MAP          name the map's functions in the knowledge (provenance map), so that rrc
                          analyze adds those Ghidra didn't find: for a port made to build a pack
 
-Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/, mapping.toml
-(docs/formats.md).
+Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/, mapping.toml,
+quirks.toml (docs/formats.md).
 Environment: RRC_CLOCKWORK (the clockwork program), RRC_CACHE (the cache folder), GHIDRA_INSTALL_DIR and
 JAVA_HOME (for analysis).";
 
@@ -167,6 +174,8 @@ pub fn main() -> ExitCode {
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
         Some("compare") => here().and_then(|repo| compare::compare(&repo, rest)),
+        Some("quirk") => here().and_then(|repo| quirks::quirk(&repo, rest)),
+        Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

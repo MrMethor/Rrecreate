@@ -192,8 +192,23 @@ original's memory through the mapping.
 **Why:** comparisons start anywhere instead of from the beginning; divergences are bisected; scenario tests; the
 port runs mid-game before menus and loading exist; gaps in the mapping show as immediate divergences.
 
-### D18. The quirk register. Accepted 2026-10-19, with the person.
+### D18. The quirk register. Accepted 2026-10-19, with the person; its tools: D74.
 Original bugs are kept in faithful mode as registered quirks with a toggle to fix each; comparisons keep them all.
+
+### D74. The quirk register's tools. Accepted 2026-10-27.
+`quirks.toml` in the port repository lists each quirk: its name (how the port's code names it), the original's
+code that does it (an ID), what happens, what fixing it does, provenance and evidence. `rrc quirk` lists them,
+each with the port's code that names it, and adds, changes or removes one; `rrc check` checks the register.
+`rrc suspects SESSION` runs the session with Clockwork's bounds checks on all named data and its
+uninitialized-read tracking: the instructions that reach past named data's ends, and those that read memory
+nothing wrote, with when (the pass to tick N), registered ones marked. An instruction past three or more named
+data is a sweep (a clear or a copy running over them) and is said once. At a divergence, a quirk registered at
+the writing instruction or a function of its chain is named. The port branches on `rrc_runtime::keeps(NAME)`,
+true unless the run fixes it (`rrc_runtime::fix`), which a comparison never does.
+**Why:** D18 and DESIGN.md §6.5: candidates come from Clockwork's checks, and each kept bug is found from both
+sides by its name and its ID. Measured on a test program: an index one past a table and a read of unwritten
+memory are found and registered. On the toy game the C runtime's clearing of its data at start is one sweep,
+not six suspects.
 
 ### D19. Toggles of two kinds. Accepted (carried from Recreate, with the person, 2026-10-17).
 Presentation toggles read state only and keep the faithful comparison passing at their neutral setting; behaviour

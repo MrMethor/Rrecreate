@@ -1,11 +1,9 @@
-//! The port's code (D73): where its files name an original's function by ID, as the code rules ask
-//! of every function that reimplements one (DESIGN.md §6.6). At a divergence, `rrc compare` names the
-//! port's code for the original's function that wrote the differing value, so both sides are found
-//! by the same ID whatever language the port is in.
+//! The port's code (D73, D74): where its files name an original's function by ID, as the code rules
+//! ask of every function that reimplements one (DESIGN.md §6.6), or a quirk by its name. At a
+//! divergence, `rrc compare` names the port's code for the original's function that wrote the
+//! differing value, so both sides are found by the same ID whatever language the port is in.
 
 use std::path::Path;
-
-use ids::Id;
 
 /// Folders of a port repository that hold no code.
 const NOT_CODE: [&str; 8] = [".git", ".rrc", "target", "knowledge", "sessions", "notes", "node_modules", "cache"];
@@ -14,11 +12,11 @@ const NOT_CODE_FILES: [&str; 7] = ["toml", "tsv", "md", "json", "jsonl", "lock",
 /// Files read at most this big.
 const MAX_FILE: u64 = 2 << 20;
 
-/// Where the port's files name `id`: (path from the repository's root, with `/`, and line number),
-/// in path order, at most `max`.
-pub fn naming(root: &Path, id: &Id, max: usize) -> Vec<(String, usize)> {
+/// Where the port's files name `what` (an ID, a quirk's name): (path from the repository's root, with
+/// `/`, and line number), in path order, at most `max`.
+pub fn naming(root: &Path, what: &str, max: usize) -> Vec<(String, usize)> {
     let mut found = Vec::new();
-    walk(root, root, &id.to_string(), max, &mut found);
+    walk(root, root, what, max, &mut found);
     found
 }
 
@@ -54,13 +52,12 @@ fn walk(root: &Path, dir: &Path, id: &str, max: usize, found: &mut Vec<(String, 
     }
 }
 
-/// Whether `line` has the ID `id` (not as the start of a longer one: `GAME.EXE+0A2F0` isn't in
-/// `GAME.EXE+0A2F01`, nor in `XGAME.EXE+0A2F0`).
-fn names(line: &str, id: &str) -> bool {
-    line.match_indices(id).any(|(at, _)| {
-        let before = line[..at].chars().next_back();
-        let after = line[at + id.len()..].chars().next();
-        !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && !after.is_some_and(|c| c.is_ascii_hexdigit())
+/// Whether `line` has `what` as a word of its own (`GAME.EXE+0A2F0` isn't in `GAME.EXE+0A2F01` or
+/// `XGAME.EXE+0A2F0`, `overrun` isn't in `overrun_2`).
+fn names(line: &str, what: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    line.match_indices(what).any(|(at, _)| {
+        !line[..at].chars().next_back().is_some_and(word) && !line[at + what.len()..].chars().next().is_some_and(word)
     })
 }
 
@@ -81,10 +78,12 @@ mod tests {
         write("knowledge/functions.tsv", "GAME.EXE+00114\tupdate\n");
         write("target/copy.rs", "GAME.EXE+00114\n");
         write("notes.md", "GAME.EXE+00114\n");
-        let id: Id = "GAME.EXE+00114".parse().unwrap();
-        assert_eq!(naming(&root, &id, 10), [("src/game/enemies.rs".to_owned(), 2), ("src/main.rs".to_owned(), 3)]);
-        assert_eq!(naming(&root, &id, 1).len(), 1);
-        assert!(naming(&root, &"GAME.EXE+00200".parse().unwrap(), 10).is_empty());
+        let id = "GAME.EXE+00114";
+        assert_eq!(naming(&root, id, 10), [("src/game/enemies.rs".to_owned(), 2), ("src/main.rs".to_owned(), 3)]);
+        assert_eq!(naming(&root, id, 1).len(), 1);
+        assert!(naming(&root, "GAME.EXE+00200", 10).is_empty());
+        write("src/quirks.rs", "if rrc_runtime::keeps(\"overrun\") {}\nkeeps(\"overrun_2\")\n");
+        assert_eq!(naming(&root, "overrun", 10), [("src/quirks.rs".to_owned(), 1)]);
         std::fs::remove_dir_all(&root).ok();
     }
 }

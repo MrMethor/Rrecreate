@@ -252,6 +252,24 @@ gets the mapped fields they wrote at that tick with its inputs. Edit through the
 count with the list it counts): a state play can't reach makes a divergence after it a false alarm, and
 `rrc compare` names the last edit before a divergence for that reason.
 
+## Quirks
+
+The original's bugs stay in the faithful port, each as a registered quirk (DESIGN.md §6.5, D74):
+
+```bash
+rrc suspects first-level
+rrc quirk enemy_overrun --at GAME.EXE+002FF --what "the sixth enemy reads the word after the table" --fix "reads 0"
+rrc quirk
+```
+
+`rrc suspects` lists the session's candidates: instructions that reach past named data's ends (`past`; a
+`sweep` is a clear or a copy over many, not an index) and that read memory nothing wrote (`uninit`). Read each
+one's code; a divergence where the port did what the code clearly means and the original didn't is another
+source. Register the bug, and branch on it where the port does that code: `if rrc_runtime::keeps("enemy_overrun")
+{ the original's way } else { the fix }`. `rrc quirk` lists each quirk with the port's code that names it.
+Comparisons keep every quirk. A quirk that depends on the original's memory layout (a read past a table
+returns its neighbour) reproduces that neighbour's data deliberately.
+
 ## Naming
 
 ```bash

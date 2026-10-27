@@ -32,6 +32,14 @@ const BIOS_TIMER: [u8; 15] = [0xB8, 0x40, 0x00, 0x8E, 0xC0, 0x26, 0xA1, 0x6C, 0x
 /// again`, `poll` (+00009) a `ret`.
 const GAME_PORT: [u8; 10] = [0xBA, 0x01, 0x02, 0xEC, 0xE8, 0x02, 0x00, 0xEB, 0xFA, 0xC3];
 
+/// A COM program with two quirk candidates: `mov cx, 5; xor bx, bx; again: mov [bx+table], bl; inc bx;
+/// loop again` writes 5 bytes into the 4-byte `table` (+00014) at +00005, then `mov al, [400h]` (+0000C)
+/// reads memory nothing wrote; then it exits.
+const OVERRUN: [u8; 25] = [
+    0xB9, 0x05, 0x00, 0x31, 0xDB, 0x88, 0x9F, 0x14, 0x01, 0x43, 0xE2, 0xF9, 0xA0, 0x00, 0x04, 0xB8, 0x00, 0x4C, 0xCD,
+    0x21, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 /// The workspace's program `name` (of package `package`), built if it isn't, or always (`fresh`).
 fn built(package: &str, name: &str, fresh: bool) -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
@@ -192,6 +200,38 @@ fn a_session_is_traced_tick_by_tick() {
     let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other"]);
     assert!(!ok && refused.contains("give --size N"), "{refused}");
     assert!(rrc.ok(&["input", "tally", "--remove"]).contains("removed   tally"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn quirk_candidates_are_found_and_registered() {
+    let (dir, rrc) = setup("quirks", &OVERRUN);
+    rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap(), "--add-version", "1.0"]);
+    rrc.ok(&["data", "T.COM+00014", "table", "--size", "4", "--type", "u8[4]"]);
+    rrc.ok(&["session", "add", "s", "--seconds", "0.1"]);
+    let found = rrc.ok(&["suspects", "s"]);
+    assert!(found.contains("suspects  s: 1 instruction reaching past named data, 1 instruction reading"), "{found}");
+    assert!(
+        found.contains("past      table (T.COM+00014, 4 bytes) by T.COM+00005: offsets 4, 1 time, first"),
+        "{found}"
+    );
+    assert!(found.contains("uninit    1 byte by T.COM+0000C: T.COM+00300 first (it held 00)"), "{found}");
+
+    // Registered, then named in the port's code.
+    let added = rrc.ok(&["quirk", "overrun", "--at", "T.COM+00005", "--what", "writes a byte past table"]);
+    assert!(added.contains("quirk     overrun at T.COM+00005"), "{added}");
+    assert!(added.contains("no code names it yet: branch on rrc_runtime::keeps(\"overrun\")"), "{added}");
+    assert!(rrc.ok(&["suspects", "s"]).contains("by T.COM+00005 (quirk overrun)"));
+    std::fs::create_dir_all(rrc.repo.join("src")).unwrap();
+    std::fs::write(rrc.repo.join("src/sim.rs"), "if rrc_runtime::keeps(\"overrun\") {}\n").unwrap();
+    let listed = rrc.ok(&["quirk"]);
+    assert!(listed.contains("quirk     overrun at T.COM+00005: writes a byte past table"), "{listed}");
+    assert!(listed.contains("  port    src/sim.rs:1"), "{listed}");
+    assert!(rrc.ok(&["check"]).contains("quirks    1"));
+    let (refused, ok) = rrc.run(&["quirk", "other", "--at", "nowhere", "--what", "x"]);
+    assert!(!ok && refused.contains("quirk other: at:"), "{refused}");
+    assert!(rrc.ok(&["quirk", "overrun", "--remove"]).contains("removed   overrun"));
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -527,7 +567,9 @@ fn a_port_matches_the_original_tick_by_tick() {
     let compared = rrc.ok(&["compare", "play"]);
     assert!(compared.contains("compare   play, ticks 1-209 of 209: 15 fields mapped (147 bytes)"), "{compared}");
     assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
-    // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value.
+    // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value; a quirk
+    // registered at that code is named (D74).
+    rrc.ok(&["quirk", "bounces", "--at", "TOY.EXE+002FF", "--what", "counts a bounce"]);
     rrc.env.push(("TOY_BUG", "1"));
     let (diverged, ok) = rrc.run(&["compare", "play"]);
     assert!(!ok, "a divergence fails: {diverged}");
@@ -536,6 +578,8 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(diverged.contains("write enemies[1].hits = 1 (was 0) by TOY.EXE+002FF in update < main"), "{diverged}");
     // The port's code for the function that wrote it (D73).
     assert!(diverged.contains("port      update (TOY.EXE+00114) is src/main.rs:"), "{diverged}");
+    assert!(diverged.contains("quirk     bounces is at TOY.EXE+002FF"), "{diverged}");
+    rrc.ok(&["quirk", "bounces", "--remove"]);
     rrc.env.pop();
     // Another, in the trail on the heap (D72): who wrote it, where the far pointer pointed then.
     rrc.env.push(("TOY_BUG", "trail"));

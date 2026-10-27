@@ -404,8 +404,14 @@ fn report(
             .iter()
             .map(|s| s.to_string())
             .collect();
-    let writers = crate::watch::watched(repo, &args)?;
-    port_code(repo, k, &writers);
+    let writer = crate::watch::watched(repo, &args)?;
+    // A registered quirk at that code (D74): the port keeps it, or should.
+    let quirks = crate::quirks::Quirks::load(repo)?;
+    let at = |id: &Id| quirks.quirks.iter().find(|q| q.at == id.to_string());
+    if let Some(q) = writer.instruction.iter().chain(&writer.chain).find_map(at) {
+        say("quirk", format!("{} is at {}: does the port keep it (rrc_runtime::keeps({:?}))?", q.name, q.at, q.name));
+    }
+    port_code(repo, k, &writer.chain);
     Ok(())
 }
 
@@ -418,7 +424,7 @@ fn port_code(repo: &Repo, k: &Knowledge, chain: &[Id]) {
         if name == id.to_string() { name } else { format!("{name} ({id})") }
     };
     for (i, id) in chain.iter().enumerate() {
-        let found = crate::sources::naming(&repo.root, id, 3);
+        let found = crate::sources::naming(&repo.root, &id.to_string(), 3);
         if found.is_empty() {
             continue;
         }

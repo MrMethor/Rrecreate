@@ -105,9 +105,16 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     watched(repo, args).map(|_| ExitCode::SUCCESS)
 }
 
-/// Does what `rrc watch` does; and says the call chain of the last write, as the functions' IDs,
-/// innermost first (none if nothing wrote).
-pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Vec<Id>, String> {
+/// The last write a watch saw: its instruction, and the call chain it was made in, as the functions'
+/// IDs, innermost first.
+#[derive(Debug, Default)]
+pub(crate) struct Writer {
+    pub instruction: Option<Id>,
+    pub chain: Vec<Id>,
+}
+
+/// Does what `rrc watch` does; and says who wrote last (nothing, if nothing wrote).
+pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     let a = Args::parse(args, &["--len", "--tick", "--ticks", "--limit", "--lines"], &["--reads", "--cycles"])?;
     let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles] [--limit N] \
                  [--lines N]";
@@ -191,9 +198,12 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Vec<Id>, String> {
             format!("{dropped} accesses past the limit of {limit} (--limit N): the counts above stop there"),
         );
     }
-    let last = accesses.iter().rev().find(|access| access.kind == "write");
-    let frames = last.and_then(|access| access.chain.as_array()).cloned().unwrap_or_default();
-    Ok(frames.iter().filter_map(|f| f["entry"].as_str().and_then(|entry| names.id(entry))).collect())
+    let Some(last) = accesses.iter().rev().find(|access| access.kind == "write") else { return Ok(Writer::default()) };
+    let frames = last.chain.as_array().cloned().unwrap_or_default();
+    Ok(Writer {
+        instruction: last.by["instruction"].as_str().and_then(|at| names.id(at)),
+        chain: frames.iter().filter_map(|f| f["entry"].as_str().and_then(|entry| names.id(entry))).collect(),
+    })
 }
 
 /// `--tick N` (default 1) and `--ticks N` (default: to the session's end).

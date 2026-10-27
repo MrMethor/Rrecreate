@@ -44,6 +44,11 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         Ok(_) => {}
         Err(e) => problems.push(e),
     }
+    let quirks = crate::quirks::Quirks::load(repo)?;
+    if !quirks.quirks.is_empty() {
+        say("quirks", quirks.quirks.len());
+    }
+    problems.extend(quirks.problems(&repo.module()));
     for problem in &problems {
         say("problem", problem);
     }

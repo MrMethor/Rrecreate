@@ -21,8 +21,9 @@
 
 mod files;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
+use std::sync::Mutex;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -56,6 +57,23 @@ pub struct Tick<'a> {
     pub number: u64,
     pub sync: &'a str,
     pub inputs: &'a Inputs,
+}
+
+/// The quirks fixed in this run (D74): none in a comparison, which keeps every one (DESIGN.md §6.5).
+static FIXED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+/// Whether the port keeps the original's quirk `name` (the port's `quirks.toml`): its code branches on
+/// this, the original's behaviour while it is true. A comparison keeps them all; a player's settings may
+/// fix some ([`fix`]).
+pub fn keeps(name: &str) -> bool {
+    !FIXED.lock().is_ok_and(|fixed| fixed.contains(name))
+}
+
+/// Fixes quirk `name` from now on: a behaviour toggle (DESIGN.md §6.4), never on in a comparison.
+pub fn fix(name: &str) {
+    if let Ok(mut fixed) = FIXED.lock() {
+        fixed.insert(name.to_owned());
+    }
 }
 
 /// The boundary values at a tick (D15, D49): each input's bytes, as the original's memory or a
@@ -385,6 +403,13 @@ mod tests {
         assert_eq!(inputs.at_site("GAME.EXE+00100").u16("elapsed"), 3, "elsewhere, the tick's");
         inputs.set_late(&[]);
         assert_eq!(inputs.at_site("GAME.EXE+04BB9").u16("elapsed"), 3, "a late read is the tick's alone");
+    }
+
+    #[test]
+    fn quirks_are_kept_until_fixed() {
+        assert!(keeps("a_quirk"));
+        fix("a_quirk");
+        assert!(!keeps("a_quirk") && keeps("another"));
     }
 
     #[test]

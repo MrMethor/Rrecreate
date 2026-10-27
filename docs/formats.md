@@ -247,6 +247,20 @@ port gets it with each tick's inputs). An item `via` a pointer is found at each 
 `rrc record` traces every mapped item (one that isn't named data under its field's name, and an item via a
 pointer as `*POINTER`, with the pointer). `rrc check` checks the mapping.
 
+## `quirks.toml`: the quirk register
+
+```toml
+[[quirk]]                       # an original bug the faithful port keeps (DESIGN.md §6.5, D74)
+name = "enemy_overrun"          # how the port's code names it: if rrc_runtime::keeps("enemy_overrun") { ... }
+at = "GAME.EXE+002FF"           # the original's code that does it
+what = "the sixth enemy's update reads the word after the table as its hits"
+fix = "reads 0 instead"         # optional: what fixing it does
+provenance = "agent:claude-opus-5-5"
+evidence = "rrc suspects play: past enemies by GAME.EXE+002FF, offset 60"
+```
+
+`rrc quirk` writes it, sorted by name. Names are names, each once; `at` is an ID of the game's program.
+
 ## `sessions/<name>.toml`: a session
 
 ```toml
