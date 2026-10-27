@@ -635,7 +635,10 @@ fn a_port_matches_the_original_tick_by_tick() {
     rrc.env.push(("TOY_BUG", "trail"));
     let (diverged, ok) = rrc.run(&["compare", "play"]);
     assert!(!ok && diverged.contains("trail[1]: original 2560, port 3168"), "{diverged}");
-    assert!(diverged.contains("write TOY.EXE+01CCA = 000A (was 0000) by TOY.EXE+00236 in update < main"), "{diverged}");
+    assert!(
+        diverged.contains("write TOY.EXE+01CCA = 0A00h (was 0000h) by TOY.EXE+00236 in update < main"),
+        "{diverged}"
+    );
     rrc.env.pop();
 
     // From the original's values at a tick; a paired checkpoint, and from it.

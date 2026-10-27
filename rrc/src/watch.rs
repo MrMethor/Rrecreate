@@ -70,7 +70,7 @@ impl<'a> Names<'a> {
 
     /// The name of the data `len` bytes at `address` are (0: as long as they are): a data item's
     /// name, or the element or field inside one its type says (`enemies[1].hits`, `name[+N]` without
-    /// a type); else the address.
+    /// a type or for part of an element, `name[+0]` its first bytes); else the address.
     pub(crate) fn data(&self, address: &str, len: u32) -> String {
         let Some(id) = self.id(address) else { return address.to_owned() };
         let Some((d, offset)) = self.datum(address) else { return id.to_string() };
@@ -81,7 +81,9 @@ impl<'a> Names<'a> {
         match crate::values::place(&d.ty, offset, &self.k.types) {
             Some((path, _, 0)) if !path.is_empty() => format!("{name}{path}"),
             Some((path, _, inner)) if !path.is_empty() => format!("{name}{path}+{inner}"),
-            _ if offset == 0 => name.clone(),
+            Some((_, leaf, 0)) if len == 0 || crate::values::primitive(&leaf).is_none_or(|width| len >= width) => {
+                name.clone()
+            }
             _ => format!("{name}[+{offset}]"),
         }
     }
@@ -272,8 +274,15 @@ struct Access {
 impl Access {
     fn describe(&self, names: &Names) -> String {
         let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
-        // As the named data's type reads it, where it is one of its elements; bytes otherwise.
-        let value = |bytes: &[u8]| names.typed(&self.at, &hex(bytes)).unwrap_or_else(|| hex(bytes));
+        // As the named data's type reads it, where it is one of its elements; else a byte, word or
+        // doubleword as the number the instruction wrote (little-endian: bytes E9 57 are 57E9h), and
+        // other lengths as bytes in memory order.
+        let value = |bytes: &[u8]| {
+            names.typed(&self.at, &hex(bytes)).unwrap_or_else(|| match bytes.len() {
+                1 | 2 | 4 => format!("{}h", bytes.iter().rev().map(|b| format!("{b:02X}")).collect::<String>()),
+                _ => bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
+            })
+        };
         let was = if self.kind == "write" { format!(" (was {})", value(&self.old)) } else { String::new() };
         let by = if let Some(at) = self.by["instruction"].as_str() {
             names.plain(at)
