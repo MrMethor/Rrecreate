@@ -779,6 +779,7 @@ impl Machine {
                     uninit: self.probes.uninit.as_deref_mut(),
                     late: self.probes.late.as_deref_mut(),
                     calls: self.probes.calls.as_deref(),
+                    pending: Default::default(),
                     cs: self.cpu.regs.cs(),
                     ip: self.cpu.regs.ip,
                     at,

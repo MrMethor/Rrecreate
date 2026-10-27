@@ -85,7 +85,8 @@ trimmed). A line whose time has passed is refused: its input would land later th
 **Watches.** `watch` `{"ranges": [{"at", "len"}], "reads": false, "limit": 10000}` ... `watch_end`: each
 write (and read) of the watched bytes: `hits`, each `{"at", "kind", "value", "old", "cycle", "by", "chain"}`,
 where `by` is `{"instruction"}`, `{"service", "ax"}` or `{"device": true}` and `chain` the calls in progress,
-innermost first (`{"entry", "from", "interrupt"}`); `dropped` counts what went past the limit. With
+innermost first (`{"entry", "from", "interrupt"}`); a write that copied a byte the instruction read (`MOVS`,
+`PUSH` and `POP` of memory) has `from`, that byte's address (D85); `dropped` counts what went past the limit. With
 `"summary": true`, who touched each byte instead, as runs of bytes touched alike (`bytes`: `{"at", "len",
 "read", "read_in_interrupt", "written", "interrupt_writer", "interrupt_write_by", "host"}`), with the services
 called (`services`) and ports read (`ports`) meanwhile, and each instruction's uses of each port
@@ -171,7 +172,8 @@ An IBM PC with DOS (Clockwork).
 4. A summary watch's `port_uses`; `image` answers what it wrote (it printed it, onto the answers).
 5. `edits`; `syncs` answers `ticks`; a watch's `by` may be `{"edit": true}`.
 6. `files`, `files_end` (D78).
-7. `contracts`, `contracts_end` (D81); `calls` takes `log` and `limit`, and `call_log` (D83).
+7. `contracts`, `contracts_end` (D81); `calls` takes `log` and `limit`, and `call_log` (D83); a watch's write
+   hit may have `from`, the byte it copied (D85).
 
 ## Changing the protocol
 

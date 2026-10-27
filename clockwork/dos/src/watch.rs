@@ -65,6 +65,9 @@ pub struct Hit {
     pub by: By,
     /// The call chain at the access, innermost first.
     pub chain: Vec<Frame>,
+    /// For a write, the physical address of the byte it copied: the instruction read that byte, with this
+    /// value, before it wrote (`MOVS`, `PUSH` and `POP` of memory). Who wrote the value is who wrote that.
+    pub from: Option<u32>,
 }
 
 /// An instruction's use of a port, in a summary watch.
@@ -175,15 +178,26 @@ impl Watch {
     /// A read by the instruction running (the probe bus calls this).
     pub(crate) fn on_read(&mut self, cycle: u64, addr: u32, value: u8, by: By, calls: Option<&Calls>) {
         if self.reads && self.watched(addr) {
-            let hit = Hit { cycle, address: addr, kind: Kind::Read, value, old: value, by, chain: Vec::new() };
+            let hit =
+                Hit { cycle, address: addr, kind: Kind::Read, value, old: value, by, chain: Vec::new(), from: None };
             self.record(hit, calls);
         }
     }
 
-    /// A write by the instruction running, of `value` over `old`.
-    pub(crate) fn on_write(&mut self, cycle: u64, addr: u32, value: u8, old: u8, by: By, calls: Option<&Calls>) {
+    /// A write by the instruction running, of `value` over `old`; `from`, the byte it copied.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn on_write(
+        &mut self,
+        cycle: u64,
+        addr: u32,
+        value: u8,
+        old: u8,
+        by: By,
+        from: Option<u32>,
+        calls: Option<&Calls>,
+    ) {
         if self.watched(addr) {
-            let hit = Hit { cycle, address: addr, kind: Kind::Write, value, old, by, chain: Vec::new() };
+            let hit = Hit { cycle, address: addr, kind: Kind::Write, value, old, by, chain: Vec::new(), from };
             self.record(hit, calls);
         }
     }
@@ -242,7 +256,8 @@ impl Watch {
         for (address, old) in first {
             let value = now(address);
             if old != value {
-                self.record(Hit { cycle, address, kind: Kind::Write, value, old, by, chain: Vec::new() }, calls);
+                let hit = Hit { cycle, address, kind: Kind::Write, value, old, by, chain: Vec::new(), from: None };
+                self.record(hit, calls);
             }
         }
     }

@@ -113,11 +113,17 @@ pub(crate) fn watch(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 pub(crate) struct Writer {
     pub instruction: Option<Id>,
     pub chain: Vec<Id>,
+    /// When it wrote, and, if it copied the bytes (D85), where from (as Clockwork names it).
+    pub cycle: u64,
+    pub copied: Option<String>,
 }
 
-/// Does what `rrc watch` does; and says who wrote last (nothing, if nothing wrote).
+/// Does what `rrc watch` does; and says who wrote last (nothing, if nothing wrote), or with `--before
+/// CYCLE` (for rrc's own use), last before that cycle.
 pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
-    let a = Args::parse(args, &["--len", "--tick", "--ticks", "--limit", "--lines"], &["--reads", "--cycles"])?;
+    let a =
+        Args::parse(args, &["--len", "--tick", "--ticks", "--limit", "--lines", "--before"], &["--reads", "--cycles"])?;
+    let before: u64 = a.value("--before").map_or(Ok(u64::MAX), str::parse).map_err(|_| "--before is a cycle")?;
     let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles] [--limit N] \
                  [--lines N]";
     let limit: u64 = a.value("--limit").map_or(Ok(10_000), str::parse).map_err(|_| "--limit is a count")?;
@@ -200,11 +206,14 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
             format!("{dropped} accesses past the limit of {limit} (--limit N): the counts above stop there"),
         );
     }
-    let Some(last) = accesses.iter().rev().find(|access| access.kind == "write") else { return Ok(Writer::default()) };
+    let last = accesses.iter().rev().find(|access| access.kind == "write" && access.cycle < before);
+    let Some(last) = last else { return Ok(Writer::default()) };
     let frames = last.chain.as_array().cloned().unwrap_or_default();
     Ok(Writer {
         instruction: last.by["instruction"].as_str().and_then(|at| names.id(at)),
         chain: frames.iter().filter_map(|f| f["entry"].as_str().and_then(|entry| names.id(entry))).collect(),
+        cycle: last.cycle,
+        copied: last.from.clone(),
     })
 }
 
@@ -269,6 +278,8 @@ struct Access {
     old: Vec<u8>,
     by: Value,
     chain: Value,
+    /// Where a write copied its bytes from (D85).
+    from: Option<String>,
 }
 
 impl Access {
@@ -305,7 +316,10 @@ impl Access {
         if frames.len() > CHAIN_SHOWN {
             chain.push("…".into());
         }
-        let chain = if chain.is_empty() { String::new() } else { format!(" in {}", chain.join(" < ")) };
+        let mut chain = if chain.is_empty() { String::new() } else { format!(" in {}", chain.join(" < ")) };
+        if let Some(from) = &self.from {
+            chain.push_str(&format!(", copied from {}", names.data(from, self.value.len() as u32)));
+        }
         format!(
             "{} {} = {}{was} by {by}{chain}",
             self.kind,
@@ -339,6 +353,7 @@ fn group(hits: Vec<Value>) -> Vec<Access> {
             old: vec![byte(&hit["old"])],
             by: hit["by"].clone(),
             chain: hit["chain"].clone(),
+            from: hit["from"].as_str().map(str::to_owned),
         });
     }
     accesses

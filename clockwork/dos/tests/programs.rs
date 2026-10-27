@@ -3566,6 +3566,38 @@ fn hit_summary(hits: &[dos::watch::Hit], base: u32, start: u32) -> Vec<HitSummar
 }
 
 #[test]
+fn a_watch_says_where_a_copied_byte_came_from() {
+    // MOVSW copies `source` to `value`; then MOV writes it without copying.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["source", "value"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        let (source, value) = (a.addr("source") as u32, a.addr("value") as u32);
+        a.mov(si, source)?;
+        a.mov(di, value)?;
+        a.movsw()?;
+        let value = word_at(a, "value");
+        a.mov(value, 0x0102)?;
+        exit(a, 0)?;
+        a.here("source")?;
+        a.dw(&[0x1234])?;
+        a.here("value")?;
+        a.dw(&[0])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("C.COM", &program)], "C.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let value = base + o["value"];
+    m.start_watch(dos::watch::Watch::range(value..value + 2, false));
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let hits = m.take_watch().unwrap().hits;
+    let from: Vec<(u8, Option<u32>)> = hits.iter().map(|h| (h.value, h.from.map(|f| f - base))).collect();
+    let source = o["source"];
+    assert_eq!(from, [(0x34, Some(source)), (0x12, Some(source + 1)), (0x02, None), (0x01, None)]);
+}
+
+#[test]
 fn a_watch_names_the_instruction_and_its_callers() {
     // `value` is written by the main program, then two calls deep.
     let offsets = std::cell::RefCell::new(BTreeMap::new());

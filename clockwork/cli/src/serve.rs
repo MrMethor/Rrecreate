@@ -742,10 +742,14 @@ fn hit(h: &dos::watch::Hit, name: &impl Fn(u32) -> String, name_physical: &impl 
         .iter()
         .map(|f| json!({"entry": name(f.entry), "from": name(f.from), "interrupt": f.interrupt}))
         .collect();
-    json!({
+    let mut hit = json!({
         "at": name_physical(h.address), "kind": if h.kind == dos::watch::Kind::Write { "write" } else { "read" },
         "value": h.value, "old": h.old, "cycle": h.cycle, "by": by, "chain": chain,
-    })
+    });
+    if let Some(from) = h.from {
+        hit["from"] = json!(name_physical(from));
+    }
+    hit
 }
 
 /// `{"from", "to"}` in cycles; `to` defaults to now.

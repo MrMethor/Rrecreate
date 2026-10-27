@@ -57,6 +57,38 @@ pub(crate) enum Access {
     Port,
 }
 
+/// The bytes the instruction running read and hasn't written elsewhere yet, oldest first: a write of the
+/// oldest's value to another address copies it (`MOVS`, `PUSH` and `POP` of memory read a byte, then
+/// write it). At most 8, as an instruction moves at most a doubleword at a time.
+#[derive(Debug, Default)]
+pub(crate) struct Pending {
+    bytes: [(u32, u8); 8],
+    start: usize,
+    len: usize,
+}
+
+impl Pending {
+    fn push(&mut self, byte: (u32, u8)) {
+        if self.len == self.bytes.len() {
+            self.start = (self.start + 1) % self.bytes.len();
+            self.len -= 1;
+        }
+        self.bytes[(self.start + self.len) % self.bytes.len()] = byte;
+        self.len += 1;
+    }
+
+    /// The source of a write of `value` to `addr`, if it copies the oldest byte read.
+    fn copied(&mut self, addr: u32, value: u8) -> Option<u32> {
+        if self.len == 0 {
+            return None;
+        }
+        let (from, read) = self.bytes[self.start];
+        self.start = (self.start + 1) % self.bytes.len();
+        self.len -= 1;
+        (from != addr && read == value).then_some(from)
+    }
+}
+
 pub(crate) struct ProbeBus<'a, 'b> {
     pub(crate) inner: PcBus<'a>,
     pub(crate) log: Option<&'b mut Vec<Access>>,
@@ -65,6 +97,8 @@ pub(crate) struct ProbeBus<'a, 'b> {
     pub(crate) uninit: Option<&'b mut Uninit>,
     pub(crate) late: Option<&'b mut LateInputs>,
     pub(crate) calls: Option<&'b Calls>,
+    /// What the instruction read, for a watch's copies.
+    pub(crate) pending: Pending,
     /// The instruction running: `cs:ip`, and its linear address.
     pub(crate) cs: u16,
     pub(crate) ip: u32,
@@ -86,6 +120,7 @@ impl Bus for ProbeBus<'_, '_> {
         if let Some(watch) = self.watch.as_deref_mut() {
             let by = crate::watch::By::Instruction { cs: self.cs, ip: self.ip, linear: self.at };
             watch.on_read(self.now, addr, value, by, self.calls);
+            self.pending.push((addr, value));
         }
         if let Some(bounds) = self.bounds.as_deref_mut() {
             bounds.access(self.at, addr, self.now);
@@ -105,7 +140,8 @@ impl Bus for ProbeBus<'_, '_> {
         }
         if let Some(watch) = self.watch.as_deref_mut() {
             let by = crate::watch::By::Instruction { cs: self.cs, ip: self.ip, linear: self.at };
-            watch.on_write(self.now, addr, value, self.inner.peek_u8(addr), by, self.calls);
+            let from = self.pending.copied(addr, value);
+            watch.on_write(self.now, addr, value, self.inner.peek_u8(addr), by, from, self.calls);
         }
         if let Some(bounds) = self.bounds.as_deref_mut() {
             bounds.access(self.at, addr, self.now);

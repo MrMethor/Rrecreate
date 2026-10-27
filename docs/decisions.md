@@ -686,6 +686,16 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D85. "Who wrote" follows copies. Accepted 2026-10-27.
+A watched write that copies a byte the same instruction read (`MOVS`, `PUSH` and `POP` of memory) says where the
+byte came from (`copied from moved_position.y`; Clockwork pairs an instruction's writes with the bytes it read
+before, oldest first, when the values agree). `rrc compare` follows a copy to the last write of its source before
+the copy, up to four copies back, and names the port's code for that writer.
+**Why:** D8's question is who decided a value, and a copy only moves it. Arena's `world_loop` copies the player's
+position to `moved_position`, lets `move_player` work on it and copies it back with `MOVSW`; every divergence of the
+position named the copy-back. Followed, tick 413's names `step_position`, where `collide` kept the old y.
+Copies through a register (`MOV AX,[a]` then `MOV [b],AX`) aren't followed: two instructions.
+
 ### D84. `rrc compare --feed`: the original's values of a subsystem not ported yet. Accepted 2026-10-27.
 `rrc compare SESSION --feed FIELD,...` gives the port the original's values of those mapped fields (or the groups
 they are in) at every tick before it steps, as a scenario's edits are given (D64): they match by construction,

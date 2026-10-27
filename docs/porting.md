@@ -331,7 +331,7 @@ rrc compare first-level --resume 900
 
 `rrc compare` says `match`, or where the port first differs: the tick, each field with both values, and who wrote
 the original's value between the previous tick's sync point and this one's (the instruction and its call chain:
-read that code); `port` names the port's code for the function that wrote it (D73), found by the ID each port
+read that code; a value copied there, by `MOVS` say, is followed to where its source was written, D85); `port` names the port's code for the function that wrote it (D73), found by the ID each port
 function names in a comment (`/// update (GAME.EXE+00114): one pass`, DESIGN.md §6.6). Fix the port and compare
 again. A divergence at the port's first tick means its start state
 isn't the original's, or a transplant misses a field (map it). Work on a subsystem from a transplant at a tick
