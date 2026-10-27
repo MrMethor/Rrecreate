@@ -50,9 +50,9 @@ functions past the program's file image, which Ghidra can't see. `rrc show ID` s
 --asm --session NAME [--tick N]` disassembles it from the session's memory, by tick N or at its last
 snapshot. Port what the generator makes, not the bytes (DESIGN.md §6).
 
-Look for prior art (D32): source releases, reimplementations, format documentation, bug lists, the knowledge
-of earlier projects (`rrc import`). For a test bench whose source is released, used to grade the toolkit, the
-source stays out of reach (D46, below).
+Look for prior art (D32): source releases, reimplementations, format documentation, bug lists, where the
+person wants them used (the Arena port uses none: D66). For a test bench whose source is released, used to
+grade the toolkit, the source stays out of reach (D46, below).
 
 ## 3. Sessions and ticks
 

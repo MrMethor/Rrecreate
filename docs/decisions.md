@@ -47,7 +47,7 @@ afterwards; the real test follows on a small game with no source release. Arena 
 ports: the person ports them with the finished toolkit (decided 2026-10-17).
 **Why:** a source release lets the agent take shortcuts, even unintentionally, and then the pilot proves nothing.
 
-### D65. The pilot is Arena. Accepted 2026-10-26, with the person.
+### D65. The pilot is Arena. Accepted 2026-10-26, with the person; its prior art: D66.
 M4 ports Arena's gameplay (`ACD.EXE`, the CD version) instead of Wolf3D's: its first dungeon, from a transplant
 at its start, compared tick by tick. Arena has no source release, so the pilot is also the test where the
 approach is needed, which M7 was to be; M7 goes. Like any port it starts from prior art (D32): Recreate's Arena
@@ -539,6 +539,17 @@ snapshots carry the edits still to come. The port can't be edited by rrc, so it 
 the same mapping that compares it. Measured on the toy port: edits at tick 100 (a score, an enemy gone) and at
 tick 120 (the lives); the session matches from tick 1.
 **Supersedes:** D59's paragraph "The emulator" (the rest of D59 stands).
+
+### D66. The Arena port uses no knowledge from Recreate or the person's earlier Arena project. Accepted 2026-10-27, with the person.
+The Arena port's knowledge comes from its own analysis and runs only: nothing from Recreate (its Arena
+knowledge, with what it imported from OpenTESArena) or from the person's earlier Arena project
+(`MrMethor/tesa-decomp`), which D65 had it start from. What was imported (141 function names, 390 data names)
+was taken out again and the analysis redone without it; the port's `rrc.toml` refuses imports. Names the port
+decided itself stay, on its own evidence.
+**Why:** the person found they bring confusion into the project: generated names (`rtl_file_6010`,
+`mouse_reset_3c9f`), provenance through two other projects, names the port can't vouch for. Recording the
+session again without them gave the same run.
+**Supersedes:** D65's sentences on prior art (the rest of D65 stands).
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the

@@ -352,8 +352,8 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 - The Ghidra export script, the library signature packs and how they are made (`rec sigs build`, now `rrc sigs
   build`, with its linker map parser), the test programs built with Open Watcom.
 - Recreate's Wolf3D knowledge (names transferred from id's released source, globals, its 46 overrides written
-  from that source) stays outside the Wolf3D port, a test bench (D46). Recreate's Arena knowledge is prior art
-  for the Arena port (D32, D65): `rrc import recreate` brings it in as evidence.
+  from that source) stays outside the Wolf3D port, a test bench (D46). Neither Recreate's Arena knowledge nor
+  the person's earlier Arena project goes into the Arena port (D66).
 - Not taken: the Python `rec` toolkit and its SQLite store, the task queue and packets, `rec submit`/`rec land`,
   Python ports. Their ideas are reused where they fit.
 
@@ -365,7 +365,7 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
 | M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | Recreate's Wolf3D knowledge loads (outside the port); a session of the Wolf3D port is traced |
 | M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, scenario sessions, the comparison and its report | A toy port of a test program matches tick by tick |
-| M4 Pilot: Arena | Arena's gameplay in its first dungeon as a native simulation (the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock), from a transplant at the dungeon's start, compared per tick (D65). The presentation is M5's | A session of play in the first dungeon (walking, doors, a fight) matches tick by tick from the transplant: the approach works on a game without a source release |
+| M4 Pilot: Arena | Arena's gameplay in its first dungeon as a native simulation (the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock), from a transplant at the dungeon's start, compared per tick (D65), from its own analysis (D66). The presentation is M5's | A session of play in the first dungeon (walking, doors, a fight) matches tick by tick from the transplant: the approach works on a game without a source release |
 | M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |
 | M6 Modern mode | Fixed-rate logic, free frame rate, resolution, the first quirk fixes | The modern toggles pass their own tests |
 
