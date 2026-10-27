@@ -125,14 +125,16 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          a recorded trace: a summary, one tick, or one item over the ticks, values
                          read as data.tsv's types (an array as its elements that aren't zero);
                          --path: where the trace file is (the path alone), to read it whole
-  compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK]
+  compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...]
                          run the port ([port] command in rrc.toml) with the session's inputs and compare
                          its state with the original's trace at every tick, field by field as
                          mapping.toml maps them: the first tick that differs, the fields and values, and
                          who wrote the original's value; from the port's start state, or the original's
                          mapped values at a tick (--transplant), or a paired checkpoint (--resume);
                          --pair keeps one at the end of tick N (the port's state and Clockwork's
-                         snapshot) if the port matched to there. Exits 1 if it diverges
+                         snapshot) if the port matched to there; --feed gives the port the original's
+                         values of those fields (or groups) before every step, for a subsystem not
+                         ported yet. Exits 1 if it diverges
   files SESSION [--file NAME] [--lines N]
                          the files the original reads and writes in the session: by file, how often,
                          how much, by which code; with --file, each read or write: where in the file,

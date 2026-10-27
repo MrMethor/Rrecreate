@@ -32,8 +32,8 @@ use crate::values::{Reader, Target, at_path, decode, differences};
 const SHOWN: usize = 8;
 
 pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--transplant", "--resume", "--to", "--pair"], &[])?;
-    let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK]";
+    let a = Args::parse(args, &["--transplant", "--resume", "--to", "--pair", "--feed"], &[])?;
+    let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...]";
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     let tick = |flag: &str| -> Result<Option<u64>, String> {
         a.value(flag)
@@ -72,7 +72,10 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let file = |f: &str| work.join(f).to_string_lossy().into_owned();
     let after = transplant.or(resume).unwrap_or(0);
-    let sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
+    let mut sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
+    if let Some(fields) = a.value("--feed") {
+        feed(&mut sets, &mapped, &original, fields, after)?;
+    }
     write_inputs(&trace, &sets, &file("inputs.jsonl"))?;
     let mut port_args =
         vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
@@ -243,8 +246,37 @@ fn edit_sets(
     Ok(sets)
 }
 
+/// Feeds the port the original's values of `fields` (mapped fields, or the groups they are in: `random`
+/// for `random.seed`) at every tick after `after`, before it steps (D84): a subsystem not ported yet
+/// gives the one being ported what it reads, and matches by construction.
+fn feed(
+    sets: &mut BTreeMap<u64, serde_json::Map<String, Value>>,
+    mapped: &[Mapped],
+    original: &[Vec<Value>],
+    fields: &str,
+    after: u64,
+) -> Result<(), String> {
+    let wanted: Vec<&str> = fields.split(',').map(str::trim).filter(|f| !f.is_empty()).collect();
+    let fed =
+        |field: &str| wanted.iter().any(|w| field == *w || field.strip_prefix(*w).is_some_and(|r| r.starts_with('.')));
+    for w in &wanted {
+        if !mapped.iter().any(|m| m.field == *w || m.field.strip_prefix(*w).is_some_and(|r| r.starts_with('.'))) {
+            return Err(format!("--feed {w}: no mapped field is it or in it"));
+        }
+    }
+    let mut names = Vec::new();
+    for (m, values) in mapped.iter().zip(original).filter(|(m, _)| fed(&m.field)) {
+        names.push(m.field.clone());
+        for (i, value) in values.iter().enumerate().skip(after as usize) {
+            sets.entry(i as u64 + 1).or_default().insert(m.field.clone(), value.clone());
+        }
+    }
+    say("fed", format!("{}: the original's values at every tick", names.join(", ")));
+    Ok(())
+}
+
 /// The session's inputs, tick by tick (`rrc-inputs`): from the trace, what the port gets; and the
-/// fields the scenario's edits set (`set`).
+/// fields the scenario's edits set and those fed (`set`).
 fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Value>>, path: &str) -> Result<(), String> {
     let inputs: Vec<Value> = trace
         .header

@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D84. `rrc compare --feed`: the original's values of a subsystem not ported yet. Accepted 2026-10-27.
+`rrc compare SESSION --feed FIELD,...` gives the port the original's values of those mapped fields (or the groups
+they are in) at every tick before it steps, as a scenario's edits are given (D64): they match by construction,
+and the subsystem being ported reads what the original's other subsystems made.
+**Why:** DESIGN.md §2 ports subsystem by subsystem from a transplant, but a subsystem not ported yet diverges at
+the next tick and the comparison stops there. Arena's walking matched at tick 401 while the creatures' random
+draws (not ported) changed the generator's seed, so nothing after tick 401 could be checked. A fed field still
+in the port's state can't hide a bug of the ported code: it is overwritten, not compared.
+
 ### D83. `rrc pass`: what one pass runs, in order. Accepted 2026-10-27.
 `rrc pass SESSION --tick N` prints the calls made between tick N-1's sync point and tick N's as a tree of named
 functions in the order they ran: `--depth` levels (2), a call repeated in a row once with a count, how many

@@ -336,7 +336,10 @@ function names in a comment (`/// update (GAME.EXE+00114): one pass`, DESIGN.md 
 again. A divergence at the port's first tick means its start state
 isn't the original's, or a transplant misses a field (map it). Work on a subsystem from a transplant at a tick
 where it is in use, so what comes before needn't be ported first. Where the port matches through a tick, `--pair
-N` keeps a paired checkpoint, and `--resume N` compares from it without the ticks before. `unmapped` lists the
+N` keeps a paired checkpoint, and `--resume N` compares from it without the ticks before. A subsystem not
+ported yet would stop the comparison at the next tick: `--feed random,actors` gives the port the original's
+values of those fields (or groups) before every step, so the subsystem you port is checked over the whole
+session (D84); remove each from `--feed` once it is ported. `unmapped` lists the
 named data the mapping neither maps nor ignores: the state nothing compares yet.
 
 A scenario is set up by edits instead of play (D59, D64): where the game has a cheat or a debug mode, use it

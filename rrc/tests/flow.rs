@@ -630,6 +630,12 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(diverged.contains("port      update (TOY.EXE+00114) is src/main.rs:"), "{diverged}");
     assert!(diverged.contains("quirk     bounces is at TOY.EXE+002FF"), "{diverged}");
     rrc.ok(&["quirk", "bounces", "--remove"]);
+    // The enemies fed from the original (D84): the rest is compared over the whole session.
+    let fed = rrc.ok(&["compare", "play", "--feed", "enemies"]);
+    assert!(fed.contains("fed       enemies: the original's values at every tick"), "{fed}");
+    assert!(fed.contains("match     every mapped field at all 209 ticks"), "{fed}");
+    let (unknown, ok) = rrc.run(&["compare", "play", "--feed", "nothing"]);
+    assert!(!ok && unknown.contains("--feed nothing: no mapped field is it or in it"), "{unknown}");
     rrc.env.pop();
     // Another, in the trail on the heap (D72): who wrote it, where the far pointer pointed then.
     rrc.env.push(("TOY_BUG", "trail"));
