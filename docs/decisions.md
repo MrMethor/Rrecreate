@@ -557,6 +557,13 @@ refuse (a linker map's names). The person deletes Recreate's and the earlier Are
 **Why:** D66: their knowledge confuses the project, and no port uses it any more; the command would only bring
 it back.
 
+### D69. Recreate is disregarded. Accepted 2026-10-27, with the person.
+Nothing more is taken from Recreate and nothing is read from it: not its code, its design (`PROJECT.md`) or its
+knowledge. What came from it (DESIGN.md §11) is Rrecreate's own now, and the decisions carried from it stand as
+Rrecreate's decisions. Clockwork no longer reads the session files Recreate's `rec-host` wrote.
+**Why:** the person knows of nothing in Recreate that is still relevant, and it confuses the project (D66).
+Its folder is deleted, and no work here may need it.
+
 ### D68. A late read's value is kept, and the port reads it where the original did; traces, version 5. Accepted 2026-10-27, with the person.
 Recording keeps, for each instruction of a pass that read an input after it had changed since the sync point,
 what it read: the trace's `late` entries are `[input, the instruction's ID, the input as that instruction read

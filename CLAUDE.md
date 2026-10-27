@@ -57,5 +57,5 @@ is in `rrc/` (M2). The runtime and the comparison are M3 (`DESIGN.md` §12).
   DOS's in the `dos-pc` extension. The files it reads and writes are documented in `docs/formats.md`: change the two together, and
   `docs/porting.md` when a step of the workflow changes. `rrc/tests/flow.rs` runs the whole flow on a small
   program with the workspace's debug `clockwork`.
-- The predecessor, Recreate (`../Recreated`, github.com/MrMethor/Recreate), is a source of code as listed in
-  `DESIGN.md` §11, not of design: its `PROJECT.md` describes the approach Rrecreate replaced.
+- Recreate, the project Rrecreate began from (`DESIGN.md` §11), is disregarded (D69): don't read its code,
+  design or knowledge, or take anything from it. Commit messages and decisions that name it are history.

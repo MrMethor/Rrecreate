@@ -22,7 +22,8 @@ file formats in [`docs/formats.md`](docs/formats.md), and how tools drive an emu
 cargo build --release -p rrc -p clockwork
 ```
 
-Rrecreate succeeds Recreate, a private predecessor whose emulator it takes over.
+Rrecreate began from Recreate, a private predecessor whose emulator it took over (`DESIGN.md` §11). Recreate is
+disregarded: nothing is read or taken from it (D69).
 
 ## Layout
 

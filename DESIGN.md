@@ -9,8 +9,8 @@ serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and
 tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 done: the runtime
 (`runtime/`), the mapping, transplants, the comparison with who wrote, paired checkpoints and scenario edits
 (D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. Next: M4, the Arena
-pilot (D65). Rrecreate succeeds Recreate (private), whose emulator and parts of whose tooling it takes
-over (§11).
+pilot (D65). Rrecreate began from Recreate's emulator and parts of its tooling (§11); Recreate itself is
+disregarded (D69).
 
 ## 1. The product
 
@@ -345,6 +345,9 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 
 ## 11. Taken over from Recreate
 
+Rrecreate began from Recreate, the person's earlier project, and took over what is listed here. Recreate is
+disregarded (D69): nothing more is taken from it, and nothing is read from it.
+
 - **Clockwork** is Recreate's `rec-host` (`host/cpu`, `host/dos`, `host/machine`, `host/frontend`), with its
   CPU tests and the SingleStepTests runner, minus what hosted the old ports inside the emulator: overrides and
   the `Call` interface, dual-run, captured-call replay, poison checks and lockstep with overrides. Kept and
@@ -355,7 +358,7 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
   from that source) and its Arena knowledge aren't used, and `rrc` has no import of them (D46, D66, D67);
   nor is the person's earlier Arena project.
 - Not taken: the Python `rec` toolkit and its SQLite store, the task queue and packets, `rec submit`/`rec land`,
-  Python ports. Their ideas are reused where they fit.
+  Python ports.
 
 ## 12. Plan
 
@@ -363,7 +366,7 @@ Subagents work in parallel on separate subsystems. Output is short: agents read 
 |---|---|---|
 | M0 Repository | Clockwork imported and cut down; workspace, tests, CI | Clockwork's tests pass; Wolf3D, Arena and Daggerfall reach their checkpoints as before |
 | M1 Control | `clockwork serve`, snapshots to disk, sync points, who wrote, bounds checks, loaded-image dumps | A script finds who wrote a given Wolf3D variable at a given tick |
-| M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | Recreate's Wolf3D knowledge loads (outside the port); a session of the Wolf3D port is traced |
+| M2 Toolkit | `rrc`: port repositories, analysis into knowledge files, sessions, boundary values, traces | A session of the Wolf3D port is traced |
 | M3 Runtime and comparison | The simulation step API, the mapping (both directions), transplant, paired checkpoints, scenario sessions, the comparison and its report | A toy port of a test program matches tick by tick |
 | M4 Pilot: Arena | Arena's gameplay in its first dungeon as a native simulation (the player's movement and collisions, doors, creatures and combat, the random generator, the game's clock), from a transplant at the dungeon's start, compared per tick (D65), from its own analysis (D66). The presentation is M5's | A session of play in the first dungeon (walking, doors, a fight) matches tick by tick from the transplant: the approach works on a game without a source release |
 | M5 Faithful presentation | Renderer and sound in faithful mode, compared by frames and sound events | Frames match through the session |
