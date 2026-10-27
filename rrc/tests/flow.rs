@@ -257,7 +257,7 @@ fn the_mouse_is_an_input_and_a_gate() {
                 tick 1)";
     assert!(recorded.contains(late), "the instruction after INT 33h: {recorded}");
     let tick = rrc.ok(&["trace", "click", "--tick", "2"]);
-    assert!(tick.contains("late      mouse: changed after the sync point, before T.COM+0000E read it"), "{tick}");
+    assert!(tick.contains("late      mouse: T.COM+0000E read buttons "), "what the read saw (D68): {tick}");
     assert!(!rrc.ok(&["trace", "click", "--tick", "4"]).contains("late"));
     std::fs::remove_dir_all(&dir).ok();
 }

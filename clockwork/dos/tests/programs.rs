@@ -3846,6 +3846,7 @@ fn input_that_changes_between_a_sync_point_and_the_read_is_late() {
         assert!(m.probes.calls.is_none(), "call tracking goes with the probe that turned it on");
         let late_ticks: Vec<u64> = late.findings.iter().map(|l| l.tick_cycle).collect();
         assert!(late_ticks.iter().all(|t| ticks.contains(t)));
+        assert!(late.findings.iter().all(|l| l.bytes.iter().any(|(o, _)| *o == 0)), "the counter's low byte, as read");
         lates.push((ticks.len(), late_ticks.len()));
     }
     // Before the HLT the handler runs after the hit, every time; after it, before.

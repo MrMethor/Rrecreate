@@ -107,14 +107,17 @@ loop reads its controls (`rrc sync ID menu --when-changed keys,timer_count,mouse
 hits each gated sync point skipped; if the loop does work per poll that changes state (a random number drawn
 each pass), the trace shows it, and the notes should say so.
 
-**Input that arrives during the pass (D60):** input arrives at any cycle, so between the sync point and the
-pass's read of an input there should be as little as possible. `rrc record` checks every read: `late` counts
-the ticks whose pass read an input after it had changed since the sync point, with the reads that did it, most
-first (the input, the instruction that read it, or for a driver the instruction after its call; in how many
-ticks; the first). Such a pass did what the next tick's values say, and a port fed this tick's would do
-something else (stay in a loop the press ended). `rrc trace SESSION --tick N` lists a tick's. The wait that
-ends a tick isn't counted: late reads all made in the call the next hit comes in, the last at most 40 of the
-program's instructions before it, are the wait polling its timer count. To fix one:
+**Input that arrives during the pass (D60, D68):** input arrives at any cycle, so between the sync point and
+the pass's read of an input there should be as little as possible. `rrc record` checks every read: `late`
+counts the ticks whose pass read an input after it had changed since the sync point, with the reads that did
+it, most first (the input, the instruction that read it, or for a driver the instruction after its call; in how
+many ticks; the first). Such a pass did what the next tick's values say, and a port fed only this tick's would
+do something else (stay in a loop the press ended). The trace keeps what each such read saw, and `rrc trace
+SESSION --tick N` lists a tick's. The wait that ends a tick isn't counted: reads all made in the call the next
+hit comes in, the last at most 40 of the program's instructions before it, are the wait polling its timer
+count. Where one read comes right after the sync point, move the sync point; where reads are spread through the
+pass (a clock read again after drawing), the port reads the input where the original did, through
+`tick.inputs.at_site("GAME.EXE+04BB9")`, and gets what that instruction read. To move one:
 
 - move the sync point to the read: onto the instruction that reads the input (the load from the key array,
   the `int 33h`, the `in al, dx` of port 201h), or just before it in the same loop; not at the top of a pass
@@ -122,12 +125,13 @@ program's instructions before it, are the wait polling its timer count. To fix o
 - if several loops call the function that reads the input, each loop gets a sync point at its own call: a
   sync point in the function ticks for every caller;
 - if the pass reads an input in several places, put the sync point on the first read; a later read that sees
-  a change stays `late` (a timer count read again mid-pass as a timestamp), and the notes should say why that
-  is harmless (a menu that sees a held key a pass later) or not (a one-shot exit);
+  a change stays `late` (a timer count read again mid-pass as a timestamp), and the port reads it there with
+  `at_site`;
 - a scripted input that lands in the gap can be moved by a few milliseconds (`MS:` in the script) while the
   sync point is being placed.
 
-Record again until no tick is `late`, or the reads left are explained in the notes.
+Record again until the reads left `late` are ones the sync point can't cover; the notes say which, and the
+port reads each with `at_site`.
 
 Then the tick's **boundary values**: what the loop reads that comes from outside it (the elapsed time the
 waiting function measures, the key-state array, the mouse). To find them:

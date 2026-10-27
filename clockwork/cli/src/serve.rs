@@ -569,7 +569,10 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let findings: Vec<Value> = late
                 .findings
                 .iter()
-                .map(|l| json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at)}))
+                .map(|l| {
+                    let bytes: Vec<Value> = l.bytes.iter().map(|(offset, value)| json!([offset, value])).collect();
+                    json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at), "bytes": bytes})
+                })
                 .collect();
             Ok(json!({"late": findings, "dropped": late.dropped}))
         }

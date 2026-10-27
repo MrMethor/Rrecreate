@@ -253,10 +253,10 @@ Recording a session again must give the same run (D44, D60), and with the same k
 
 ## Traces
 
-JSON lines (D60): a header, a line per tick, and an end line.
+JSON lines (D68): a header, a line per tick, and an end line.
 
 ```
-{"format":"rrc-trace","version":4,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
+{"format":"rrc-trace","version":5,"game":"game","session":"walk","program":"GAME.EXE","clockwork":"0.1.0",
  "syncs":[{"name":"play","at":"GAME.EXE+0A31C"},
           {"name":"menu","at":"GAME.EXE+0B1F0","when_changed":[{"name":"timer_count","at":"GAME.EXE+21C50","size":4}]}],
  "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2},
@@ -265,7 +265,7 @@ JSON lines (D60): a header, a line per tick, and an end line.
  "edits":[{"tick":100,"at":"GAME.EXE+1E0A4","hex":"0200","edit":"door_state = 2"}]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":[[0,"0100"]],"state":[[0,"0000"], …],
  "frames":[[284,20380102,19,"61f5…","a3c0…"]],"sound":{"opl":[[2549120000,176,49]]}}
-{"tick":2,"sync":"play","cycle":20504101,"late":[[1,"GAME.EXE+0A3B2"]],"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
+{"tick":2,"sync":"play","cycle":20504101,"late":[[0,"GAME.EXE+0A3B2","0300"]],"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
 {"end":"the session's end","cycles":688000000,"frames":[[6020,687990122,19,"0e3a…","77d1…"]],"state_hash":"9c2c680ec5356ad6"}
 ```
 
@@ -280,12 +280,13 @@ JSON lines (D60): a header, a line per tick, and an end line.
   where memory isn't mapped. Empty lists are left out.
 - `edits` (in the header, only if the session has any): the scenario's writes, each at an ID with its bytes
   and the edit as the session has it (D64). A tick's state has its edits written.
-- `late`: `[index, ID]` for each input the tick's pass read with another value than the tick's, and the
-  instruction that first read it so (for a driver, the instruction after its call): it changed after the sync
-  point, before the program read it (D60), so the pass did what the next tick's values say. The program's own
-  writes are followed. Not counted: what interrupt handlers read, the wait that ends the next tick (late reads
-  all in the call the next hit comes in, the last at most 40 of the program's instructions before it), and
-  memory a host service reads for the program (the BIOS keyboard buffer through INT 16h).
+- `late`: `[index, ID, value]` for each instruction of the tick's pass that read an input with another value
+  than the tick's (for a driver, the instruction after its call), once a tick: it changed after the sync point,
+  before the program read it (D60). The value is what that instruction read: the tick's value with the bytes it
+  read as it first read each (D68). The program's own writes are followed. Not counted: what interrupt
+  handlers read, the wait that ends the next tick (an instruction whose late reads were all in the call the next
+  hit comes in, the last at most 40 of the program's instructions before it), and memory a host service reads
+  for the program (the BIOS keyboard buffer through INT 16h).
 - `frames`: the frames Clockwork showed since the tick before (a display refresh each, 70 a second):
   `[number, cycle, BIOS video mode, fingerprint, picture]`, the picture's hash in the cache (below).
 - `sound`: the sound events since the tick before, by device, only those with events: `opl` `[ns, register,
@@ -328,7 +329,9 @@ inputs and the trace are JSON lines.
   `{"format":"rrc-inputs","version":1,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`,
   then a line per tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
   whose value changed since they were last read (index in the header's list, bytes in hex as the trace has
-  them); a value holds until it changes. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
+  them); a value holds until it changes. A tick whose pass read inputs late has `late`,
+  `[[index, "GAME.EXE+04BB9", "0300"]]`: what each instruction read (D68), which the runtime's
+  `Inputs::at_site(ID)` gives the port. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
   mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
   port sets in its state before writing the tick (D64). The last line is
   `{"end":"the session's end","ticks":1400}`.

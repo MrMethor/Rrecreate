@@ -59,15 +59,33 @@ pub struct Tick<'a> {
 }
 
 /// The boundary values at a tick (D15, D49): each input's bytes, as the original's memory or a
-/// device held them at the sync point.
+/// device held them at the sync point; and what the pass read of them later, where they had changed
+/// meanwhile (D68).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Inputs {
     values: BTreeMap<String, Vec<u8>>,
+    /// By (input, the ID of the instruction that read it): the value it read.
+    late: BTreeMap<(String, String), Vec<u8>>,
 }
 
 impl Inputs {
     pub fn new(values: BTreeMap<String, Vec<u8>>) -> Inputs {
-        Inputs { values }
+        Inputs { values, late: BTreeMap::new() }
+    }
+
+    /// The inputs as the original's instruction `site` (its ID, `GAME.EXE+04BB9`) read them: where the
+    /// pass read an input there after it had changed since the sync point (a clock read again after
+    /// the frame was drawn, a key pressed meanwhile), the value it read; else the tick's. The port reads
+    /// such an input through this, at the place that does what that instruction did. (A live platform
+    /// reads its clock or device again here.)
+    pub fn at_site(&self, site: &str) -> Inputs {
+        let mut values = self.values.clone();
+        for ((name, at), value) in &self.late {
+            if at == site {
+                values.insert(name.clone(), value.clone());
+            }
+        }
+        Inputs { values, late: BTreeMap::new() }
     }
 
     /// An input's bytes (empty if the session has no such input, or it wasn't read yet).
@@ -101,6 +119,11 @@ impl Inputs {
 
     pub(crate) fn set(&mut self, name: &str, bytes: Vec<u8>) {
         self.values.insert(name.to_owned(), bytes);
+    }
+
+    /// This tick's late reads, replacing the last tick's.
+    pub(crate) fn set_late(&mut self, late: &[(String, String, Vec<u8>)]) {
+        self.late = late.iter().map(|(name, site, value)| ((name.clone(), site.clone()), value.clone())).collect();
     }
 }
 
@@ -194,6 +217,7 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
         for (name, bytes) in &line.inputs {
             current.set(name, bytes.clone());
         }
+        current.set_late(&line.late);
         if line.tick < first {
             continue;
         }
@@ -343,6 +367,24 @@ mod tests {
         assert!(files::set_path(&mut state, "a[1].b", serde_json::json!(2)).is_err(), "no such element");
         assert!(files::set_path(&mut state, "a[0]x", serde_json::json!(2)).is_err());
         std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn an_input_read_late_is_read_at_its_site() {
+        let text = INPUTS.replace(
+            r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]]}"#,
+            r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]],"late":[[0,"GAME.EXE+04BB9","0600"]]}"#,
+        );
+        let file = InputsFile::parse(&text).unwrap();
+        assert_eq!(file.ticks[2].late, [("elapsed".to_owned(), "GAME.EXE+04BB9".to_owned(), vec![6, 0])]);
+        let mut inputs = Inputs::default();
+        inputs.set("elapsed", vec![3, 0]);
+        inputs.set_late(&file.ticks[2].late);
+        assert_eq!(inputs.u16("elapsed"), 3, "the tick's value");
+        assert_eq!(inputs.at_site("GAME.EXE+04BB9").u16("elapsed"), 6, "as that instruction read it");
+        assert_eq!(inputs.at_site("GAME.EXE+00100").u16("elapsed"), 3, "elsewhere, the tick's");
+        inputs.set_late(&[]);
+        assert_eq!(inputs.at_site("GAME.EXE+04BB9").u16("elapsed"), 3, "a late read is the tick's alone");
     }
 
     #[test]

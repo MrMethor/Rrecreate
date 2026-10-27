@@ -14,13 +14,15 @@ pub struct InputsFile {
     pub ticks: Vec<InputsLine>,
 }
 
-/// A tick of the inputs file: the inputs whose values changed (a value holds until it changes), and
-/// the fields a scenario's edit set at this tick (D64), by path, with the original's values.
+/// A tick of the inputs file: the inputs whose values changed (a value holds until it changes), the
+/// inputs its pass read late (D68: name, the reading instruction's ID, the value it read), and the
+/// fields a scenario's edit set at this tick (D64), by path, with the original's values.
 #[derive(Debug, Default, PartialEq)]
 pub struct InputsLine {
     pub tick: u64,
     pub sync: String,
     pub inputs: Vec<(String, Vec<u8>)>,
+    pub late: Vec<(String, String, Vec<u8>)>,
     pub set: Vec<(String, Value)>,
 }
 
@@ -52,10 +54,17 @@ impl InputsFile {
                 let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
                 inputs.push((name.clone(), unhex(pair[1].as_str().unwrap_or_default())?));
             }
+            let mut late = Vec::new();
+            for read in v["late"].as_array().into_iter().flatten() {
+                let i = read[0].as_u64().ok_or("a late read's input")? as usize;
+                let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
+                let site = read[1].as_str().unwrap_or_default().to_owned();
+                late.push((name.clone(), site, unhex(read[2].as_str().unwrap_or_default())?));
+            }
             let set =
                 v["set"].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect();
             let sync = v["sync"].as_str().unwrap_or_default().to_owned();
-            file.ticks.push(InputsLine { tick, sync, inputs, set });
+            file.ticks.push(InputsLine { tick, sync, inputs, late, set });
         }
         Ok(file)
     }

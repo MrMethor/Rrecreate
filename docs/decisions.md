@@ -444,7 +444,7 @@ follows one.
 the page tables), Clockwork drops its decoded code at every run, and the edits are part of the state and its
 hash. rrc runs to the tick, writes, and goes on. Part of M3.
 
-### D60. Input that changes within a tick is flagged; traces, version 4. Accepted 2026-10-23, with the person.
+### D60. Input that changes within a tick is flagged; traces, version 4. Accepted 2026-10-23, with the person; the values: D68.
 A sync point is an instruction before the pass reads its inputs, and input arrives at any cycle: input that
 changes between the two is read by the pass but recorded with the next tick. Recording checks for it: from
 each tick's sync point on, Clockwork compares every read the program makes of an input (its memory; a device
@@ -556,6 +556,26 @@ session again without them gave the same run.
 refuse (a linker map's names). The person deletes Recreate's and the earlier Arena project's folders.
 **Why:** D66: their knowledge confuses the project, and no port uses it any more; the command would only bring
 it back.
+
+### D68. A late read's value is kept, and the port reads it where the original did; traces, version 5. Accepted 2026-10-27, with the person.
+Recording keeps, for each instruction of a pass that read an input after it had changed since the sync point,
+what it read: the trace's `late` entries are `[input, the instruction's ID, the input as that instruction read
+it]` (the tick's value with the bytes it read as it first read each), each reading instruction once a tick. The
+wait's reads stay out, now instruction by instruction (all in the call of the next hit, the last at most 40 of
+the program's instructions before it). `rrc compare` gives them to the port with the tick's inputs, and the
+runtime's `Inputs::at_site(ID)` is the inputs as that instruction read them: the port reads a clock or a key
+there through it, at the place that does what that instruction did. A live platform reads its clock or device
+again at that call. Otherwise traces are version 4's.
+**Why:** the goal is a port as close to the original as can be checked (D39); where that costs too much, the
+closest thing that is still well built for modernizing (the person, 2026-10-27). Arena's world loop is
+CPU-bound and reads its clock again after drawing the frame, every pass (an action every 90 timer ticks, at
++04BB9): no sync point can fix it, and how far the clock moved depends on how long the original's drawing
+took, which a port can't compute. A value per reading instruction is what the original's code saw there; a
+port that reads its clock in the same place through `at_site` stays a clean simulation (a clock read is an
+input), and a modern mode can read a real clock there. Moving the sync point to the read (D60) stays the fix
+where one read comes right after it.
+**Supersedes:** D60's "detect it and document the placement" for the values: detection, the wait rule and the
+placement advice stand.
 
 ### D45. Traces are JSON lines: inputs, changed state, frames and sound per tick. Superseded by D50.
 A header names the items (boundary values and named data, with their IDs and sizes); each tick's line has the
