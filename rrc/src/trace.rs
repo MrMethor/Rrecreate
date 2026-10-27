@@ -56,7 +56,8 @@ pub struct Item {
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ItemVia {
     pub at: String,
-    /// `near` (an offset of `size` bytes from `base`) or `far` (offset, segment: 4 bytes).
+    /// `near` (an offset of `size` bytes from `base`), `far` (offset, segment: 4 bytes) or `segment`
+    /// (a segment alone: 2 bytes).
     pub pointer: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub base: String,
@@ -74,6 +75,7 @@ impl ItemVia {
         let (pointer, base) = match &via.pointer {
             PointerKind::Near { base, .. } => ("near", base.to_string()),
             PointerKind::Far => ("far", String::new()),
+            PointerKind::Segment => ("segment", String::new()),
         };
         ItemVia { at: m.id.to_string(), pointer: pointer.into(), base, size: via.pointer.size(), offset: via.offset }
     }
@@ -82,6 +84,7 @@ impl ItemVia {
         match self.pointer.as_str() {
             "near" => Ok(PointerKind::Near { base: crate::knowledge::parse_id(&self.base)?, size: self.size }),
             "far" => Ok(PointerKind::Far),
+            "segment" => Ok(PointerKind::Segment),
             other => Err(format!("a trace's pointer is near or far, not {other:?}")),
         }
     }

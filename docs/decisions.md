@@ -553,7 +553,7 @@ any language maps by naming its fields. **Not yet:** encodings the types don't h
 packed bits, a flag as a boolean): until the mapping has them, a port serializes such a field the original's
 way (in Rust, a serde attribute on the field).
 
-### D72. Pointers, data on the heap and packed bits in the mapping; traces, version 6. Accepted 2026-10-27.
+### D72. Pointers, data on the heap and packed bits in the mapping; traces, version 6. Accepted 2026-10-27; segments: D80.
 `types.toml` declares pointer types (`[[pointer]]`: `near`, an offset of 2 or 4 bytes from a base ID; `far`,
 an offset then a segment, real mode) and packed bits (`[[bits]]`: fields of bits, each a number or a `bool`);
 `bool` and `far` are built in. A pointer reads as null, as the index of the element it points to (`into` an array
@@ -685,6 +685,15 @@ to the level, the doors and the creatures. A walkthrough answered at once what t
 cell's key). The person: "It's a toolkit, all the tools are meant to be used as they are fit."
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
+
+### D80. A segment alone is a pointer kind. Accepted 2026-10-27.
+`types.toml`'s pointers have a third kind, `segment`, and `segment` is built in: 2 bytes, pointing at
+segment × 16. A mapped item `via` one is the block it starts, `offset` bytes in. Edits write it as
+`SEGMENT:0000`.
+**Why:** DOS programs keep blocks they allocated, and tables in segments of their own, by the segment alone.
+Arena reaches its creature data (8 records of 1054 bytes) through the segment at `ACD.EXE+3CA42`, and its map
+layers through the segment at `+49206`; neither is a far pointer.
+**Supersedes:** nothing; D72 has near and far pointers.
 
 ### D79. Runs feed the analysis: `rrc analyze --session`, and file tracing (`rrc files`) built ahead of M5. Accepted 2026-10-27.
 - **`rrc analyze --session NAME`** runs the session with call counting and adds every function the run

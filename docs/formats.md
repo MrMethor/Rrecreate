@@ -157,7 +157,8 @@ values = { north = 0, east = 1 }
 
 [[pointer]]                     # a pointer type (D72)
 name = "actor_ptr"
-kind = "near"                   # an offset of `size` bytes from `base`; or "far": offset, then segment
+kind = "near"                   # an offset of `size` bytes from `base`; "far": offset, then segment;
+                                # "segment": a segment alone (2 bytes), pointing at its start
 size = 2
 base = "GAME.EXE+20000"         # a near pointer's: the ID its offset 0 is (its segment's start)
 into = "actors"                 # optional: named data, an array: read as the element's index
@@ -171,8 +172,10 @@ fields = [
 ]
 ```
 
-A type's name is unique and isn't a built-in one (the numbers, `bool`, `far`). A far pointer (`far`, or a
-`[[pointer]]` of kind `far`) is 4 bytes, segment × 16 + offset (real mode).
+A type's name is unique and isn't a built-in one (the numbers, `bool`, `far`, `segment`). A far pointer
+(`far`, or a `[[pointer]]` of kind `far`) is 4 bytes, segment × 16 + offset (real mode); a `segment` is 2
+bytes, pointing at segment × 16 (a block DOS allocated, or a table's segment), and `via` one reaches the
+block, with `offset` into it.
 
 ## `knowledge/ticks.toml`: where ticks end and what they read
 

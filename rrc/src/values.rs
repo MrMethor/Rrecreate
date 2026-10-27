@@ -13,9 +13,10 @@ use crate::knowledge::{Bits, Enum, Knowledge, Pointer, Struct, Types, parse_id};
 const PRIMITIVES: [(&str, u32, bool); 6] =
     [("u8", 1, false), ("i8", 1, true), ("u16", 2, false), ("i16", 2, true), ("u32", 4, false), ("i32", 4, true)];
 
-/// The types `types.toml` needn't declare: the numbers, `bool` (a byte: 0 false, anything else true)
-/// and `far` (a far pointer, read as the ID it points to).
-pub const BUILT_IN: [&str; 8] = ["u8", "i8", "u16", "i16", "u32", "i32", "bool", "far"];
+/// The types `types.toml` needn't declare: the numbers, `bool` (a byte: 0 false, anything else true),
+/// `far` (a far pointer, read as the ID it points to) and `segment` (a segment alone, pointing at its
+/// start: a block DOS allocated).
+pub const BUILT_IN: [&str; 9] = ["u8", "i8", "u16", "i16", "u32", "i32", "bool", "far", "segment"];
 
 /// What a type is.
 enum Kind<'a> {
@@ -39,6 +40,7 @@ fn kind<'a>(ty: &'a str, types: &'a Types) -> Result<Kind<'a>, String> {
     match ty {
         "bool" => return Ok(Kind::Bool),
         "far" => return Ok(Kind::Pointer(PointerKind::Far, None)),
+        "segment" => return Ok(Kind::Pointer(PointerKind::Segment, None)),
         _ => {}
     }
     if let Some(s) = types.structs.iter().find(|s| s.name == ty) {
@@ -66,6 +68,8 @@ pub enum PointerKind {
     Near { base: Id, size: u32 },
     /// An offset, then a segment: segment × 16 + offset (real mode).
     Far,
+    /// A segment alone (2 bytes): its start, segment × 16 (real mode).
+    Segment,
 }
 
 /// Where a pointer points: an ID (a near pointer's), or a linear address (a far pointer's).
@@ -83,7 +87,8 @@ impl PointerKind {
                 Ok(PointerKind::Near { base, size: p.size })
             }
             "far" => Ok(PointerKind::Far),
-            kind => Err(format!("pointer {}: kind {kind:?}: near or far", p.name)),
+            "segment" => Ok(PointerKind::Segment),
+            kind => Err(format!("pointer {}: kind {kind:?}: near, far or segment", p.name)),
         }
     }
 
@@ -100,6 +105,7 @@ impl PointerKind {
         match self {
             PointerKind::Near { size, .. } => *size,
             PointerKind::Far => 4,
+            PointerKind::Segment => 2,
         }
     }
 
@@ -113,6 +119,9 @@ impl PointerKind {
             PointerKind::Far => {
                 let word = |at: usize| u32::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
                 Some(Target::Linear(word(2) * 16 + word(0) + past))
+            }
+            PointerKind::Segment => {
+                Some(Target::Linear(u32::from(u16::from_le_bytes([bytes[0], bytes[1]])) * 16 + past))
             }
         }
     }
@@ -233,7 +242,10 @@ fn pointer_value(bytes: &[u8], p: &PointerKind, declared: Option<&Pointer>, r: &
     let Some(target) = p.target(bytes, 0) else { return Value::Null };
     let Some(id) = r.id(&target) else {
         let word = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
-        return json!(format!("{:04X}:{:04X}", word(2), word(0)));
+        return match p {
+            PointerKind::Segment => json!(format!("{:04X}:0000", word(0))),
+            _ => json!(format!("{:04X}:{:04X}", word(2), word(0))),
+        };
     };
     let into = declared.map(|d| d.into.as_str()).filter(|into| !into.is_empty());
     if let Some((array, _, width, count)) = into.and_then(|into| r.array(into))
@@ -327,7 +339,7 @@ fn encode_at(value: &Value, ty: &str, r: &Reader, at: u32, out: &mut Vec<(u32, V
 }
 
 /// A pointer's bytes: null, an index into its array (`into`), or the ID it points to; a far one's,
-/// null or SEGMENT:OFFSET.
+/// null or SEGMENT:OFFSET; a segment's, null or SEGMENT:0000.
 fn pointer_bytes(value: &Value, p: &PointerKind, declared: Option<&Pointer>, r: &Reader) -> Result<Vec<u8>, String> {
     if value.is_null() {
         return Ok(vec![0; p.size() as usize]);
@@ -341,6 +353,14 @@ fn pointer_bytes(value: &Value, p: &PointerKind, declared: Option<&Pointer>, r: 
                 .and_then(|(s, o)| Some((word(s)?, word(o)?)))
                 .ok_or_else(|| format!("a far pointer is SEGMENT:OFFSET in hex, not {text:?}"))?;
             return Ok([offset.to_le_bytes(), segment.to_le_bytes()].concat());
+        }
+        PointerKind::Segment => {
+            let text = value.as_str().ok_or_else(|| format!("a segment is null or SEGMENT:0000, not {value}"))?;
+            let segment = text
+                .strip_suffix(":0000")
+                .and_then(|s| u16::from_str_radix(s, 16).ok())
+                .ok_or_else(|| format!("a segment is SEGMENT:0000 in hex, not {text:?}"))?;
+            return Ok(segment.to_le_bytes().to_vec());
         }
         PointerKind::Near { base, size } => (base, *size),
     };
@@ -638,6 +658,9 @@ mod tests {
         let near = PointerKind::of_type("enemy_ptr", &k.types).unwrap().unwrap();
         assert_eq!(near.target(&[0x06, 0x01], 2), Some(Target::Id("GAME.EXE+20108".parse().unwrap())));
         assert_eq!(PointerKind::Far.target(&[0x10, 0, 0x00, 0x20], 0), Some(Target::Linear(0x20010)));
+        assert_eq!(PointerKind::Segment.target(&[0x4E, 0x6B], 0x41E), Some(Target::Linear(0x6B4E0 + 0x41E)));
+        assert_eq!(decode(&[0x4E, 0x6B], "segment", &r).unwrap(), json!("6B4E:0000"));
+        assert_eq!(bytes(json!("6B4E:0000"), "segment").unwrap(), [0x4E, 0x6B]);
         assert!(PointerKind::of_type("u16", &k.types).is_none());
     }
 

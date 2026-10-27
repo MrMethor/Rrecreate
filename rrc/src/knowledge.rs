@@ -105,7 +105,8 @@ pub struct Types {
 pub struct Pointer {
     pub name: String,
     /// `near`: an offset of `size` bytes (2 or 4) from `base`; `far`: an offset, then a segment (4
-    /// bytes), the address segment × 16 + offset (real mode).
+    /// bytes), the address segment × 16 + offset (real mode); `segment`: a segment alone (2 bytes),
+    /// pointing at its start.
     pub kind: String,
     #[serde(default)]
     pub size: u32,
@@ -492,9 +493,10 @@ impl Knowledge {
                     Err(e) => problems.push(wrong(format!("base: {e}"))),
                 },
                 ("near", n) => problems.push(wrong(format!("a near pointer is 2 or 4 bytes, not {n}"))),
-                ("far", 0 | 4) => {}
+                ("far", 0 | 4) | ("segment", 0 | 2) => {}
                 ("far", n) => problems.push(wrong(format!("a far pointer is 4 bytes, not {n}"))),
-                (kind, _) => problems.push(wrong(format!("kind {kind:?}: near or far"))),
+                ("segment", n) => problems.push(wrong(format!("a segment is 2 bytes, not {n}"))),
+                (kind, _) => problems.push(wrong(format!("kind {kind:?}: near, far or segment"))),
             }
             if !p.into.is_empty() {
                 let array = self.named(&p.into).and_then(|id| self.data.get(id)).map(|d| d.ty.as_str());
@@ -707,7 +709,7 @@ mod tests {
             "type u16: named twice, or a built-in type's name",
             "pointer no_base: a near pointer needs a base (an ID)",
             "pointer wide: a far pointer is 4 bytes, not 2",
-            "pointer odd: kind \"huge\": near or far",
+            "pointer odd: kind \"huge\": near, far or segment",
             "pointer into_number: into: score isn't an array (\"u16\")",
             "bits flags: field a: a bool is one bit",
             "bits flags: field b: overlaps another",
