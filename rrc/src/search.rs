@@ -120,50 +120,20 @@ pub(crate) fn search(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if syncs.is_empty() {
         return Err("rrc search reads memory at ticks: declare a sync point first (knowledge/ticks.toml)".into());
     }
-    let length_ms = (session.seconds * 1000.0) as u64;
-    let first = ticks[0];
-    let (mut clockwork, loaded, from) = open(repo, &session, &syncs, first + 1)?;
-    crate::watch::to_tick(&mut clockwork, first + 1, from.as_ref(), length_ms)?;
-    let places = Places::new(repo, &session);
-    let ranges: Vec<(String, u32)> = match a.value("--at") {
-        Some(at) => {
-            let analysis = crate::analysis::Analysis::load(repo)?;
-            let id = crate::naming::resolve(repo, &k, analysis.as_ref(), at)?;
-            let len: u32 = a.required("--len")?.parse().map_err(|_| "--len is a number of bytes")?;
-            vec![(places.address(&id.to_string())?, len)]
-        }
-        None if crate::places::is_le(repo) => {
-            let objects = places.objects()?.to_vec();
-            let data = objects.iter().filter(|&&(_, _, flags)| flags & 4 == 0);
-            data.map(|&(base, size, _)| (format!("@{base:X}"), size)).collect()
-        }
-        None => {
-            // DS's segment at the first tick, as an offset in the image when it is in it.
-            let regs = clockwork.ask("regs", Value::Null)?;
-            let ds = clockwork::number(&regs, "ds")? as u32;
-            match (ds * 16).checked_sub(clockwork::linear(&loaded, "image")?) {
-                Some(offset) => vec![(format!("+{offset:05X}"), 0x1_0000)],
-                None => vec![(format!("{ds:04X}:0000"), 0x1_0000)],
-            }
-        }
+    // Each range's bytes at each tick: kept from an earlier search, or read now (and kept, D76).
+    let what = match a.value("--at") {
+        Some(at) => format!("{at} {}", a.value("--len").unwrap_or_default()),
+        None => "data".to_owned(),
     };
-    let request: Vec<Value> = ranges.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
-    // Each range's bytes at each tick read: ticks at their sync point (tick t's state is read where
-    // tick t+1's pass starts).
-    let mut memory: BTreeMap<u64, Vec<Vec<u8>>> = BTreeMap::new();
-    let mut now = first;
-    for &t in &ticks {
-        if t > now {
-            let ran = clockwork.ask("run", json!({"sync": "next", "n": t - now, "max_ms": length_ms}))?;
-            if ran.get("sync").is_none() {
-                return Err(format!("{name} ends before tick {t}"));
-            }
-            now = t;
+    let key = crate::memory::key(repo, &session, &syncs, &what)?;
+    let (first, last) = (ticks[0], ticks[ticks.len() - 1]);
+    let (ranges, memory) = match crate::memory::kept(repo, &key, first, last)? {
+        Some(span) => {
+            say("memory", format!("ticks {}-{}, kept by an earlier search", span.first, span.last));
+            (span.ranges.clone(), crate::memory::load(repo, &span, &ticks)?)
         }
-        let read = clockwork.ask("read", json!({ "ranges": request }))?;
-        let bytes = read["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(unhex).unwrap_or_default());
-        memory.insert(t, bytes.collect());
-    }
+        None => read(repo, &a, &k, &session, &ticks, &key)?,
+    };
 
     let names = Names::new(&k, repo, &session)?;
     let mut found: Vec<(String, Vec<(u64, i64)>)> = Vec::new();
@@ -203,6 +173,79 @@ pub(crate) fn search(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         say("...", format!("{} more: add a condition, or --lines N", total - found.len()));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The ranges a search reads (the data segment at the first tick, an LE program's data objects, or the
+/// range asked for) and their bytes at each tick it needs, read from Clockwork: every tick from the first
+/// to the last, kept for later searches, unless that is more than [`crate::memory::MAX_KEPT`] bytes.
+#[allow(clippy::type_complexity)]
+fn read(
+    repo: &Repo,
+    a: &Args,
+    k: &Knowledge,
+    session: &Session,
+    ticks: &[u64],
+    key: &str,
+) -> Result<(Vec<(String, u32)>, BTreeMap<u64, Vec<Vec<u8>>>), String> {
+    let syncs = sync_points(k)?;
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let (first, last) = (ticks[0], ticks[ticks.len() - 1]);
+    // Tick t's state is memory at its sync point, where tick t+1's pass starts.
+    let (mut clockwork, loaded, from) = open(repo, session, &syncs, first + 1)?;
+    crate::watch::to_tick(&mut clockwork, first + 1, from.as_ref(), length_ms)?;
+    let places = Places::new(repo, session);
+    let ranges: Vec<(String, u32)> = match a.value("--at") {
+        Some(at) => {
+            let analysis = crate::analysis::Analysis::load(repo)?;
+            let id = crate::naming::resolve(repo, k, analysis.as_ref(), at)?;
+            let len: u32 = a.required("--len")?.parse().map_err(|_| "--len is a number of bytes")?;
+            vec![(places.address(&id.to_string())?, len)]
+        }
+        None if crate::places::is_le(repo) => {
+            let objects = places.objects()?.to_vec();
+            let data = objects.iter().filter(|&&(_, _, flags)| flags & 4 == 0);
+            data.map(|&(base, size, _)| (format!("@{base:X}"), size)).collect()
+        }
+        None => {
+            // DS's segment at the first tick, as an offset in the image when it is in it.
+            let regs = clockwork.ask("regs", Value::Null)?;
+            let ds = clockwork::number(&regs, "ds")? as u32;
+            match (ds * 16).checked_sub(clockwork::linear(&loaded, "image")?) {
+                Some(offset) => vec![(format!("+{offset:05X}"), 0x1_0000)],
+                None => vec![(format!("{ds:04X}:0000"), 0x1_0000)],
+            }
+        }
+    };
+    let request: Vec<Value> = ranges.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
+    let bytes: u64 = ranges.iter().map(|(_, len)| u64::from(*len)).sum::<u64>() * (last - first + 1);
+    let keep = bytes <= crate::memory::MAX_KEPT;
+    let read: Vec<u64> = if keep { (first..=last).collect() } else { ticks.to_vec() };
+    let mut span: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
+    let mut memory: BTreeMap<u64, Vec<Vec<u8>>> = BTreeMap::new();
+    let mut now = first;
+    for t in read {
+        if t > now {
+            let ran = clockwork.ask("run", json!({"sync": "next", "n": t - now, "max_ms": length_ms}))?;
+            if ran.get("sync").is_none() {
+                return Err(format!("the session ends before tick {t}"));
+            }
+            now = t;
+        }
+        let answer = clockwork.ask("read", json!({ "ranges": request }))?;
+        let tick: Vec<Option<Vec<u8>>> =
+            answer["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(unhex)).collect();
+        if ticks.contains(&t) {
+            memory.insert(t, tick.iter().map(|m| m.clone().unwrap_or_default()).collect());
+        }
+        if keep {
+            span.push(tick);
+        }
+    }
+    if keep {
+        crate::memory::keep(repo, key, first, &ranges, &span)?;
+        say("memory", format!("ticks {first}-{last}, read and kept: searches within them run no emulator"));
+    }
+    Ok((ranges, memory))
 }
 
 #[cfg(test)]

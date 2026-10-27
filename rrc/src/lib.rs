@@ -13,6 +13,7 @@ pub mod frames;
 pub mod game;
 pub mod knowledge;
 pub mod mapping;
+mod memory;
 mod naming;
 pub mod places;
 pub mod quirks;

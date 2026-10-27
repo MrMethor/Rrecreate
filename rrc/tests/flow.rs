@@ -204,6 +204,13 @@ fn a_session_is_traced_tick_by_tick() {
 }
 
 #[test]
+fn clockwork_says_what_decides_how_it_behaves() {
+    // Runs and snapshots are kept by Clockwork's sources, not its program's bytes (D76).
+    let source = rrc::clockwork::source(&clockwork()).unwrap();
+    assert!(source.starts_with("source ") && source.len() == 7 + 64, "{source}");
+}
+
+#[test]
 fn quirk_candidates_are_found_and_registered() {
     let (dir, rrc) = setup("quirks", &OVERRUN);
     rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]);
@@ -570,6 +577,18 @@ fn a_port_matches_the_original_tick_by_tick() {
     // while right is.
     let found = rrc.ok(&["search", "play", "same:2-30", "less:40-130", "more:160-200", "--type", "i16"]);
     assert!(found.contains("found     player_x  2: 2560, 30: 2560, 40: "), "{found}");
+    assert!(found.contains("memory    ticks 2-200, read and kept"), "{found}");
+    // Another search within those ticks reads the kept memory (D76): the same places, no emulator.
+    let again = rrc.ok(&["search", "play", "same:2-30", "less:40-130", "more:160-200", "--type", "i16"]);
+    assert!(again.contains("memory    ticks 2-200, kept by an earlier search"), "{again}");
+    let lines = |text: &str| text.lines().filter(|l| l.starts_with("found") || l.starts_with("search")).count();
+    assert!(
+        lines(&again) > 1
+            && found
+                .lines()
+                .filter(|l| !l.starts_with("memory"))
+                .eq(again.lines().filter(|l| !l.starts_with("memory")))
+    );
     assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
     // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value; a quirk
     // registered at that code is named (D74).

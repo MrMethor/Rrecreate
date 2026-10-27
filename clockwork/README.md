@@ -74,6 +74,9 @@ file), following its control flow.
 
 ## Driving Clockwork from a tool
 
+`clockwork --source` prints the hash of the sources it was built from (its crates, the workspace's manifest
+and lock file, the compiler's version): what decides how it behaves, which tools keep runs and snapshots by.
+
 `clockwork serve` takes JSON requests, one per line, on stdin (or a local TCP port with `--port N`) and answers
 each on one line. `load` takes `clockwork run`'s arguments; then a tool can run for a time or to a sync point's
 next hit, read and write memory, take and restore snapshots, and watch memory: each read or write of the

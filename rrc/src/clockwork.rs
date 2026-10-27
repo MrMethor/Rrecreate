@@ -219,6 +219,32 @@ pub fn find(local: &Local) -> Result<PathBuf, String> {
 }
 
 /// `clockwork --version`.
+/// What decides how the Clockwork program `exe` behaves (D76): the hash of its sources (`clockwork
+/// --source`), so a rebuild of the same sources keeps the runs and snapshots kept by it; from a
+/// Clockwork that doesn't say, the hash of the program itself.
+pub fn source(exe: &Path) -> Result<String, String> {
+    static KNOWN: std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, String>> =
+        std::sync::Mutex::new(std::collections::BTreeMap::new());
+    if let Some(known) = KNOWN.lock().ok().and_then(|known| known.get(exe).cloned()) {
+        return Ok(known);
+    }
+    let said = Command::new(exe)
+        .arg("--source")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()));
+    let source = match said {
+        Some(hash) => format!("source {hash}"),
+        None => crate::cache::sha256_file(exe)?,
+    };
+    if let Ok(mut known) = KNOWN.lock() {
+        known.insert(exe.to_owned(), source.clone());
+    }
+    Ok(source)
+}
+
 pub fn version(exe: &Path) -> Option<String> {
     let output = Command::new(exe).arg("--version").output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);

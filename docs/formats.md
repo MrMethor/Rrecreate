@@ -94,8 +94,11 @@ what an earlier run made from given inputs:
   functions' offsets;
 - `index/snapshots/<key>`: the Clockwork snapshots `rrc record` kept of a session (`[[snapshot]]` with `tick`,
   `cycle`, `ms` and the snapshot's `hash`), keyed by what makes the run and its ticks the same: Clockwork's
-  program (its hash), the game's files, the program and its options, the session's options and input (its
-  file's hash), and the sync points (D51);
+  sources (`clockwork --source`; from one that doesn't say, its program's hash: D76), the game's files, the
+  program and its options, the session's options and input (its file's hash), and the sync points (D51);
+- `index/memory/<key>`: the memory `rrc search` read at every tick of a span (`[[span]]` with `first`, `last`,
+  the `ranges` read and the memory's `hash`: the first tick's bytes, then each tick's changes, deflated), keyed
+  by the session's run, its sync points and the range asked for (D76);
 - `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, keyed by the build of `rrc` that gave
   it (its program's hash), the command, its arguments, the session's run (as above, without the sync points),
   the knowledge files and the analysis;

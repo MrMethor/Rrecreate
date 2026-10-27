@@ -184,6 +184,7 @@ dependencies = [
  "midir",
  "minifb",
  "serde_json",
+ "sha2",
  "tinyaudio",
 ]
 

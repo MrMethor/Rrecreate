@@ -219,7 +219,9 @@ rrc search first-level less:64-76 more:123-130 same:78-88 --type u16
 
 `rrc trace --item` gives the ticks each key is held; a position changes while walking and stays put while
 turning or standing, an angle goes one way turning left and the other turning right. Each condition narrows
-the places; watch the few left (`rrc watch`) to see the code that keeps them, and name them.
+the places; watch the few left (`rrc watch`) to see the code that keeps them, and name them. The first search
+reads every tick of its span and keeps it (D76): searches within those ticks answer at once, so ask about a
+wide span first.
 
 Then map it: `mapping.toml` names each field of the port's state and the original's item it is
 (`docs/formats.md`); record again, so the trace follows every mapped item. Then name the port's program in

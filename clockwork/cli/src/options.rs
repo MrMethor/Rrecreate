@@ -18,6 +18,8 @@ usage:
   clockwork gdb [--port N] <game-dir> <program> [options]
                                                  the program stopped at its entry, for gdb or
                                                  Ghidra's debugger on 127.0.0.1:N (1234; gdb.rs)
+  clockwork --version | --source                 its version; the hash of its sources (what decides
+                                                 how it behaves), which tools keep runs by
   clockwork listing <image> --entry OFFSET --segment SEG
   clockwork listing <file.elf> --entry LINEAR
                                                  a function's code from a load image (hex image

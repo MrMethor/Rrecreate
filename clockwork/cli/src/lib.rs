@@ -42,6 +42,11 @@ pub fn main() -> ExitCode {
             println!("clockwork {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
+        // What decides how this build behaves (build.rs): tools keep runs and snapshots by it (D76).
+        Some("--source") => {
+            println!("{}", env!("CLOCKWORK_SOURCE"));
+            Ok(ExitCode::SUCCESS)
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(1);

@@ -405,7 +405,7 @@ emulator (D26), so the original's pictures must be kept; the person chose to kee
 request. Measured on the Wolf3D port's pushwall: 1860 pictures, about 16 MB, recording 48 s instead of 44.
 **Supersedes:** D50.
 
-### D51. Questions start from the session's snapshots; whole-session answers are kept. Accepted 2026-10-21.
+### D51. Questions start from the session's snapshots; whole-session answers are kept. Accepted 2026-10-21; kept by Clockwork's sources: D76.
 `rrc record` keeps a Clockwork snapshot at the first tick after every 10 emulated seconds, in the cache, keyed
 by Clockwork's program (its hash, not its version: builds share one), the game's files, the program, the
 session's options and input, and the sync points (which number the ticks and are in the snapshot, with their
@@ -582,6 +582,19 @@ put while they stood); with ticks and the session's inputs, the conditions come 
 `cell` session, the player's position (changed while walking, the same while turning or standing) is 43 places
 of 64 KB, 24 with more spans, and a watch on them shows the copy `world_loop` makes; the facing angle (less while
 turning left, more while turning right) is one place among 6.
+
+### D76. Runs are kept by Clockwork's sources; a search keeps each tick's memory. Accepted 2026-10-27.
+A session's run (its snapshots, its places, kept answers) is kept by the hash of Clockwork's sources, not of
+its program: `clockwork --source` prints it, made when Clockwork is built from its crates' sources and
+manifests, the workspace's manifest and lock file and the compiler's version, line endings left out (a
+Clockwork that doesn't say is kept by its program's hash, as before). `rrc search` reads every tick from the
+first to the last its conditions name, not only those, and keeps them in the cache (the first tick's bytes,
+then each tick's changes, deflated; up to 256 MB read): a later search within them runs no emulator.
+**Why:** any rebuild changes the program's bytes, a rebuild of the same sources too, so every rebuild set
+aside all snapshots and questions replayed sessions from power-on: on Arena's `cell`, a search ran the
+330-second walkthrough again, 1m40s each. The sources decide how Clockwork behaves; a change to them still sets
+the old snapshots aside. Narrowing state down takes several searches over the same ticks, and the memory of
+a span is small (64 KB a tick, little of it changing).
 
 ### D63. The comparison reports the first divergence and who wrote it; paired checkpoints. Accepted 2026-10-26.
 `rrc compare SESSION` reads the original's trace from the cache, runs the port and compares every mapped field

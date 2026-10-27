@@ -3,7 +3,7 @@
 //! 10 s of emulated time (`RRC_SNAPSHOT_MS` changes that); `rrc watch` and `rrc inputs` start from
 //! the last one before the tick they begin at.
 //!
-//! They are found by what makes the run and its ticks the same: Clockwork's program, the game's
+//! They are found by what makes the run and its ticks the same: Clockwork's sources (D76), the game's
 //! files, the session's input and options, and the sync points. A snapshot holds the machine with
 //! its sync points' counts and the input still to come, so a run from it goes on as the recording
 //! did.
@@ -41,10 +41,10 @@ struct Index {
     snapshots: Vec<Taken>,
 }
 
-/// What makes a session's run the same: Clockwork's program, the game's files, the session's input
-/// and options (as a hash).
+/// What makes a session's run the same: Clockwork's sources (not its program's bytes, which any
+/// rebuild changes: D76), the game's files, the session's input and options (as a hash).
 pub fn run_identity(repo: &Repo, session: &Session) -> Result<String, String> {
-    let exe = sha256_file(&clockwork::find(&repo.local)?)?;
+    let exe = clockwork::source(&clockwork::find(&repo.local)?)?;
     let files = crate::game::hash_folder(repo.game_dir()?, &repo.state()?)?;
     let input = |name: &Option<String>| -> Result<String, String> {
         match name {
