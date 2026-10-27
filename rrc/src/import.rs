@@ -1,6 +1,8 @@
 //! `rrc import recreate DIR`: Recreate's knowledge files (`games/<game>/knowledge/*.tsv` there) as
 //! this port's. Each item keeps its provenance, prefixed `recreate:`; nothing replaces a decision
-//! the port has, and a name the port uses for another item is left out.
+//! the port has, and a name the port uses for another item is left out. A name with characters a
+//! name can't have (OpenTESArena's `Thieving.PickpocketMaxGold`) comes in with `_` for each, its
+//! original in the evidence.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -34,6 +36,9 @@ pub(crate) fn import(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if report.left_out > 0 {
         say("left out", format!("{} by provenance (--without)", report.left_out));
     }
+    if let Some((from, to)) = report.renamed.first() {
+        say("renamed", format!("{} names a name can't be ({from} as {to})", report.renamed.len()));
+    }
     for conflict in report.conflicts.iter().take(10) {
         say("kept", conflict);
     }
@@ -52,6 +57,8 @@ pub struct Report {
     pub left_out: usize,
     /// Items not taken because the port decided otherwise.
     pub conflicts: Vec<String>,
+    /// Names taken with `_` for characters a name can't have: (theirs, ours).
+    pub renamed: Vec<(String, String)>,
 }
 
 /// Adds the knowledge in Recreate's `functions.tsv`, `globals.tsv` and `types.tsv` in `dir` to `k`.
@@ -139,12 +146,26 @@ fn decision(
         "" => None,
         c => Some(c.parse().map_err(|_| format!("{name}: bad confidence {c:?}"))?),
     };
-    Ok(Some(Decision {
-        name: name.to_owned(),
-        provenance: format!("recreate:{provenance}"),
-        confidence,
-        evidence: evidence.to_owned(),
-    }))
+    let ours = as_name(name);
+    let evidence = if ours == name {
+        evidence.to_owned()
+    } else {
+        report.renamed.push((name.to_owned(), ours.clone()));
+        let named = format!("named {name} there");
+        if evidence.is_empty() { named } else { format!("{named}; {evidence}") }
+    };
+    Ok(Some(Decision { name: ours, provenance: format!("recreate:{provenance}"), confidence, evidence }))
+}
+
+/// `name` as a name: `_` for each character a name can't have, and before a first one that can't
+/// start it.
+fn as_name(name: &str) -> String {
+    let mut ours: String =
+        name.chars().map(|c| if c.is_ascii_alphanumeric() || "_@$".contains(c) { c } else { '_' }).collect();
+    if !ours.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        ours.insert(0, '_');
+    }
+    ours
 }
 
 /// Why `name` for `id` can't be taken, if it can't.
@@ -176,7 +197,8 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.join("globals.tsv"),
-            "# offset\tname\tsize\ttype\tprovenance\tconfidence\n209F0\telapsed\t2\t\thuman\t\n",
+            "# offset\tname\tsize\ttype\tprovenance\tconfidence\n209F0\telapsed\t2\t\thuman\t\n\
+             20A00\tThieving.MaxGold\t\t\tprior-art:x\t0.8\n",
         )
         .unwrap();
         let mut k = Knowledge::default();
@@ -185,7 +207,10 @@ mod tests {
         k.functions.insert("GAME.EXE+00400".parse().unwrap(), mine);
         let report = from_recreate(&mut k, &dir, "GAME.EXE", &BTreeSet::from(["transfer:src"])).unwrap();
         std::fs::remove_dir_all(&dir).ok();
-        assert_eq!((report.functions, report.data, report.left_out), (1, 1, 1));
+        assert_eq!((report.functions, report.data, report.left_out), (1, 2, 1));
+        let gold = &k.data[&"GAME.EXE+20A00".parse().unwrap()].decision;
+        assert_eq!((gold.name.as_str(), gold.evidence.as_str()), ("Thieving_MaxGold", "named Thieving.MaxGold there"));
+        assert_eq!(as_name("3d.x"), "_3d_x");
         assert_eq!(report.conflicts, ["GAME.EXE+00400: the port's Mine over Taken"]);
         let think = &k.functions[&"GAME.EXE+00300".parse().unwrap()];
         assert_eq!(think.provenance, "recreate:agent:x");
