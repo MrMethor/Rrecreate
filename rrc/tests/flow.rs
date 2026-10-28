@@ -165,10 +165,13 @@ fn a_session_is_traced_tick_by_tick() {
     let recorded = rrc.ok(&["record", "short"]);
     assert!(recorded.contains("ticks"), "{recorded}");
     assert!(rrc.ok(&["record", "short"]).contains("same      as the trace recorded before"), "deterministic");
-    // Reading more is another trace of the same run.
+    // Reading more is another trace of the same run, from the memory kept with the last (D92).
     rrc.ok(&["data", "T.COM+00005", "delay", "--size", "2"]);
     let again = rrc.ok(&["record", "short"]);
     assert!(again.contains("same      run as before; the trace differs"), "{again}");
+    assert!(again.contains("from      the run recorded before"), "no emulator: {again}");
+    let run = rrc.ok(&["record", "short", "--run"]);
+    assert!(run.contains("same      as the trace recorded before"), "what a run reads: {run}");
     // Memory at a tick, named or not, without recording (D87).
     let peeked = rrc.ok(&["peek", "short", "--tick", "2", "count", "T.COM+0000F", "--len", "1"]);
     assert!(peeked.contains("tick      2: the state at its sync point"), "{peeked}");
@@ -616,10 +619,11 @@ fn a_port_matches_the_original_tick_by_tick() {
     // while right is.
     let found = rrc.ok(&["search", "play", "same:2-30", "less:40-130", "more:160-200", "--type", "i16"]);
     assert!(found.contains("found     player_x  2: 2560, 30: 2560, 40: "), "{found}");
-    assert!(found.contains("memory    ticks 2-200, read and kept"), "{found}");
-    // Another search within those ticks reads the kept memory (D76): the same places, no emulator.
+    // The recording kept each tick's data segment (D92), so the search runs no emulator.
+    assert!(found.contains("memory    ticks 1-209, kept (by the recording or a search)"), "{found}");
+    // Another search within those ticks reads the kept memory too (D76): the same places.
     let again = rrc.ok(&["search", "play", "same:2-30", "less:40-130", "more:160-200", "--type", "i16"]);
-    assert!(again.contains("memory    ticks 2-200, kept by an earlier search"), "{again}");
+    assert!(again.contains("memory    ticks 1-209, kept"), "{again}");
     let lines = |text: &str| text.lines().filter(|l| l.starts_with("found") || l.starts_with("search")).count();
     assert!(
         lines(&again) > 1

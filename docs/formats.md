@@ -279,6 +279,7 @@ options = []                    # optional: more `clockwork run` options (rrc se
 
 [trace]                         # written by rrc record
 hash = "6e7f…"                  # the trace, in the cache
+memory = "2b9a…"                # the data segment at every tick of its run, in the cache (D92)
 run = "31ff…"                   # the run: what the machine did, whatever the knowledge read (D60)
 ticks = 2770
 clockwork = "0.1.0"             # the Clockwork that recorded it
@@ -372,7 +373,8 @@ run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK
 and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is
 shown when it fails. Its environment has the person's copy of the game (D82): `RRC_GAME`, the game's folder,
 and `RRC_PROGRAM`, the program as the analysis unpacked it (an MZ file; its load image is what IDs' offsets
-count in), for the static data the port reads (`rrc_runtime::original`). The state at tick t is what the original holds at its t-th sync point hit; a step with tick
+count in), for the static data the port reads (`rrc_runtime::original`); run without them (its own tests), the
+runtime finds both from the port repository it runs in (D91). The state at tick t is what the original holds at its t-th sync point hit; a step with tick
 t's inputs makes tick t+1's. The port runs from the first tick (1, or the transplant's or the resumed state's)
 to the inputs' last (or `--to`'s), writing its state at each tick before stepping. All files are JSON; the
 inputs and the trace are JSON lines.

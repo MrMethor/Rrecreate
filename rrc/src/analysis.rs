@@ -125,7 +125,10 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                     signed.insert(id, s.text());
                 }
             }
-            let carry = signed.values().filter(|s| s.ends_with(" CF")).count();
+            let carry = signed
+                .values()
+                .filter(|s| s.rsplit(' ').next().is_some_and(|o| o.split('+').any(|r| r == "CF")))
+                .count();
             say(
                 "contracts",
                 format!(
@@ -431,6 +434,9 @@ pub struct Analysis {
     pub refs: Vec<(Id, Id, String)>,
     /// Ghidra's memory blocks (the program's segments): image offset of the start, and size.
     pub blocks: Vec<(u32, u32)>,
+    /// A 16-bit program's data segment: the segment (as Ghidra numbers them) most of its data
+    /// references use, which `DS:OFF` names (D90).
+    pub data_segment: Option<u64>,
     /// Disassembly and decompiled code, by function.
     pub code: BTreeMap<Id, (String, Option<String>)>,
 }
@@ -464,6 +470,7 @@ impl Analysis {
         let layout = analysis.layout();
         let id = |address: &Value| layout.id_at(module, address["linear"].as_u64()?);
         let packs = Packs::load()?;
+        let mut segments: BTreeMap<u64, usize> = BTreeMap::new();
         for r in &records {
             match r["record"].as_str() {
                 Some("function") => {
@@ -490,8 +497,15 @@ impl Analysis {
                     }
                 }
                 Some("ref") => {
+                    let kind = r["kind"].as_str().unwrap_or("data");
                     if let (Some(from), Some(to)) = (id(&r["from"]), id(&r["to"])) {
-                        analysis.refs.push((from, to, r["kind"].as_str().unwrap_or("data").to_owned()));
+                        analysis.refs.push((from, to, kind.to_owned()));
+                    }
+                    let segment = r["to"]["text"].as_str().and_then(|t| t.split_once(':'));
+                    if let Some(segment) = segment.and_then(|(s, _)| u64::from_str_radix(s, 16).ok())
+                        && kind != "data"
+                    {
+                        *segments.entry(segment).or_default() += 1;
                     }
                 }
                 Some("block") => {
@@ -506,6 +520,10 @@ impl Analysis {
                 }
                 _ => {}
             }
+        }
+        if objects.is_empty() {
+            analysis.data_segment =
+                segments.iter().max_by_key(|&(segment, n)| (*n, *segment)).map(|(segment, _)| *segment);
         }
         // A function exported again (an addition's caller) lists its calls and references twice.
         analysis.calls.sort();
@@ -648,6 +666,18 @@ impl Analysis {
         out
     }
 
+    /// The ID of offset `offset` in the data segment (`DS:OFF`), if the program has one.
+    pub fn ds_id(&self, module: &str, offset: u32) -> Option<Id> {
+        self.layout().id_at(module, self.data_segment? * 16 + u64::from(offset))
+    }
+
+    /// Where `id` is in the data segment (`DS:OFF`'s offset), if it is in it.
+    pub fn ds_offset(&self, id: &Id) -> Option<u32> {
+        let linear = self.layout().linear(id)?;
+        let offset = linear.checked_sub(self.data_segment? * 16)?;
+        (offset <= 0xFFFF).then_some(offset as u32)
+    }
+
     /// The ID of one of Ghidra's addresses: `SSSS:OOOO` in real mode, a linear `LLLLLLLL` in a flat
     /// program.
     pub fn id_of(&self, module: &str, address: &str) -> Option<Id> {
@@ -736,6 +766,10 @@ mod tests {
         assert_eq!(a.containing(&id("GAME.EXE+00042")).map(|f| f.0), Some(&id("GAME.EXE+00010")), "its second range");
         assert_eq!(a.containing(&id("GAME.EXE+00030")), None);
         assert_eq!(a.with_ids("1000:0040  RETF\n", "GAME.EXE"), "GAME.EXE+00040  RETF\n");
+        // The data segment is the one the data references use: DS:0010 is 2000:0010.
+        assert_eq!(a.data_segment, Some(0x2000));
+        let at = a.ds_id("GAME.EXE", 0x10).unwrap();
+        assert_eq!((a.id_of("GAME.EXE", "2000:0010"), a.ds_offset(&at)), (Some(at.clone()), Some(0x10)));
         let ftol = &a.functions[&id("GAME.EXE+00040")];
         assert_eq!(ftol.library, Some(("F_FTOL@".into(), "borland-c++-1991-medium".into())));
         assert_eq!(a.calls, [(id("GAME.EXE+00010"), id("GAME.EXE+00018"), id("GAME.EXE+00040"))]);

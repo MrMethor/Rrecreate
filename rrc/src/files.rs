@@ -137,10 +137,10 @@ pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 }
 
 /// The session's file accesses, and emulated milliseconds per cycle: from the cache, or a run of the
-/// session with file tracing (kept by the run and the build of `rrc`).
+/// session with file tracing (kept by the run).
 fn traced(repo: &Repo, session: &Session) -> Result<(Vec<Access>, f64), String> {
     let cache = Cache::open(&repo.local)?;
-    let key = crate::snapshots::result_key(repo, session, &["files 2".to_owned()])?;
+    let key = crate::snapshots::run_key(repo, session, "files 3")?;
     if let Some(text) = cache.recall("results", &key)
         && let Ok(kept) = serde_json::from_str::<Value>(&text)
         && let Ok(accesses) = serde_json::from_value::<Vec<Access>>(kept["accesses"].clone())

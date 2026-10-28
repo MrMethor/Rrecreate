@@ -686,6 +686,60 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D92. A recording keeps its data segment at every tick; naming more of it records again without a run. Accepted 2026-10-28.
+`rrc record` keeps the data segment (an LE program's data objects) at every tick in the cache, as `rrc search`
+keeps it (D76), and the session's file names it (`[trace] memory`). Recording again when items were only added
+to the state, each in that memory (not read through a pointer, not a device), builds the trace from the last
+one and the kept memory: no emulator (`from      the run recorded before`). `--run` runs the session anyway,
+and recording with nothing added runs it always: that checks the run is the same. A search after a recording
+reads its memory. What a run gives Clockwork's probes, kept as it came (contract inference, file tracing), is
+kept by the run alone (the session's run identity, D76), not by rrc's build, the knowledge or the analysis.
+**Why:** on Arena (M4), every item the port needed in a trace meant recording the session again, 4 to 8
+minutes for values the last run had already passed through; a new name or a rebuilt rrc also made `rrc analyze
+--session` run the session again for its contracts, 10 minutes each time, for data only the run decides.
+Measured on Arena's `cell` (650 ticks, 465 emulated seconds): a recording takes about 5 minutes; naming one
+more byte of the data segment and recording again took 2 seconds and gives the trace a run gives; and after
+a rebuilt rrc, `rrc analyze --session cell` took 6 minutes instead of 21.
+
+### D91. A port finds the original program and the game as `rrc` would give them. Accepted 2026-10-28.
+Run outside `rrc` (its own `cargo test`), a port's `rrc_runtime::original` finds the port repository above
+the current folder, the program in its analysis (`.rrc/analysis.toml`) in its cache (`RRC_CACHE`,
+`rrc.local.toml`'s `cache`, or the user's), and the game's folder in `rrc.local.toml`. `RRC_PROGRAM` and
+`RRC_GAME`, which `rrc` sets when it runs the port, come first.
+**Why:** the Arena port's tests that read the program's tables (the fists' damage, the hit locations, the
+months) needed `RRC_PROGRAM` set by hand to a path in the cache, a shell line in its notes. Its tests now pass
+with nothing set.
+
+### D90. `DS:OFF` names a place in the data segment. Accepted 2026-10-28.
+Every command that takes an ID takes `DS:OFF` too: an offset, in hex, in the program's data segment, the
+segment most of Ghidra's data references use (Arena's `DS:7A46` is `ACD.EXE+43446`). `rrc show` says a data
+item's `DS:` address. The naming commands (`name`, `data`, `sync`, `input`, `forget`) take Ghidra's addresses
+and names as well (`4BA0:7A46`, `DAT_4ba0_7a46`), as the questions do.
+**Why:** a 16-bit program's code names its data by offsets in DS (`mov ax,[7A46h]`, Ghidra's `DAT_4ba0_7a46`),
+and IDs count in the image: on Arena the agent did the sum (DS = 3BA0h, so +3BA00) by hand, and named a wrong
+address twice. Ghidra's references already say which segment DS is.
+
+### D89. A near call through memory stays in its code segment. Accepted 2026-10-28.
+`rrc analyze`'s export script moves the computed target of each near call that Ghidra put in another segment
+(`call word ptr [si+8]`, through a table of handlers) into the caller's segment at the same offset, makes a
+function there, and removes a function Ghidra made at the wrong target when nothing else refers to it.
+**Why:** Ghidra's real-mode analysis reads a handler table's words as offsets in another segment. Arena's
+button bar (`+25AEE`) called `+20380` and `+20486`, which are `+257A0` and `+258A6`: a near call can't leave
+its segment. Measured on Arena: 18 near calls moved and 6 functions at wrong targets removed; `+25AEE`
+calls `+257A0` and `+258A6`.
+
+### D88. A function's results are all its callers used: one is its return, several a structure. Accepted 2026-10-28.
+The contracts `rrc analyze --session` gives Ghidra (D81) now return every result a function's callers used:
+`AX` (a byte seen changing as its word), `EAX`, `BX`, `CX`, `DX`, `SI`, `DI`, `ES`, the carry and the zero
+flags, and `DX:AX` alone as a long. One is the function's return value, as before; several are a structure
+of them (`results_SSSS_OOOO`, fields `ax`, `bx`, `cf`, `zf`) stored in those registers, so a caller's code reads
+each (`rVar4 = test_position(...); if (!rVar4.zf) { if (rVar4.cf) ...`). The direction flag isn't a result.
+**Why:** D81 returned one, AX before the carry, so a function that answers in both lost the carry in its
+callers' code, and no zero flag ever showed. Arena's `test_position` answers in AX, BX, the carry and the zero
+flag; `collide` read `bVar3 = false; test_position(...); if (bVar3)`. In `cell`'s run, 26 functions return a
+register and the carry; 75 have the carry among their results (55 had it as their only one).
+**Supersedes:** D81's one result (the rest of D81 stands).
+
 ### D87. `rrc peek`: memory at a tick, without naming or recording. Accepted 2026-10-28.
 `rrc peek SESSION --tick N WHAT...` runs from the last snapshot before tick N to its sync point and reads each
 item there, named or not: as its type reads it, else as a number or bytes.
@@ -741,7 +795,7 @@ port's source. A port played without `rrc` (M6) will need the unpacking itself.
 gives; ACD.EXE is packed with PKLITE, so the table is only in the unpacked image. Copying it into the port would
 put the game's data in a repository (D78 keeps extracted data out of them), and every port has such tables.
 
-### D81. Contracts from a run give Ghidra register parameters and results. Accepted 2026-10-27.
+### D81. Contracts from a run give Ghidra register parameters and results. Accepted 2026-10-27; several results: D88.
 `rrc analyze --session NAME` runs the session once with Clockwork's contract inference (kept by the run) and
 gives Ghidra each called function's contract before decompiling: the registers it read before writing them
 become register parameters, beside the stack ones Ghidra found, and the result its callers used (`AX`, `DX:AX`,

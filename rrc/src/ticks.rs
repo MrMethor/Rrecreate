@@ -4,7 +4,7 @@
 use std::process::ExitCode;
 
 use crate::args::Args;
-use crate::knowledge::{DEVICES, Input, Knowledge, Sync, parse_id};
+use crate::knowledge::{DEVICES, Input, Knowledge, Sync};
 use crate::naming::{DECISION_OPTIONS, decision};
 use crate::repo::Repo;
 use crate::say;
@@ -41,7 +41,7 @@ pub(crate) fn sync(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::SUCCESS);
     };
-    let id = parse_id(id)?;
+    let id = crate::naming::place(repo, id)?;
     let d = decision(&a, name)?;
     let when_changed = list(a.value("--when-changed"));
     for item in &when_changed {
@@ -108,7 +108,7 @@ pub(crate) fn input(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let (at, device) = if DEVICES.iter().any(|(device, _)| device == what) {
         (String::new(), what.clone())
     } else {
-        (parse_id(what)?.to_string(), String::new())
+        (crate::naming::place(repo, what)?.to_string(), String::new())
     };
     // Named data there gives its size.
     let size = match (size, k.data.iter().find(|(id, _)| id.to_string() == at)) {

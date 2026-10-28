@@ -129,7 +129,10 @@ pub(crate) fn search(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let (first, last) = (ticks[0], ticks[ticks.len() - 1]);
     let (ranges, memory) = match crate::memory::kept(repo, &key, first, last)? {
         Some(span) => {
-            say("memory", format!("ticks {}-{}, kept by an earlier search", span.first, span.last));
+            say(
+                "memory",
+                format!("ticks {}-{}, kept (by the recording or a search): no emulator", span.first, span.last),
+            );
             (span.ranges.clone(), crate::memory::load(repo, &span, &ticks)?)
         }
         None => read(repo, &a, &k, &session, &ticks, &key)?,

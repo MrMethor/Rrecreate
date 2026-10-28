@@ -108,7 +108,7 @@ pub(crate) fn name(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let [id, name] = a.positionals(2, 2, "name ID NAME [--evidence TEXT] [--confidence X] [--by WHO]")? else {
         unreachable!()
     };
-    let id = parse_id(id)?;
+    let id = place(repo, id)?;
     let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if k.data.contains_key(&id) {
@@ -127,9 +127,9 @@ pub(crate) fn forget(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let [what] = a.positionals(1, 1, "forget ID|NAME")? else { unreachable!() };
     let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
-    let id = match parse_id(what) {
-        Ok(id) => id,
-        Err(_) => k.named(what).cloned().ok_or_else(|| format!("nothing is named {what}"))?,
+    let id = match k.named(what) {
+        Some(id) => id.clone(),
+        None => place(repo, what)?,
     };
     let (kind, name) = if let Some(d) = k.functions.remove(&id) {
         ("function", d.name)
@@ -148,7 +148,7 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &options, &[])?;
     let usage = "data ID NAME [--size N] [--type T] [--evidence TEXT] [--confidence X] [--by WHO]";
     let [id, name] = a.positionals(2, 2, usage)? else { unreachable!() };
-    let id = parse_id(id)?;
+    let id = place(repo, id)?;
     let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if k.functions.contains_key(&id) {
@@ -197,6 +197,9 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             say("inside", format!("{name}, {offset:#X} bytes in"));
         }
     }
+    if let Some(offset) = analysis.as_ref().and_then(|a| a.ds_offset(&id)).filter(|_| !k.functions.contains_key(&id)) {
+        say("address", format!("DS:{offset:04X}, in the data segment"));
+    }
     let text = id.to_string();
     for s in k.ticks.syncs.iter().filter(|s| s.at == text) {
         say("sync", format!("{}{}", s.name, note(&s.note)));
@@ -204,8 +207,13 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     for i in k.ticks.inputs.iter().filter(|i| i.at == text) {
         say("input", format!("{}, {} bytes{}", i.name, i.size, note(&i.note)));
     }
+    // The function an address inside one belongs to: its code is what --asm and --c show.
+    let inside = analysis.as_ref().and_then(|a| a.containing(&id)).filter(|f| *f.0 != id).map(|f| f.0.clone());
     if let Some(analysis) = &analysis {
-        show_analysis(&k, analysis, &id, a.has("--c"));
+        match &inside {
+            Some(entry) if a.has("--c") => show_analysis(&k, analysis, entry, true),
+            _ => show_analysis(&k, analysis, &id, a.has("--c")),
+        }
         let size = k.data.get(&id).and_then(|d| d.size).unwrap_or(1);
         let shown = if a.has("--all") { usize::MAX } else { REFS_SHOWN };
         let referred = show_refs(&k, analysis, &id, size, shown);
@@ -230,7 +238,14 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         // Clockwork's decoder, not Ghidra's listing text: Ghidra's prints `mov es,cx` as `MOV CX,ES` and
         // ends functions at some string instructions (D86).
         if a.has("--asm") || a.has("--listing") {
-            print!("{}", clockwork_listing(repo, &k, analysis, &id, image.as_deref())?);
+            match &inside {
+                // From the instruction the address is in, decoded from the function's entry: decoding
+                // from the address itself may start mid-instruction.
+                Some(entry) if image.is_none() => {
+                    print!("{}", from_inside(&clockwork_listing(repo, &k, analysis, entry, None)?, &id));
+                }
+                _ => print!("{}", clockwork_listing(repo, &k, analysis, &id, image.as_deref())?),
+            }
         } else if !in_code && !referred && !k.data.contains_key(&id) && !id.is_memory() {
             if made {
                 say(
@@ -474,11 +489,42 @@ fn with_object_ids(text: &str, name: impl Fn(u64) -> Option<String>) -> String {
 
 /// The ID `what` stands for: an ID, a name, or Ghidra's `SEG:OFF`.
 pub(crate) fn resolve(repo: &Repo, k: &Knowledge, analysis: Option<&Analysis>, what: &str) -> Result<Id, String> {
-    if let Ok(id) = parse_id(what) {
-        return Ok(id);
+    if parse_id(what).is_ok() || is_ds(what) {
+        return place_in(repo, analysis, what);
     }
     let ghidra = || analysis.and_then(|a| a.id_of(&repo.module(), what));
     k.named(what).cloned().or_else(ghidra).ok_or_else(|| format!("nothing is named {what:?}"))
+}
+
+/// A place to name: an ID, `DS:OFF` (an offset in the program's data segment, D90), or Ghidra's
+/// address or name for it (`4BA0:7A46`, `DAT_4ba0_7a46`). The analysis is read only when needed.
+pub(crate) fn place(repo: &Repo, what: &str) -> Result<Id, String> {
+    match parse_id(what) {
+        Ok(id) => Ok(id),
+        Err(_) => place_in(repo, Analysis::load(repo)?.as_ref(), what),
+    }
+}
+
+fn place_in(repo: &Repo, analysis: Option<&Analysis>, what: &str) -> Result<Id, String> {
+    if let Ok(id) = parse_id(what) {
+        return Ok(id);
+    }
+    if is_ds(what) {
+        let bad = || format!("{what:?}: DS:OFF takes the offset in hex (DS:7A46)");
+        let offset = u32::from_str_radix(&what[3..], 16).ok().filter(|&o| o <= 0xFFFF).ok_or_else(bad)?;
+        let analysis = analysis.ok_or("DS:OFF needs the analysis, which knows the data segment: rrc analyze")?;
+        return analysis
+            .ds_id(&repo.module(), offset)
+            .ok_or_else(|| "DS:OFF: the analysis has no data segment (a flat program has none: use IDs)".to_owned());
+    }
+    analysis.and_then(|a| a.id_of(&repo.module(), what)).ok_or_else(|| {
+        format!("{what:?} is neither an ID (GAME.EXE+0A31C), DS:OFF (DS:7A46) nor one of Ghidra's addresses")
+    })
+}
+
+/// `DS:OFF`, in any case.
+fn is_ds(what: &str) -> bool {
+    what.get(..3).is_some_and(|ds| ds.eq_ignore_ascii_case("DS:"))
 }
 
 /// What Ghidra found about `id`: the function there, its calls and callers, its code.
@@ -504,6 +550,35 @@ fn show_analysis(k: &Knowledge, analysis: &Analysis, id: &Id, c: bool) {
     }
 }
 
+/// A function's listing from the instruction `id` is in on, with what the listing's first line says.
+fn from_inside(listing: &str, id: &Id) -> String {
+    let mut lines = listing.lines();
+    let header = lines.next().unwrap_or_default();
+    let code: Vec<(Id, &str)> = lines
+        .filter_map(|line| Some((parse_id(line.split_whitespace().next()?).ok()?, line)))
+        .filter(|(at, _)| at.module() == id.module() && at.part() == id.part())
+        .collect();
+    let Some(start) = code.iter().map(|(at, _)| at).filter(|at| at.offset() <= id.offset()).max().cloned() else {
+        return format!(
+            "{header}
+(nothing before {id} in it: the function's code doesn't reach it)
+"
+        );
+    };
+    let mut out = format!("{header}, shown from {start}");
+    if start != *id {
+        out.push_str(&format!(" (the instruction {id} is in)"));
+    }
+    out.push('\n');
+    let mut shown: Vec<&(Id, &str)> = code.iter().filter(|(at, _)| at.offset() >= start.offset()).collect();
+    shown.sort_by_key(|(at, _)| at.offset());
+    for (_, line) in shown {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// A function's or data item's name, `name[+N]` for a byte inside an item, else the ID.
 fn ref_name(k: &Knowledge, id: &Id) -> String {
     if let Some(d) = k.functions.get(id) {
@@ -521,4 +596,28 @@ fn ref_name(k: &Knowledge, id: &Id) -> String {
 
 fn note(text: &str) -> String {
     if text.is_empty() { String::new() } else { format!(": {text}") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_address_inside_a_function_lists_from_its_instruction() {
+        let listing = "code      Clockwork's disassembly from GAME.EXE+00100\n\
+                       GAME.EXE+00100  push bp\n\
+                       GAME.EXE+00101  mov bp,sp\n\
+                       GAME.EXE+00103  call GAME.EXE+00200\n\
+                       GAME.EXE+00106  pop bp\n\
+                       GAME.EXE+00107  ret\n";
+        let shown = from_inside(listing, &parse_id("GAME.EXE+00104").unwrap());
+        let lines: Vec<&str> = shown.lines().collect();
+        assert!(lines[0].ends_with("shown from GAME.EXE+00103 (the instruction GAME.EXE+00104 is in)"), "{shown}");
+        assert_eq!(
+            lines[1..],
+            ["GAME.EXE+00103  call GAME.EXE+00200", "GAME.EXE+00106  pop bp", "GAME.EXE+00107  ret"]
+        );
+        let at_start = from_inside(listing, &parse_id("GAME.EXE+00106").unwrap());
+        assert!(at_start.lines().next().unwrap().ends_with("shown from GAME.EXE+00106"), "{at_start}");
+    }
 }

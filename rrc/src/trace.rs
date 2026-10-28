@@ -276,8 +276,8 @@ fn carried(
 }
 
 pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &[])?;
-    let [name] = a.positionals(1, 1, "record SESSION")? else { unreachable!() };
+    let a = Args::parse(args, &[], &["--run"])?;
+    let [name] = a.positionals(1, 1, "record SESSION [--run]")? else { unreachable!() };
     let mut session = Session::load(repo, name)?;
     let k = Knowledge::load(&repo.knowledge())?;
     if k.ticks.syncs.is_empty() {
@@ -299,14 +299,23 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         state,
         edits,
     };
-    let (trace, snapshots) = run(repo, &session, header)?;
+    // Only items added since the last recording, all in its kept memory: no run (D92).
+    let kept = if a.has("--run") { None } else { from_kept(repo, &session, &header)? };
+    let (trace, snapshots, memory) = match kept {
+        Some(trace) => (trace, None, session.trace.as_ref().and_then(|t| t.memory.clone())),
+        None => {
+            let (trace, snapshots, memory) = run(repo, &session, header)?;
+            (trace, Some(snapshots), memory)
+        }
+    };
     let cache = Cache::open(&repo.local)?;
     let text = trace.to_text();
     let late = late_text(&trace);
     let hash = cache.put(text.as_bytes())?;
     let run = trace.run_hash();
     let ticks = trace.ticks.len() as u64;
-    let recorded = Recorded { hash: hash.clone(), run: run.clone(), ticks, clockwork: trace.header.clockwork.clone() };
+    let recorded =
+        Recorded { hash: hash.clone(), run: run.clone(), ticks, clockwork: trace.header.clockwork.clone(), memory };
     let before = session.trace.replace(recorded);
     // Paired checkpoints are of the run they were taken in (D63).
     let pairs = session.pairs.len();
@@ -321,13 +330,16 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if let Some(late) = late {
         say("late", late);
     }
-    say(
-        "snapshots",
-        format!(
-            "{snapshots}, one every {} s, for rrc watch and rrc inputs",
-            crate::snapshots::spacing_ms() as f64 / 1000.0
+    match snapshots {
+        Some(snapshots) => say(
+            "snapshots",
+            format!(
+                "{snapshots}, one every {} s, for rrc watch and rrc inputs",
+                crate::snapshots::spacing_ms() as f64 / 1000.0
+            ),
         ),
-    );
+        None => say("from", "the run recorded before and the memory it kept: no emulator (--run runs the session)"),
+    }
     match before {
         Some(b) if b.hash == hash => say("same", "as the trace recorded before"),
         Some(b) if b.run == run => {
@@ -479,8 +491,110 @@ pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
         .collect()
 }
 
-/// The session run to its end, a tick at each sync point hit; and how many snapshots it kept.
-fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize), String> {
+/// The trace of a recording that only added items to the last one's state, all in the memory kept with
+/// it (D92): the last trace's ticks with the new items read from that memory. None when the run would
+/// differ (another Clockwork, sync points, inputs or edits), when an item isn't in the kept memory (a
+/// device, an item read through a pointer, memory outside the data segment), or with nothing kept.
+fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Option<Trace>, String> {
+    let Some(before) = &session.trace else { return Ok(None) };
+    let Some(memory) = &before.memory else { return Ok(None) };
+    let cache = Cache::open(&repo.local)?;
+    let Ok(text) = cache.get(&before.hash) else { return Ok(None) };
+    let Ok(old) = Trace::parse(&String::from_utf8_lossy(&text)) else { return Ok(None) };
+    // The same run: all but the state alike.
+    let run = |h: &Header| Header { state: Vec::new(), ..h.clone() };
+    // Nothing added: recording again checks the run is the same, so it runs.
+    if old.header.version != VERSION || run(&old.header) != run(header) || old.header == *header {
+        return Ok(None);
+    }
+    let key = crate::memory::key(repo, session, &header.syncs, "data")?;
+    let ticks = old.ticks.len() as u64;
+    let span = crate::memory::kept(repo, &key, 1, ticks)?.filter(|s| &s.hash == memory);
+    let Some(span) = span.filter(|_| ticks > 0) else { return Ok(None) };
+    // Each item: its index in the last trace's state, or its range in the kept memory and where in it.
+    enum Source {
+        Old(usize),
+        Memory(usize, usize, usize),
+    }
+    let places = Places::new(repo, session);
+    let mut ranges = Vec::new();
+    for (at, len) in &span.ranges {
+        ranges.push((places.linear(at)?, *len));
+    }
+    let mut sources = Vec::new();
+    for item in &header.state {
+        if let Some(i) = old.header.state.iter().position(|o| o == item) {
+            sources.push(Source::Old(i));
+            continue;
+        }
+        if item.via.is_some() || !item.device.is_empty() {
+            return Ok(None);
+        }
+        let linear = places.linear(&places.address(&item.at)?)?;
+        let range = ranges.iter().position(|&(start, len)| {
+            linear >= start && u64::from(linear) + u64::from(item.size) <= u64::from(start) + u64::from(len)
+        });
+        let Some(r) = range else { return Ok(None) };
+        sources.push(Source::Memory(r, (linear - ranges[r].0) as usize, item.size as usize));
+    }
+    let carried: Vec<Vec<Option<String>>> =
+        (0..old.header.state.len()).map(|i| carried(&old.ticks, i, |t| &t.state)).collect();
+    let all: Vec<u64> = (1..=ticks).collect();
+    let kept = if sources.iter().any(|s| matches!(s, Source::Memory(..))) {
+        crate::memory::load(repo, &span, &all)?
+    } else {
+        BTreeMap::new()
+    };
+    let mut new_ticks = Vec::with_capacity(old.ticks.len());
+    let mut previous: Vec<Option<String>> = Vec::new();
+    for (t, tick) in old.ticks.iter().enumerate() {
+        let values: Vec<Option<String>> = sources
+            .iter()
+            .map(|s| match *s {
+                Source::Old(i) => carried[i][t].clone(),
+                Source::Memory(r, at, size) => {
+                    let bytes = kept.get(&(t as u64 + 1)).and_then(|m| m.get(r)).and_then(|m| m.get(at..at + size));
+                    bytes.map(crate::edits::hex)
+                }
+            })
+            .collect();
+        let state = values
+            .iter()
+            .enumerate()
+            .filter(|(i, v)| t == 0 || previous[*i] != **v)
+            .map(|(i, v)| (i, v.clone()))
+            .collect();
+        new_ticks.push(Tick { state, ..tick.clone() });
+        previous = values;
+    }
+    Ok(Some(Trace { header: header.clone(), ticks: new_ticks, end: old.end }))
+}
+
+/// The ranges kept with a trace (D92), as `rrc search` reads them: an LE program's data objects, or the
+/// 16-bit program's data segment (DS at the first tick), as an offset in the image (`image`, linear)
+/// where it is in it.
+fn data_ranges(
+    repo: &Repo,
+    clockwork: &mut Clockwork,
+    places: &Places,
+    image: u32,
+) -> Result<Vec<(String, u32)>, String> {
+    if crate::places::is_le(repo) {
+        let objects = places.objects()?.to_vec();
+        let data = objects.iter().filter(|&&(_, _, flags)| flags & 4 == 0);
+        return Ok(data.map(|&(base, size, _)| (format!("@{base:X}"), size)).collect());
+    }
+    let regs = clockwork.ask("regs", Value::Null)?;
+    let ds = clockwork::number(&regs, "ds")? as u32 * 16;
+    Ok(vec![match ds.checked_sub(image) {
+        Some(offset) => (format!("+{offset:05X}"), 0x1_0000),
+        None => (format!("@{ds:X}"), 0x1_0000),
+    }])
+}
+
+/// The session run to its end, a tick at each sync point hit; how many snapshots it kept; and the hash
+/// of the data segment kept at every tick (D92), unless that was more than the cache keeps.
+fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, Option<String>), String> {
     let (mut clockwork, loaded, syncs) = begin(repo, session, &header.syncs)?;
     let places = Places::new(repo, session);
     let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
@@ -510,6 +624,11 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
         ranges.push(item.request(&places)?);
     }
     let pointers = Pointers::new(&header.state)?;
+    let items = ranges.len();
+    // The data segment at each tick, from the first on (D92).
+    let mut data: Vec<(String, u32)> = Vec::new();
+    let mut memory: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
+    let mut keeping = true;
     let ranges = json!({ "ranges": ranges });
     let length_ms = (session.seconds * 1000.0) as u64;
     let mut last_cycle = start;
@@ -518,15 +637,35 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
     let mut previous: Vec<Option<String>> = vec![None; header.state.len()];
     let mut ticks = Vec::new();
     let stop = loop {
-        let request = json!({"from": last_cycle, "ranges": ranges["ranges"], "until_ms": length_ms});
+        let mut asked = ranges["ranges"].as_array().cloned().unwrap_or_default();
+        if keeping {
+            asked.extend(data.iter().map(|(at, len)| json!({"at": at, "len": len})));
+        }
+        let request = json!({"from": last_cycle, "ranges": asked, "until_ms": length_ms});
         let ran = clockwork.ask("tick", request)?;
         let cycle = clockwork::number(&ran, "cycles")?;
         let Some(at) = ran["sync"]["at"].as_str() else {
             break (ran["stop"].as_str().unwrap_or("?").to_owned(), cycle);
         };
         let sync = syncs.get(at).cloned().unwrap_or_else(|| at.to_owned());
-        let values: Vec<Option<String>> =
+        let mut values: Vec<Option<String>> =
             ran["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
+        if keeping {
+            let kept: Vec<Option<Vec<u8>>> = if data.is_empty() {
+                // The first tick says where the data segment is.
+                data = data_ranges(repo, &mut clockwork, &places, clockwork::linear(&loaded, "image")?)?;
+                let request: Vec<Value> = data.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
+                let read = clockwork.ask("read", json!({ "ranges": request }))?;
+                read["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(unhex)).collect()
+            } else {
+                values.split_off(items.min(values.len())).iter().map(|v| v.as_deref().map(unhex)).collect()
+            };
+            memory.push(kept);
+            let bytes = data.iter().map(|(_, len)| u64::from(*len)).sum::<u64>() * memory.len() as u64;
+            if bytes > crate::memory::MAX_KEPT {
+                (keeping, memory) = (false, Vec::new());
+            }
+        }
         let (inputs, direct) = values.split_at(header.inputs.len().min(values.len()));
         let state = pointers.read(&mut clockwork, &places, &header.state, direct)?;
         let mut read = Vec::new();
@@ -602,7 +741,13 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize),
     let sound = sound_events(&clockwork.ask("sound", span)?);
     let state_hash = clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
     let end = if stop == "time limit reached" { "the session's end".to_owned() } else { stop };
-    Ok((Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } }, saver.finish()?))
+    let kept = if keeping && !memory.is_empty() {
+        let key = crate::memory::key(repo, session, &header.syncs, "data")?;
+        Some(crate::memory::keep(repo, &key, 1, &data, &memory)?.hash)
+    } else {
+        None
+    };
+    Ok((Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } }, saver.finish()?, kept))
 }
 
 /// The items read through pointers (D72): each one's index in the state, where it is past where its

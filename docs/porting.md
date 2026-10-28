@@ -114,7 +114,8 @@ is recorded, `rrc analyze --session NAME` adds every function its run called to 
 references and decompiled code (D79; Ghidra opens its analysis again: a few minutes). It also gives Ghidra the
 register contracts the run showed (D81): hand-written assembly's register parameters (`update_actor(word si)`
 instead of `unaff_SI`) and results, a carry flag among them (`bVar = FUN_1000_1cee()` instead of a lost
-flag). A register only an untaken path reads isn't one, so a session that runs the code you read gives the
+flag). A function whose callers use several results returns a structure of them (D88): `r =
+test_position(...); if (r.cf)`, `r.ax`, `r.zf`. A register only an untaken path reads isn't one, so a session that runs the code you read gives the
 best contracts. One function at a
 time: `rrc show ID --asm` disassembles it with Clockwork, following its jumps, and once named (`rrc name`)
 `rrc analyze` adds it. Code the program loaded at run time (drivers) is past its file: read it with
@@ -131,6 +132,12 @@ rrc files first-level --file LEVEL1.MAP
 was called from). With `--file` it lists each read or write: where in the file, how many bytes, where in
 memory (named), by which code, when. A structure in memory leads to the file and offset it came from, the
 file to the function that reads it, and a save routine's writes to which memory each part of a save is.
+
+An address inside a function shows that function: `rrc show ID --asm` lists it from the instruction the
+address is in, and `--c` gives the function's code. Data can be named by its offset in the data segment, as
+the code addresses it: `rrc show DS:7A46`, `rrc data DS:7A46 NAME` (D90; `rrc show` says a datum's `DS:`
+address). A near call through a table of handlers (`call word ptr [si+8]`) reaches functions in its own code
+segment (D89), so `rrc show`'s calls and callers list the handlers.
 
 Some games make code at run time (drawing routines generated for each size, say): `rrc calls` then counts
 functions past the program's file image, which Ghidra can't see. `rrc show ID` says so, and `rrc show ID
@@ -285,7 +292,9 @@ lists each access in those ticks (or the whole session) with the instruction, th
 A value is shown as the data's type reads it; an access to part of an element (`seed[+2]`, a word of a
 doubleword) as the number the instruction wrote, in hex (`57E9h`: the bytes E9 57). `rrc frame` writes what the screen showed by the end of a tick as a PNG, to look at.
 Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and record again: the trace follows
-every named data item. Recording a session again must give the same run (`same`); after a knowledge change
+every named data item. A recording keeps the data segment at every tick (D92), so recording again after naming
+more of it takes seconds (`from the run recorded before`): only an item read through a pointer, a device, a
+change to the sync points, inputs, the session or Clockwork runs it again (`--run` always does). Recording a session again must give the same run (`same`); after a knowledge change
 the trace differs and `rrc record` says the run is the same (`same run as before; the trace differs`). A run
 that differs is a Clockwork bug, or the session, the game or Clockwork changed: say so in the notes. Commit the
 session's file with the new hashes.
@@ -318,6 +327,9 @@ Then map it: `mapping.toml` names each field of the port's state and the origina
 struct serde serializes, its fields named as the mapping says; it implements `Simulation` (`start`: the state at
 the first tick; `step`: one pass with the tick's inputs) and its `main` calls `rrc_runtime::main`. `examples/toy`
 is a whole port repository to copy from: the knowledge, a session, the mapping and the port of a toy game.
+Tables the original's code reads (a sine table, combat tables) are loaded from the person's copy, not copied
+into the port (D82): `rrc_runtime::original::program().i16s(0x46A3C, 640)` reads them at their image offset,
+under `rrc compare` and in the port's own `cargo test` alike (D91).
 
 The original's pointers, heap and flag bytes map too (D72): declare a pointer type in `types.toml` with `into`
 the array it points into, and the port's field is an index (or none); map a heap block `via` the pointer that

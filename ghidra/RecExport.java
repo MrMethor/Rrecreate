@@ -7,14 +7,19 @@
 // changes analyzed; with "only", the export has just those functions' records (to add to an export of
 // the program made before, from the same analysis: no program or block records).
 // A signatures file gives functions their register contracts, as a run showed them (D81): a line is
-// "<linear address> <inputs> <output>", inputs register names joined by commas and output a register,
-// "DX:AX" or "CF" (each "-" for none). The inputs become register parameters (beside the stack ones
-// Ghidra found) and the output the return, so callers' code uses them.
+// "<linear address> <inputs> <outputs>", inputs register names joined by commas and outputs each a
+// register, "DX:AX" or a flag ("CF", "ZF") joined by "+" (each "-" for none). The inputs become register
+// parameters (beside the stack ones Ghidra found) and the outputs the return, so callers' code uses
+// them: one is the return value; several are a structure of them (D88), stored in those registers.
 // One JSON object per line: a "program" record, then "block", "function", "call" and "ref" records
 // (an instruction's reference to data: "read", "write" or "data" for an address taken), then one
 // "code" record per function with its disassembly (and its decompilation when asked).
 // Function records carry Ghidra's Function ID hashes ("fid"), which library signature packs
 // (`sigs/`) match.
+// In real mode, a near call through memory (a table of handlers) stays in its code segment: its targets
+// are the words it reads (Ghidra's read references from the call) as offsets in the caller's segment,
+// made functions there, where Ghidra's analysis put them in another segment (D89).
+
 // Addresses are linear (segment * 16 + offset) as Ghidra stores them; the toolkit turns them into
 // load-image offsets with the program record's entry point.
 //@category Rrecreate
@@ -36,10 +41,14 @@ import ghidra.feature.fid.service.FidService;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.SegmentedAddress;
+import ghidra.program.model.address.SegmentedAddressSpace;
 import ghidra.program.model.data.BooleanDataType;
 import ghidra.program.model.data.ByteDataType;
+import ghidra.program.model.data.CategoryPath;
 import ghidra.program.model.data.DWordDataType;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
@@ -52,7 +61,9 @@ import ghidra.program.model.listing.ReturnParameterImpl;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 
@@ -93,6 +104,8 @@ public class RecExport extends GhidraScript {
 		if (signatures != null) {
 			applySignatures(signatures);
 		}
+		// After the functions added are analysed: their calls are among those to fix.
+		fixNearCalls();
 		out = new BufferedWriter(new FileWriter(args[0]));
 		try {
 			export(decompile, only);
@@ -227,6 +240,90 @@ public class RecExport extends GhidraScript {
 		println("RecExport: created " + created + " functions");
 	}
 
+	/**
+	 * Gives near calls through memory the targets a near call has: each word the call reads (Ghidra's
+	 * read references from it: a table's entries) as an offset in the caller's code segment, which a near
+	 * call can't leave. Makes functions there, and removes the functions Ghidra made at the wrong targets
+	 * when nothing else refers to them.
+	 */
+	private void fixNearCalls() throws Exception {
+		if (!(currentProgram.getMinAddress() instanceof SegmentedAddress)) {
+			return;
+		}
+		ReferenceManager refs = currentProgram.getReferenceManager();
+		List<Address> right = new ArrayList<>();
+		List<Address> wrong = new ArrayList<>();
+		InstructionIterator instructions = currentProgram.getListing().getInstructions(true);
+		while (instructions.hasNext()) {
+			Instruction ins = instructions.next();
+			// CALL is near; a far call (CALLF) names its segment.
+			if (!ins.getFlowType().isCall() || !ins.getFlowType().isComputed() || !ins.getMnemonicString().equals("CALL")) {
+				continue;
+			}
+			SegmentedAddress at = (SegmentedAddress) ins.getAddress();
+			SegmentedAddressSpace space = (SegmentedAddressSpace) at.getAddressSpace();
+			// What a near call through memory goes to: the words it reads, in its segment.
+			List<Address> targets = new ArrayList<>();
+			for (Reference r : ins.getReferencesFrom()) {
+				if (r.getReferenceType().isFlow() || !r.getReferenceType().isRead()) {
+					continue;
+				}
+				try {
+					Address target = space.getAddress(at.getSegment(), getShort(r.getToAddress()) & 0xFFFF);
+					if (!targets.contains(target)) {
+						targets.add(target);
+					}
+				}
+				catch (Exception e) {
+					// A word Ghidra can't read (uninitialized memory): no target from it.
+				}
+			}
+			if (targets.isEmpty()) {
+				continue;
+			}
+			List<Address> called = new ArrayList<>();
+			for (Reference r : ins.getReferencesFrom()) {
+				if (!r.getReferenceType().isCall()) {
+					continue;
+				}
+				if (targets.contains(r.getToAddress())) {
+					called.add(r.getToAddress());
+				}
+				else {
+					refs.delete(r);
+					wrong.add(r.getToAddress());
+				}
+			}
+			for (Address target : targets) {
+				if (!called.contains(target)) {
+					refs.addMemoryReference(at, target, RefType.COMPUTED_CALL, SourceType.ANALYSIS, 0);
+					right.add(target);
+				}
+			}
+		}
+		for (Address target : right) {
+			if (getFunctionAt(target) == null) {
+				disassemble(target);
+				createFunction(target, null);
+			}
+			// Exported with the functions added, whose calls they are.
+			listed.add(target);
+		}
+		int removed = 0;
+		for (Address to : wrong) {
+			Function f = getFunctionAt(to);
+			if (f != null && !refs.getReferencesTo(to).hasNext() && !right.contains(to)) {
+				removeFunction(f);
+				removed++;
+			}
+		}
+		if (!right.isEmpty()) {
+			analyzeChanges(currentProgram);
+		}
+		println("RecExport: " + right.size() + " near calls moved to their code segment, " + removed
+			+ " functions at the wrong targets removed");
+	}
+
 	/** Gives the functions the file lists their register parameters and returns (custom storage). */
 	private void applySignatures(Path file) throws Exception {
 		int applied = 0;
@@ -260,15 +357,7 @@ public class RecExport extends GhidraScript {
 				ReturnParameterImpl ret =
 					new ReturnParameterImpl(old.getDataType(), old.getVariableStorage(), currentProgram);
 				if (!parts[2].equals("-")) {
-					String[] regs = parts[2].split(":");
-					Register[] storage = new Register[regs.length];
-					int size = 0;
-					for (int i = 0; i < regs.length; i++) {
-						storage[i] = currentProgram.getRegister(regs[i]);
-						size += storage[i].getMinimumByteSize();
-					}
-					DataType type = parts[2].equals("CF") ? BooleanDataType.dataType : sized(size);
-					ret = new ReturnParameterImpl(type, new VariableStorage(currentProgram, storage), currentProgram);
+					ret = result(f, parts[2].split("\\+"));
 				}
 				f.updateFunction(f.getCallingConventionName(), ret, params, FunctionUpdateType.CUSTOM_STORAGE, true,
 					SourceType.ANALYSIS);
@@ -279,6 +368,51 @@ public class RecExport extends GhidraScript {
 			}
 		}
 		println("RecExport: " + applied + " signatures");
+	}
+
+	/**
+	 * The return of results stored in registers: one ("AX", "DX:AX" a long, "CF" a boolean), or several
+	 * as a structure of them, one field a result in order, stored most significant (the last) first.
+	 */
+	private ReturnParameterImpl result(Function f, String[] results) throws Exception {
+		List<Register> storage = new ArrayList<>();
+		StructureDataType fields =
+			new StructureDataType(new CategoryPath("/rrc"), "results_" + f.getEntryPoint().toString().replace(':', '_'), 0);
+		for (String result : results) {
+			String[] regs = result.split(":");
+			int size = 0;
+			for (String name : regs) {
+				Register r = currentProgram.getRegister(name);
+				if (r == null) {
+					throw new Exception("no register " + name);
+				}
+				size += r.getMinimumByteSize();
+			}
+			boolean flag = result.endsWith("F") && regs.length == 1;
+			fields.add(flag ? BooleanDataType.dataType : sized(size), size,
+				result.replace(":", "_").toLowerCase(), null);
+			for (String name : regs) {
+				storage.add(currentProgram.getRegister(name));
+			}
+		}
+		DataType type;
+		if (results.length == 1) {
+			type = fields.getComponent(0).getDataType();
+		}
+		else {
+			type = currentProgram.getDataTypeManager()
+					.addDataType(fields, DataTypeConflictHandler.REPLACE_HANDLER);
+			// Most significant first: the structure's last field is the first piece.
+			List<Register> pieces = new ArrayList<>();
+			for (int i = results.length - 1; i >= 0; i--) {
+				for (String name : results[i].split(":")) {
+					pieces.add(currentProgram.getRegister(name));
+				}
+			}
+			storage = pieces;
+		}
+		return new ReturnParameterImpl(type,
+			new VariableStorage(currentProgram, storage.toArray(new Register[0])), currentProgram);
 	}
 
 	private static DataType sized(int bytes) {

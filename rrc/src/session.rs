@@ -62,6 +62,10 @@ pub struct Recorded {
     pub ticks: u64,
     /// The Clockwork that recorded it.
     pub clockwork: String,
+    /// The data segment (an LE program's data objects) at every tick of its run, kept in the cache with
+    /// it (D92): its hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
 }
 
 /// A paired checkpoint: the port's state and the original's snapshot at the end of a tick both matched

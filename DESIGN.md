@@ -12,7 +12,7 @@ tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D
 game's logic, tested on Arena (§12, D70, D71): from a transplant, Arena's port matches its first dungeon's session
 (walking, collisions, the fists, the attacks and a rat's death, the rats' bites, the game's clock, the random
 generator) to the session's end, with the view's parts (creatures waking from the flats it draws, its animation)
-still fed (D84); the gaps it found are D80-D87. Rrecreate began from Recreate's emulator and parts of its tooling
+still fed (D84); the gaps it found are D80-D92. Rrecreate began from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
 ## 1. The product
@@ -149,8 +149,9 @@ the session.
 - **Dynamic:** sessions give coverage, call edges with counts (code Ghidra missed, calls through pointers),
   and per-function memory use (which functions read and write each global); `rrc analyze --session` adds the
   functions a session called that Ghidra lacks to its analysis (D79) and the register contracts its run showed
-  (D81), `rrc pass` shows one pass's calls in order (D83), and `rrc files` says which file bytes went where,
-  read or written by which code (D78, D79).
+  (D81, D88), `rrc pass` shows one pass's calls in order (D83), and `rrc files` says which file bytes went where,
+  read or written by which code (D78, D79). A recording keeps the data segment at every tick, so naming more
+  of it records again without a run (D92).
 - **Outside sources (D32, D77):** for every game, look for source releases, reimplementations, format
   documentation, wikis, walkthroughs and community bug lists, and use what licences allow. They are
   expected, and not relied upon: evidence named with its provenance (`prior-art:<source>`), which the

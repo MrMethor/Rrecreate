@@ -172,6 +172,25 @@ impl<'a> Places<'a> {
             self.objects()?;
             return self.id(&Address::Linear(linear).to_string()).ok_or_else(|| format!("@{linear:X} has no ID"));
         }
+        let (base, size) = self.image()?;
+        match linear.checked_sub(base).filter(|&offset| offset < size) {
+            Some(offset) => Id::new(&self.module, None, offset).map_err(|e| e.to_string()),
+            None => Ok(Id::memory(linear)),
+        }
+    }
+
+    /// The linear address of one of Clockwork's addresses (`+OFF`, `@LINEAR`) in the session.
+    pub(crate) fn linear(&self, address: &str) -> Result<u32, String> {
+        match Address::parse(address) {
+            Some(Address::Image(offset)) => Ok(self.image()?.0.wrapping_add(offset)),
+            Some(Address::Linear(linear)) => Ok(linear),
+            _ => Err(format!("{address:?} has no linear address")),
+        }
+    }
+
+    /// A 16-bit program's image in the session (linear base, size): where a launcher's run loads it, or
+    /// the memory DOS gives it at load.
+    fn image(&self) -> Result<(u32, u32), String> {
         if self.image.get().is_none() {
             let image = if launched_16bit(self.repo) {
                 placement(self.repo, self.session)?.image
@@ -181,11 +200,7 @@ impl<'a> Places<'a> {
             };
             let _ = self.image.set(image);
         }
-        let &(base, size) = self.image.get().expect("just set");
-        match linear.checked_sub(base).filter(|&offset| offset < size) {
-            Some(offset) => Id::new(&self.module, None, offset).map_err(|e| e.to_string()),
-            None => Ok(Id::memory(linear)),
-        }
+        Ok(*self.image.get().expect("just set"))
     }
 
     /// Whether `address` is the program's own: in its image, or in an LE program's objects (whose

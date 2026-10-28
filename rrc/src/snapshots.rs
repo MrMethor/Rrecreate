@@ -185,6 +185,20 @@ pub fn kept(
     result
 }
 
+/// The key of what a session's run gives Clockwork's probes, kept as it came (contract inference, file
+/// tracing): the run and `what` was asked (a version, when what is kept changes). Neither rrc's build nor
+/// the knowledge changes a run: a rebuilt rrc or a new name doesn't run the session again (D92).
+pub fn run_key(repo: &Repo, session: &Session, what: &str) -> Result<String, String> {
+    Ok(sha256(
+        format!(
+            "{what}
+{}",
+            run_identity(repo, session)?
+        )
+        .as_bytes(),
+    ))
+}
+
 /// The key of a whole-session answer: the build of `rrc` that gave it, the command and its arguments,
 /// the session's run, and what it reads: the knowledge files and the analysis.
 pub fn result_key(repo: &Repo, session: &Session, command: &[String]) -> Result<String, String> {

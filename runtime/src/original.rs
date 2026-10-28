@@ -1,9 +1,11 @@
 //! The person's copy of the game, for what a port loads from it instead of copying it into its source
 //! (D82): the original program's static data (tables its code reads, such as a sine table) and the
 //! game's files. `rrc` gives a port both when it runs it: `RRC_PROGRAM`, the program as the analysis
-//! unpacked it, and `RRC_GAME`, the game's folder.
+//! unpacked it, and `RRC_GAME`, the game's folder. Run otherwise (the port's own `cargo test`), the
+//! port finds them as `rrc` would (D91): the port repository above the current folder, its analysis
+//! (`.rrc/analysis.toml`), its cache and its game (`rrc.local.toml`, or `RRC_CACHE`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// The original program's load image: what its IDs' offsets count in (`ACD.EXE+46A3C` is offset
@@ -50,9 +52,11 @@ impl Program {
 pub fn program() -> &'static Program {
     static PROGRAM: OnceLock<Result<Program, String>> = OnceLock::new();
     let loaded = PROGRAM.get_or_init(|| {
-        let path = std::env::var_os("RRC_PROGRAM")
-            .ok_or("the port reads the original program (RRC_PROGRAM): run it through rrc, after rrc analyze")?;
-        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", PathBuf::from(&path).display()))?;
+        let path = match std::env::var_os("RRC_PROGRAM") {
+            Some(path) => PathBuf::from(path),
+            None => repository_program()?,
+        };
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         Program::from_mz(&bytes)
     });
     match loaded {
@@ -61,9 +65,48 @@ pub fn program() -> &'static Program {
     }
 }
 
-/// The game's folder (`RRC_GAME`), if `rrc` gave one.
+/// The game's folder: `RRC_GAME`, else the port repository's (`rrc.local.toml`'s `game`), if there is one.
 pub fn game_dir() -> Option<PathBuf> {
-    std::env::var_os("RRC_GAME").map(PathBuf::from)
+    std::env::var_os("RRC_GAME").map(PathBuf::from).or_else(|| {
+        let root = repository(&std::env::current_dir().ok()?)?;
+        Some(PathBuf::from(setting(&root.join("rrc.local.toml"), "game")?))
+    })
+}
+
+/// The program as the port repository's analysis unpacked it, in the cache: what `rrc` would give.
+fn repository_program() -> Result<PathBuf, String> {
+    let here = std::env::current_dir().map_err(|e| e.to_string())?;
+    let no = "the port reads the original program: run it through rrc, or inside its port repository after rrc analyze";
+    let root = repository(&here).ok_or(no)?;
+    let hash = setting(&root.join(".rrc").join("analysis.toml"), "program").ok_or(no)?;
+    let cache = std::env::var_os("RRC_CACHE")
+        .map(PathBuf::from)
+        .or_else(|| setting(&root.join("rrc.local.toml"), "cache").map(PathBuf::from))
+        .or_else(default_cache)
+        .ok_or("no cache folder: set RRC_CACHE")?;
+    let (folder, rest) = hash.split_at(2.min(hash.len()));
+    Ok(cache.join("objects").join(folder).join(rest))
+}
+
+/// The port repository `dir` is in: the folder with `rrc.toml`, from `dir` up.
+fn repository(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors().find(|d| d.join("rrc.toml").is_file()).map(Path::to_path_buf)
+}
+
+/// A top-level string of a TOML file.
+fn setting(file: &Path, key: &str) -> Option<String> {
+    let table: toml::Table = std::fs::read_to_string(file).ok()?.parse().ok()?;
+    table.get(key)?.as_str().map(str::to_owned)
+}
+
+/// The user's cache folder, as `rrc` has it (`%LOCALAPPDATA%\rrecreate\cache`, `$XDG_CACHE_HOME/rrecreate` or
+/// `~/.cache/rrecreate`).
+fn default_cache() -> Option<PathBuf> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(windows) {
+        return var("LOCALAPPDATA").map(|d| d.join("rrecreate").join("cache"));
+    }
+    var("XDG_CACHE_HOME").or_else(|| var("HOME").map(|h| h.join(".cache"))).map(|d| d.join("rrecreate"))
 }
 
 #[cfg(test)]
@@ -83,5 +126,21 @@ mod tests {
         assert_eq!(program.u16s(0, 2), [0x0192, 0xFFFE]);
         assert_eq!(program.i16s(2, 1), [-2], "the byte past the header's length isn't the image's");
         assert!(Program::from_mz(b"PK").is_err());
+    }
+
+    #[test]
+    fn a_port_repository_s_settings_are_found_from_inside_it() {
+        let root = std::env::temp_dir().join(format!("rrc-runtime-repo-{}", std::process::id()));
+        let inside = root.join("src").join("deep");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(root.join(".rrc")).unwrap();
+        std::fs::write(root.join("rrc.toml"), "[game]\nname = \"t\"\n").unwrap();
+        std::fs::write(root.join(".rrc").join("analysis.toml"), "program = \"ab12cd\"\nentry = 0\n").unwrap();
+        std::fs::write(root.join("rrc.local.toml"), "game = 'C:\\Games\\T'\ncache = \"D:/c\"\n").unwrap();
+        assert_eq!(repository(&inside), Some(root.clone()));
+        assert_eq!(setting(&root.join(".rrc").join("analysis.toml"), "program").as_deref(), Some("ab12cd"));
+        assert_eq!(setting(&root.join("rrc.local.toml"), "game").as_deref(), Some("C:\\Games\\T"));
+        assert_eq!(repository(&std::env::temp_dir().join("no-port-here-at-all")), None);
+        std::fs::remove_dir_all(&root).ok();
     }
 }
