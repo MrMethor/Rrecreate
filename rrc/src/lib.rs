@@ -18,6 +18,7 @@ pub mod mapping;
 mod memory;
 mod naming;
 mod pass;
+mod peek;
 pub mod places;
 pub mod quirks;
 pub mod repo;
@@ -106,6 +107,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          who writes (and with --reads, reads) it during the session, or from tick N
                          for N ticks: the instruction, the value, and the call chain (start: before
                          the first sync point hit); at most --limit accesses (10000), --lines lines
+  peek SESSION --tick N ID|NAME|SEG:OFF... [--len N]
+                         memory at the end of tick N (its sync point), named or not, without
+                         recording: as its type reads it, else as a number or bytes (--len: 2, or
+                         the item's size)
   pass SESSION --tick N [--depth N] [--in ID|NAME] [--interrupts] [--lines N]
                          what tick N's pass runs, in order: the calls from tick N-1's sync point to
                          tick N's as a tree of named functions, --depth levels (2), a call repeated
@@ -202,6 +207,7 @@ pub fn main() -> ExitCode {
         Some("search") => here().and_then(|repo| search::search(&repo, rest)),
         Some("files") => here().and_then(|repo| files::files(&repo, rest)),
         Some("pass") => here().and_then(|repo| pass::pass(&repo, rest)),
+        Some("peek") => here().and_then(|repo| peek::peek(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

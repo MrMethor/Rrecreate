@@ -686,6 +686,13 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D87. `rrc peek`: memory at a tick, without naming or recording. Accepted 2026-10-28.
+`rrc peek SESSION --tick N WHAT...` runs from the last snapshot before tick N to its sync point and reads each
+item there, named or not: as its type reads it, else as a number or bytes.
+**Why:** to know a value at a tick, the trace needed the item named and the session recorded again: four minutes
+for Arena's session, for every question. Porting Arena's weapon needed a dozen flags' values at one tick
+(DS:7F80, DS:1012, DS:0D49...); `rrc peek` answered in 13 seconds, before deciding what to name.
+
 ### D86. `rrc show --asm` is Clockwork's disassembly, with Ghidra's references. Accepted 2026-10-28.
 `--asm` lists a function with Clockwork's decoder (iced-x86), following its jumps and tables as `--listing` did,
 and names each instruction's data from Ghidra's references (`; tick_count`); Ghidra's listing text is no longer

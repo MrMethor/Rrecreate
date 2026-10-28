@@ -169,6 +169,10 @@ fn a_session_is_traced_tick_by_tick() {
     rrc.ok(&["data", "T.COM+00005", "delay", "--size", "2"]);
     let again = rrc.ok(&["record", "short"]);
     assert!(again.contains("same      run as before; the trace differs"), "{again}");
+    // Memory at a tick, named or not, without recording (D87).
+    let peeked = rrc.ok(&["peek", "short", "--tick", "2", "count", "T.COM+0000F", "--len", "1"]);
+    assert!(peeked.contains("tick      2: the state at its sync point"), "{peeked}");
+    assert!(peeked.matches("value     count").count() == 2, "by name and by ID: {peeked}");
     std::fs::write(
         repo.join("knowledge/data.tsv"),
         std::fs::read_to_string(repo.join("knowledge/data.tsv"))
