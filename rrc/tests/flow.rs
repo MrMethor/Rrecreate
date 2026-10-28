@@ -136,6 +136,11 @@ fn a_session_is_traced_tick_by_tick() {
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
     let (taken, ok) = rrc.run(&["data", "T.COM+00011", "count", "--size", "2"]);
     assert!(!ok && taken.contains("count names T.COM+0000F already"), "{taken}");
+    // A name taken back, by its name or ID.
+    rrc.ok(&["data", "T.COM+00011", "spare", "--size", "2"]);
+    assert!(rrc.ok(&["forget", "spare"]).contains("forgot    data T.COM+00011 spare"));
+    let (gone, ok) = rrc.run(&["forget", "T.COM+00011"]);
+    assert!(!ok && gone.contains("T.COM+00011 isn't named"), "{gone}");
     rrc.ok(&["sync", "T.COM+0000E", "loop", "--by", "human", "--evidence", "step runs once a pass"]);
     let ticks = std::fs::read_to_string(repo.join("knowledge/ticks.toml")).unwrap();
     assert!(ticks.contains("provenance = \"human\"") && ticks.contains("evidence = \"step runs once"), "{ticks}");
@@ -465,6 +470,9 @@ fn a_flat_program_s_objects_have_ids() {
     ] {
         assert!(listing.lines().any(|l| l == line), "{line:?} in:\n{listing}");
     }
+    // --asm is the same disassembly (D86).
+    let asm = rrc.ok(&["show", "FLAT32.EXE#1+00024", "--asm"]);
+    assert!(asm.contains("FLAT32.EXE#1+00041  mov [edx*4+squares],eax"), "{asm}");
 
     // A linker map's names, as in a port made to build a signature pack (sigs/README.md).
     let map = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testbins/bin/FLAT32.MAP");

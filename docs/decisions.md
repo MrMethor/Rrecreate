@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D86. `rrc show --asm` is Clockwork's disassembly, with Ghidra's references. Accepted 2026-10-28.
+`--asm` lists a function with Clockwork's decoder (iced-x86), following its jumps and tables as `--listing` did,
+and names each instruction's data from Ghidra's references (`; tick_count`); Ghidra's listing text is no longer
+shown. `--listing` stays, the same.
+**Why:** Ghidra's 16-bit listing misreads code it decodes. In Arena it prints `mov es,cx` as `MOV CX,ES` (every
+`mov ax,ds / mov es,ax` read `MOV AX,DS / MOV AX,ES`), and its function `+0F76F` stops at a `REPNE SCASB`, so the
+lookup of the special walls after it was missing. Clockwork's listing had both right; Ghidra's references are
+still what names the data.
+
 ### D85. "Who wrote" follows copies. Accepted 2026-10-27.
 A watched write that copies a byte the same instruction read (`MOVS`, `PUSH` and `POP` of memory) says where the
 byte came from (`copied from moved_position.y`; Clockwork pairs an instruction's writes with the bytes it read

@@ -51,7 +51,8 @@ the original judges the port, not the code it was read from.
 3. **Every finding has two kinds of evidence:** what the code or a source says, and what a run shows. One
    alone is a guess.
 4. **Name what you learn as you learn it** (`rrc name`, `rrc data`, `notes/`), with its evidence and
-   provenance: the next question starts from the names.
+   provenance: the next question starts from the names. A name that turns out wrong is taken back with
+   `rrc forget`, not edited out of the files.
 5. **Use the whole toolkit.** Pick the tool that answers the question at hand, not the one used last. If a
    few tries of one approach haven't answered, change the source, not the number of tries.
 6. **The original is the specification.** Code, sources and files explain it; where they disagree with how
@@ -98,11 +99,11 @@ rrc analyze
 Clockwork unpacks the program if it was packed, Ghidra analyses it (minutes), and the runtime library's
 functions get their names from the signature packs (`sigs/README.md` lists them; `rrc sigs build` makes one
 from a program built with the game's compiler and its linker map). `rrc show <ID or name>` then tells what is known about a
-function: its name and evidence, its size, calls and callers, and with `--c` or `--asm` its decompiled code or
-disassembly, in which Ghidra's `FUN_` and `DAT_` names become the names you gave (`name[+N]` for a byte inside
-a data item). In the disassembly, lines and branch targets are IDs, and each instruction's data is named after
-it (`; tick_count`); a jump through a table says so, and `--listing` shows Clockwork's disassembly instead,
-following the jumps and listing each table's cases. For data, it lists the instructions that read it, write
+function: its name and evidence, its size, calls and callers, and with `--c` its decompiled code, in which
+Ghidra's `FUN_` and `DAT_` names become the names you gave (`name[+N]` for a byte inside a data item), or with
+`--asm` its disassembly by Clockwork (D86), following the jumps and listing each table's cases: lines and branch
+targets are IDs, and each instruction's data, as Ghidra's references have it, is named after it
+(`; tick_count`). For data, it lists the instructions that read it, write
 it or take its address, by function (ten functions a kind; `--all` lists them all).
 Decompiled code is a hint, not a source (D2): it is partly wrong.
 

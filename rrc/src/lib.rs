@@ -62,6 +62,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          else RRC_BY, else agent)
   data ID NAME [--size N] [--type T]
                          name data (the same options as name)
+  forget ID|NAME         take a function's or data's name back out of the knowledge
   sync [ID NAME [--when-changed A,B] [--note TEXT]]
                          the sync points, or one (where a tick ends; with --when-changed, a loop that
                          polls ticks when these inputs or data changed); --remove NAME takes one out
@@ -183,6 +184,7 @@ pub fn main() -> ExitCode {
         Some("check") => here().and_then(|repo| naming::check(&repo)),
         Some("name") => here().and_then(|repo| naming::name(&repo, rest)),
         Some("data") => here().and_then(|repo| naming::data(&repo, rest)),
+        Some("forget") => here().and_then(|repo| naming::forget(&repo, rest)),
         Some("sync") => here().and_then(|repo| ticks::sync(&repo, rest)),
         Some("input") => here().and_then(|repo| ticks::input(&repo, rest)),
         Some("show") => here().and_then(|repo| naming::show(&repo, rest)),
