@@ -29,6 +29,7 @@ build TIMER s src/timer.c
 build FLOAT s -fpi87 src/float.c
 build MEDIUM m src/medmain.c src/medlib.c
 build TOY s src/toy.c
+build VAULT s src/vault.c
 # 32-bit, flat, under the CauseWay extender (an LE executable).
 wcl386 -zq -bt=dos -l=causeway -fo=obj/ -fe=bin/FLAT32.EXE -fm=bin/FLAT32.MAP src/flat32.c
 # The 32-bit C runtime, for its signature pack (sigs/README.md).

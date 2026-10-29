@@ -80,6 +80,34 @@ fn medium_model_far_calls_and_a_jump_table() {
 }
 
 #[test]
+fn a_game_loads_what_it_shows_and_plays_from_an_archive() {
+    // VAULT.EXE: the title from VAULT.DAT (run-length coded) with its palette, then two levels (LZSS
+    // coded), the second loaded mid-play; walked through by the keys, it exits with the moves made.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testbins/bin");
+    let mut drive = Vfs::new();
+    for name in ["VAULT.EXE", "VAULT.DAT"] {
+        drive.insert_file(name, std::fs::read(dir.join(name)).unwrap());
+    }
+    let mut m = Machine::with_program(Config::default(), drive, "VAULT.EXE", "").unwrap();
+    let (right, up, down) = (0x4D, 0x48, 0x50);
+    let mut at = 1500;
+    let mut press = |m: &mut Machine, scan: u8, extended: bool| {
+        let prefix: &[u8] = if extended { &[0xE0] } else { &[] };
+        let cycle = m.cycle_at_ms(at);
+        m.queue_scancodes(cycle, &[prefix, &[scan]].concat());
+        let cycle = m.cycle_at_ms(at + 60);
+        m.queue_scancodes(cycle, &[prefix, &[scan | 0x80]].concat());
+        at += 500;
+    };
+    press(&mut m, 0x1C, false);
+    for scan in [right, right, down, right, right, up, right, down, down, down] {
+        press(&mut m, scan, true);
+    }
+    assert_eq!(m.run(10 * SECOND), Stop::Exited(9), "6 moves on level 1 (a wall bumped), 3 on level 2");
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
 fn a_snapshot_on_disk_goes_on_exactly_as_the_machine_would_have() {
     // Files written and renamed, mode 13h and the DAC, a timer interrupt handler, x87 code: half
     // way through, saved and loaded again, each runs on to the same end as without the snapshot.
