@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use rrc_runtime::codecs::{Lzss, runs};
+use rrc_runtime::codecs::{Lzss, lzhuf, runs};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,7 +32,7 @@ pub enum Kind {
     Picture,
     /// Colours of three bytes (`bits` each: 6, the VGA DAC's, or 8).
     Palette,
-    /// `width` × `height` cells.
+    /// Cells, `width` × `height` if they are known.
     Map,
     Data,
 }
@@ -58,7 +58,7 @@ pub enum Number {
     Field(String),
 }
 
-/// How bytes are coded: a codec by name (`stored`, `runs`, `lzss`), or one with its parameters
+/// How bytes are coded: a codec by name (`stored`, `runs`, `lzss`, `lzhuf`), or one with its parameters
 /// (`{codec = "lzss", fill = 0}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -102,6 +102,7 @@ impl Codec {
         match self.codec.as_str() {
             "stored" => Ok(packed[..packed.len().min(size)].to_vec()),
             "runs" => Ok(runs(packed, size)),
+            "lzhuf" => Ok(lzhuf(packed, size)),
             "lzss" => {
                 let d = Lzss::OKUMURA;
                 let lzss = Lzss {
@@ -118,7 +119,7 @@ impl Codec {
                 }
                 Ok(lzss.decode(packed, size))
             }
-            other => Err(format!("{other}: no such codec (stored, runs, lzss)")),
+            other => Err(format!("{other}: no such codec (stored, runs, lzss, lzhuf)")),
         }
     }
 }
@@ -136,9 +137,17 @@ pub struct Format {
     /// (`header.width`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header: Option<String>,
-    /// How the bytes past the header are coded.
+    /// How the bytes past the header are coded: one codec, or by a number of the header (`method`, its bits
+    /// in `mask`) that `methods` gives the codec of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coded: Option<Coded>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<u64>,
+    /// How many bytes past the header are coded (else all): what follows them is the file's too (a palette).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packed: Option<Number>,
     /// How many bytes they decode to (else as many as `width` × `height`, or as the codec gives).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<Number>,
@@ -163,10 +172,10 @@ pub struct Format {
     pub width: Option<Number>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<Number>,
-    /// A picture's palette: a file or member of kind `palette`.
+    /// A picture's palette: a file or member of kind `palette`, or `after`, the bytes after its coded ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
-    /// A palette's bits per colour (6 or 8; 6).
+    /// A palette's bits per colour (6 or 8; 6), and a picture's palette `after`'s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bits: Option<u8>,
     /// The function that reads it (an ID).
@@ -200,6 +209,8 @@ pub struct Opened {
     pub codecs: Vec<String>,
     pub header: Option<Value>,
     pub bytes: Vec<u8>,
+    /// The bytes after its coded ones.
+    pub after: Vec<u8>,
 }
 
 impl Formats {
@@ -235,6 +246,9 @@ impl Formats {
                     problems.push(format!("{at}: {e}"));
                 }
             }
+            if f.method.is_some() && (f.coded.is_some() || f.methods.is_empty()) {
+                problems.push(format!("{at}: a method needs methods, and no coded"));
+            }
             for coded in f.coded.iter().chain(f.methods.values()) {
                 if let Err(e) = coded.codec().decode(&[], 0) {
                     problems.push(format!("{at}: {e}"));
@@ -244,8 +258,8 @@ impl Formats {
                 Kind::Archive if f.directory.is_none() || f.count.is_none() || f.entry.is_none() => {
                     problems.push(format!("{at}: an archive needs its directory, count and entry"));
                 }
-                Kind::Picture | Kind::Map if f.width.is_none() || f.height.is_none() => {
-                    problems.push(format!("{at}: a {} needs its width and height", f.kind.text()));
+                Kind::Picture if f.width.is_none() || f.height.is_none() => {
+                    problems.push(format!("{at}: a picture needs its width and height"));
                 }
                 _ => {}
             }
@@ -258,53 +272,54 @@ impl Formats {
         problems
     }
 
-    /// A file of the game (`name`) or an archive's member (`FILE/MEMBER`, `#2` for the second of its name)
-    /// decoded by its format.
+    /// A file of the game (`name`) or a member of an archive or chunked file (`FILE/MEMBER`; a member's member,
+    /// `START.MIF/LEVL/MAP1`; `#2` for the second of a name), decoded by its format.
     pub fn open(&self, k: &Knowledge, game: &Path, path: &str) -> Result<Opened, String> {
-        let (file, member) = match path.split_once('/') {
-            Some((file, member)) => (file, Some(member)),
-            None => (path, None),
-        };
+        let mut parts = path.split('/');
+        let file = parts.next().unwrap_or_default();
         let bytes = rrc_runtime::original::file_in(game, file)?;
-        let mut opened = match member {
-            None => Opened {
-                file: file.to_owned(),
-                format: None,
-                offset: 0,
-                packed: bytes.len(),
-                codecs: Vec::new(),
-                header: None,
-                bytes,
-            },
-            Some(wanted) => {
-                let archive =
-                    self.of(file).ok_or_else(|| format!("{file}: no format in {FORMATS} names it, so no members"))?;
-                let members = self.members(archive, k, &bytes)?;
-                let m = find_member(&members, wanted).ok_or_else(|| {
-                    let names: Vec<&str> = members.iter().take(12).map(|m| m.name.as_str()).collect();
-                    format!("{file} has no member {wanted} (it has {})", names.join(", "))
-                })?;
-                let packed = bytes.get(m.offset..m.offset + m.packed).ok_or_else(|| {
-                    format!("{path}: {} bytes at +{:X}, past the file's {} bytes", m.packed, m.offset, bytes.len())
-                })?;
-                Opened {
-                    file: file.to_owned(),
-                    format: None,
-                    offset: m.offset,
-                    packed: m.packed,
-                    codecs: vec![m.codec.codec.clone()].into_iter().filter(|c| c != "stored").collect(),
-                    header: None,
-                    bytes: m.codec.decode(packed, m.size)?,
-                }
-            }
+        let mut opened = Opened {
+            file: file.to_owned(),
+            format: None,
+            offset: 0,
+            packed: bytes.len(),
+            codecs: Vec::new(),
+            header: None,
+            bytes,
+            after: Vec::new(),
         };
-        let Some(format) = self.of(path) else { return Ok(opened) };
+        // The path as the formats name it: each member by its name, without `#n`.
+        let mut named = file.to_owned();
+        for wanted in parts {
+            let container =
+                self.of(&named).ok_or_else(|| format!("{named}: no format in {FORMATS} names it, so no members"))?;
+            let members = self.members(container, k, &opened.bytes)?;
+            let m = find_member(&members, wanted).ok_or_else(|| {
+                let names: Vec<&str> = members.iter().take(12).map(|m| m.name.as_str()).collect();
+                format!("{named} has no member {wanted} (it has {})", names.join(", "))
+            })?;
+            let packed = opened.bytes.get(m.offset..m.offset + m.packed).ok_or_else(|| {
+                format!("{path}: {} bytes at +{:X}, past its {} bytes", m.packed, m.offset, opened.bytes.len())
+            })?;
+            // Where it is in the file, while what holds it is as the file has it.
+            if opened.codecs.is_empty() {
+                opened.offset += m.offset;
+                opened.packed = m.packed;
+            }
+            let decoded = m.codec.decode(packed, m.size)?;
+            opened.bytes = decoded;
+            if m.codec.codec != "stored" {
+                opened.codecs.push(m.codec.codec.clone());
+            }
+            named = format!("{named}/{}", m.name);
+        }
+        let Some(format) = self.of(&named) else { return Ok(opened) };
         opened.format = Some(format.clone());
         if matches!(format.kind, Kind::Archive | Kind::Chunks) {
             return Ok(opened);
         }
-        // Its header, then the rest decoded.
-        let mut body = opened.bytes.clone();
+        // Its header, then the coded bytes (`packed` of them, or the rest), then what follows them.
+        let mut body = std::mem::take(&mut opened.bytes);
         if let Some(ty) = &format.header {
             let n = size(ty, &k.types)? as usize;
             let head = body.get(..n).ok_or_else(|| format!("{path}: shorter than its header ({ty}, {n} bytes)"))?;
@@ -312,17 +327,34 @@ impl Formats {
             body.drain(..n);
         }
         let number = |n: &Option<Number>| resolve(n.as_ref(), opened.header.as_ref());
+        let coded = number(&format.packed)?.unwrap_or(body.len()).min(body.len());
+        let after = body.split_off(coded);
         let cells = match (number(&format.width)?, number(&format.height)?) {
             (Some(w), Some(h)) => Some(w * h),
             _ => None,
         };
-        if let Some(coded) = &format.coded {
-            let codec = coded.codec();
+        let codec = match (&format.coded, &format.method) {
+            (Some(coded), _) => Some(coded.codec()),
+            (None, Some(method)) => {
+                let value = resolve(Some(method), opened.header.as_ref())?.unwrap_or(0) as u64
+                    & format.mask.unwrap_or(u64::MAX);
+                let codec = format
+                    .methods
+                    .get(&value.to_string())
+                    .ok_or_else(|| format!("{path}: its method {value} isn't in {}'s methods", format.name))?;
+                Some(codec.codec())
+            }
+            (None, None) => None,
+        };
+        if let Some(codec) = codec {
             let size = number(&format.size)?.or(cells).unwrap_or(usize::MAX);
             body = codec.decode(&body, size)?;
-            opened.codecs.push(codec.codec);
+            if codec.codec != "stored" {
+                opened.codecs.push(codec.codec);
+            }
         }
         opened.bytes = body;
+        opened.after = after;
         Ok(opened)
     }
 
@@ -514,6 +546,9 @@ mod tests {
             kind: Kind::Chunks,
             header: None,
             coded: None,
+            method: None,
+            mask: None,
+            packed: None,
             size: None,
             directory: Some(Number::Is(2)),
             count: None,
@@ -534,5 +569,41 @@ mod tests {
         let named: Vec<(&str, usize, usize)> = members.iter().map(|m| (m.name.as_str(), m.offset, m.size)).collect();
         assert_eq!(named, [("MHDR", 8, 1), ("MAP1", 15, 2), ("MAP1", 23, 0)]);
         assert_eq!(find_member(&members, "map1#2").map(|m| m.offset), Some(23));
+    }
+
+    #[test]
+    fn a_member_s_member_is_decoded_by_its_header() {
+        // OUTR holds INNR, whose header (a u16 size, a u16 method, a u16 count of coded bytes) says how many
+        // run-length coded bytes follow; a palette of two colours comes after them.
+        let k = Knowledge {
+            types: toml::from_str(
+                "[[struct]]\nname = \"head\"\nsize = 6\nfields = [\
+                 {offset = 0, size = 2, name = \"size\", type = \"u16\"},\
+                 {offset = 2, size = 2, name = \"flags\", type = \"u16\"},\
+                 {offset = 4, size = 2, name = \"length\", type = \"u16\"}]\n",
+            )
+            .unwrap(),
+            ..Knowledge::default()
+        };
+        let formats: Formats = toml::from_str(
+            "[[format]]\nname = \"file\"\nfiles = [\"*.BIN\"]\nkind = \"chunks\"\n\
+             [[format]]\nname = \"outer\"\nfiles = [\"*.BIN/OUTR\"]\nkind = \"chunks\"\n\
+             [[format]]\nname = \"inner\"\nfiles = [\"*.BIN/OUTR/INNR\"]\nkind = \"data\"\nheader = \"head\"\n\
+             size = \"header.size\"\nmethod = \"header.flags\"\nmask = 0x0F\nmethods = { 1 = \"runs\" }\n\
+             packed = \"header.length\"\n",
+        )
+        .unwrap();
+        assert!(formats.problems(&k).is_empty(), "{:?}", formats.problems(&k));
+        let inner = [&[4, 0, 0x11, 0x01, 2, 0, 0xC4, 7][..], &[1, 2, 3, 4, 5, 6]].concat();
+        let outer = [&b"INNR"[..], &(inner.len() as u16).to_le_bytes(), &inner].concat();
+        let file = [&b"OUTR"[..], &(outer.len() as u16).to_le_bytes(), &outer].concat();
+        let dir = std::env::temp_dir().join(format!("rrc-formats-nested-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("A.BIN"), &file).unwrap();
+        let opened = formats.open(&k, &dir, "a.bin/outr/innr").unwrap();
+        assert_eq!(opened.bytes, [7; 4]);
+        assert_eq!(opened.after, [1, 2, 3, 4, 5, 6], "the bytes after the coded ones");
+        assert_eq!((opened.offset, opened.packed, opened.codecs.as_slice()), (12, 14, &["runs".to_owned()][..]));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

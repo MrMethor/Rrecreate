@@ -644,11 +644,19 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     let checked = rrc.ok(&["asset", "VAULT.DAT/LEVEL2", "--session", "play"]);
     assert!(checked.contains("read      in the pass to tick 374, by VAULT.EXE+009F0 < load < load_level < play_pass"));
     assert!(
-        checked.contains("original  equal: at tick 374 its memory holds these 1024 bytes at VAULT.EXE+"),
+        checked.contains(
+            "original  equal: 2 ms after the read (in the pass to tick 374), its memory holds these 1024 bytes at \
+             VAULT.EXE+"
+        ),
         "{checked}"
     );
     let palette = rrc.ok(&["asset", "VAULT.DAT/PALETTE", "--session", "play"]);
-    assert!(palette.contains("original  equal: at tick 1 its memory holds these 768 bytes at palette"), "{palette}");
+    assert!(
+        palette.contains(
+            "original  equal: 1 ms after the read (before tick 1), its memory holds these 768 bytes at palette"
+        ),
+        "{palette}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

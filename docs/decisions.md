@@ -686,7 +686,30 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
-### D103. Formats as knowledge, `rrc asset`, and the original's memory as the check. Accepted 2026-10-29.
+### D104. LZHUF, nested members, codecs chosen by a header, and the check at moments after the read. Accepted 2026-10-29.
+Arena's level map and title picture, extracted and checked (M5's second test), asked for:
+- **LZHUF** (`rrc_runtime::codecs::lzhuf`, `lzhuf` in a format): Yoshizaki's lzhuf.c (1988), LZSS whose
+  literals and lengths are one adaptive Huffman code and whose places' upper 6 bits a fixed code, as LHarc
+  and many games of its time had it. Arena's map layers (`MAP1`, `FLOR`) are coded so: `+3137D` is lzhuf.c's
+  `Decode`, after a u16 of the size.
+- **A member's members** (`START.MIF/LEVL/MAP1`): chunks inside a chunk, each container decoding its member.
+- **A header's field chooses the codec** (`method`, `mask`, `methods`): an IMG's flags (bit 2: lzss.c's LZSS,
+  `+07608`; none: stored). **`packed`**: how many bytes are coded; those after them are the file's too, a
+  picture's palette `after` them. A header may be a plain type (`u16`).
+- **The check at moments after the read:** 1 ms after the read that completes the bytes, then doubling to
+  about 4 s, the memory is searched until it holds them all, and the answer says when. What a game decodes and
+  shows before its first tick (a title) is gone by then, and a decoder may take that long. A map copied into a
+  wider grid is found as its rows: the longest start found is a row, and the next rows are the same distance
+  apart (within 64 KB).
+
+**Why:** M5 is done when Arena's level map and a picture extracted from its files equal what it loaded. Its
+loader's code (`+0EAE4`, `+3137D`, `+0582C`, `+07608`) said what each is; the toolkit had neither LZHUF nor
+the layouts. Measured: `START.MIF/LEVL/MAP1` (1496 bytes, lzhuf, 5000 decoded) is equal 128 ms after its read
+as 50 rows of 100 bytes, 256 apart, in the level's grid; `TITLE.IMG` (20431 bytes of LZSS, 64000 pixels, its
+palette after) is equal 256 ms after its read; the vault's members are equal 1 to 128 ms after theirs.
+**Supersedes:** D103's check at the tick after the read (the rest of D103 stands).
+
+### D103. Formats as knowledge, `rrc asset`, and the original's memory as the check. Accepted 2026-10-29; the check's moments: D104.
 D78's formats and extraction, built:
 - **`knowledge/formats.toml`:** each kind of file or archive member: its files (DOS wildcards; an archive's
   members as `FILE/MEMBER`), its kind (an archive with a directory, tagged chunks, a picture with its

@@ -269,10 +269,30 @@ palette = "VAULT.DAT/PALETTE"       # a file or member of kind palette (`bits`: 
   its tag; `picture`, `width` × `height` palette indices shown with `palette`; `palette`, colours of three
   bytes; `map`, `width` × `height` cells; `data`, anything else.
 - **Coding:** `coded` is how the bytes past the header are coded, decoded to `size` bytes (else `width` ×
-  `height`, else as many as the codec gives). A codec is `stored`, `runs` (PCX's run-length code) or `lzss`,
-  or one with its parameters, `{codec = "lzss", ring = 4096, fill = 0, start = 4078, shortest = 3}` (those not
-  given are lzss.c's): the runtime's codecs (`rrc_runtime::codecs`), which a port decodes with (D101).
-- A member of an archive is decoded by the archive's method, then by its own format.
+  `height`, else as many as the codec gives); or the header's `method` field (its bits in `mask`) chooses the
+  codec from `methods`. `packed` is how many bytes are coded (else all past the header); those after them are
+  the file's too, and `palette = "after"` takes a picture's palette from them (`bits` a colour). A codec is
+  `stored`, `runs` (PCX's run-length code), `lzss` or `lzhuf` (lzhuf.c's: LZSS whose literals, lengths and
+  places are Huffman coded), or one with its parameters, `{codec = "lzss", ring = 4096, fill = 0, start =
+  4078, shortest = 3}` (those not given are lzss.c's): the runtime's codecs (`rrc_runtime::codecs`), which a
+  port decodes with (D101, D104). A header may be a plain type (`header = "u16"`, `size = "header"`).
+- A member is decoded by its container's method, then by its own format; a member's members are named on
+  (`START.MIF/LEVL/MAP1`, D104).
+
+```toml
+[[format]]
+name = "picture"
+files = ["*.IMG"]
+kind = "picture"
+header = "img_header"
+width = "header.width"
+height = "header.height"
+method = "header.flags"
+mask = 0x0F
+methods = { 0 = "stored", 4 = "lzss" }
+packed = "header.length"
+palette = "after"
+```
 
 ## `mapping.toml`: the port's state and the original's
 

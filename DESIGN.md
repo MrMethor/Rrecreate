@@ -15,7 +15,8 @@ creatures woken, the fists, the attacks and a rat's death, the rats' bites, the 
 generator), the 3D view's parts given to it as a part not ported (D84, D96, D98, D99); the gaps it found are
 D80-D99. M5 under way: a port reads and decodes the game's files, and the vault test program's port
 (`examples/vault`) matches from power-on through its title and play (D101, D102); formats are knowledge, and
-`rrc asset` extracts the vault's members equal to what the original loaded (D103). Rrecreate began from Recreate's emulator and parts of its tooling
+`rrc asset` extracts the vault's members, Arena's level map and its title picture equal to what the original
+loaded (D103, D104). Rrecreate began from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
 ## 1. The product
@@ -161,8 +162,8 @@ the session.
   original confirms or overrules.
 - **Assets (D78, M5):** the game's files are a source too. File tracing says which bytes of which file the
   program put where; formats are knowledge (`knowledge/formats.toml`); `rrc asset` extracts pictures,
-  palettes, sounds, music and levels, checked against what the original loaded: its memory at the tick after
-  file tracing's reads is searched for what was decoded (D103). A port reads the game's files through the
+  palettes, sounds, music and levels, checked against what the original loaded: its memory at moments after
+  file tracing's reads is searched for what was decoded (D103, D104). A port reads the game's files through the
   runtime and decodes the common compressions with its codecs, which `rrc asset` decodes with too (D101).
 - **IDs:** `<MODULE>[#<n>]+<offset>`, where `#n` is an overlay (MZ) or an object (LE/LX) and the offset is in
   the loaded image, uppercase hex, 5 to 8 digits. The same form names functions and data. The module `MEM`

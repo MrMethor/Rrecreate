@@ -149,7 +149,8 @@ rrc asset TITLE.IMG
 `rrc asset` decodes a file or an archive's member by its format: an archive's members, a picture as PNG with
 its palette (in `.rrc/assets/`), the bytes in the cache. With `--session`, the original checks it (D103):
 where the session read those bytes and by which code, and whether the original's memory holds what this
-decoded at the tick after, `equal` and where, or how far it agrees. A format that decodes equal is the one
+decoded at moments after the read (1 ms, then doubling to about 4 s), `equal` and when and where (a map laid
+out in a wider grid is found as its rows), or how far it agrees (D104). A format that decodes equal is the one
 the port's loader decodes by (`rrc_runtime::codecs`). A game's own coding, which no codec of the toolkit is,
 is the port's code, checked by the comparison as the loaded data it makes (mapped state).
 

@@ -154,7 +154,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          a file of the game or an archive's member, decoded by its format
                          (knowledge/formats.toml): an archive's members, a picture as PNG with its
                          palette, the bytes kept in the cache; with --session, where the original read
-                         them and whether its memory holds them decoded at the tick after
+                         them and whether its memory holds them decoded after that
   search SESSION CONDITION... [--type T] [--step N] [--at ID --len N] [--lines N]
                          the places in the data segment (LE: the data objects; or the range given)
                          whose values, read as T (u16 unless --type says), meet every condition over
