@@ -184,7 +184,38 @@ pub struct Ticks {
     /// Boundary values: what the original's logic reads at each tick (key states, elapsed time).
     #[serde(default, rename = "input", skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<Input>,
+    /// Calls a part of the program not ported makes into ported code, with their arguments (D98).
+    #[serde(default, rename = "hook", skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<Hook>,
 }
+
+/// A call into ported code from a part of the program not ported (D98: a renderer waking a creature it
+/// drew): each run of its entry `at` in a pass, with the registers it takes.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Hook {
+    pub name: String,
+    /// The entry's ID.
+    pub at: String,
+    /// The part that calls it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub part: String,
+    /// Its arguments: `ax`, `cl`, `edi`, `es`...
+    pub registers: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provenance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+/// The registers a hook takes: the general ones by their 32-, 16- and 8-bit names, the segments, flags.
+pub const REGISTERS: [&str; 33] = [
+    "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp", "ax", "bx", "cx", "dx", "si", "di", "bp", "sp", "al", "ah",
+    "bl", "bh", "cl", "ch", "dl", "dh", "es", "cs", "ss", "ds", "flags", "eflags", "ip", "fs", "gs",
+];
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sync {

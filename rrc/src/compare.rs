@@ -290,12 +290,22 @@ fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Valu
             }
         })
         .collect();
-    let mut text =
-        json!({"format": "rrc-inputs", "version": 1, "session": trace.header.session, "inputs": inputs}).to_string();
+    let mut header = json!({"format": "rrc-inputs", "version": 1, "session": trace.header.session, "inputs": inputs});
+    if !trace.header.hooks.is_empty() {
+        let hooks: Vec<Value> =
+            trace.header.hooks.iter().map(|h| json!({"name": h.name, "registers": h.registers})).collect();
+        header["hooks"] = json!(hooks);
+    }
+    let mut text = header.to_string();
     text.push('\n');
     for t in &trace.ticks {
         let read: Vec<Value> = t.inputs.iter().filter_map(|(i, v)| v.as_ref().map(|v| json!([i, v]))).collect();
         let mut line = json!({"tick": t.tick, "sync": t.sync, "inputs": read});
+        // The hooks' calls in the pass (D98).
+        if !t.hooks.is_empty() {
+            let calls: Vec<Value> = t.hooks.iter().map(|(i, values)| json!([i, values])).collect();
+            line["hooks"] = json!(calls);
+        }
         // What each late read saw, and its bytes that differ from what the program should have read (D97).
         let late: Vec<Value> = t
             .late

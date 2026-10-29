@@ -130,7 +130,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 9, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 10, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
@@ -225,6 +225,15 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["record", "short"]).contains("same      run as before"), "Clockwork takes the source");
     let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other", "--size", "2", "--read-at", "T.COM+00000"]);
     assert!(!ok && refused.contains("--read-at goes with --part"), "{refused}");
+    // A part not ported calling ported code: each call in a pass with its registers (D98).
+    let hook = rrc.ok(&["hook", "T.COM+0000E", "steps", "--part", "the loop", "--registers", "ax,cl"]);
+    assert!(hook.contains("hook      steps T.COM+0000E, called by the loop, with ax, cl"), "{hook}");
+    let (refused, ok) = rrc.run(&["hook", "T.COM+0000E", "other", "--part", "x", "--registers", "zz"]);
+    assert!(!ok && refused.contains("no register zz"), "{refused}");
+    rrc.ok(&["record", "short"]);
+    let tick = rrc.ok(&["trace", "short", "--tick", "2"]);
+    assert!(tick.contains("hook      steps (T.COM+0000E): ax="), "the call in tick 2's pass: {tick}");
+    assert!(rrc.ok(&["hook", "steps", "--remove"]).contains("removed   steps"));
     assert!(rrc.ok(&["input", "tally", "--remove"]).contains("removed   tally"));
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -70,6 +70,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
   input [ID|mouse|joystick NAME [--size N] [--sync A,B] [--note TEXT]]
                          the boundary values, or one (memory, or a device's state; --sync: read only
                          at those sync points); --remove NAME; both take name's options
+  hook [ID NAME --part TEXT --registers A,B]
+                         the calls a part not ported makes into ported code, or one: each run of the
+                         entry ID in a pass with those registers, given the port (D98); --remove NAME
   show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
                          its DAT_SEG_OFF names): its name and evidence, what Ghidra found (size,
@@ -192,6 +195,7 @@ pub fn main() -> ExitCode {
         Some("forget") => here().and_then(|repo| naming::forget(&repo, rest)),
         Some("sync") => here().and_then(|repo| ticks::sync(&repo, rest)),
         Some("input") => here().and_then(|repo| ticks::input(&repo, rest)),
+        Some("hook") => here().and_then(|repo| ticks::hook(&repo, rest)),
         Some("show") => here().and_then(|repo| naming::show(&repo, rest)),
         Some("session") => here().and_then(|repo| session::session(&repo, rest)),
         Some("calls") => here().and_then(|repo| calls::calls(&repo, rest)),

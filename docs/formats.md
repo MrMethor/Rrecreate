@@ -210,6 +210,12 @@ at = "GAME.EXE+4855E"
 size = 2
 part = "the 3D view"            # what writes it: its writes aren't followed
 read_at = ["GAME.EXE+22DBB"]    # the ported code's reads of it, where the trace keeps what each saw
+
+[[hook]]                        # a call a part not ported makes into ported code (D98)
+name = "view_wakes"
+at = "GAME.EXE+25F11"           # the entry; each run of it in a pass, outside interrupt handlers
+part = "the 3D view"
+registers = ["ax", "bx", "cl", "di"]  # what it takes: 32-, 16- and 8-bit names, segments, flags
 ```
 
 `rrc sync` and `rrc input` write these. Each item may carry `provenance`, `confidence` and `evidence`, as the
@@ -326,7 +332,8 @@ JSON lines (D72): a header, a line per tick, and an end line.
  "inputs":[{"name":"tick_elapsed","at":"GAME.EXE+21C40","size":2},
            {"name":"mouse","device":"mouse","size":46,"sync":["menu"]}],
  "state":[{"name":"door_state","at":"GAME.EXE+1E0A4","size":2}, …],
- "edits":[{"tick":100,"at":"GAME.EXE+1E0A4","hex":"0200","edit":"door_state = 2"}]}
+ "edits":[{"tick":100,"at":"GAME.EXE+1E0A4","hex":"0200","edit":"door_state = 2"}],
+ "hooks":[{"name":"view_wakes","at":"GAME.EXE+25F11","registers":["ax","bx","cl","di"]}]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":[[0,"0100"]],"state":[[0,"0000"], …],
  "frames":[[284,20380102,19,"61f5…","a3c0…"]],"sound":{"opl":[[2549120000,176,49]]}}
 {"tick":2,"sync":"play","cycle":20504101,"late":[[0,"GAME.EXE+0A3B2","0300",1,[[0,3]]]],"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
@@ -346,6 +353,9 @@ JSON lines (D72): a header, a line per tick, and an end line.
   where memory isn't mapped. Empty lists are left out.
 - `edits` (in the header, only if the session has any): the scenario's writes, each at an ID with its bytes
   and the edit as the session has it (D64). A tick's state has its edits written.
+- `hooks` (in the header, only if the knowledge has any): the calls a part not ported makes into ported code
+  (D98); a tick's `hooks`, `[[index, [value, …]]]`, are those its pass made, in order, each with its
+  registers' values as the header's hook lists them (version 9).
 - `late`: `[index, ID, value, read, bytes]` for each read of the tick's pass that saw an input otherwise than
   the same instruction's read before it there (the first, otherwise than the tick's value): it changed after the
   sync point, before the program read it (D60). `ID` is the instruction (for a driver, the instruction after its
@@ -406,7 +416,10 @@ inputs and the trace are JSON lines.
   them); a value holds until it changes. A tick whose pass read inputs late has `late`,
   `[[index, "GAME.EXE+04BB9", "0300", 1, [[0, 3]]]]`: what each read saw, which of that instruction's reads it
   was (D68, D93), and its bytes that differ from what the program should have read (D97), which the runtime's
-  `Inputs::at_site(ID)` gives the port, a call a read, over what the port wrote (`Inputs::write`). A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
+  `Inputs::at_site(ID)` gives the port, a call a read, over what the port wrote (`Inputs::write`). With hooks
+  (D98) the header has `"hooks":[{"name":"view_wakes","registers":["ax","cl"]}]` and a tick whose pass made
+  calls through them `hooks`, `[[0, [1472, 5]]]` (the hook's index, the registers' values), which
+  `Inputs::calls(name)` gives the port. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
   mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
   port sets in its state before writing the tick (D64). The last line is
   `{"end":"the session's end","ticks":1400}`.

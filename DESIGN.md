@@ -12,7 +12,7 @@ tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D
 game's logic, tested on Arena (§12, D70, D71): from a transplant, Arena's port matches its first dungeon's session
 (walking, collisions, the fists, the attacks and a rat's death, the rats' bites, the game's clock, the random
 generator) to the session's end, with the view's parts (creatures waking from the flats it draws, its animation)
-still fed (D84); the gaps it found are D80-D97. Rrecreate began from Recreate's emulator and parts of its tooling
+still fed (D84); the gaps it found are D80-D98. Rrecreate began from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
 ## 1. The product

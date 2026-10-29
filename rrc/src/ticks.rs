@@ -4,7 +4,7 @@
 use std::process::ExitCode;
 
 use crate::args::Args;
-use crate::knowledge::{DEVICES, Input, Knowledge, Sync};
+use crate::knowledge::{DEVICES, Hook, Input, Knowledge, REGISTERS, Sync};
 use crate::naming::{DECISION_OPTIONS, decision};
 use crate::repo::Repo;
 use crate::say;
@@ -160,6 +160,74 @@ pub(crate) fn input(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     k.save(&repo.knowledge())?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// `rrc hook [ID NAME --part TEXT --registers A,B ...] | [NAME --remove]` (D98).
+pub(crate) fn hook(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
+    let options = [DECISION_OPTIONS.as_slice(), &["--part", "--registers", "--note"]].concat();
+    let a = Args::parse(args, &options, &["--remove"])?;
+    let usage = "hook [ID NAME --part TEXT --registers A,B [--note TEXT] [--evidence TEXT] [--confidence X] \
+                 [--by WHO]] [NAME --remove]";
+    let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
+    let mut k = Knowledge::load(&repo.knowledge())?;
+    if a.has("--remove") {
+        let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
+        let before = k.ticks.hooks.len();
+        k.ticks.hooks.retain(|h| &h.name != name);
+        if k.ticks.hooks.len() == before {
+            return Err(format!("no hook {name}"));
+        }
+        k.save(&repo.knowledge())?;
+        say("removed", name);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let positionals = a.positionals(0, 2, usage)?;
+    let [id, name] = positionals else {
+        if !positionals.is_empty() {
+            return Err(format!("usage: rrc {usage}"));
+        }
+        for h in &k.ticks.hooks {
+            say("hook", hook_text(h));
+        }
+        if k.ticks.hooks.is_empty() {
+            say("none", "no hooks: calls a part not ported makes into ported code (docs/porting.md, D98)");
+        }
+        return Ok(ExitCode::SUCCESS);
+    };
+    let part = a.value("--part").unwrap_or_default().to_owned();
+    if part.is_empty() {
+        return Err("--part: what calls it, not ported (the 3D view)".into());
+    }
+    let registers = list(a.value("--registers"));
+    if let Some(unknown) = registers.iter().find(|r| !REGISTERS.contains(&r.as_str())) {
+        return Err(format!("--registers: no register {unknown} ({})", REGISTERS.join(", ")));
+    }
+    let d = decision(&a, name)?;
+    let hook = Hook {
+        name: name.clone(),
+        at: crate::naming::place(repo, id)?.to_string(),
+        part,
+        registers,
+        provenance: d.provenance,
+        confidence: d.confidence,
+        evidence: d.evidence,
+        note: a.value("--note").unwrap_or_default().to_owned(),
+    };
+    say("hook", hook_text(&hook));
+    match k.ticks.hooks.iter_mut().find(|h| h.name == *name) {
+        Some(old) => {
+            say("was", hook_text(old));
+            *old = hook;
+        }
+        None => k.ticks.hooks.push(hook),
+    }
+    k.save(&repo.knowledge())?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn hook_text(h: &Hook) -> String {
+    let provenance = if h.provenance.is_empty() { "?" } else { &h.provenance };
+    format!("{} {}, called by {}, with {} ({provenance})", h.name, h.at, h.part, h.registers.join(", "))
 }
 
 /// A comma-separated list.

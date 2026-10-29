@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **9** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **10** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -48,7 +48,7 @@ A platform may add its own forms (`dos-pc`: `SEG:OFF`, `%PHYS`).
 
 ## Core operations
 
-**`hello`**: what the emulator is: `{"protocol": 9, "platform": "dos-pc", "emulator": "clockwork",
+**`hello`**: what the emulator is: `{"protocol": 10, "platform": "dos-pc", "emulator": "clockwork",
 "version": "0.1.0"}`. A tool refuses a revision or platform it doesn't speak.
 
 **Loading.** `load` `{"argv": [dir, program, options...]}`: a machine with the game's folder and program,
@@ -112,6 +112,10 @@ functions it was made in, innermost first, while `calls` is on) (D78).
 "arg_bytes", ...}`: the registers and flags read before written, those the code after a call read as its
 results, those every call kept, the bytes popped with the return, how it returned and the stack argument
 bytes read; `clockwork run --contracts` writes the same, `clockwork/dos/src/contracts.rs`). Real mode (D81).
+
+**Entries.** `entries` `{"at": [addr]}` ... `entries_end`: each run of those instructions (a function's entry)
+outside interrupt handlers, `{"entries": [{"cycle", "at", "regs": {"eax", ..., "es", "cs", "ss", "ds",
+"flags"}}], "dropped"}`, in order (D98; past a million, counted in `dropped`).
 
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}]}` ... `uninit_end`: reads of memory nothing wrote
@@ -184,6 +188,7 @@ An IBM PC with DOS (Clockwork).
 9. A `late_inputs` source of memory may have `"follow_writes": false` and `"read_at": [addr]`: what a part of
    the program writes (D96), the program's writes not followed, and only the reads of those instructions
    counted (none listed: all).
+10. `entries`, `entries_end`: the runs of chosen entries with the registers (D98).
 
 ## Changing the protocol
 

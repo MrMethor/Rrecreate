@@ -23,6 +23,8 @@ pub struct InputsLine {
     pub sync: String,
     pub inputs: Vec<(String, Vec<u8>)>,
     pub late: Vec<LateRead>,
+    /// The calls a part not ported made into ported code in the pass, in order (D98): hook, registers.
+    pub calls: Vec<(String, crate::Call)>,
     pub set: Vec<(String, Value)>,
 }
 
@@ -57,6 +59,16 @@ impl InputsFile {
             .flatten()
             .map(|i| i["name"].as_str().unwrap_or_default().to_owned())
             .collect();
+        let hooks: Vec<(String, Vec<String>)> = header["hooks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|h| {
+                let registers = h["registers"].as_array().into_iter().flatten();
+                let registers = registers.map(|r| r.as_str().unwrap_or_default().to_owned()).collect();
+                (h["name"].as_str().unwrap_or_default().to_owned(), registers)
+            })
+            .collect();
         let mut file = InputsFile { session: header["session"].as_str().unwrap_or_default().to_owned(), ticks: vec![] };
         for line in lines {
             let v: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
@@ -90,10 +102,17 @@ impl InputsFile {
                 let value = unhex(read[2].as_str().unwrap_or_default())?;
                 late.push(LateRead { name: name.clone(), site, read: n, value, bytes });
             }
+            let mut calls = Vec::new();
+            for call in v["hooks"].as_array().into_iter().flatten() {
+                let i = call[0].as_u64().ok_or("a hook's call: its hook")? as usize;
+                let (name, registers) = hooks.get(i).ok_or_else(|| format!("tick {tick}: no hook {i}"))?;
+                let values = call[1].as_array().into_iter().flatten().map(|v| v.as_u64().unwrap_or(0) as u32);
+                calls.push((name.clone(), crate::Call { registers: registers.iter().cloned().zip(values).collect() }));
+            }
             let set =
                 v["set"].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect();
             let sync = v["sync"].as_str().unwrap_or_default().to_owned();
-            file.ticks.push(InputsLine { tick, sync, inputs, late, set });
+            file.ticks.push(InputsLine { tick, sync, inputs, late, calls, set });
         }
         Ok(file)
     }

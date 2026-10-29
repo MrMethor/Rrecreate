@@ -686,6 +686,19 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D98. The calls a part not ported makes into ported code are given the port; trace version 9. Accepted 2026-10-29.
+A hook (`ticks.toml` `[[hook]]`, `rrc hook`) names an entry of ported code that a part of the program not
+ported calls, and the registers it takes. Recording keeps each run of the entry in a tick's pass (outside
+interrupt handlers) with those registers' values; the trace's ticks have them (`hooks`, version 9; versions 5
+to 8 are still read), the inputs file too, and the runtime's `Inputs::calls(name)` gives them to the port,
+which makes the same calls at the place in its step of the part that made them. Clockwork's `entries` and
+`entries_end` keep the runs (protocol revision 10).
+**Why:** Arena's renderer wakes the creatures whose flats it draws within 800 units: for each, it calls the
+game's `ACD.EXE+25F11` with the flat's position (AX, BX), its number (CL) and its cell (ES:DI), which makes the
+creature, its stats rolled, and takes the flat out of the map. The call comes mid-pass from the ray caster, so
+neither feeding at sync points (D84) nor an input the part writes (D96) gives it to the port, and feeding the
+actors would have hidden the creatures' code the comparison tests.
+
 ### D97. A port makes the program's own writes to an input; trace version 8. Accepted 2026-10-29.
 A late read keeps the bytes it saw otherwise than the program should have read them (the tick's value with
 its own writes since, what Clockwork compares a read with since D60), as well as the value: the trace's late

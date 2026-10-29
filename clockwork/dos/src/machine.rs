@@ -755,6 +755,9 @@ impl Machine {
             if self.probes.exec_watch.is_some() {
                 self.watch_exec();
             }
+            if self.probes.entries.is_some() {
+                self.watch_entries();
+            }
             if self.probes.coverage.is_some() {
                 self.coverage_before();
             }
@@ -964,6 +967,21 @@ impl Machine {
             regs: self.cpu.regs,
             stack,
         });
+    }
+
+    /// An entry of [`Machine::start_entries`] is about to run, outside an interrupt handler: kept.
+    fn watch_entries(&mut self) {
+        let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+        let in_handler = self.probes.calls.as_deref().is_some_and(|c| c.in_hardware_interrupt());
+        let Some(entries) = self.probes.entries.as_deref_mut() else { return };
+        if in_handler || entries.at.binary_search(&linear).is_err() {
+            return;
+        }
+        if entries.hits.len() >= MAX_EXEC_HITS {
+            entries.dropped += 1;
+            return;
+        }
+        entries.hits.push(crate::probe::EntryHit { cycle: self.cpu.cycles, at: linear, regs: self.cpu.regs });
     }
 
     fn count_irq(&mut self, vector: u8) {
@@ -1212,6 +1230,18 @@ impl Machine {
     pub fn start_late_inputs(&mut self, late: crate::late::LateInputs) {
         self.probes.late = Some(Box::new(late));
         self.calls_for(crate::probe::CALLS_FOR_LATE);
+    }
+
+    /// Keeps each run of the entries at `at` (linear) with the registers (D98), outside interrupt
+    /// handlers (call tracking, when it is on, tells them apart).
+    pub fn start_entries(&mut self, mut at: Vec<u32>) {
+        at.sort_unstable();
+        at.dedup();
+        self.probes.entries = Some(Box::new(crate::probe::Entries { at, ..Default::default() }));
+    }
+
+    pub fn take_entries(&mut self) -> Option<crate::probe::Entries> {
+        self.probes.entries.take().map(|e| *e)
     }
 
     pub fn take_late_inputs(&mut self) -> Option<crate::late::LateInputs> {

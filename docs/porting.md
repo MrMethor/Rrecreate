@@ -247,7 +247,11 @@ Declare that memory an input the part writes, with the ported code's instruction
 GAME.EXE+4855E view_pick --size 2 --part "the 3D view" --read-at GAME.EXE+22DBB`. The program's writes to it
 aren't followed, so each read there that saw something other than the read before is kept, and the port reads
 it with `tick.inputs.at_site("GAME.EXE+22DBB")`, polling until `read_out` as a loop would (the part may hand
-over nothing in a pass, or several times).
+over nothing in a pass, or several times). Where the part calls ported code with its arguments in registers
+(the renderer wakes each creature it draws through a function of the game's), declare the call a hook (D98):
+`rrc hook GAME.EXE+25F11 view_wakes --part "the 3D view" --registers ax,bx,cl,di`. Recording keeps each run of
+that entry in a pass with those registers, and the port makes the same calls where the part would have, at
+its step's place for that part: `for call in tick.inputs.calls("view_wakes") { wake(call.get("ax"), …) }`.
 
 Then the tick's **boundary values**: what the loop reads that comes from outside it (the elapsed time the
 waiting function measures, the key-state array, the mouse). To find them:

@@ -93,6 +93,22 @@ pub struct Inputs {
     reads: std::cell::RefCell<BTreeMap<String, u32>>,
     /// The program's own writes to inputs this tick, as the port made them ([`Inputs::write`]).
     written: std::cell::RefCell<BTreeMap<String, BTreeMap<usize, u8>>>,
+    /// The calls a part not ported made into ported code in the pass, by hook, in order (D98).
+    calls: BTreeMap<String, Vec<Call>>,
+}
+
+/// A call a part of the program not ported made into ported code in the pass (D98): the registers it
+/// was made with, by name (`ax`, `cl`, `di`, as the hook's `registers` list them).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Call {
+    pub registers: BTreeMap<String, u32>,
+}
+
+impl Call {
+    /// A register's value (0 if the hook doesn't take it).
+    pub fn get(&self, register: &str) -> u32 {
+        self.registers.get(register).copied().unwrap_or(0)
+    }
 }
 
 impl Inputs {
@@ -152,6 +168,13 @@ impl Inputs {
             }
         }
         Inputs { values, ..Inputs::default() }
+    }
+
+    /// The calls the part not ported made into the ported code through hook `name` in the tick's pass, in
+    /// order, with their registers (D98): the port makes each where the part would have (the renderer's
+    /// wakes, at the port's view step), as the original's code was called.
+    pub fn calls(&self, name: &str) -> &[Call] {
+        self.calls.get(name).map_or(&[], Vec::as_slice)
     }
 
     /// The program's own write to an input (a keyboard buffer it empties), which the port makes where the
@@ -217,6 +240,14 @@ impl Inputs {
         self.late.values_mut().for_each(|reads| reads.sort_by_key(|l| l.read));
         self.reads.borrow_mut().clear();
         self.written.borrow_mut().clear();
+    }
+
+    /// This tick's calls through hooks, replacing the last tick's.
+    pub(crate) fn set_calls(&mut self, calls: &[(String, Call)]) {
+        self.calls.clear();
+        for (name, call) in calls {
+            self.calls.entry(name.clone()).or_default().push(call.clone());
+        }
     }
 }
 
@@ -311,6 +342,7 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
             current.set(name, bytes.clone());
         }
         current.set_late(&line.late);
+        current.set_calls(&line.calls);
         if line.tick < first {
             continue;
         }
@@ -525,6 +557,27 @@ mod tests {
         assert_eq!(inputs.u16("elapsed"), 1, "the tick's value, read at no site");
         inputs.set_late(&file.ticks[2].late);
         assert_eq!(inputs.at_site("GAME.EXE+16E85").u16("elapsed"), 1, "a new tick: nothing written");
+    }
+
+    #[test]
+    fn a_part_not_ported_calls_the_ported_code_through_hooks() {
+        let text = INPUTS
+            .replace(
+                r#"{"name":"keys","size":2}]}"#,
+                r#"{"name":"keys","size":2}],"hooks":[{"name":"wake","registers":["ax","cl"]}]}"#,
+            )
+            .replace(
+                r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]]}"#,
+                r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]],"hooks":[[0,[1472,5]],[0,[96,7]]]}"#,
+            );
+        let file = InputsFile::parse(&text).unwrap();
+        let mut inputs = Inputs::default();
+        inputs.set_calls(&file.ticks[2].calls);
+        let calls: Vec<(u32, u32)> = inputs.calls("wake").iter().map(|c| (c.get("ax"), c.get("cl"))).collect();
+        assert_eq!(calls, [(1472, 5), (96, 7)], "in order");
+        assert!(inputs.calls("other").is_empty() && inputs.calls("wake")[0].get("dx") == 0);
+        inputs.set_calls(&file.ticks[1].calls);
+        assert!(inputs.calls("wake").is_empty(), "a tick without calls");
     }
 
     #[test]

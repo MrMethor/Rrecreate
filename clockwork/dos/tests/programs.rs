@@ -4059,6 +4059,20 @@ fn ten_steps() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
 }
 
 #[test]
+fn an_entry_s_runs_are_kept_with_the_registers() {
+    let (program, o) = ten_steps();
+    let mut m = boot(&[("S.COM", &program)], "S.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    m.start_entries(vec![base + o["step"], base + o["count"]]);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let entries = m.take_entries().unwrap();
+    let counts: Vec<u16> = entries.hits.iter().map(|h| h.regs.cx()).collect();
+    assert_eq!(counts, (1..=10).rev().collect::<Vec<u16>>(), "each call of step, with its CX");
+    assert!(entries.hits.iter().all(|h| h.at == base + o["step"]) && entries.dropped == 0, "data never runs");
+    assert!(entries.hits.windows(2).all(|w| w[0].cycle < w[1].cycle));
+}
+
+#[test]
 fn a_run_stops_at_a_sync_point_s_hit() {
     let (program, o) = ten_steps();
     let mut m = boot(&[("S.COM", &program)], "S.COM");

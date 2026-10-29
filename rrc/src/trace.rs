@@ -26,7 +26,7 @@ use crate::session::{Recorded, Session};
 use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 /// The oldest version this rrc reads: version 6 only added items read through pointers (D72).
 const OLDEST: u32 = 5;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
@@ -147,6 +147,31 @@ pub struct Header {
     /// The scenario's edits (D64): `{"tick", "at" (an ID), "hex", "edit" (as the session has it)}`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<Value>,
+    /// Calls into ported code from a part not ported (D98): `{"name", "at", "registers"}`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<HookItem>,
+}
+
+/// A hook a trace follows (D98): its name, its entry's ID and the registers it takes.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct HookItem {
+    pub name: String,
+    pub at: String,
+    pub registers: Vec<String>,
+}
+
+/// A register's value in Clockwork's `entries_end` answer: `ax` is `eax`'s low word, `ah` its second byte.
+fn register(regs: &Value, name: &str) -> Option<u32> {
+    let full = |n: &str| regs[n].as_u64().map(|v| v as u32);
+    let word = |n: &str| full(n).map(|v| v & 0xFFFF);
+    Some(match name {
+        "ax" | "bx" | "cx" | "dx" | "si" | "di" | "bp" | "sp" => word(&format!("e{name}"))?,
+        "al" | "bl" | "cl" | "dl" => full(&format!("e{}x", &name[..1]))? & 0xFF,
+        "ah" | "bh" | "ch" | "dh" => full(&format!("e{}x", &name[..1]))? >> 8 & 0xFF,
+        "eflags" => full("flags")?,
+        "ip" => full("eip")? & 0xFFFF,
+        other => full(other)?,
+    })
 }
 
 /// A read of a tick's pass that saw an input otherwise than the tick has, or than the same instruction's
@@ -224,6 +249,9 @@ pub struct Tick {
     /// instruction's read before (D60, D68, D93).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub late: Vec<LateRead>,
+    /// The hooks' calls in the tick's pass, in order (D98): (index in the header's `hooks`, registers).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<(usize, Vec<u32>)>,
     /// The frames shown during the tick: [number, cycle, video mode, fingerprint, picture (its hash in
     /// the cache)].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -360,6 +388,12 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         inputs,
         state,
         edits,
+        hooks: k
+            .ticks
+            .hooks
+            .iter()
+            .map(|h| HookItem { name: h.name.clone(), at: h.at.clone(), registers: h.registers.clone() })
+            .collect(),
     };
     // Only items added since the last recording, all in its kept memory: no run (D92).
     let kept = if a.has("--run") { Err(String::new()) } else { from_kept(repo, &session, &header)? };
@@ -585,6 +619,8 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<T
             "the inputs changed"
         } else if old.header.edits != header.edits {
             "the edits changed"
+        } else if old.header.hooks != header.hooks {
+            "the hooks changed"
         } else {
             "another program or game"
         };
@@ -703,6 +739,11 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
         }
         clockwork.ask("late_inputs", json!({ "sources": sources }))?;
     }
+    // Calls into ported code from a part not ported (D98).
+    if !header.hooks.is_empty() {
+        let at: Vec<String> = header.hooks.iter().map(|h| places.address(&h.at)).collect::<Result<_, _>>()?;
+        clockwork.ask("entries", json!({ "at": at }))?;
+    }
     // Each frame's picture, kept in the cache (D25).
     clockwork.ask("frame_images", json!({"on": true}))?;
     let writer = Cache::open(&repo.local)?.writer();
@@ -782,6 +823,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
             inputs: read,
             state: changed,
             late: Vec::new(),
+            hooks: Vec::new(),
             frames,
             sound,
         });
@@ -821,6 +863,23 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
                 let bytes = Some(byte_pairs(&late["bytes"]).unwrap_or_default());
                 ticks[i].late.push(LateRead { input, at, value: read, read: n, bytes });
             }
+        }
+    }
+    // Each hook's call in the pass of the tick before it: its registers.
+    if !header.hooks.is_empty() {
+        let found = clockwork.ask("entries_end", Value::Null)?;
+        for entry in found["entries"].as_array().into_iter().flatten() {
+            let (Some(cycle), Some(at)) = (entry["cycle"].as_u64(), entry["at"].as_str()) else { continue };
+            let at = places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
+            let Some(hook) = header.hooks.iter().position(|h| h.at == at) else { continue };
+            let i = ticks.partition_point(|t| t.cycle <= cycle);
+            let Some(tick) = i.checked_sub(1).and_then(|i| ticks.get_mut(i)) else { continue };
+            let values =
+                header.hooks[hook].registers.iter().map(|r| register(&entry["regs"], r).unwrap_or(0)).collect();
+            tick.hooks.push((hook, values));
+        }
+        if found["dropped"].as_u64().unwrap_or(0) > 0 {
+            say("hooks", format!("{} calls past the limit not kept", found["dropped"]));
         }
     }
     // What the run did after the last tick, and the machine's state at the end.
@@ -977,6 +1036,14 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             let which = if l.read > 1 { format!(" (its read {} there)", l.read) } else { String::new() };
             say("late", format!("{}: {}{which} read {value}, changed after the sync point", item.name, l.at));
         }
+        for (i, values) in tick.hooks.iter().take(HOOK_CALLS) {
+            let hook = &h.hooks[*i];
+            let args: Vec<String> = hook.registers.iter().zip(values).map(|(r, v)| format!("{r}={v:X}h")).collect();
+            say("hook", format!("{} ({}): {}", hook.name, hook.at, args.join(", ")));
+        }
+        if tick.hooks.len() > HOOK_CALLS {
+            say("...", format!("{} more calls through hooks in this pass", tick.hooks.len() - HOOK_CALLS));
+        }
         for edit in h.edits.iter().filter(|e| e["tick"].as_u64() == Some(n)) {
             say("edit", edit_text(edit));
         }
@@ -1097,6 +1164,9 @@ fn show_item(trace: &Trace, name: &str, ty: &dyn Fn(&Item) -> String, lines: usi
     Ok(ExitCode::SUCCESS)
 }
 
+/// Most calls through hooks `rrc trace --tick` shows for a tick.
+const HOOK_CALLS: usize = 8;
+
 /// Most elements of an array `value_text` shows.
 const ELEMENTS: usize = 16;
 
@@ -1195,6 +1265,7 @@ mod tests {
             inputs: vec![item("elapsed", "GAME.EXE+20000")],
             state: vec![item("x", "GAME.EXE+20002"), item("y", "GAME.EXE+20004")],
             edits: vec![json!({"tick": 2, "at": "GAME.EXE+20002", "hex": "0100", "edit": "x = 1"})],
+            hooks: vec![],
         };
         let tick = |n: u64, inputs: Vec<(usize, Option<String>)>, state: Vec<(usize, Option<String>)>| Tick {
             tick: n,
@@ -1204,6 +1275,7 @@ mod tests {
             inputs,
             state,
             late: vec![],
+            hooks: vec![],
             frames: vec![json!([n, n * 1000 - 10, 19, "61f5"])],
             sound: serde_json::Map::new(),
         };

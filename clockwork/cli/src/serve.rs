@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 9;
+pub const PROTOCOL: u64 = 10;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -638,6 +638,30 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             }
             m.start_late_inputs(late);
             Ok(json!({}))
+        }
+        "entries" => {
+            let list = r.get("at").and_then(Value::as_array).ok_or("missing \"at\": a list of addresses")?;
+            let at = list
+                .iter()
+                .map(|p| addr(m, p.as_str().ok_or("\"at\" lists addresses")?))
+                .collect::<Result<Vec<_>, _>>()?;
+            m.start_entries(at);
+            Ok(json!({}))
+        }
+        "entries_end" => {
+            let entries = m.take_entries().ok_or("no entries kept")?;
+            let hits: Vec<Value> = entries
+                .hits
+                .iter()
+                .map(|h| {
+                    let g = &h.regs;
+                    json!({"cycle": h.cycle, "at": name(h.at), "regs": {
+                        "eax": g.gpr[0], "ecx": g.gpr[1], "edx": g.gpr[2], "ebx": g.gpr[3],
+                        "esp": g.gpr[4], "ebp": g.gpr[5], "esi": g.gpr[6], "edi": g.gpr[7],
+                        "es": g.es(), "cs": g.cs(), "ss": g.ss(), "ds": g.ds(), "flags": g.flags}})
+                })
+                .collect();
+            Ok(json!({"entries": hits, "dropped": entries.dropped}))
         }
         "late_inputs_end" => {
             let late = m.take_late_inputs().ok_or("no late-input check on")?;

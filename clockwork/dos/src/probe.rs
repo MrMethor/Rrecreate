@@ -44,6 +44,27 @@ pub struct Probes {
     pub uninit: Option<Box<Uninit>>,
     /// Input that changed within a tick ([`crate::Machine::start_late_inputs`]).
     pub late: Option<Box<LateInputs>>,
+    /// Entries whose runs are kept with the registers ([`crate::Machine::start_entries`]).
+    pub entries: Option<Box<Entries>>,
+}
+
+/// The program's runs of chosen entries, with the registers it ran them with (D98): the calls a part of
+/// the program a port doesn't have makes into code the port has (a renderer waking a creature it drew).
+/// Interrupt handlers' runs aren't the program's and are left out.
+#[derive(Debug, Clone, Default)]
+pub struct Entries {
+    /// The entries (linear), sorted.
+    pub at: Vec<u32>,
+    pub hits: Vec<EntryHit>,
+    /// Runs past [`crate::machine::MAX_EXEC_HITS`].
+    pub dropped: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntryHit {
+    pub cycle: u64,
+    pub at: u32,
+    pub regs: cpu::Regs,
 }
 
 pub(crate) const CALLS_FOR_WATCH: u8 = 1;
