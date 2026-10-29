@@ -34,6 +34,11 @@ pub enum Kind {
     Palette,
     /// Cells, `width` × `height` if they are known.
     Map,
+    /// Sampled sound: unsigned 8-bit mono samples at `rate` (`coded = "voc"`: a Creative Voice File's,
+    /// at its rate).
+    Sound,
+    /// Music: XMIDI (`.XMI`), or a standard MIDI file.
+    Music,
     Data,
 }
 
@@ -45,6 +50,8 @@ impl Kind {
             Kind::Picture => "picture",
             Kind::Palette => "palette",
             Kind::Map => "map",
+            Kind::Sound => "sound",
+            Kind::Music => "music",
             Kind::Data => "data",
         }
     }
@@ -58,7 +65,7 @@ pub enum Number {
     Field(String),
 }
 
-/// How bytes are coded: a codec by name (`stored`, `runs`, `lzss`, `lzhuf`), or one with its parameters
+/// How bytes are coded: a codec by name (`stored`, `runs`, `lzss`, `lzhuf`, `voc`), or one with its parameters
 /// (`{codec = "lzss", fill = 0}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -81,6 +88,9 @@ pub struct Codec {
     pub start: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shortest: Option<usize>,
+    /// The coded bytes begin with how many they decode to: `u16` or `u32`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
 }
 
 impl Coded {
@@ -97,32 +107,60 @@ impl Codec {
         Codec { codec: "stored".into(), ..Codec::default() }
     }
 
-    /// `packed` decoded, up to `size` bytes.
-    pub fn decode(&self, packed: &[u8], size: usize) -> Result<Vec<u8>, String> {
-        match self.codec.as_str() {
-            "stored" => Ok(packed[..packed.len().min(size)].to_vec()),
-            "runs" => Ok(runs(packed, size)),
-            "lzhuf" => Ok(lzhuf(packed, size)),
-            "lzss" => {
-                let d = Lzss::OKUMURA;
-                let lzss = Lzss {
-                    ring: self.ring.unwrap_or(d.ring),
-                    fill: self.fill.unwrap_or(d.fill),
-                    start: self.start.unwrap_or(d.start),
-                    shortest: self.shortest.unwrap_or(d.shortest),
-                };
-                if !lzss.ring.is_power_of_two() || lzss.start >= lzss.ring {
-                    return Err(format!(
-                        "lzss: a ring of {} from {} (a power of two, past the start)",
-                        lzss.ring, lzss.start
-                    ));
-                }
-                Ok(lzss.decode(packed, size))
-            }
-            other => Err(format!("{other}: no such codec (stored, runs, lzss, lzhuf)")),
+    /// Whether it is a codec there is, with parameters that can be.
+    fn check(&self) -> Result<(), String> {
+        if !CODECS.contains(&self.codec.as_str()) {
+            return Err(format!("{}: no such codec ({})", self.codec, CODECS.join(", ")));
         }
+        if let Some(prefix) = self.prefix.as_deref().filter(|p| !["u16", "u32"].contains(p)) {
+            return Err(format!("a prefix is u16 or u32, not {prefix}"));
+        }
+        if self.codec == "lzss" {
+            self.lzss()?;
+        }
+        Ok(())
+    }
+
+    /// Its LZSS: lzss.c's, with the parameters given.
+    fn lzss(&self) -> Result<Lzss, String> {
+        let d = Lzss::OKUMURA;
+        let lzss = Lzss {
+            ring: self.ring.unwrap_or(d.ring),
+            fill: self.fill.unwrap_or(d.fill),
+            start: self.start.unwrap_or(d.start),
+            shortest: self.shortest.unwrap_or(d.shortest),
+        };
+        if !lzss.ring.is_power_of_two() || lzss.start >= lzss.ring {
+            return Err(format!("lzss: a ring of {} from {} (a power of two, past the start)", lzss.ring, lzss.start));
+        }
+        Ok(lzss)
+    }
+
+    /// `packed` decoded, up to `size` bytes (or its prefix's).
+    pub fn decode(&self, packed: &[u8], size: usize) -> Result<Vec<u8>, String> {
+        self.check()?;
+        let (packed, size) = match self.prefix.as_deref() {
+            Some(width) => {
+                let n = if width == "u16" { 2 } else { 4 };
+                let prefix = packed.get(..n).ok_or("shorter than its size")?;
+                let said = prefix.iter().rev().fold(0usize, |v, &b| v << 8 | usize::from(b));
+                (&packed[n..], said.min(size))
+            }
+            None => (packed, size),
+        };
+        Ok(match self.codec.as_str() {
+            "runs" => runs(packed, size),
+            "lzhuf" => lzhuf(packed, size),
+            "lzss" => self.lzss()?.decode(packed, size),
+            // A sound's samples: `Formats::open` reads them with their rate.
+            "voc" => rrc_runtime::audio::voc(packed)?.samples,
+            _ => packed[..packed.len().min(size)].to_vec(),
+        })
     }
 }
+
+/// The codecs a format may name.
+const CODECS: [&str; 5] = ["stored", "runs", "lzss", "lzhuf", "voc"];
 
 /// A kind of file or member.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,9 +189,13 @@ pub struct Format {
     /// How many bytes they decode to (else as many as `width` × `height`, or as the codec gives).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<Number>,
-    /// An archive's directory, or the first chunk: where it begins.
+    /// An archive's directory, or the first chunk: where it begins (`end`: the file's last bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory: Option<Number>,
+    /// Where an archive's members begin when its entries have no `offset`: each follows the last (else
+    /// past the header).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Number>,
     /// An archive's entries: how many.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<Number>,
@@ -175,6 +217,9 @@ pub struct Format {
     /// A picture's palette: a file or member of kind `palette`, or `after`, the bytes after its coded ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
+    /// A sound's samples a second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<Number>,
     /// A palette's bits per colour (6 or 8; 6), and a picture's palette `after`'s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bits: Option<u8>,
@@ -211,6 +256,8 @@ pub struct Opened {
     pub bytes: Vec<u8>,
     /// The bytes after its coded ones.
     pub after: Vec<u8>,
+    /// A sound's samples a second.
+    pub rate: Option<u32>,
 }
 
 impl Formats {
@@ -250,7 +297,7 @@ impl Formats {
                 problems.push(format!("{at}: a method needs methods, and no coded"));
             }
             for coded in f.coded.iter().chain(f.methods.values()) {
-                if let Err(e) = coded.codec().decode(&[], 0) {
+                if let Err(e) = coded.codec().check() {
                     problems.push(format!("{at}: {e}"));
                 }
             }
@@ -287,6 +334,7 @@ impl Formats {
             header: None,
             bytes,
             after: Vec::new(),
+            rate: None,
         };
         // The path as the formats name it: each member by its name, without `#n`.
         let mut named = file.to_owned();
@@ -346,9 +394,16 @@ impl Formats {
             }
             (None, None) => None,
         };
+        opened.rate = number(&format.rate)?.map(|r| r as u32);
         if let Some(codec) = codec {
             let size = number(&format.size)?.or(cells).unwrap_or(usize::MAX);
-            body = codec.decode(&body, size)?;
+            if codec.codec == "voc" {
+                let voice = rrc_runtime::audio::voc(&body)?;
+                opened.rate = opened.rate.or(Some(voice.rate));
+                body = voice.samples;
+            } else {
+                body = codec.decode(&body, size)?;
+            }
             if codec.codec != "stored" {
                 opened.codecs.push(codec.codec);
             }
@@ -369,12 +424,24 @@ impl Formats {
             }
             None => None,
         };
-        let start = resolve(f.directory.as_ref(), header.as_ref())?.unwrap_or(0);
+        let at_end = f.directory == Some(Number::Field("end".into()));
+        let start = if at_end { 0 } else { resolve(f.directory.as_ref(), header.as_ref())?.unwrap_or(0) };
         match f.kind {
             Kind::Archive => {
                 let count = resolve(f.count.as_ref(), header.as_ref())?.ok_or_else(|| at("an archive's count"))?;
                 let ty = f.entry.as_ref().ok_or_else(|| at("an archive's entry"))?;
                 let n = size(ty, &k.types)? as usize;
+                let start = if at_end {
+                    bytes.len().checked_sub(count * n).ok_or_else(|| at("shorter than its directory"))?
+                } else {
+                    start
+                };
+                // Entries without an offset: each member after the last, from `data` (else past the header).
+                let head = match &f.header {
+                    Some(ty) => size(ty, &k.types)? as usize,
+                    None => 0,
+                };
+                let mut next = resolve(f.data.as_ref(), header.as_ref())?.unwrap_or(head);
                 let mut members = Vec::with_capacity(count);
                 for i in 0..count {
                     let b = bytes
@@ -383,8 +450,10 @@ impl Formats {
                     let e = decode(b, ty, &Reader::of(k))?;
                     let field = |name: &str| e.get(name).and_then(Value::as_u64).map(|v| v as usize);
                     let name = e.get("name").map(name_text).ok_or_else(|| at("its entry has no name"))?;
-                    let offset = field("offset").ok_or_else(|| at("its entry has no offset"))?;
                     let size = field("size").ok_or_else(|| at("its entry has no size"))?;
+                    let packed = field("packed").unwrap_or(size);
+                    let offset = field("offset").unwrap_or(next);
+                    next = offset + packed;
                     let codec = match e.get("method") {
                         Some(method) => {
                             let method = method.as_u64().unwrap_or(0).to_string();
@@ -395,7 +464,7 @@ impl Formats {
                         }
                         None => Codec::stored(),
                     };
-                    members.push(Member { name, offset, packed: field("packed").unwrap_or(size), size, codec });
+                    members.push(Member { name, offset, packed, size, codec });
                 }
                 Ok(members)
             }
@@ -551,6 +620,7 @@ mod tests {
             packed: None,
             size: None,
             directory: Some(Number::Is(2)),
+            data: None,
             count: None,
             entry: None,
             methods: BTreeMap::new(),
@@ -559,6 +629,7 @@ mod tests {
             width: None,
             height: None,
             palette: None,
+            rate: None,
             bits: None,
             read_by: String::new(),
             provenance: String::new(),
@@ -604,6 +675,45 @@ mod tests {
         assert_eq!(opened.bytes, [7; 4]);
         assert_eq!(opened.after, [1, 2, 3, 4, 5, 6], "the bytes after the coded ones");
         assert_eq!((opened.offset, opened.packed, opened.codecs.as_slice()), (12, 14, &["runs".to_owned()][..]));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_archive_s_directory_may_end_it_and_a_sound_be_its_member() {
+        // A count, the members one after another, then the directory: a name of 4 and a size each. SND is a
+        // Creative Voice File; RUN is run-length coded after a u16 of its size.
+        let k = Knowledge {
+            types: toml::from_str(
+                "[[struct]]\nname = \"entry\"\nsize = 6\nfields = [\
+                 {offset = 0, size = 4, name = \"name\", type = \"u8[4]\"},\
+                 {offset = 4, size = 2, name = \"size\", type = \"u16\"}]\n",
+            )
+            .unwrap(),
+            ..Knowledge::default()
+        };
+        let formats: Formats = toml::from_str(
+            "[[format]]\nname = \"pack\"\nfiles = [\"P.BSA\"]\nkind = \"archive\"\nheader = \"u16\"\ncount = \"header\"\n\
+             directory = \"end\"\nentry = \"entry\"\n\
+             [[format]]\nname = \"voice\"\nfiles = [\"P.BSA/SND\"]\nkind = \"sound\"\ncoded = \"voc\"\n\
+             [[format]]\nname = \"runs\"\nfiles = [\"P.BSA/RUN\"]\nkind = \"data\"\n\
+             coded = { codec = \"runs\", prefix = \"u16\" }\n",
+        )
+        .unwrap();
+        assert!(formats.problems(&k).is_empty(), "{:?}", formats.problems(&k));
+        let mut snd = b"Creative Voice File\x1A\x1A\x00\x0A\x01\x29\x11".to_vec();
+        snd.extend([1, 4, 0, 0, 156, 0, 1, 2, 0]);
+        let run = [3, 0, 0xC3, 9];
+        let mut file = 2u16.to_le_bytes().to_vec();
+        file.extend(&snd);
+        file.extend(run);
+        file.extend([&b"SND\0"[..], &(snd.len() as u16).to_le_bytes(), b"RUN\0", &4u16.to_le_bytes()].concat());
+        let dir = std::env::temp_dir().join(format!("rrc-formats-end-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("P.BSA"), &file).unwrap();
+        let sound = formats.open(&k, &dir, "P.BSA/SND").unwrap();
+        assert_eq!((sound.offset, sound.bytes.as_slice(), sound.rate), (2, &[1, 2][..], Some(10_000)));
+        let runs = formats.open(&k, &dir, "P.BSA/RUN").unwrap();
+        assert_eq!((runs.offset, runs.bytes.as_slice()), (2 + snd.len(), &[9, 9, 9][..]));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

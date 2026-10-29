@@ -70,7 +70,7 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   two at once don't lose each other's changes; one older than a minute is taken over. The files themselves
   are written aside and renamed.
 - `compare/<session>/`: the files of the session's last `rrc compare` (below, "The port's files").
-- `assets/`: the pictures `rrc asset` wrote, the person's (D78).
+- `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
 
 ## Ghidra's export
@@ -262,12 +262,15 @@ height = 200
 palette = "VAULT.DAT/PALETTE"       # a file or member of kind palette (`bits`: 6, the DAC's, or 8)
 ```
 
-- **Kinds:** `archive`, a directory of `count` entries of type `entry` from `directory`, whose fields `name`
-  (characters to the first NUL), `offset` and `size` place each member, and `packed` (its bytes in the file)
-  and `method` (its codec, by `methods`) when they are coded; `chunks`, tagged chunks from `directory` (0),
-  each a tag of `tag` bytes (4), its length (`length`: `u16` or `u32`) and that many bytes, a member named by
-  its tag; `picture`, `width` × `height` palette indices shown with `palette`; `palette`, colours of three
-  bytes; `map`, `width` × `height` cells; `data`, anything else.
+- **Kinds:** `archive`, a directory of `count` entries of type `entry` from `directory` (`"end"`: the
+  file's last bytes), whose fields `name` (characters to the first NUL), `offset` and `size` place each
+  member (without `offset`, each follows the last from `data`, else past the header), and `packed` (its bytes
+  in the file) and `method` (its codec, by `methods`) when they are coded; `chunks`, tagged chunks from
+  `directory` (0), each a tag of `tag` bytes (4), its length (`length`: `u16` or `u32`) and that many bytes, a
+  member named by its tag; `picture`, `width` × `height` palette indices shown with `palette`; `palette`,
+  colours of three bytes; `map`, `width` × `height` cells; `sound`, unsigned 8-bit mono samples at `rate` a
+  second (`coded = "voc"`: a Creative Voice File's, at its rate), written as WAV; `music`, XMIDI (`.XMI`) or a
+  standard MIDI file, written as MIDI (D105); `data`, anything else.
 - **Coding:** `coded` is how the bytes past the header are coded, decoded to `size` bytes (else `width` ×
   `height`, else as many as the codec gives); or the header's `method` field (its bits in `mask`) chooses the
   codec from `methods`. `packed` is how many bytes are coded (else all past the header); those after them are
@@ -275,7 +278,9 @@ palette = "VAULT.DAT/PALETTE"       # a file or member of kind palette (`bits`: 
   `stored`, `runs` (PCX's run-length code), `lzss` or `lzhuf` (lzhuf.c's: LZSS whose literals, lengths and
   places are Huffman coded), or one with its parameters, `{codec = "lzss", ring = 4096, fill = 0, start =
   4078, shortest = 3}` (those not given are lzss.c's): the runtime's codecs (`rrc_runtime::codecs`), which a
-  port decodes with (D101, D104). A header may be a plain type (`header = "u16"`, `size = "header"`).
+  port decodes with (D101, D104). `prefix = "u16"` (or `"u32"`): the coded bytes begin with their decoded
+  size. `voc` is a Creative Voice File's samples (`rrc_runtime::audio`, D105). A header may be a plain type
+  (`header = "u16"`, `size = "header"`).
 - A member is decoded by its container's method, then by its own format; a member's members are named on
   (`START.MIF/LEVL/MAP1`, D104).
 

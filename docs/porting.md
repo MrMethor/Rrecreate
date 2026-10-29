@@ -147,7 +147,7 @@ rrc asset TITLE.IMG
 ```
 
 `rrc asset` decodes a file or an archive's member by its format: an archive's members, a picture as PNG with
-its palette (in `.rrc/assets/`), the bytes in the cache. With `--session`, the original checks it (D103):
+its palette, a sound as WAV, music as MIDI (in `.rrc/assets/`), the bytes in the cache. With `--session`, the original checks it (D103):
 where the session read those bytes and by which code, and whether the original's memory holds what this
 decoded at moments after the read (1 ms, then doubling to about 4 s), `equal` and when and where (a map laid
 out in a wider grid is found as its rows), or how far it agrees (D104). A format that decodes equal is the one

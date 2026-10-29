@@ -1,6 +1,6 @@
-//! `rrc asset PATH` (D78, D103): a file of the game, or an archive's member (`FILE/MEMBER`), decoded by
-//! its format (`knowledge/formats.toml`): an archive's members listed, a picture written as PNG with its
-//! palette, the decoded bytes kept in the cache. With `--session`, the check: where the session's original
+//! `rrc asset PATH` (D78, D103, D105): a file of the game, or an archive's member (`FILE/MEMBER`), decoded
+//! by its format (`knowledge/formats.toml`): an archive's members listed, a picture written as PNG with its
+//! palette, a sound as WAV, music as MIDI, the decoded bytes kept in the cache. With `--session`, the check: where the session's original
 //! read those bytes (file tracing), and whether its memory holds what this decoded, at moments after.
 
 use std::process::ExitCode;
@@ -23,7 +23,7 @@ use crate::session::Session;
 use crate::trace::sync_points;
 use crate::watch::Names;
 
-const USAGE: &str = "asset FILE[/MEMBER] [--session NAME] [--out FILE.png] [--lines N]";
+const USAGE: &str = "asset FILE[/MEMBER] [--session NAME] [--out FILE] [--lines N]";
 /// Members listed.
 const SHOWN: usize = 40;
 /// The bytes a search of the original's memory starts from.
@@ -97,7 +97,10 @@ pub(crate) fn asset(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             let (width, height) = format.dimensions(opened.header.as_ref())?.expect("checked: a picture's size");
             // Its palette: the bytes after its coded ones, or a file's (as that file's format has it).
             let palette = match format.palette.as_deref() {
-                Some("after") => Some(("its own".to_owned(), opened.after.clone(), format.bits.unwrap_or(6))),
+                Some("after") if opened.after.len() >= 768 => {
+                    Some(("its own".to_owned(), opened.after.clone(), format.bits.unwrap_or(6)))
+                }
+                Some("after") => None,
                 Some(p) => {
                     let pal = formats.open(&k, game, p)?;
                     let bits = pal.format.as_ref().and_then(|f| f.bits).unwrap_or(6);
@@ -106,16 +109,9 @@ pub(crate) fn asset(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 None => None,
             };
             let picture = picture(&opened.bytes, width, height, palette.as_ref().map(|(_, p, bits)| (&p[..], *bits)))?;
-            let out = match a.value("--out") {
-                Some(out) => std::path::PathBuf::from(out),
-                None => repo.state()?.join("assets").join(format!("{}.png", path.replace(['/', '\\'], "-"))),
-            };
-            if let Some(dir) = out.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            }
-            std::fs::write(&out, picture.png()).map_err(|e| format!("{}: {e}", out.display()))?;
+            let out = written(repo, a.value("--out"), path, "png", &picture.png())?;
             let shown_with =
-                palette.map_or("grey, as no palette is named".to_owned(), |(p, _, _)| format!("palette {p}"));
+                palette.map_or("grey, as it has no palette".to_owned(), |(p, _, _)| format!("palette {p}"));
             say("picture", format!("{width} × {height}, {shown_with}"));
             say("png", crate::path_text(&out));
         }
@@ -129,12 +125,80 @@ pub(crate) fn asset(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 say("map", format!("{width} × {height}"));
             }
         }
+        Some(Kind::Sound) => {
+            let rate = opened.rate.ok_or("a sound without its rate: give the format's rate, or code it voc")?;
+            let out = written(repo, a.value("--out"), path, "wav", &wav(&opened.bytes, rate))?;
+            say(
+                "sound",
+                format!(
+                    "{} samples at {rate} a second, {:.2} s",
+                    opened.bytes.len(),
+                    opened.bytes.len() as f64 / f64::from(rate)
+                ),
+            );
+            say("wav", crate::path_text(&out));
+        }
+        Some(Kind::Music) => {
+            let sequences = if opened.bytes.starts_with(b"MThd") {
+                vec![opened.bytes.clone()]
+            } else {
+                rrc_runtime::audio::midi_from_xmi(&opened.bytes)?
+            };
+            say("music", format!("{} sequence{}", sequences.len(), if sequences.len() == 1 { "" } else { "s" }));
+            for (i, midi) in sequences.iter().enumerate() {
+                let name = if sequences.len() == 1 { path.to_owned() } else { format!("{path}-{}", i + 1) };
+                let out = written(repo, a.value("--out").filter(|_| sequences.len() == 1), &name, "mid", midi)?;
+                say("midi", crate::path_text(&out));
+            }
+        }
         Some(Kind::Data) | None => {}
     }
     if let Some(name) = a.value("--session") {
         check(repo, name, &k, &opened)?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// An extraction written: to `out`, else to `.rrc/assets/` by its path; where.
+fn written(
+    repo: &Repo,
+    out: Option<&str>,
+    path: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    let out = match out {
+        Some(out) => std::path::PathBuf::from(out),
+        None => repo.state()?.join("assets").join(format!("{}.{extension}", path.replace(['/', '\\'], "-"))),
+    };
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(&out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok(out)
+}
+
+/// Unsigned 8-bit mono samples as a WAV file.
+fn wav(samples: &[u8], rate: u32) -> Vec<u8> {
+    let len = samples.len() as u32;
+    let mut out = b"RIFF".to_vec();
+    out.extend((36 + len + (len & 1)).to_le_bytes());
+    out.extend(b"WAVEfmt ");
+    out.extend(16u32.to_le_bytes());
+    // PCM, 1 channel, the rate, as many bytes a second, 1 byte a frame, 8 bits.
+    out.extend(1u16.to_le_bytes());
+    out.extend(1u16.to_le_bytes());
+    out.extend(rate.to_le_bytes());
+    out.extend(rate.to_le_bytes());
+    out.extend(1u16.to_le_bytes());
+    out.extend(8u16.to_le_bytes());
+    out.extend(b"data");
+    out.extend(len.to_le_bytes());
+    out.extend(samples);
+    if len & 1 == 1 {
+        out.push(0);
+    }
+    out
 }
 
 /// A picture's indices in its palette's colours (6 bits to 8), or grey.
@@ -353,6 +417,14 @@ fn longest(memory: &[u8], wanted: &[u8]) -> Found {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn samples_make_a_wav_file() {
+        let w = wav(&[0x80, 0x90, 0x70], 11025);
+        assert_eq!((&w[..4], &w[8..16], w.len()), (&b"RIFF"[..], &b"WAVEfmt "[..], 44 + 4));
+        assert_eq!(u32::from_le_bytes(w[24..28].try_into().unwrap()), 11025);
+        assert_eq!((&w[36..40], u32::from_le_bytes(w[40..44].try_into().unwrap())), (&b"data"[..], 3));
+    }
 
     #[test]
     fn the_longest_start_is_found() {

@@ -13,10 +13,11 @@ game's logic, tested on Arena (§12, D70, D71, D100): from a transplant at its f
 first dungeon's session to its end (the in-game menu, walking, collisions, the key's pickup, the gate, the
 creatures woken, the fists, the attacks and a rat's death, the rats' bites, the game's clock, the random
 generator), the 3D view's parts given to it as a part not ported (D84, D96, D98, D99); the gaps it found are
-D80-D99. M5 under way: a port reads and decodes the game's files, and the vault test program's port
-(`examples/vault`) matches from power-on through its title and play (D101, D102); formats are knowledge, and
-`rrc asset` extracts the vault's members, Arena's level map and its title picture equal to what the original
-loaded (D103, D104). Rrecreate began from Recreate's emulator and parts of its tooling
+D80-D99. M5 done, the game's data (D101-D106): a port reads and decodes the game's files, and the vault test
+program's port (`examples/vault`) matches from power-on through its title and play; formats are knowledge, and
+`rrc asset` extracts pictures, maps, sounds and music equal to what the original loaded (the vault's members;
+Arena's level map, title, sounds and music); the Arena port reads its level's texts itself. Rrecreate began
+from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
 ## 1. The product
@@ -164,7 +165,8 @@ the session.
   program put where; formats are knowledge (`knowledge/formats.toml`); `rrc asset` extracts pictures,
   palettes, sounds, music and levels, checked against what the original loaded: its memory at moments after
   file tracing's reads is searched for what was decoded (D103, D104). A port reads the game's files through the
-  runtime and decodes the common compressions with its codecs, which `rrc asset` decodes with too (D101).
+  runtime and decodes the common compressions with its codecs, and its sounds (Creative's Voice Files) and
+  music (XMIDI, as MIDI) with its audio module, which `rrc asset` decodes with too (D101, D105).
 - **IDs:** `<MODULE>[#<n>]+<offset>`, where `#n` is an overlay (MZ) or an object (LE/LX) and the offset is in
   the loaded image, uppercase hex, 5 to 8 digits. The same form names functions and data. The module `MEM`
   is memory outside the programs' images, by linear address (`MEM+0046C`, the BIOS's timer count; D53).

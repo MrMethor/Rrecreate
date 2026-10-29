@@ -22,6 +22,7 @@
 //! What the port loads from the person's copy of the game (the program's static data, the game's
 //! files) is in [`original`] (D82).
 
+pub mod audio;
 pub mod codecs;
 mod files;
 pub mod original;

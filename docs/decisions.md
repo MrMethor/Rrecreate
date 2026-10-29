@@ -686,6 +686,45 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D106. M5 is done: the game's data, from a test program's power-on to Arena's assets. Accepted 2026-10-30, with the person.
+M5 closes with both its tests passing and the rest of its scope done, as the person asked before closing it:
+- The vault test program's port (`examples/vault`) reads its archive through the runtime and matches its
+  session from power-on through the title's loop and play's, to the program's exit (D101, D102).
+- Arena's level map (`START.MIF/LEVL/MAP1`) and its title picture (`TITLE.IMG`), extracted by `rrc asset`,
+  equal what the original loaded (D103, D104); so do its sounds, music and archived pictures (D105).
+- The Arena port reads its level's texts from the game's files (its INF, decrypted, and `+006BE`'s lookup):
+  the hooks that gave it the original's lookups are gone, and the cell session still matches all 650 ticks.
+
+Left to later milestones: the creatures' images and sounds the renderer and the sound use (M6); Arena's own
+picture formats (CFA, DFA, CIF, headerless textures), as M6 needs them; sessions of Arena from power-on (the
+cell session starts from a transplant at its first tick).
+**Why:** DESIGN.md §12's M5 row: a test program's port that loads its data files matches from power-on
+through two loops, and Arena's level map and a picture extracted from its files equal what it loaded.
+
+### D105. Sounds and music: Creative's Voice Files and XMIDI; archives without offsets. Accepted 2026-10-29, with the person.
+M5's assets past pictures and levels, which the person asked to finish before closing M5:
+- **`rrc_runtime::audio`:** `voc` reads a Creative Voice File's samples (8-bit mono blocks, their
+  continuations and silences; the rate of its first block); `midi_from_xmi` makes XMIDI's sequences
+  standard MIDI files (60 ticks a quarter at 120 a minute, XMIDI's 120 a second; a note's length, which
+  XMIDI gives where it starts, becomes a note off; XMIDI's tempo events dropped, its ticks being time
+  already). A port plays the game's sounds and music with them (M6); `rrc asset` writes them as WAV and MIDI.
+- **Formats:** the kinds `sound` (unsigned 8-bit samples at `rate`, or `coded = "voc"`) and `music` (XMIDI or
+  MIDI). An archive's directory may end it (`directory = "end"`) and its entries have no offsets (each member
+  after the last, from `data`); a codec's `prefix` (`u16`, `u32`): the coded bytes begin with their decoded
+  size.
+- **The check** compares what the original loaded: a sound's samples, music's XMIDI bytes (its driver plays
+  them; the MIDI is the extraction's).
+
+A game's own coding stays the port's: Arena's INF files are encrypted in GLOBAL.BSA (each byte XORed with its
+position plus a key's byte, `+0683A`, for the extensions `+069F1` compares), and the Arena port reads its
+level's texts so.
+**Why:** D78 named sounds and music. Arena's are VOC files and XMIDI in GLOBAL.BSA, whose directory ends it
+(`+06A52` reads count × 18 bytes there) and whose LZHUF pictures begin with their size. Measured on Arena's
+cell session: GLOBAL.BSA's 2441 members listed; BASH.VOC (2192 samples at 6993 a second) and
+GLOBAL.BSA/ARROWFR.VOC equal 1 ms after their reads; DUNGEON2.XMI equal 1 ms after its read, and made MIDI;
+QUOTE.IMG (LZHUF after its size) equal 512 ms after its read. IMG's codings by bits 0 and 1 are in none of
+GLOBAL.BSA's pictures, so none is described.
+
 ### D104. LZHUF, nested members, codecs chosen by a header, and the check at moments after the read. Accepted 2026-10-29.
 Arena's level map and title picture, extracted and checked (M5's second test), asked for:
 - **LZHUF** (`rrc_runtime::codecs::lzhuf`, `lzhuf` in a format): Yoshizaki's lzhuf.c (1988), LZSS whose

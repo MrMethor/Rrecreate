@@ -150,10 +150,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          the files the original reads and writes in the session: by file, how often,
                          how much, by which code; with --file, each read or write: where in the file,
                          how many bytes, where in memory, by which code, when
-  asset FILE[/MEMBER] [--session NAME] [--out FILE.png] [--lines N]
+  asset FILE[/MEMBER] [--session NAME] [--out FILE] [--lines N]
                          a file of the game or an archive's member, decoded by its format
                          (knowledge/formats.toml): an archive's members, a picture as PNG with its
-                         palette, the bytes kept in the cache; with --session, where the original read
+                         palette, a sound as WAV, music as MIDI, the bytes kept in the cache; with
+                         --session, where the original read
                          them and whether its memory holds them decoded after that
   search SESSION CONDITION... [--type T] [--step N] [--at ID --len N] [--lines N]
                          the places in the data segment (LE: the data objects; or the range given)
