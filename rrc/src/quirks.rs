@@ -311,6 +311,12 @@ impl When {
         When { cycles: trace.map(|t| t.ticks.iter().map(|tick| tick.cycle).collect()).unwrap_or_default() }
     }
 
+    /// The tick whose state is the first after the cycle: the pass it is in leads to it (tick 1 for what
+    /// runs before the first sync point hit); none after the last tick, or without a recording.
+    pub(crate) fn tick(&self, cycle: u64) -> Option<u64> {
+        self.cycles.iter().position(|&end| cycle <= end).map(|i| i as u64 + 1)
+    }
+
     pub(crate) fn text(&self, cycle: u64) -> String {
         if self.cycles.is_empty() {
             return format!("at cycle {cycle} (rrc record gives ticks)");

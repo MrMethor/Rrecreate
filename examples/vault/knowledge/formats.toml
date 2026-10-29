@@ -1,0 +1,45 @@
+# The game's file formats (docs/formats.md): what each kind of file or archive member is, how it is laid
+# out and coded, and the function that reads it.
+
+[[format]]
+name = "archive"
+files = ["VAULT.DAT"]
+kind = "archive"
+header = "archive_header"
+directory = 6
+count = "header.count"
+entry = "entry"
+methods = { 0 = "stored", 1 = "runs", 2 = "lzss" }
+read_by = "VAULT.EXE+0021F"
+provenance = "map"
+evidence = "main reads the header and the directory; load (+0021F) a member, unpack_runs and unpack_lzss decode it"
+
+[[format]]
+name = "title"
+files = ["VAULT.DAT/TITLE"]
+kind = "picture"
+width = 320
+height = 200
+palette = "VAULT.DAT/PALETTE"
+read_by = "VAULT.EXE+0021F"
+provenance = "map"
+evidence = "main loads it into picture, which show_title copies to the screen"
+
+[[format]]
+name = "palette"
+files = ["VAULT.DAT/PALETTE"]
+kind = "palette"
+bits = 6
+read_by = "VAULT.EXE+0021F"
+provenance = "map"
+evidence = "main loads it into palette, which show_title gives the DAC"
+
+[[format]]
+name = "level"
+files = ["VAULT.DAT/LEVEL?"]
+kind = "map"
+width = 32
+height = 32
+read_by = "VAULT.EXE+00313"
+provenance = "map"
+evidence = "load_level loads LEVELn into map, 32 cells a row"

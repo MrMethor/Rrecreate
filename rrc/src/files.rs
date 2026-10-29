@@ -27,17 +27,17 @@ const SHOWN: usize = 40;
 
 /// One access as Clockwork reported it.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Access {
-    cycle: u64,
-    write: bool,
-    file: String,
-    offset: u32,
-    len: u32,
-    at: String,
-    by: String,
+pub(crate) struct Access {
+    pub(crate) cycle: u64,
+    pub(crate) write: bool,
+    pub(crate) file: String,
+    pub(crate) offset: u32,
+    pub(crate) len: u32,
+    pub(crate) at: String,
+    pub(crate) by: String,
     /// The functions it was made in, innermost first.
     #[serde(default)]
-    chain: Vec<String>,
+    pub(crate) chain: Vec<String>,
 }
 
 pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
@@ -51,19 +51,7 @@ pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let places = Places::new(repo, &session);
     let analysis = Analysis::load(repo)?;
     let code = |address: &str| code_text(&places, &k, analysis.as_ref(), address);
-    // The code and the functions it was called from, as names where the knowledge has them.
-    let made = |x: &Access| {
-        // The program's own functions (not the system's call stub), each once, past the innermost.
-        let mut callers: Vec<String> = Vec::new();
-        for entry in x.chain.iter().filter(|entry| names.in_program(entry)).skip(1) {
-            let name = names.function(entry);
-            if callers.last() != Some(&name) {
-                callers.push(name);
-            }
-        }
-        callers.truncate(3);
-        if callers.is_empty() { code(&x.by) } else { format!("{} < {}", code(&x.by), callers.join(" < ")) }
-    };
+    let made = |x: &Access| made_by(x, &names, &code);
     let when = When::new(repo, &session);
     let time = |cycle: u64| {
         let ticks = when.text(cycle);
@@ -136,9 +124,24 @@ pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// The code that made an access and the functions it was called from, as names where the knowledge has
+/// them.
+pub(crate) fn made_by(x: &Access, names: &Names, code: &dyn Fn(&str) -> String) -> String {
+    // The program's own functions (not the system's call stub), each once, past the innermost.
+    let mut callers: Vec<String> = Vec::new();
+    for entry in x.chain.iter().filter(|entry| names.in_program(entry)).skip(1) {
+        let name = names.function(entry);
+        if callers.last() != Some(&name) {
+            callers.push(name);
+        }
+    }
+    callers.truncate(3);
+    if callers.is_empty() { code(&x.by) } else { format!("{} < {}", code(&x.by), callers.join(" < ")) }
+}
+
 /// The session's file accesses, and emulated milliseconds per cycle: from the cache, or a run of the
 /// session with file tracing (kept by the run).
-fn traced(repo: &Repo, session: &Session) -> Result<(Vec<Access>, f64), String> {
+pub(crate) fn traced(repo: &Repo, session: &Session) -> Result<(Vec<Access>, f64), String> {
     let cache = Cache::open(&repo.local)?;
     let key = crate::snapshots::run_key(repo, session, "files 3")?;
     if let Some(text) = cache.recall("results", &key)

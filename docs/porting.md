@@ -135,6 +135,24 @@ was called from). With `--file` it lists each read or write: where in the file, 
 memory (named), by which code, when. A structure in memory leads to the file and offset it came from, the
 file to the function that reads it, and a save routine's writes to which memory each part of a save is.
 
+Once the reader's code says how a kind of file is laid out and coded (and format documentation, as a source,
+what it is), write it in `knowledge/formats.toml` (`docs/formats.md`): an archive's directory, tagged chunks,
+a picture with its palette, a map; its header a structure of `types.toml`; its coding one of the toolkit's
+codecs (PCX run-length, LZSS with its parameters).
+
+```bash
+rrc asset LEVELS.DAT
+rrc asset LEVELS.DAT/LEVEL1 --session first-level
+rrc asset TITLE.IMG
+```
+
+`rrc asset` decodes a file or an archive's member by its format: an archive's members, a picture as PNG with
+its palette (in `.rrc/assets/`), the bytes in the cache. With `--session`, the original checks it (D103):
+where the session read those bytes and by which code, and whether the original's memory holds what this
+decoded at the tick after, `equal` and where, or how far it agrees. A format that decodes equal is the one
+the port's loader decodes by (`rrc_runtime::codecs`). A game's own coding, which no codec of the toolkit is,
+is the port's code, checked by the comparison as the loaded data it makes (mapped state).
+
 An address inside a function shows that function: `rrc show ID --asm` lists it from the instruction the
 address is in, and `--c` gives the function's code. Data can be named by its offset in the data segment, as
 the code addresses it: `rrc show DS:7A46`, `rrc data DS:7A46 NAME` (D90; `rrc show` says a datum's `DS:`

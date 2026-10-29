@@ -14,6 +14,8 @@ path = "src/main.rs"
 # Clockwork is driven through its protocol, never linked (DESIGN.md §3, D12).
 [dependencies]
 ids = { path = "../ids" }
+# The codecs a port decodes the game's files with, so an extraction decodes as the port does (D103).
+rrc-runtime = { path = "../runtime" }
 serde.workspace = true
 serde_json = "1"
 toml = "0.9"

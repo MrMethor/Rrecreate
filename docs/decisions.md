@@ -686,6 +686,30 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D103. Formats as knowledge, `rrc asset`, and the original's memory as the check. Accepted 2026-10-29.
+D78's formats and extraction, built:
+- **`knowledge/formats.toml`:** each kind of file or archive member: its files (DOS wildcards; an archive's
+  members as `FILE/MEMBER`), its kind (an archive with a directory, tagged chunks, a picture with its
+  palette, a palette, a map, data), the structure at its start (a type of `types.toml`, whose fields its
+  numbers may name: `header.width`), its coding (the runtime's codecs, D101, with their parameters), the
+  function that reads it, provenance and evidence. `rrc check` checks it.
+- **`rrc asset FILE[/MEMBER]`:** decodes by it: an archive's members listed, a picture written as PNG with its
+  palette (`.rrc/assets/`, the person's), the bytes kept in the cache. `rrc` decodes with the runtime's
+  codecs (it depends on `rrc-runtime`), so an extraction decodes as a port's loader does.
+- **The check (`--session`):** file tracing (D79) gives the reads of the asset's bytes, the code that made
+  them, and the pass that completes them; at the tick after, the original's memory is searched for what
+  `rrc asset` decoded: `equal` and where (named), or the most of its start found and the first byte that
+  differs, or not found. Conventional memory is searched first, extended memory only if needed.
+
+A format no codec decodes (a game's own) is the port's code, and the comparison checks it as the data it
+loads. Pictures in other layouts (planar, sprites with transparent runs), sounds as WAV and music as MIDI come
+as games need them (D70).
+**Why:** D78: the original is the check of an extraction as of the port. Searching the memory, rather than
+asking where the decoded data goes, needs no knowledge of the loader's buffers, and a partial match says how
+far a decoder is right. Measured on the vault: its archive's four members (the title, run-length coded; the
+palette, stored; two levels, LZSS) decode equal to what the original loaded, at tick 1 and at the ticks
+after each level's load; a wrong ring start is found at the 23rd byte.
+
 ### D102. A port's field may be unset while the original's holds what was there before the program set it. Accepted 2026-10-29.
 From power-on, the original's buffers hold what their memory held before the program fills them: a heap
 block's leftovers (the allocator's links), the buffer of a level not loaded yet. Nothing the game does depends

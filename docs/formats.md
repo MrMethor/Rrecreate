@@ -70,6 +70,7 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   two at once don't lose each other's changes; one older than a minute is taken over. The files themselves
   are written aside and renamed.
 - `compare/<session>/`: the files of the session's last `rrc compare` (below, "The port's files").
+- `assets/`: the pictures `rrc asset` wrote, the person's (D78).
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
 
 ## Ghidra's export
@@ -233,6 +234,45 @@ A device's state is bytes, like memory (little-endian):
   and the position of its last press (05h's BX, CX, DX), then the same for releases (06h).
 - `joystick`, 12 bytes: for stick A, then B, whether it is connected (a byte, 1 or 0), its buttons (a byte:
   bit 0 button 1, bit 1 button 2, set while pressed), X and Y (signed 16-bit, -32767 to 32767).
+
+## `knowledge/formats.toml`: the game's file formats
+
+Each kind of file or archive member (D78, D103), which `rrc asset` decodes by and `rrc check` checks:
+
+```toml
+[[format]]
+name = "archive"
+files = ["VAULT.DAT"]               # names in the game's folder, `*` and `?` as DOS has them, any case
+kind = "archive"                    # archive, chunks, picture, palette, map or data
+header = "archive_header"           # a structure of types.toml at its start
+directory = 6                       # where its directory (or its first chunk) begins
+count = "header.count"              # how many entries: a number, or a field of the header
+entry = "entry"                     # the entry's structure: name, offset, size; packed and method if coded
+methods = { 0 = "stored", 1 = "runs", 2 = "lzss" }
+read_by = "VAULT.EXE+0021F"         # the function that reads it
+provenance = "map"
+evidence = "main reads the directory; load (+0021F) a member"
+
+[[format]]
+name = "title"
+files = ["VAULT.DAT/TITLE"]         # an archive's members: FILE/MEMBER, `#2` for the second of a name
+kind = "picture"
+width = 320                         # numbers may name the header's fields: "header.width"
+height = 200
+palette = "VAULT.DAT/PALETTE"       # a file or member of kind palette (`bits`: 6, the DAC's, or 8)
+```
+
+- **Kinds:** `archive`, a directory of `count` entries of type `entry` from `directory`, whose fields `name`
+  (characters to the first NUL), `offset` and `size` place each member, and `packed` (its bytes in the file)
+  and `method` (its codec, by `methods`) when they are coded; `chunks`, tagged chunks from `directory` (0),
+  each a tag of `tag` bytes (4), its length (`length`: `u16` or `u32`) and that many bytes, a member named by
+  its tag; `picture`, `width` × `height` palette indices shown with `palette`; `palette`, colours of three
+  bytes; `map`, `width` × `height` cells; `data`, anything else.
+- **Coding:** `coded` is how the bytes past the header are coded, decoded to `size` bytes (else `width` ×
+  `height`, else as many as the codec gives). A codec is `stored`, `runs` (PCX's run-length code) or `lzss`,
+  or one with its parameters, `{codec = "lzss", ring = 4096, fill = 0, start = 4078, shortest = 3}` (those not
+  given are lzss.c's): the runtime's codecs (`rrc_runtime::codecs`), which a port decodes with (D101).
+- A member of an archive is decoded by the archive's method, then by its own format.
 
 ## `mapping.toml`: the port's state and the original's
 

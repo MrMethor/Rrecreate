@@ -6,6 +6,7 @@ VAULT.EXE+00313	load_level	map		VAULT.MAP
 VAULT.EXE+00383	wait_tick	map		VAULT.MAP
 VAULT.EXE+00393	title_pass	map		VAULT.MAP
 VAULT.EXE+003BC	play_pass	map		VAULT.MAP
+VAULT.EXE+0045D	show_title	agent		vault.c's static show_title, which VAULT.MAP doesn't list: called by main, it loads PALETTE and TITLE (rrc asset --session)
 VAULT.EXE+00637	main	map		VAULT.MAP
 VAULT.EXE+008FE	_fmalloc	map		VAULT.MAP: Watcom's far heap allocation
 VAULT.EXE+01436	__AllocSeg	map		VAULT.MAP: Watcom's far heap, a new segment from DOS

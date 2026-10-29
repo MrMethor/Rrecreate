@@ -612,7 +612,8 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     std::fs::copy(root.join("testbins/bin/VAULT.DAT"), dir.join("game").join("VAULT.DAT")).unwrap();
     let port = built("vault-port", "vault-port", true);
     let files = ["mapping.toml", "sessions/play.toml", "sessions/play.inputs", "src/main.rs"];
-    let knowledge = ["functions.tsv", "data.tsv", "types.toml", "ticks.toml"].map(|f| format!("knowledge/{f}"));
+    let knowledge =
+        ["functions.tsv", "data.tsv", "types.toml", "ticks.toml", "formats.toml"].map(|f| format!("knowledge/{f}"));
     example_repository(&rrc, "vault", &port, &[&files[..], &knowledge.each_ref().map(String::as_str)[..]].concat());
     rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
     assert!(rrc.ok(&["game", dir.join("game").to_str().unwrap()]).contains("version   1.0"));
@@ -631,6 +632,23 @@ fn a_port_from_power_on_loads_the_game_s_files() {
         ),
         "{compared}"
     );
+
+    // The archive by its format (D103): its members; the title as PNG with its palette; a level decoded as
+    // the original loaded it, found in its memory at the tick after the read.
+    assert!(rrc.ok(&["check"]).contains("formats   4"));
+    let listed = rrc.ok(&["asset", "VAULT.DAT"]);
+    assert!(listed.contains("member    LEVEL2: +10FA, 144 bytes, lzss, 1024 decoded, level (map)"), "{listed}");
+    let title = rrc.ok(&["asset", "VAULT.DAT/TITLE", "--out", dir.join("title.png").to_str().unwrap()]);
+    assert!(title.contains("picture   320 × 200, palette VAULT.DAT/PALETTE"), "{title}");
+    assert!(std::fs::read(dir.join("title.png")).unwrap().starts_with(b"\x89PNG"));
+    let checked = rrc.ok(&["asset", "VAULT.DAT/LEVEL2", "--session", "play"]);
+    assert!(checked.contains("read      in the pass to tick 374, by VAULT.EXE+009F0 < load < load_level < play_pass"));
+    assert!(
+        checked.contains("original  equal: at tick 374 its memory holds these 1024 bytes at VAULT.EXE+"),
+        "{checked}"
+    );
+    let palette = rrc.ok(&["asset", "VAULT.DAT/PALETTE", "--session", "play"]);
+    assert!(palette.contains("original  equal: at tick 1 its memory holds these 768 bytes at palette"), "{palette}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

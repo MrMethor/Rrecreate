@@ -12,3 +12,12 @@ fields = [
     { offset = 20, size = 2, name = "method", type = "u16" },
     { offset = 22, size = 2, name = "reserved", type = "u16" },
 ]
+
+[[struct]]
+name = "archive_header"
+size = 6
+provenance = "map"
+fields = [
+    { offset = 0, size = 4, name = "magic", type = "u8[4]" },
+    { offset = 4, size = 2, name = "count", type = "u16" },
+]

@@ -38,6 +38,11 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         say("objects", format!("{} bytes", sizes.join(", ")));
     }
     let mut problems = k.problems(&repo.module(), image_size.ok(), objects.as_deref());
+    let formats = crate::formats::Formats::load(&repo.knowledge())?;
+    if !formats.formats.is_empty() {
+        say("formats", formats.formats.len());
+    }
+    problems.extend(formats.problems(&k));
     let mapping = crate::mapping::Mapping::load(repo)?;
     match mapping.resolve(&k).and_then(|mapped| Ok((mapped, mapping.ignored(&k)?))) {
         Ok((mapped, _)) if !mapped.is_empty() => say("mapping", format!("{} fields mapped", mapped.len())),

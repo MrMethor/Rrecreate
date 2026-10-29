@@ -78,7 +78,13 @@ pub fn game_dir() -> Option<PathBuf> {
 pub fn file(name: &str) -> Result<Vec<u8>, String> {
     let dir = game_dir()
         .ok_or("the game's files: run the port through rrc, or inside its port repository (rrc.local.toml's game)")?;
-    let path = find(&dir, name)?;
+    file_in(&dir, name)
+}
+
+/// A file of the game in `dir`, by the name the program opens it with (`file`; `rrc asset` reads the
+/// game's files so too).
+pub fn file_in(dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+    let path = find(dir, name)?;
     std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 

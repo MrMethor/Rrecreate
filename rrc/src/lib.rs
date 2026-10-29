@@ -4,6 +4,7 @@
 
 pub mod analysis;
 mod args;
+mod asset;
 pub mod cache;
 mod calls;
 pub mod clockwork;
@@ -11,6 +12,7 @@ mod compare;
 mod contracts;
 pub mod edits;
 mod files;
+pub mod formats;
 pub mod frames;
 pub mod game;
 pub mod knowledge;
@@ -148,6 +150,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          the files the original reads and writes in the session: by file, how often,
                          how much, by which code; with --file, each read or write: where in the file,
                          how many bytes, where in memory, by which code, when
+  asset FILE[/MEMBER] [--session NAME] [--out FILE.png] [--lines N]
+                         a file of the game or an archive's member, decoded by its format
+                         (knowledge/formats.toml): an archive's members, a picture as PNG with its
+                         palette, the bytes kept in the cache; with --session, where the original read
+                         them and whether its memory holds them decoded at the tick after
   search SESSION CONDITION... [--type T] [--step N] [--at ID --len N] [--lines N]
                          the places in the data segment (LE: the data objects; or the range given)
                          whose values, read as T (u16 unless --type says), meet every condition over
@@ -210,6 +217,7 @@ pub fn main() -> ExitCode {
         Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),
         Some("search") => here().and_then(|repo| search::search(&repo, rest)),
         Some("files") => here().and_then(|repo| files::files(&repo, rest)),
+        Some("asset") => here().and_then(|repo| asset::asset(&repo, rest)),
         Some("pass") => here().and_then(|repo| pass::pass(&repo, rest)),
         Some("peek") => here().and_then(|repo| peek::peek(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
