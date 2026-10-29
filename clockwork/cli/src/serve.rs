@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 7;
+pub const PROTOCOL: u64 = 8;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -630,7 +630,8 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 .iter()
                 .map(|l| {
                     let bytes: Vec<Value> = l.bytes.iter().map(|(offset, value)| json!([offset, value])).collect();
-                    json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at), "bytes": bytes})
+                    json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at),
+                           "read": l.read, "bytes": bytes})
                 })
                 .collect();
             Ok(json!({"late": findings, "dropped": late.dropped}))

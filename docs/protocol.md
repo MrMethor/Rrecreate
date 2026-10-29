@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **6** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **8** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -48,7 +48,7 @@ A platform may add its own forms (`dos-pc`: `SEG:OFF`, `%PHYS`).
 
 ## Core operations
 
-**`hello`**: what the emulator is: `{"protocol": 4, "platform": "dos-pc", "emulator": "clockwork",
+**`hello`**: what the emulator is: `{"protocol": 8, "platform": "dos-pc", "emulator": "clockwork",
 "version": "0.1.0"}`. A tool refuses a revision or platform it doesn't speak.
 
 **Loading.** `load` `{"argv": [dir, program, options...]}`: a machine with the game's folder and program,
@@ -123,9 +123,13 @@ that value, which the program's own writes change, and what interrupt handlers r
 (the emulator tracks calls for it). The late reads of a source are the wait's, and left out, when the next hit
 of one of its sync points (counted or not) comes in the call all of them were made in (the innermost call or
 interrupt; for a driver, the one its call was made in), at most 40 of the program's instructions after the
-last (interrupt handlers' don't count). The answer: `late`, `[{"tick", "source", "cycle", "at"}]`, each a tick
-(the cycle of its hit), the source (its index), when it was first read late and by which instruction (for a
-driver, the instruction its call returns to), a source once a tick; `dropped`, what went past 10000.
+last (interrupt handlers' don't count). An instruction's reads of a source are numbered from the last hit of
+its sync points; a device's state the program changes through its driver (a mouse position set) is what it
+should read next. The answer: `late`, `[{"tick", "source", "cycle", "at", "read", "bytes"}]`, each a read that
+saw the source otherwise than the same instruction's read before it (the first, otherwise than the tick's
+value): the tick (the cycle of its hit), the source (its index), when and by which instruction (for a driver,
+the instruction its call returns to), which of that instruction's reads (from 1), and the bytes that differ
+from the tick's value (`[offset, value]`; none: the tick's value again); `dropped`, what went past 10000.
 
 **Frames and sound.** `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as
 `[number, cycle, mode, hash]`. `frame_images` `{"on": true}`: from now on, the picture of each frame whose
@@ -174,6 +178,8 @@ An IBM PC with DOS (Clockwork).
 6. `files`, `files_end` (D78).
 7. `contracts`, `contracts_end` (D81); `calls` takes `log` and `limit`, and `call_log` (D83); a watch's write
    hit may have `from`, the byte it copied (D85).
+8. `late_inputs_end` answers each read that saw otherwise than its instruction's read before, with `read`, its
+   number (D93).
 
 ## Changing the protocol
 

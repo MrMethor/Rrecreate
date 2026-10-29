@@ -1355,6 +1355,16 @@ impl Machine {
         self.next_event = self.cpu.cycles;
     }
 
+    /// The program changed `device`'s state through a service: its next read should see it so.
+    fn late_device_written(&mut self, device: Device) {
+        let Some(calls) = self.probes.calls.as_deref().filter(|_| self.probes.late.is_some()) else { return };
+        if calls.in_hardware_interrupt() {
+            return;
+        }
+        let state = self.device_state(device);
+        self.probes.late.as_deref_mut().expect("checked").device_written(device, &state);
+    }
+
     fn callback(&mut self, id: u16) {
         // Services write guest memory (file reads, BIOS data, the mouse cursor).
         self.cpu.flush_code_cache();
@@ -1366,13 +1376,20 @@ impl Machine {
         if let Some(watch) = self.probes.watch.as_deref_mut() {
             watch.service_called(id);
         }
-        if id == bios::callback::MOUSE {
+        // The mouse driver's functions that answer with its state are reads of it (D93).
+        let mouse = id == bios::callback::MOUSE;
+        if mouse && matches!(self.cpu.regs.ax(), 0x03 | 0x05 | 0x06 | 0x0B) {
             self.late_device_read(Device::Mouse);
         }
         let watched = self.watch_before();
         let ax = self.cpu.regs.ax();
         if !bios::dispatch(self, id) && !dos::dispatch(self, id) {
             self.diagnostic(format!("unknown host callback {id:#06x}"));
+        }
+        // What the call did to the driver (a position set, counts and motion read and cleared) is the
+        // program's: what it should read next.
+        if mouse {
+            self.late_device_written(Device::Mouse);
         }
         if let Some(video) = watched {
             self.watch_changes(video, crate::watch::By::Service { id, ax });

@@ -4,9 +4,10 @@
 //! instructions later, a clock read again after the frame was drawn) is read by the pass but recorded
 //! with the next tick, so a port fed the tick's values would do something else. This finds those reads:
 //! at each counted sync point hit it keeps its sources' bytes, and compares each read the program makes
-//! of them until the next one (a device's: each call of its driver, each read of its port). For each
-//! instruction that read a source late it keeps the bytes it read that differ, as it first read them
-//! (D68), so a port can be given what that read saw.
+//! of them until the next one (a device's: each call of its driver, each read of its port). It numbers
+//! each instruction's reads of a source in the pass, and keeps a read's bytes that differ from the
+//! tick's where they differ from what that instruction's read before saw (D68, D93): so a port can be
+//! given what each read saw, a polling loop's included (a modal wait reading the mouse until a click).
 //!
 //! The wait a sync point ends is left out (D47 puts the sync point where the wait is over): a timer
 //! count it reads until it changes is read with the next tick's value, which the next tick records.
@@ -25,8 +26,7 @@ use std::ops::Range;
 
 use crate::calls::Frame;
 
-/// Each source is reported once a tick for each instruction that read it late, and this many findings
-/// in all.
+/// Findings kept in all: past this many they are counted.
 pub const MAX_FINDINGS: usize = 10_000;
 
 /// Late reads in the call of the next hit, the last this many of the program's instructions or fewer
@@ -42,19 +42,22 @@ pub enum LateSource {
     Device(crate::Device),
 }
 
-/// An instruction of a tick's pass that read a source after it changed since the tick's sync point.
+/// A read in a tick's pass that saw a source otherwise than the instruction's read before it did (the
+/// first, otherwise than the tick's value).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Late {
     /// The tick: the cycle of its sync point's counted hit.
     pub tick_cycle: u64,
     /// The source (an index into what [`LateInputs::new`] took).
     pub source: usize,
-    /// When the program first read it so, and the instruction that did (linear; for a service, where
-    /// its call returns to).
+    /// When the program read it, the instruction that did (linear; for a service, where its call
+    /// returns to), and which of that instruction's reads of the source in the pass it was (from 1).
     pub cycle: u64,
     pub at: u32,
-    /// The bytes it read that differ from what the program should have read, as it first read each:
-    /// (offset in the source, value).
+    pub read: u32,
+    /// The bytes it read that differ from what the program should have read (the tick's value, as the
+    /// program's own writes changed it): (offset in the source, value). None: it read the tick's value
+    /// again, after a read that didn't.
     pub bytes: Vec<(u32, u8)>,
 }
 
@@ -77,20 +80,52 @@ struct Source {
     expected: Vec<u8>,
     /// The cycle of its last tick; none before the first.
     tick: Option<u64>,
-    /// Late reads waiting for the next hit (are they the wait's?), by instruction, and whether this
-    /// tick's were reported (a hit of another source's sync point ended it).
-    pending: Vec<Pending>,
+    /// Each instruction's reads of it this tick, waiting for the next hit (are its late reads the
+    /// wait's?), and whether this tick's were reported (a hit of another source's sync point ended it).
+    readers: Vec<Reader>,
     found: bool,
 }
 
-/// An instruction's late reads of a source this tick.
+/// An instruction's reads of a source this tick.
 #[derive(Debug, Clone)]
-struct Pending {
-    late: Late,
-    /// The call of the first, whether all were made in it, and when the last was ([`LateInputs::steps`]).
-    call: Option<Frame>,
+struct Reader {
+    at: u32,
+    /// Its reads so far, the step of the last (the bytes of one read come one by one), and what that
+    /// read saw that differs from the tick's value.
+    reads: u32,
+    step: u64,
+    cycle: u64,
+    current: Vec<(u32, u8)>,
+    /// What its last kept read saw (none: the tick's value), and the reads kept.
+    seen: Vec<(u32, u8)>,
+    kept: Vec<Late>,
+    /// The call of its first late read, whether all its late reads were made in it, and the step of the
+    /// last ([`LateInputs::steps`]).
+    call: Option<Option<Frame>>,
     one_call: bool,
     last: u64,
+}
+
+impl Reader {
+    /// The read under way is over: kept if it saw otherwise than the read before.
+    fn end_read(&mut self, tick_cycle: u64, source: usize) {
+        if self.reads == 0 {
+            return;
+        }
+        let mut now = std::mem::take(&mut self.current);
+        now.sort_unstable();
+        if now != self.seen {
+            self.kept.push(Late {
+                tick_cycle,
+                source,
+                cycle: self.cycle,
+                at: self.at,
+                read: self.reads,
+                bytes: now.clone(),
+            });
+            self.seen = now;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -116,7 +151,7 @@ impl LateInputs {
                 spans: Vec::new(),
                 expected: Vec::new(),
                 tick: None,
-                pending: Vec::new(),
+                readers: Vec::new(),
                 found: false,
             })
             .collect();
@@ -142,11 +177,14 @@ impl LateInputs {
             if !s.ticks_at(at) {
                 continue;
             }
-            let pending = std::mem::take(&mut s.pending);
-            for p in pending {
-                if !(p.one_call && p.call == call && self.steps - p.last <= WAIT_TAIL) {
+            let Some(tick_cycle) = s.tick else { continue };
+            let readers = std::mem::take(&mut s.readers);
+            for mut r in readers {
+                r.end_read(tick_cycle, i);
+                let wait = r.call.is_some_and(|c| c == call) && r.one_call && self.steps - r.last <= WAIT_TAIL;
+                if !wait && !r.kept.is_empty() {
                     self.sources[i].found = true;
-                    self.push(p.late);
+                    r.kept.into_iter().for_each(|late| self.push(late));
                 }
             }
         }
@@ -156,7 +194,7 @@ impl LateInputs {
     /// `values` (in order), or the device holds `values`.
     pub(crate) fn tick(&mut self, source: usize, cycle: u64, spans: Vec<Range<u32>>, values: Vec<u8>) {
         let s = &mut self.sources[source];
-        (s.spans, s.expected, s.tick, s.pending, s.found) = (spans, values, Some(cycle), Vec::new(), false);
+        (s.spans, s.expected, s.tick, s.readers, s.found) = (spans, values, Some(cycle), Vec::new(), false);
         let spans = || self.sources.iter().flat_map(|s| &s.spans);
         self.bounds = spans().map(|s| s.start).min().unwrap_or(0)..spans().map(|s| s.end).max().unwrap_or(0);
     }
@@ -170,10 +208,9 @@ impl LateInputs {
     /// The program read `value` at physical address `addr`.
     pub(crate) fn memory_read(&mut self, addr: u32, value: u8, read: Read) {
         for (i, s) in self.sources.iter_mut().enumerate() {
-            if let Some(byte) = s.byte(addr)
-                && s.expected[byte] != value
-            {
-                s.late(i, read, self.steps, &[(byte as u32, value)]);
+            if let Some(byte) = s.byte(addr) {
+                let differ: &[(u32, u8)] = if s.expected[byte] != value { &[(byte as u32, value)] } else { &[] };
+                s.read(i, read, self.steps, differ);
             }
         }
     }
@@ -190,22 +227,37 @@ impl LateInputs {
     /// The program read `device` (called its driver, read its port); `state` is what it holds now.
     pub(crate) fn device_read(&mut self, device: crate::Device, state: &[u8], read: Read) {
         for (i, s) in self.sources.iter_mut().enumerate() {
-            if s.what == LateSource::Device(device) && s.tick.is_some() && s.expected != state {
+            if s.what == LateSource::Device(device) && s.tick.is_some() {
                 let differ: Vec<(u32, u8)> = (0..state.len())
                     .filter(|&k| s.expected.get(k) != Some(&state[k]))
                     .map(|k| (k as u32, state[k]))
                     .collect();
-                s.late(i, read, self.steps, &differ);
+                s.read(i, read, self.steps, &differ);
+            }
+        }
+    }
+
+    /// The program changed `device`'s state (a driver's call that sets or clears it): what it reads next.
+    pub(crate) fn device_written(&mut self, device: crate::Device, state: &[u8]) {
+        for s in &mut self.sources {
+            if s.what == LateSource::Device(device) && s.tick.is_some() {
+                s.expected = state.to_vec();
             }
         }
     }
 
     /// The findings, with the late reads no hit came after (the run ended in the pass).
     pub fn finish(mut self) -> LateInputs {
-        let pending: Vec<Late> =
-            self.sources.iter_mut().flat_map(|s| std::mem::take(&mut s.pending)).map(|p| p.late).collect();
-        pending.into_iter().for_each(|late| self.push(late));
-        self.findings.sort_by_key(|l| (l.tick_cycle, l.source, l.cycle));
+        let mut kept = Vec::new();
+        for (i, s) in self.sources.iter_mut().enumerate() {
+            let Some(tick_cycle) = s.tick else { continue };
+            for mut r in std::mem::take(&mut s.readers) {
+                r.end_read(tick_cycle, i);
+                kept.extend(r.kept);
+            }
+        }
+        kept.into_iter().for_each(|late| self.push(late));
+        self.findings.sort_by_key(|l| (l.tick_cycle, l.source, l.cycle, l.at, l.read));
         self
     }
 
@@ -235,24 +287,43 @@ impl Source {
         None
     }
 
-    /// It (source number `source`) was read with another value than expected, at `step`: `bytes` as
-    /// (offset, value).
-    fn late(&mut self, source: usize, read: Read, step: u64, bytes: &[(u32, u8)]) {
+    /// It (source number `source`) was read at `step`; `bytes` (offset, value) differ from what the
+    /// program should have read. A read's bytes come one by one, in the same step.
+    fn read(&mut self, source: usize, read: Read, step: u64, bytes: &[(u32, u8)]) {
         let Some(tick_cycle) = self.tick.filter(|_| !self.found) else { return };
-        match self.pending.iter_mut().find(|p| p.late.at == read.at) {
-            Some(p) => {
-                p.one_call &= p.call == read.call;
-                p.last = step;
-                for &(offset, value) in bytes {
-                    if !p.late.bytes.iter().any(|(o, _)| *o == offset) {
-                        p.late.bytes.push((offset, value));
-                    }
-                }
-            }
+        let r = match self.readers.iter().position(|r| r.at == read.at) {
+            Some(r) => &mut self.readers[r],
             None => {
-                let late = Late { tick_cycle, source, cycle: read.cycle, at: read.at, bytes: bytes.to_vec() };
-                self.pending.push(Pending { late, call: read.call, one_call: true, last: step });
+                self.readers.push(Reader {
+                    at: read.at,
+                    reads: 0,
+                    step: 0,
+                    cycle: 0,
+                    current: Vec::new(),
+                    seen: Vec::new(),
+                    kept: Vec::new(),
+                    call: None,
+                    one_call: true,
+                    last: 0,
+                });
+                self.readers.last_mut().expect("just pushed")
             }
+        };
+        if r.reads == 0 || r.step != step {
+            r.end_read(tick_cycle, source);
+            (r.reads, r.step, r.cycle) = (r.reads + 1, step, read.cycle);
+        }
+        for &(offset, value) in bytes {
+            if !r.current.iter().any(|(o, _)| *o == offset) {
+                r.current.push((offset, value));
+            }
+        }
+        if !bytes.is_empty() {
+            match r.call {
+                Some(call) => r.one_call &= call == read.call,
+                None => r.call = Some(read.call),
+            }
+            r.last = step;
         }
     }
 }
@@ -262,7 +333,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_source_read_other_than_its_tick_left_it_is_late_once_a_tick() {
+    fn each_read_that_saw_otherwise_than_the_one_before_is_kept() {
         let memory = LateSource::Memory { at: 0x100, len: 3 };
         let mut late = LateInputs::new(vec![(memory, vec![]), (LateSource::Device(crate::Device::Mouse), vec![7])]);
         assert_eq!(late.ticking(5).count(), 1);
@@ -275,12 +346,13 @@ mod tests {
         late.memory_read(0x100, 9, read(10, 1)); // before the first tick: nothing to compare
         late.tick(0, 100, vec![0x100..0x102, 0x200..0x201], vec![1, 2, 3]);
         assert!(late.watches(0x200) && !late.watches(0x201));
-        late.memory_read(0x101, 2, read(110, 2)); // as at the tick
+        at(&mut late, 110).memory_read(0x101, 2, read(110, 2)); // as at the tick
         late.memory_written(0x100, 5); // the program's own write
-        late.memory_read(0x100, 5, read(115, 3));
-        late.memory_read(0x200, 4, read(120, 4)); // changed: late
-        late.memory_read(0x101, 7, read(130, 5)); // late too, by another instruction
-        late.memory_read(0x200, 6, read(131, 4)); // the first instruction again: its first value stays
+        at(&mut late, 115).memory_read(0x100, 5, read(115, 3));
+        at(&mut late, 120).memory_read(0x200, 4, read(120, 4)); // changed: late, the first read there
+        at(&mut late, 130).memory_read(0x101, 7, read(130, 5)); // late too, by another instruction
+        at(&mut late, 131).memory_read(0x200, 6, read(131, 4)); // the first instruction again, changed again
+        at(&mut late, 132).memory_read(0x200, 6, read(132, 4)); // and as it read before: nothing new
         late.device_read(crate::Device::Mouse, &[1, 0, 0, 0], read(135, 6)); // no tick of its own yet
         at(&mut late, 1000).hit(5, None);
         late.tick(0, 1000, std::iter::once(0x100..0x103).collect(), vec![1, 2, 4]);
@@ -299,24 +371,31 @@ mod tests {
         at(&mut late, 1700).memory_read(0x102, 12, read(1700, 13)); // then the wait: left out
         at(&mut late, 1701).hit(5, None);
         late.tick(1, 2000, vec![], vec![0; 4]);
-        late.device_read(crate::Device::Mouse, &[0; 4], read(2010, 9));
-        late.device_read(crate::Device::Mouse, &[1, 0, 0, 0], read(2020, 10)); // changed since: late, at the end
+        // A modal wait reading the mouse until a click: its third read is the one that saw it, its fourth
+        // the release (the tick's value again).
+        at(&mut late, 2010).device_read(crate::Device::Mouse, &[0; 4], read(2010, 9));
+        at(&mut late, 2015).device_read(crate::Device::Mouse, &[0; 4], read(2015, 9));
+        at(&mut late, 2020).device_read(crate::Device::Mouse, &[1, 0, 0, 0], read(2020, 9));
+        at(&mut late, 2030).device_read(crate::Device::Mouse, &[0; 4], read(2030, 9));
         let late = late.finish();
-        let l = |tick_cycle, source, cycle, at, bytes: &[(u32, u8)]| Late {
+        let l = |tick_cycle, source, cycle, at, read, bytes: &[(u32, u8)]| Late {
             tick_cycle,
             source,
             cycle,
             at,
+            read,
             bytes: bytes.to_vec(),
         };
         assert_eq!(
             late.findings,
             [
-                l(100, 0, 120, 4, &[(2, 4)]),
-                l(100, 0, 130, 5, &[(1, 7)]),
-                l(1100 + WAIT_TAIL, 0, 1200, 8, &[(2, 8)]),
-                l(1600, 0, 1610, 12, &[(2, 11)]),
-                l(2000, 1, 2020, 10, &[(0, 1)])
+                l(100, 0, 120, 4, 1, &[(2, 4)]),
+                l(100, 0, 130, 5, 1, &[(1, 7)]),
+                l(100, 0, 131, 4, 2, &[(2, 6)]),
+                l(1100 + WAIT_TAIL, 0, 1200, 8, 1, &[(2, 8)]),
+                l(1600, 0, 1610, 12, 1, &[(2, 11)]),
+                l(2000, 1, 2020, 9, 3, &[(0, 1)]),
+                l(2000, 1, 2030, 9, 4, &[]),
             ]
         );
     }

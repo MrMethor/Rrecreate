@@ -3998,6 +3998,42 @@ fn a_device_read_through_its_driver_is_checked_too() {
     assert_eq!(lates, [3, 0], "each move lands in the delay");
 }
 
+#[test]
+fn what_the_program_does_to_the_mouse_driver_is_not_late_input() {
+    // Each pass: set the cursor to the pass's count (INT 33h 04h), then read it (03h): the position the
+    // read sees changed since the sync point, but the program changed it.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        offsets.borrow_mut().insert("pass", a.addr("pass") as u32);
+        a.xor(ax, ax)?;
+        a.int(0x33)?;
+        a.xor(si, si)?;
+        a.here("pass")?;
+        a.inc(si)?;
+        a.mov(ax, 4)?;
+        a.mov(cx, si)?;
+        a.mov(dx, 50)?;
+        a.int(0x33)?;
+        a.mov(ax, 3)?;
+        a.int(0x33)?;
+        a.mov(cx, 100)?;
+        a.here("work")?;
+        let work = a.l("work");
+        a.loop_(work)?;
+        let pass = a.l("pass");
+        a.jmp(pass)
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("M.COM", &program)], "M.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let mouse = dos::late::LateSource::Device(dos::Device::Mouse);
+    m.start_late_inputs(dos::late::LateInputs::new(vec![(mouse, vec![])]));
+    m.syncs.add(base + o["pass"], false);
+    assert_eq!(m.run(SECOND / 10), Stop::CycleLimit);
+    assert!(m.syncs.get(base + o["pass"]).unwrap().hits > 100);
+    assert_eq!(m.take_late_inputs().unwrap().findings, [], "the position set, and the setting itself, aren't reads");
+}
+
 /// A program that calls `step` ten times (from `again`); `step` counts its calls in `count`.
 fn ten_steps() -> (Vec<u8>, BTreeMap<&'static str, u32>) {
     let offsets = std::cell::RefCell::new(BTreeMap::new());

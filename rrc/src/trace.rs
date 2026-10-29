@@ -26,7 +26,7 @@ use crate::session::{Recorded, Session};
 use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 /// The oldest version this rrc reads: version 6 only added items read through pointers (D72).
 const OLDEST: u32 = 5;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
@@ -139,6 +139,41 @@ pub struct Header {
     pub edits: Vec<Value>,
 }
 
+/// A read of a tick's pass that saw an input otherwise than the tick has, or than the same instruction's
+/// read before it in the pass (D93): `[input, ID, value, read]`. Version 5 and 6 traces have no `read`: one
+/// value an instruction, its first read's.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "Vec<Value>", into = "Vec<Value>")]
+pub struct LateRead {
+    /// The input (its index in the header's).
+    pub input: usize,
+    /// The instruction that read it (for a driver, the one its call returns to).
+    pub at: String,
+    /// What it read: the tick's value with the bytes that read saw (none: memory not mapped).
+    pub value: Option<String>,
+    /// Which of that instruction's reads of the input in the pass it was, from 1.
+    pub read: u32,
+}
+
+impl TryFrom<Vec<Value>> for LateRead {
+    type Error = String;
+
+    fn try_from(v: Vec<Value>) -> Result<LateRead, String> {
+        let wrong = || format!("a late read is [input, ID, value, read]: {v:?}");
+        let input = v.first().and_then(Value::as_u64).ok_or_else(wrong)? as usize;
+        let at = v.get(1).and_then(Value::as_str).ok_or_else(wrong)?.to_owned();
+        let value = v.get(2).and_then(Value::as_str).map(str::to_owned);
+        let read = v.get(3).map_or(Some(1), Value::as_u64).ok_or_else(wrong)? as u32;
+        Ok(LateRead { input, at, value, read })
+    }
+}
+
+impl From<LateRead> for Vec<Value> {
+    fn from(l: LateRead) -> Vec<Value> {
+        vec![json!(l.input), json!(l.at), json!(l.value), json!(l.read)]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Tick {
     /// From 1.
@@ -156,12 +191,10 @@ pub struct Tick {
     /// (index in the header's `state`, value) for each item that changed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub state: Vec<(usize, Option<String>)>,
-    /// The inputs the tick's pass read with another value than the tick has, as (index in the header's,
-    /// the ID of the instruction that read it; for a driver, the one its call returns to, the input as
-    /// that instruction read it): they changed after its sync point, before the read (D60, D68). The
-    /// value is the tick's with the bytes that instruction read as it first read them.
+    /// The reads of the tick's pass that saw an input otherwise than the tick has, or than the same
+    /// instruction's read before (D60, D68, D93).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub late: Vec<(usize, String, Option<String>)>,
+    pub late: Vec<LateRead>,
     /// The frames shown during the tick: [number, cycle, video mode, fingerprint, picture (its hash in
     /// the cache)].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -702,7 +735,8 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
     if !header.inputs.is_empty() {
         let found = clockwork.ask("late_inputs_end", Value::Null)?;
         places.objects()?;
-        // Each late read as the input's value at its tick with the bytes the read saw (D68).
+        // Each late read as the input's value at its tick with the bytes the read saw (D68), numbered among
+        // its instruction's reads in the pass (D93).
         let values: Vec<Vec<Option<String>>> =
             (0..header.inputs.len()).map(|i| carried(&ticks, i, |t| &t.inputs)).collect();
         for late in found["late"].as_array().into_iter().flatten() {
@@ -727,7 +761,8 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
                     }
                     crate::edits::hex(&bytes)
                 });
-                ticks[i].late.push((input, at, read));
+                let n = late["read"].as_u64().unwrap_or(1) as u32;
+                ticks[i].late.push(LateRead { input, at, value: read, read: n });
             }
         }
     }
@@ -879,10 +914,11 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         for (i, value) in &tick.state {
             say("changed", format!("{} = {}", h.state[*i].name, value_text(value.as_deref(), &ty(&h.state[*i]))));
         }
-        for (i, at, read) in &tick.late {
-            let item = &h.inputs[*i];
-            let value = value_text(read.as_deref(), &ty(item));
-            say("late", format!("{}: {at} read {value}, changed after the sync point", item.name));
+        for l in &tick.late {
+            let item = &h.inputs[l.input];
+            let value = value_text(l.value.as_deref(), &ty(item));
+            let which = if l.read > 1 { format!(" (its read {} there)", l.read) } else { String::new() };
+            say("late", format!("{}: {}{which} read {value}, changed after the sync point", item.name, l.at));
         }
         for edit in h.edits.iter().filter(|e| e["tick"].as_u64() == Some(n)) {
             say("edit", edit_text(edit));
@@ -946,7 +982,7 @@ fn late_text(trace: &Trace) -> Option<String> {
     // (input, instruction) -> (ticks, the first)
     let mut reads: BTreeMap<(usize, &str), (usize, u64)> = BTreeMap::new();
     for tick in &trace.ticks {
-        for (i, at, _) in &tick.late {
+        for LateRead { input: i, at, .. } in &tick.late {
             reads.entry((*i, at.as_str())).or_insert((0, tick.tick)).0 += 1;
         }
     }
@@ -1137,7 +1173,8 @@ mod tests {
         renamed.ticks[2].inputs.clear();
         assert_eq!(renamed.run_hash(), trace.run_hash());
         assert_eq!(late_text(&trace), None);
-        renamed.ticks[1].late = vec![(0, "GAME.EXE+00123".into(), Some("0200".into()))];
+        renamed.ticks[1].late =
+            vec![LateRead { input: 0, at: "GAME.EXE+00123".into(), value: Some("0200".into()), read: 2 }];
         assert_eq!(Trace::parse(&renamed.to_text()).unwrap(), renamed);
         let late = late_text(&renamed).unwrap();
         let first = "1 tick reads an input after it changed since the sync point: elapsed at GAME.EXE+00123 in 1 (first \

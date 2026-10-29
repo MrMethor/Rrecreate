@@ -297,7 +297,7 @@ fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Valu
         let read: Vec<Value> = t.inputs.iter().filter_map(|(i, v)| v.as_ref().map(|v| json!([i, v]))).collect();
         let mut line = json!({"tick": t.tick, "sync": t.sync, "inputs": read});
         let late: Vec<Value> =
-            t.late.iter().filter_map(|(i, at, value)| value.as_ref().map(|v| json!([i, at, v]))).collect();
+            t.late.iter().filter_map(|l| l.value.as_ref().map(|v| json!([l.input, l.at, v, l.read]))).collect();
         if !late.is_empty() {
             line["late"] = json!(late);
         }
@@ -403,9 +403,13 @@ fn report(
         return Ok(());
     }
     let before = &trace.ticks[(t - 2) as usize];
-    for (i, at, _) in &before.late {
-        let name = &trace.header.inputs[*i].name;
-        say("late", format!("tick {}'s pass read {name} late at {at}: the port reads it there with at_site", t - 1));
+    for l in &before.late {
+        let name = &trace.header.inputs[l.input].name;
+        let which = if l.read > 1 { format!(", its read {} there", l.read) } else { String::new() };
+        say(
+            "late",
+            format!("tick {}'s pass read {name} late at {}{which}: the port reads it there with at_site", t - 1, l.at),
+        );
     }
     // Who wrote the first differing value: in the pass from tick t-1's sync point to tick t's, which a
     // watch numbers t.

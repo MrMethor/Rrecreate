@@ -15,14 +15,14 @@ pub struct InputsFile {
 }
 
 /// A tick of the inputs file: the inputs whose values changed (a value holds until it changes), the
-/// inputs its pass read late (D68: name, the reading instruction's ID, the value it read), and the
-/// fields a scenario's edit set at this tick (D64), by path, with the original's values.
+/// inputs its pass read late (D68, D93: name, the reading instruction's ID, which of its reads, the value
+/// it read), and the fields a scenario's edit set at this tick (D64), by path, with the original's values.
 #[derive(Debug, Default, PartialEq)]
 pub struct InputsLine {
     pub tick: u64,
     pub sync: String,
     pub inputs: Vec<(String, Vec<u8>)>,
-    pub late: Vec<(String, String, Vec<u8>)>,
+    pub late: Vec<(String, String, u32, Vec<u8>)>,
     pub set: Vec<(String, Value)>,
 }
 
@@ -59,7 +59,9 @@ impl InputsFile {
                 let i = read[0].as_u64().ok_or("a late read's input")? as usize;
                 let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
                 let site = read[1].as_str().unwrap_or_default().to_owned();
-                late.push((name.clone(), site, unhex(read[2].as_str().unwrap_or_default())?));
+                // An instruction's first read where the file doesn't say (before D93).
+                let n = read.get(3).map_or(Some(1), Value::as_u64).ok_or("a late read's number")? as u32;
+                late.push((name.clone(), site, n, unhex(read[2].as_str().unwrap_or_default())?));
             }
             let set =
                 v["set"].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect();

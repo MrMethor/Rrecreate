@@ -86,28 +86,43 @@ pub fn fix(name: &str) {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Inputs {
     values: BTreeMap<String, Vec<u8>>,
-    /// By (input, the ID of the instruction that read it): the value it read.
-    late: BTreeMap<(String, String), Vec<u8>>,
+    /// By the ID of the instruction that read it: the reads that saw an input otherwise than the read
+    /// before (which of the instruction's reads, the input, the value), in order.
+    late: BTreeMap<String, Vec<(u32, String, Vec<u8>)>>,
+    /// The reads made at each site so far this tick ([`Inputs::at_site`]).
+    reads: std::cell::RefCell<BTreeMap<String, u32>>,
 }
 
 impl Inputs {
     pub fn new(values: BTreeMap<String, Vec<u8>>) -> Inputs {
-        Inputs { values, late: BTreeMap::new() }
+        Inputs { values, ..Inputs::default() }
     }
 
-    /// The inputs as the original's instruction `site` (its ID, `GAME.EXE+04BB9`) read them: where the
-    /// pass read an input there after it had changed since the sync point (a clock read again after
-    /// the frame was drawn, a key pressed meanwhile), the value it read; else the tick's. The port reads
-    /// such an input through this, at the place that does what that instruction did. (A live platform
-    /// reads its clock or device again here.)
+    /// The inputs as the original's instruction `site` (its ID, `GAME.EXE+04BB9`) read them, its next
+    /// read: where the pass read an input there after it had changed since the sync point (a clock read
+    /// again after the frame was drawn, a key pressed meanwhile), the value that read saw; else the
+    /// tick's. Each call is one read there: the port calls it where it does what that instruction did, as
+    /// often as the original read there (twice for a function called twice, each time round a loop that
+    /// polls), and the n-th call gets the original's n-th read (D93). (A live platform reads its clock or
+    /// device again here.)
     pub fn at_site(&self, site: &str) -> Inputs {
+        let n = {
+            let mut reads = self.reads.borrow_mut();
+            let n = reads.entry(site.to_owned()).or_default();
+            *n += 1;
+            *n
+        };
+        self.at_read(site, n)
+    }
+
+    /// The inputs as the original's instruction `site` read them at its `n`-th read in the pass (from 1),
+    /// without counting a read ([`Inputs::at_site`]).
+    pub fn at_read(&self, site: &str, n: u32) -> Inputs {
         let mut values = self.values.clone();
-        for ((name, at), value) in &self.late {
-            if at == site {
-                values.insert(name.clone(), value.clone());
-            }
+        for (_, name, value) in self.late.get(site).into_iter().flatten().filter(|(read, _, _)| *read <= n) {
+            values.insert(name.clone(), value.clone());
         }
-        Inputs { values, late: BTreeMap::new() }
+        Inputs { values, ..Inputs::default() }
     }
 
     /// An input's bytes (empty if the session has no such input, or it wasn't read yet).
@@ -143,9 +158,14 @@ impl Inputs {
         self.values.insert(name.to_owned(), bytes);
     }
 
-    /// This tick's late reads, replacing the last tick's.
-    pub(crate) fn set_late(&mut self, late: &[(String, String, Vec<u8>)]) {
-        self.late = late.iter().map(|(name, site, value)| ((name.clone(), site.clone()), value.clone())).collect();
+    /// This tick's late reads, replacing the last tick's; no read made yet.
+    pub(crate) fn set_late(&mut self, late: &[(String, String, u32, Vec<u8>)]) {
+        self.late.clear();
+        for (name, site, n, value) in late {
+            self.late.entry(site.clone()).or_default().push((*n, name.clone(), value.clone()));
+        }
+        self.late.values_mut().for_each(|reads| reads.sort_by_key(|(n, _, _)| *n));
+        self.reads.borrow_mut().clear();
     }
 }
 
@@ -395,16 +415,21 @@ mod tests {
     fn an_input_read_late_is_read_at_its_site() {
         let text = INPUTS.replace(
             r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]]}"#,
-            r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]],"late":[[0,"GAME.EXE+04BB9","0600"]]}"#,
+            r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]],"late":[[0,"GAME.EXE+04BB9","0600"],[0,"GAME.EXE+09017","0700",3]]}"#,
         );
         let file = InputsFile::parse(&text).unwrap();
-        assert_eq!(file.ticks[2].late, [("elapsed".to_owned(), "GAME.EXE+04BB9".to_owned(), vec![6, 0])]);
+        let site = |s: &str| s.to_owned();
+        assert_eq!(file.ticks[2].late[0], (site("elapsed"), site("GAME.EXE+04BB9"), 1, vec![6, 0]), "a first read");
         let mut inputs = Inputs::default();
         inputs.set("elapsed", vec![3, 0]);
         inputs.set_late(&file.ticks[2].late);
         assert_eq!(inputs.u16("elapsed"), 3, "the tick's value");
         assert_eq!(inputs.at_site("GAME.EXE+04BB9").u16("elapsed"), 6, "as that instruction read it");
         assert_eq!(inputs.at_site("GAME.EXE+00100").u16("elapsed"), 3, "elsewhere, the tick's");
+        // An instruction that read it three times, the third after it changed: each call is its next read.
+        let polls: Vec<u16> = (0..4).map(|_| inputs.at_site("GAME.EXE+09017").u16("elapsed")).collect();
+        assert_eq!(polls, [3, 3, 7, 7]);
+        assert_eq!(inputs.at_read("GAME.EXE+09017", 2).u16("elapsed"), 3);
         inputs.set_late(&[]);
         assert_eq!(inputs.at_site("GAME.EXE+04BB9").u16("elapsed"), 3, "a late read is the tick's alone");
     }

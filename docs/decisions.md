@@ -686,6 +686,24 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D93. A late read's value is kept for each read of its instruction; traces, version 7. Accepted 2026-10-29.
+An instruction's reads of an input in a pass are numbered (from the last hit of the input's sync point), and
+recording keeps each read that saw the input otherwise than the instruction's read before it (the first,
+otherwise than the tick's value; a read back at the tick's value is kept too): the trace's `late` entries are
+`[input, ID, value, read]`. The runtime's `Inputs::at_site(ID)` is one read there: its n-th call in a step gets
+what the original's n-th read there saw, so a port reads at the same place as often as the original did (a
+function called twice, a loop polling until a click). `Inputs::at_read(ID, n)` asks for one without counting.
+The mouse driver's calls that answer with its state (03h, 05h, 06h, 0Bh) are its reads, and what any call of
+it does to the driver (a position set, counts read and cleared) is the program's, so the next read is compared
+with that, as the program's own writes are in memory. Clockwork's `late_inputs_end` answers each read's number
+(protocol revision 8). Traces of versions 5 and 6 are still read, their entries as an instruction's first read.
+**Why:** going back to the start of Arena's dungeon (M4), the port diverged at tick 18: in that pass the
+mouse reader at `+09017` ran twice in `move_player`, which saw the tick's value, then 1665 times more in a
+modal wait for the dungeon's opening message, the last seeing the click that ended it. D68 kept one value
+for the instruction, so the port's two reads both got the click, and `buttons_before` and the mouse mover
+went wrong. The cursor set by the mouse zones (INT 33h 04h) was also taken for a late read.
+**Supersedes:** D68's one value an instruction (the rest of D68 stands).
+
 ### D92. A recording keeps its data segment at every tick; naming more of it records again without a run. Accepted 2026-10-28.
 `rrc record` keeps the data segment (an LE program's data objects) at every tick in the cache, as `rrc search`
 keeps it (D76), and the session's file names it (`[trace] memory`). Recording again when items were only added
@@ -860,7 +878,7 @@ Rrecreate's decisions. Clockwork no longer reads the session files Recreate's `r
 **Why:** the person knows of nothing in Recreate that is still relevant, and it confuses the project (D66).
 Its folder is deleted, and no work here may need it.
 
-### D68. A late read's value is kept, and the port reads it where the original did; traces, version 5. Accepted 2026-10-27, with the person.
+### D68. A late read's value is kept, and the port reads it where the original did; traces, version 5. Accepted 2026-10-27, with the person; each read, not each instruction: D93.
 Recording keeps, for each instruction of a pass that read an input after it had changed since the sync point,
 what it read: the trace's `late` entries are `[input, the instruction's ID, the input as that instruction read
 it]` (the tick's value with the bytes it read as it first read each), each reading instruction once a tick. The
