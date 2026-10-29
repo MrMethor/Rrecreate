@@ -125,6 +125,16 @@ impl Inputs {
         Inputs { values, ..Inputs::default() }
     }
 
+    /// Whether the port's reads at `site` this tick have seen all the original's did: as many as its
+    /// last there that saw a change (none: from the start). A loop polling there that hasn't seen what
+    /// ends it never would (each read after sees the same), while the original's ended: the port went
+    /// another way. It stops there and says so, as for a path not ported, instead of polling on.
+    pub fn read_out(&self, site: &str) -> bool {
+        let made = self.reads.borrow().get(site).copied().unwrap_or(0);
+        let last = self.late.get(site).and_then(|reads| reads.iter().map(|(read, _, _)| *read).max()).unwrap_or(0);
+        made >= last
+    }
+
     /// An input's bytes (empty if the session has no such input, or it wasn't read yet).
     pub fn bytes(&self, name: &str) -> &[u8] {
         self.values.get(name).map_or(&[], Vec::as_slice)
@@ -430,6 +440,19 @@ mod tests {
         let polls: Vec<u16> = (0..4).map(|_| inputs.at_site("GAME.EXE+09017").u16("elapsed")).collect();
         assert_eq!(polls, [3, 3, 7, 7]);
         assert_eq!(inputs.at_read("GAME.EXE+09017", 2).u16("elapsed"), 3);
+        assert!(
+            inputs.read_out("GAME.EXE+09017") && inputs.read_out("GAME.EXE+00200"),
+            "a read not made late: from the start"
+        );
+        inputs.set_late(&file.ticks[2].late);
+        let site = "GAME.EXE+09017";
+        let read_out: Vec<bool> = (0..3)
+            .map(|_| {
+                inputs.at_site(site);
+                inputs.read_out(site)
+            })
+            .collect();
+        assert_eq!(read_out, [false, false, true], "out once the third read, the last that saw a change, is made");
         inputs.set_late(&[]);
         assert_eq!(inputs.at_site("GAME.EXE+04BB9").u16("elapsed"), 3, "a late read is the tick's alone");
     }

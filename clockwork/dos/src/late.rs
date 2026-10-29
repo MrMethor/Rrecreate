@@ -237,11 +237,19 @@ impl LateInputs {
         }
     }
 
-    /// The program changed `device`'s state (a driver's call that sets or clears it): what it reads next.
-    pub(crate) fn device_written(&mut self, device: crate::Device, state: &[u8]) {
+    /// The program called `device`'s driver, which held `before` and holds `after`: what the call
+    /// changed (a position set, counts read and cleared) is what it reads next. The rest isn't the
+    /// program's: a button let go before the call still differs from what it should read.
+    pub(crate) fn device_written(&mut self, device: crate::Device, before: &[u8], after: &[u8]) {
         for s in &mut self.sources {
             if s.what == LateSource::Device(device) && s.tick.is_some() {
-                s.expected = state.to_vec();
+                for (k, (&was, &now)) in before.iter().zip(after).enumerate() {
+                    if was != now
+                        && let Some(byte) = s.expected.get_mut(k)
+                    {
+                        *byte = now;
+                    }
+                }
             }
         }
     }
@@ -377,6 +385,14 @@ mod tests {
         at(&mut late, 2015).device_read(crate::Device::Mouse, &[0; 4], read(2015, 9));
         at(&mut late, 2020).device_read(crate::Device::Mouse, &[1, 0, 0, 0], read(2020, 9));
         at(&mut late, 2030).device_read(crate::Device::Mouse, &[0; 4], read(2030, 9));
+        // Pressed again; a read's call changes nothing, so the next read is as the one before (not the
+        // tick's value again); a position set is the program's.
+        let pressed = [1, 0, 0, 0];
+        at(&mut late, 2040).device_read(crate::Device::Mouse, &pressed, read(2040, 9));
+        late.device_written(crate::Device::Mouse, &pressed, &pressed);
+        at(&mut late, 2050).device_read(crate::Device::Mouse, &pressed, read(2050, 9));
+        late.device_written(crate::Device::Mouse, &pressed, &[1, 0, 5, 0]);
+        at(&mut late, 2060).device_read(crate::Device::Mouse, &[1, 0, 5, 0], read(2060, 9));
         let late = late.finish();
         let l = |tick_cycle, source, cycle, at, read, bytes: &[(u32, u8)]| Late {
             tick_cycle,
@@ -396,6 +412,7 @@ mod tests {
                 l(1600, 0, 1610, 12, 1, &[(2, 11)]),
                 l(2000, 1, 2020, 9, 3, &[(0, 1)]),
                 l(2000, 1, 2030, 9, 4, &[]),
+                l(2000, 1, 2040, 9, 5, &[(0, 1)]),
             ]
         );
     }

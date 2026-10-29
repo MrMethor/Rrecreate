@@ -333,10 +333,13 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         edits,
     };
     // Only items added since the last recording, all in its kept memory: no run (D92).
-    let kept = if a.has("--run") { None } else { from_kept(repo, &session, &header)? };
+    let kept = if a.has("--run") { Err(String::new()) } else { from_kept(repo, &session, &header)? };
     let (trace, snapshots, memory) = match kept {
-        Some(trace) => (trace, None, session.trace.as_ref().and_then(|t| t.memory.clone())),
-        None => {
+        Ok(trace) => (trace, None, session.trace.as_ref().and_then(|t| t.memory.clone())),
+        Err(why) => {
+            if !why.is_empty() {
+                say("runs", format!("the session: {why}"));
+            }
             let (trace, snapshots, memory) = run(repo, &session, header)?;
             (trace, Some(snapshots), memory)
         }
@@ -376,8 +379,12 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     match before {
         Some(b) if b.hash == hash => say("same", "as the trace recorded before"),
         Some(b) if b.run == run => {
-            let older = recorded_header(&cache, &b.hash).is_some_and(|h| h.version != VERSION);
-            let why = if older { "it was in an older format" } else { "the knowledge changed" };
+            let header = recorded_header(&cache, &b.hash);
+            let why = match header {
+                Some(h) if h.version != VERSION => "it was in an older format",
+                Some(h) if h == trace.header => "what its passes read late differs (another Clockwork)",
+                _ => "the knowledge changed",
+            };
             say("same", format!("run as before; the trace differs ({}, {} ticks): {why}", b.hash, b.ticks))
         }
         Some(b) if b.run.is_empty() => say("differs", "from the trace recorded before, which has no run hash"),
@@ -525,25 +532,45 @@ pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
 }
 
 /// The trace of a recording that only added items to the last one's state, all in the memory kept with
-/// it (D92): the last trace's ticks with the new items read from that memory. None when the run would
-/// differ (another Clockwork, sync points, inputs or edits), when an item isn't in the kept memory (a
-/// device, an item read through a pointer, memory outside the data segment), or with nothing kept.
-fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Option<Trace>, String> {
-    let Some(before) = &session.trace else { return Ok(None) };
-    let Some(memory) = &before.memory else { return Ok(None) };
+/// it (D92): the last trace's ticks with the new items read from that memory. Else why the session runs
+/// (empty: nothing recorded before): the run would differ (another Clockwork, sync points, inputs or
+/// edits), an item isn't in the kept memory (a device, an item read through a pointer, memory outside
+/// the data segment), or nothing was kept.
+fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<Trace, String>, String> {
+    let Some(before) = &session.trace else { return Ok(Err(String::new())) };
+    let Some(memory) = &before.memory else { return Ok(Err("its last recording kept no memory".into())) };
     let cache = Cache::open(&repo.local)?;
-    let Ok(text) = cache.get(&before.hash) else { return Ok(None) };
-    let Ok(old) = Trace::parse(&String::from_utf8_lossy(&text)) else { return Ok(None) };
+    let old = cache.get(&before.hash).ok().and_then(|text| Trace::parse(&String::from_utf8_lossy(&text)).ok());
+    let Some(old) = old else { return Ok(Err("its last trace isn't in the cache".into())) };
     // The same run: all but the state alike.
     let run = |h: &Header| Header { state: Vec::new(), ..h.clone() };
+    if old.header.version != VERSION {
+        return Ok(Err(format!("its last trace is of version {}", old.header.version)));
+    }
+    if run(&old.header) != run(header) {
+        let what = if old.header.clockwork != header.clockwork {
+            "another Clockwork"
+        } else if old.header.syncs != header.syncs {
+            "the sync points changed"
+        } else if old.header.inputs != header.inputs {
+            "the inputs changed"
+        } else if old.header.edits != header.edits {
+            "the edits changed"
+        } else {
+            "another program or game"
+        };
+        return Ok(Err(format!("{what} since its last recording")));
+    }
     // Nothing added: recording again checks the run is the same, so it runs.
-    if old.header.version != VERSION || run(&old.header) != run(header) || old.header == *header {
-        return Ok(None);
+    if old.header == *header {
+        return Ok(Err("nothing added since its last recording: it checks the run is the same".into()));
     }
     let key = crate::memory::key(repo, session, &header.syncs, "data")?;
     let ticks = old.ticks.len() as u64;
     let span = crate::memory::kept(repo, &key, 1, ticks)?.filter(|s| &s.hash == memory);
-    let Some(span) = span.filter(|_| ticks > 0) else { return Ok(None) };
+    let Some(span) = span.filter(|_| ticks > 0) else {
+        return Ok(Err("the memory its last recording kept isn't in the cache, or is of another run".into()));
+    };
     // Each item: its index in the last trace's state, or its range in the kept memory and where in it.
     enum Source {
         Old(usize),
@@ -561,13 +588,13 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Option<T
             continue;
         }
         if item.via.is_some() || !item.device.is_empty() {
-            return Ok(None);
+            return Ok(Err(format!("{} is read through a pointer or a device, not kept", item.name)));
         }
         let linear = places.linear(&places.address(&item.at)?)?;
         let range = ranges.iter().position(|&(start, len)| {
             linear >= start && u64::from(linear) + u64::from(item.size) <= u64::from(start) + u64::from(len)
         });
-        let Some(r) = range else { return Ok(None) };
+        let Some(r) = range else { return Ok(Err(format!("{} is outside the memory kept", item.name))) };
         sources.push(Source::Memory(r, (linear - ranges[r].0) as usize, item.size as usize));
     }
     let carried: Vec<Vec<Option<String>>> =
@@ -600,7 +627,7 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Option<T
         new_ticks.push(Tick { state, ..tick.clone() });
         previous = values;
     }
-    Ok(Some(Trace { header: header.clone(), ticks: new_ticks, end: old.end }))
+    Ok(Ok(Trace { header: header.clone(), ticks: new_ticks, end: old.end }))
 }
 
 /// The ranges kept with a trace (D92), as `rrc search` reads them: an LE program's data objects, or the
@@ -1040,8 +1067,12 @@ fn show_item(trace: &Trace, name: &str, ty: &dyn Fn(&Item) -> String, lines: usi
     Ok(ExitCode::SUCCESS)
 }
 
+/// Most elements of an array `value_text` shows.
+const ELEMENTS: usize = 16;
+
 /// A value as its type reads (`u16`, `i16`, `u8[256]`, ...): a number in decimal, an array as its
-/// elements that aren't zero (`[index]=value`); hex when the type isn't one of these.
+/// elements that aren't zero (`[index]=value`, the first `ELEMENTS` of them); hex when the type isn't
+/// one of these.
 pub fn value_text(hex: Option<&str>, ty: &str) -> String {
     let Some(hex) = hex else { return "unmapped".into() };
     let bytes: Vec<u8> =
@@ -1073,7 +1104,11 @@ pub fn value_text(hex: Option<&str>, ty: &str) -> String {
     }
     let set: Vec<String> =
         values.iter().enumerate().filter(|(_, v)| **v != 0).map(|(i, v)| format!("[{i:#X}]={v}")).collect();
-    if set.is_empty() { format!("all {} zero", values.len()) } else { set.join(" ") }
+    match set.len() {
+        0 => format!("all {} zero", values.len()),
+        n if n > ELEMENTS => format!("{} … ({} more not zero)", set[..ELEMENTS].join(" "), n - ELEMENTS),
+        _ => set.join(" "),
+    }
 }
 
 /// The mouse's state (docs/formats.md): the buttons, the position and the motion, and the press
@@ -1186,6 +1221,8 @@ mod tests {
         assert_eq!((value_text(Some("FEFF"), "i16"), value_text(Some("FEFF"), "u16")), ("-2".into(), "65534".into()));
         assert_eq!(value_text(Some("00000100"), "u16[2]"), "[0x1]=1");
         assert_eq!(value_text(Some("0000"), "u8[2]"), "all 2 zero");
+        let long = value_text(Some(&"01".repeat(20)), "u8[20]");
+        assert!(long.starts_with("[0x0]=1 ") && long.ends_with("[0xF]=1 … (4 more not zero)"), "{long}");
         assert_eq!((value_text(Some("0A0B"), ""), value_text(None, "u8")), ("0A0B".into(), "unmapped".into()));
         let mut mouse = "01007800380024FF9CFF".to_owned() + &"0".repeat(72);
         mouse.replace_range(20..32, "010078003800");

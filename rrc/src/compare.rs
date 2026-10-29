@@ -131,7 +131,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         for (m, values) in mapped.iter().zip(&original) {
             let theirs = &values[(t - 1) as usize];
             match at_path(&state, &m.field) {
-                Some(ours) => differences(&m.field, theirs, ours, SHOWN, &mut found),
+                Some(ours) => differences(&m.field, theirs, &m.masked(ours), SHOWN, &mut found),
                 None => found.push((m.field.clone(), theirs.clone(), Value::Null)),
             }
         }
@@ -182,7 +182,7 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
             let value = match &last {
                 Some((h, v)) if *h == hex => v.clone(),
                 _ => match &hex {
-                    Some(h) => decode(&unhex(h)?, &m.ty, r).map_err(|e| format!("{}: {e}", m.field))?,
+                    Some(h) => m.masked(&decode(&unhex(h)?, &m.ty, r).map_err(|e| format!("{}: {e}", m.field))?),
                     None => Value::Null,
                 },
             };
@@ -617,6 +617,7 @@ mod tests {
             ty: ty.into(),
             size,
             via: None,
+            mask: None,
         };
         let m = mapped("enemies", "GAME.EXE+00100", "enemy[6]", 60);
         assert_eq!(locate(&m, "enemies[3].y", &types), Some((32, 2)));

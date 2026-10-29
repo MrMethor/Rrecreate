@@ -1,7 +1,9 @@
 //! The state mapping (DESIGN.md §7, D16, D62, D72): `mapping.toml` in the port repository. Each
 //! `[[map]]` is a field of the port's state (a path in its serialization, `player.x`) and the
 //! original's item it is: a data name or an ID, read as the knowledge's type for it or the one given;
-//! or, `via` a pointer, what the pointer points to at each tick (data on the heap). `[[ignore]]` is the
+//! or, `via` a pointer, what the pointer points to at each tick (data on the heap); with a `mask`, only
+//! those bits of an unsigned number (D95: the others are a part's the port doesn't have, a renderer's
+//! scratch in a flags word, neither compared nor transplanted). `[[ignore]]` is the
 //! original's memory that may differ (padding, caches, driver internals), named so that nothing is left
 //! out silently. `rrc record` traces every mapped item; `rrc compare` compares them, and a transplant
 //! builds the port's state from them.
@@ -39,6 +41,9 @@ pub struct Map {
     /// How to read it; empty: the knowledge's type for the data (an item `via` a pointer needs one).
     #[serde(default, rename = "type", skip_serializing_if = "String::is_empty")]
     pub ty: String,
+    /// The bits of the item (an unsigned number) that are the field; none: all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<u64>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -67,6 +72,8 @@ pub struct Mapped {
     pub ty: String,
     pub size: u32,
     pub via: Option<Via>,
+    /// The bits that are the field ([`Map::mask`]).
+    pub mask: Option<u64>,
 }
 
 /// How a mapped item is found through a pointer: the pointer as the mapping names it, how it points,
@@ -89,6 +96,14 @@ impl Via {
 }
 
 impl Mapped {
+    /// A value of the field (the original's or the port's): the bits of its mask.
+    pub fn masked(&self, value: &serde_json::Value) -> serde_json::Value {
+        match (self.mask, value.as_u64()) {
+            (Some(mask), Some(n)) => serde_json::Value::from(n & mask),
+            _ => value.clone(),
+        }
+    }
+
     /// The original's memory the field covers: the item, or the pointer it is found through.
     pub fn covers(&self) -> (&Id, u32) {
         match &self.via {
@@ -121,7 +136,14 @@ impl Mapping {
                 (false, false) => Err("at or via, not both".into()),
                 (true, true) => Err("no at: the original's item (or via: a pointer to it)".into()),
             };
-            mapped.push(resolved.map_err(at)?);
+            let mut resolved = resolved.map_err(at)?;
+            if let Some(mask) = m.mask {
+                if !matches!(resolved.ty.as_str(), "u8" | "u16" | "u32") {
+                    return Err(at(format!("a mask takes some bits of an unsigned number, not of {}", resolved.ty)));
+                }
+                resolved.mask = Some(mask);
+            }
+            mapped.push(resolved);
         }
         Ok(mapped)
     }
@@ -167,7 +189,7 @@ fn direct(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     if k.ticks.inputs.iter().any(|i| i.at == id.to_string()) {
         return Err(format!("{} is an input: the port gets it with each tick's inputs", m.at));
     }
-    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None })
+    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None, mask: None })
 }
 
 /// A field mapped to what a pointer points to (D72).
@@ -189,7 +211,7 @@ fn via(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     let size = values::size(&m.ty, &k.types)?;
     let id = values::moved(&id, offset).ok_or("past the address space")?;
     let via = Via { name: m.via.clone(), pointer, offset: m.offset };
-    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: Some(via) })
+    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: Some(via), mask: None })
 }
 
 /// The ID a mapping (or an edit) names: an ID, or a data name.
@@ -267,6 +289,11 @@ mod tests {
         assert!(wrong(vec![map("s", "score", "u32")]).contains("data.tsv says score is 2"));
         assert!(wrong(vec![map("s", "nothing", "u8")]).contains("no data named nothing"));
         assert!(wrong(vec![map("a", "score", ""), map("a", "player_x", "i16")]).contains("mapped twice"));
+        let flags = |ty: &str| Map { mask: Some(0xFFFD), ..map("flags", "score", ty) };
+        assert!(wrong(vec![flags("i16")]).contains("some bits of an unsigned number"));
+        let mapped = Mapping { maps: vec![flags("")], ignores: vec![] }.resolve(&k).unwrap();
+        assert_eq!(mapped[0].masked(&serde_json::json!(3)), serde_json::json!(1), "bit 1 isn't the field's");
+        assert_eq!(mapped[0].masked(&serde_json::json!([3])), serde_json::json!([3]), "a number's bits only");
     }
 
     #[test]

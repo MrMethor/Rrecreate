@@ -165,8 +165,9 @@ fn find(calls: &[Call], matches: &dyn Fn(&Call) -> bool, out: &mut Vec<Call>) {
 }
 
 /// Lines for `calls` at `level`, `depth` levels in all: a call by its target's name and its site; the
-/// same call made again in a row, with the same calls shown under it, once with a count; and under the
-/// last level shown, how many calls are below.
+/// same call made again in a row, with the same calls shown under it, once with a count; a loop's
+/// calls made again in a row (up to `PERIOD` calls a round), once with a line counting the rounds; and
+/// under the last level shown, how many calls are below.
 fn render(calls: &[Call], names: &Names, level: usize, depth: usize, out: &mut Vec<String>) {
     let below = |c: &Call| -> Vec<String> {
         let mut lines = Vec::new();
@@ -175,6 +176,8 @@ fn render(calls: &[Call], names: &Names, level: usize, depth: usize, out: &mut V
         }
         lines
     };
+    // Each call with its lines, the same call made again in a row as one.
+    let mut shown: Vec<Vec<String>> = Vec::new();
     let mut i = 0;
     while i < calls.len() {
         let call = &calls[i];
@@ -194,11 +197,47 @@ fn render(calls: &[Call], names: &Names, level: usize, depth: usize, out: &mut V
             _ => names.function(&call.target),
         };
         let repeated = if times > 1 { format!(" ×{times}") } else { String::new() };
-        let hidden = if level + 1 >= depth && deeper > 0 { format!(", {deeper} calls below") } else { String::new() };
-        out.push(format!("{}{what}{repeated}  (at {}{hidden})", "  ".repeat(level), names.plain(&call.site)));
-        out.extend(lines);
+        let hidden = match deeper {
+            _ if level + 1 < depth => String::new(),
+            0 => String::new(),
+            1 => ", 1 call below".to_owned(),
+            n => format!(", {n} calls below"),
+        };
+        let mut all = vec![format!("{}{what}{repeated}  (at {}{hidden})", "  ".repeat(level), names.plain(&call.site))];
+        all.extend(lines);
+        shown.push(all);
         i += times;
     }
+    let mut i = 0;
+    while i < shown.len() {
+        let (round, rounds) = rounds(&shown[i..]);
+        for lines in &shown[i..i + round] {
+            out.extend(lines.iter().cloned());
+        }
+        if rounds > 1 {
+            out.push(format!("{}the {round} calls above ×{rounds}", "  ".repeat(level)));
+        }
+        i += round * rounds;
+    }
+}
+
+/// Most calls a round of a loop `render` finds.
+const PERIOD: usize = 16;
+
+/// The round that starts `items` and how many times it is made in a row: the one that covers the most
+/// items (the shortest of those), or the first item once.
+fn rounds<T: PartialEq>(items: &[T]) -> (usize, usize) {
+    let mut best = (1, 1);
+    for round in 2..=PERIOD.min(items.len() / 2) {
+        let mut times = 1;
+        while items.len() >= round * (times + 1) && items[round * times..round * (times + 1)] == items[..round] {
+            times += 1;
+        }
+        if times > 1 && round * times > best.0 * best.1 {
+            best = (round, times);
+        }
+    }
+    best
 }
 
 #[cfg(test)]
@@ -216,6 +255,14 @@ mod tests {
         assert_eq!(calls[0].calls[0].calls[0].target, "c");
         assert_eq!(calls[1].calls[0].target, "e", "deeper than the log saw begin: under the deepest");
         assert_eq!(calls[0].count(), 3);
+    }
+
+    #[test]
+    fn a_loop_s_rounds_are_counted() {
+        assert_eq!(rounds(&["a", "b", "a", "b", "a", "b", "c"]), (2, 3));
+        assert_eq!(rounds(&["a", "b", "c", "a", "b"]), (1, 1), "a round not made twice");
+        assert_eq!(rounds(&["a", "b", "a", "b", "c", "a", "b", "c"]), (2, 2), "from the first item");
+        assert_eq!(rounds(&["a", "a", "b", "a", "a", "b", "a", "a", "b"]), (3, 3));
     }
 
     #[test]

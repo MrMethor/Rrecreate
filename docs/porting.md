@@ -71,7 +71,9 @@ the original judges the port, not the code it was read from.
 | What does a pass run, in what order? | `rrc pass SESSION --tick N`, `--in FUNCTION` | the loop's `--c` | `rrc watch` of a value it changes |
 
 A pass's order matters as much as its code: `rrc pass SESSION --tick N` shows the calls one pass makes, in
-order, by name (`--in FUNCTION` for one function's), which is the outline of the port's step (D83).
+order, by name (`--in FUNCTION` for one function's), which is the outline of the port's step (D83). A call
+made again in a row shows once with its count (`×8`), and a loop's calls made again round after round show
+once, then `the 4 calls above ×10800`.
 
 ## 1. Set up
 
@@ -215,7 +217,10 @@ pass (a clock read again after drawing), the port reads the input where the orig
 `tick.inputs.at_site("GAME.EXE+04BB9")`, and gets what that instruction read. Each call is one read there: the
 port calls it as often as the original read there in the pass (a function called twice, each time round a
 loop that polls the mouse until a click), and the n-th call gets what the original's n-th read saw (`rrc trace
-SESSION --tick N` says which read, `its read 3 there`). To move one:
+SESSION --tick N` says which read, `its read 3 there`). A loop that polls checks
+`tick.inputs.read_out("GAME.EXE+09017")` when what it waits for hasn't come: true once the port made as many
+reads there as the original's last that saw a change, so the original's loop had ended by then and the port's
+went another way; it stops there as at a path not ported, instead of polling forever (D94). To move one:
 
 - move the sync point to the read: onto the instruction that reads the input (the load from the key array,
   the `int 33h`, the `in al, dx` of port 201h), or just before it in the same loop; not at the top of a pass
@@ -337,7 +342,9 @@ under `rrc compare` and in the port's own `cargo test` alike (D91).
 The original's pointers, heap and flag bytes map too (D72): declare a pointer type in `types.toml` with `into`
 the array it points into, and the port's field is an index (or none); map a heap block `via` the pointer that
 finds it, and the port's field is its contents; declare a flag byte as `[[bits]]`, and the port's field is a
-structure of named numbers and booleans.
+structure of named numbers and booleans. A flags word that holds bits of a part not ported (the renderer's
+scratch next to the game's flags) maps with a `mask` of the bits that are the port's (D95), once the code that
+reads the others is found to be that part's alone; a part the port's code reads is fed instead (`--feed`).
 
 ```bash
 rrc compare first-level

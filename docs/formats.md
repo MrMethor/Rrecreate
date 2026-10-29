@@ -230,6 +230,11 @@ at = "player_x"                 # the original's item: a data name, or an ID
 type = "i16"                    # optional: how to read it, else data.tsv's type for it
 
 [[map]]
+field = "flags"
+at = "world_flags"
+mask = 0xFFFD                   # optional: the bits of an unsigned number that are the field (D95)
+
+[[map]]
 field = "level.cells"
 via = "level_map"               # or: a pointer (named data, an ID, a path into one: world.level); the item
 offset = 0                      # is where it points at each tick, this many bytes past (optional)
@@ -250,6 +255,9 @@ isn't known, `SEGMENT:OFFSET`).
 The port's state, serialized as JSON, has the same numbers, arrays and objects at the mapped paths; what it has
 beyond them is its own. A mapped item is named data of the type's size, or an ID; an input can't be mapped (the
 port gets it with each tick's inputs). An item `via` a pointer is found at each tick: null while the pointer is.
+A `mask` (on a `u8`, `u16` or `u32`) keeps those bits of the original's value: the others are a part's the port
+doesn't have (a renderer's scratch in a flags word), so neither the transplant nor the comparison takes them,
+and the comparison takes the port's value with the same mask.
 `rrc record` traces every mapped item (one that isn't named data under its field's name, and an item via a
 pointer as `*POINTER`, with the pointer). `rrc check` checks the mapping.
 

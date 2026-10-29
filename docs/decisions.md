@@ -686,6 +686,28 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D95. A mapped field can be some bits of its item. Accepted 2026-10-29.
+A `[[map]]` of an unsigned number may have a `mask`: the bits of the original's item that are the port's field.
+The transplant gives the port those bits, and the comparison compares those bits of both sides; the others are
+a part's the port doesn't have, so it neither has nor computes them. It is for bits only that part's code reads;
+bits the port's code reads come from a part fed instead (D84).
+**Why:** Arena's ray caster keeps, for each ray, whether its major axis is x in bit 1 of `world_flags`, the word
+of the game's flags (0x80 ends the world loop; `move_player` sets 0x2000 and 0x800): only the ray caster reads it
+(`ACD.EXE+0AE9B`, `+0AEDD`). The port has no renderer until M6 (D71), so from the dungeon's first tick the
+comparison diverged on that bit at tick 96, whose last ray differed. Feeding the whole word would have hidden
+the game's bits, and `[[ignore]]` the whole item.
+
+### D94. A port's polling loop asks whether the original's reads there are out. Accepted 2026-10-29.
+The runtime's `Inputs::read_out(ID)` is true once the port has made as many reads at `ID` this tick as the
+original's last there that saw a change (D93; none: from the start). A port's loop that polls an input until
+something comes (a modal wait for a click, a "press a key") checks it when what it waits for hasn't come:
+every read after that one sees the same, so the original's loop, which ended, would have ended by then, and
+the port went another way. The port stops the loop there, as at a path not ported (`unported`), and the
+comparison shows where it went another way.
+**Why:** Arena's game menu waits in the pass for a click on one of its buttons (`wait_for_click`, 10801 reads
+of the mouse in the cell session's tick 17). A port that opened it where the original didn't, or read the
+mouse fewer times before it, would poll forever and the comparison would hang, with nothing to read.
+
 ### D93. A late read's value is kept for each read of its instruction; traces, version 7. Accepted 2026-10-29.
 An instruction's reads of an input in a pass are numbered (from the last hit of the input's sync point), and
 recording keeps each read that saw the input otherwise than the instruction's read before it (the first,

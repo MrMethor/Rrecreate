@@ -1355,14 +1355,21 @@ impl Machine {
         self.next_event = self.cpu.cycles;
     }
 
-    /// The program changed `device`'s state through a service: its next read should see it so.
-    fn late_device_written(&mut self, device: Device) {
+    /// `device`'s state before a service call, when late reads are followed (for
+    /// [`Machine::late_device_written`]).
+    fn late_device_before(&self, device: Device) -> Option<Vec<u8>> {
+        self.probes.late.is_some().then(|| self.device_state(device))
+    }
+
+    /// The program called `device`'s driver, which held `before`: what the call changed (a position
+    /// set, counts read and cleared) is the program's, what its next read should see.
+    fn late_device_written(&mut self, device: Device, before: &[u8]) {
         let Some(calls) = self.probes.calls.as_deref().filter(|_| self.probes.late.is_some()) else { return };
         if calls.in_hardware_interrupt() {
             return;
         }
-        let state = self.device_state(device);
-        self.probes.late.as_deref_mut().expect("checked").device_written(device, &state);
+        let after = self.device_state(device);
+        self.probes.late.as_deref_mut().expect("checked").device_written(device, before, &after);
     }
 
     fn callback(&mut self, id: u16) {
@@ -1381,6 +1388,7 @@ impl Machine {
         if mouse && matches!(self.cpu.regs.ax(), 0x03 | 0x05 | 0x06 | 0x0B) {
             self.late_device_read(Device::Mouse);
         }
+        let mouse_before = if mouse { self.late_device_before(Device::Mouse) } else { None };
         let watched = self.watch_before();
         let ax = self.cpu.regs.ax();
         if !bios::dispatch(self, id) && !dos::dispatch(self, id) {
@@ -1388,8 +1396,8 @@ impl Machine {
         }
         // What the call did to the driver (a position set, counts and motion read and cleared) is the
         // program's: what it should read next.
-        if mouse {
-            self.late_device_written(Device::Mouse);
+        if let Some(before) = mouse_before {
+            self.late_device_written(Device::Mouse, &before);
         }
         if let Some(video) = watched {
             self.watch_changes(video, crate::watch::By::Service { id, ax });
