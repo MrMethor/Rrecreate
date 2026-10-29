@@ -360,7 +360,11 @@ the first tick; `step`: one pass with the tick's inputs) and its `main` calls `r
 is a whole port repository to copy from: the knowledge, a session, the mapping and the port of a toy game.
 Tables the original's code reads (a sine table, combat tables) are loaded from the person's copy, not copied
 into the port (D82): `rrc_runtime::original::program().i16s(0x46A3C, 640)` reads them at their image offset,
-under `rrc compare` and in the port's own `cargo test` alike (D91).
+under `rrc compare` and in the port's own `cargo test` alike (D91). So are the game's files:
+`rrc_runtime::original::file("DATA\\LEVEL1.MAP")` reads one by the name the program opens it with, and
+`rrc_runtime::codecs` decodes the common compressions (PCX's run-length code, LZSS with lzss.c's parameters or
+others); a game's own is the port's code (D101). A port from power-on loads in `start` what the original loads
+before its first sync point hit: `examples/vault` is one.
 
 The original's pointers, heap and flag bytes map too (D72): declare a pointer type in `types.toml` with `into`
 the array it points into, and the port's field is an index (or none); map a heap block `via` the pointer that
@@ -381,7 +385,11 @@ the original's value between the previous tick's sync point and this one's (the 
 read that code; a value copied there, by `MOVS` say, is followed to where its source was written, D85); `port` names the port's code for the function that wrote it (D73), found by the ID each port
 function names in a comment (`/// update (GAME.EXE+00114): one pass`, DESIGN.md §6.6). Fix the port and compare
 again. A divergence at the port's first tick means its start state
-isn't the original's, or a transplant misses a field (map it). Work on a subsystem from a transplant at a tick
+isn't the original's, or a transplant misses a field (map it). From power-on, a buffer the program hasn't
+filled yet holds leftovers (a heap block's links): leave the port's field `None` until the port sets it.
+`rrc compare` takes it as matching while the original's value is unchanged, and says `unset` with who last
+wrote it before the first tick: the C library's allocator means leftovers; the game's own code (a loader)
+means `start` should set it (D102). Work on a subsystem from a transplant at a tick
 where it is in use, so what comes before needn't be ported first. Where the port matches through a tick, `--pair
 N` keeps a paired checkpoint, and `--resume N` compares from it without the ticks before. A subsystem not
 ported yet would stop the comparison at the next tick: `--feed random,actors` gives the port the original's

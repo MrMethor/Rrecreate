@@ -686,6 +686,37 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D102. A port's field may be unset while the original's holds what was there before the program set it. Accepted 2026-10-29.
+From power-on, the original's buffers hold what their memory held before the program fills them: a heap
+block's leftovers (the allocator's links), the buffer of a level not loaded yet. Nothing the game does depends
+on them, and a port shouldn't model a C library's heap to equal them. A port's field may be `None` (null in its
+trace) for "not set yet": `rrc compare` takes it as matching while the original's value is the one it had at
+the first compared tick; where that changes (the program set it), the port has nothing, and the comparison
+diverges there and says who wrote. It lists each field it took as unset, at which ticks, and who last wrote
+the original's value in the pass to the first tick: the C library's allocator for leftovers; the game's own
+code (a loader) means the port's `start` should have set it.
+**Why:** taking unset fields as equal must not hide a missing load: a field is unset only while the original's
+is unchanged, and the writer named for it tells leftovers from loaded data. Measured on the vault port (D101):
+its map is unset until the first level (ticks 1-100), the original's holding the links `__AllocSeg` left in
+the block `_fmalloc` gave.
+
+### D101. A port reads the game's files through the runtime and decodes them with its codecs. Accepted 2026-10-29.
+A port loads the game's data from the person's copy as the original does (M5, D82):
+`rrc_runtime::original::file(NAME)` reads a file of the game's folder by the name the program opens it with (a
+DOS path, in any case, `\` or `/`), under `rrc compare` (`RRC_GAME`) and in the port's own tests
+(`rrc.local.toml`'s `game`, D91). `rrc_runtime::codecs` decodes the compressions the era's games share: PCX's
+run-length code (`runs`) and LZSS, its ring, fill, start and shortest match as parameters (`Lzss`;
+`Lzss::OKUMURA`, lzss.c's); `rrc asset` decodes with the same (D78). A game's own compression is the port's
+code, as the rest of its logic. M5's test program is `testbins/src/vault.c`, a game of two loops (a title, a
+maze of two levels) with an archive of its own (`VAULT.DAT`, written by `testbins/data.py`: a directory of
+members stored, run-length or LZSS coded): before its first tick it reads the directory and loads the title's
+picture and palette; in play it loads each level as the last is left. Its port, `examples/vault`, runs from
+power-on: its `start` is what `main` does before the first sync point hit.
+**Why:** a port plays from the person's files, never from data copied into it (D82), and its loader is checked
+as its logic is: what the original loaded is mapped state. The common compressions are where ports would
+otherwise repeat each other's code. Measured: the vault port matches its session from power-on to the
+program's exit (506 ticks, both loops, both levels, 66 KB mapped).
+
 ### D100. M4 is done: Arena's dungeon session matches from its first tick, the view's parts given. Accepted 2026-10-29, with the person.
 M4 closes with Arena's dungeon session (`cell`, 650 ticks: the in-game menu, the cell's ruby key, the gate,
 the corridor, the rats woken, a fight and a rat's death) matching every mapped field (86, 78 KB) from a

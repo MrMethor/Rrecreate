@@ -116,6 +116,8 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     }
     let mut state = json!({});
     let (mut first, mut last, mut diverged) = (None, 0, None);
+    // The fields the port left unset (null), by the ticks they were (D102).
+    let mut unset: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
     for line in lines {
         let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
         let Some(t) = v["tick"].as_u64() else { continue };
@@ -125,12 +127,17 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         if t == 0 || t > ticks {
             return Err(format!("the port's trace has tick {t}; the session has 1 to {ticks}"));
         }
-        first.get_or_insert(t);
+        let start = *first.get_or_insert(t);
         last = t;
         let mut found = Vec::new();
         for (m, values) in mapped.iter().zip(&original) {
             let theirs = &values[(t - 1) as usize];
             match at_path(&state, &m.field) {
+                Some(Value::Null) => {
+                    if unset_matches(&m.field, &values[(start - 1) as usize], theirs, &mut found) {
+                        unset.entry(m.field.as_str()).or_insert((t, t)).1 = t;
+                    }
+                }
                 Some(ours) => differences(&m.field, theirs, &m.masked(ours), SHOWN, &mut found),
                 None => found.push((m.field.clone(), theirs.clone(), Value::Null)),
             }
@@ -143,6 +150,11 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let first = first.ok_or("the port ran no tick")?;
     let bytes: u32 = mapped.iter().map(|m| m.size).sum();
     say("compare", format!("{name}, ticks {first}-{last} of {ticks}: {} fields mapped ({bytes} bytes)", mapped.len()));
+    for (field, (from, to)) in &unset {
+        let Some(m) = mapped.iter().find(|m| m.field == *field) else { continue };
+        let writer = last_writer(repo, name, &trace, &k, m, first)?;
+        say("unset", format!("{field} at ticks {from}-{to}: the original's held its value of tick {first}, {writer}"));
+    }
     let code = match diverged {
         None => {
             say("match", format!("every mapped field at all {} ticks", last - first + 1));
@@ -158,6 +170,17 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     }
     unmapped(&k, &mapped, repo)?;
     Ok(code)
+}
+
+/// A field the port left unset (null) is what the original's memory held before the program set it: it
+/// matches while the original's value is `leftovers`, its value at the first tick (D102). Where that
+/// changed, the port has nothing.
+fn unset_matches(path: &str, leftovers: &Value, theirs: &Value, found: &mut Vec<(String, Value, Value)>) -> bool {
+    let mut changed = Vec::new();
+    differences(path, leftovers, theirs, SHOWN.saturating_sub(found.len()).max(1), &mut changed);
+    let matches = changed.is_empty();
+    found.extend(changed.into_iter().map(|(path, _, theirs)| (path, theirs, Value::Null)));
+    matches
 }
 
 /// Each mapped field's value at each tick of the original's trace.
@@ -436,32 +459,9 @@ fn report(
     let Some((m, offset, size)) = mapped.iter().find_map(|m| locate(m, path, &k.types).map(|(o, s)| (m, o, s))) else {
         return Ok(());
     };
-    let id = match &m.via {
-        None => Id::new(m.id.module(), m.id.part(), m.id.offset() + offset).map_err(|e| e.to_string())?,
-        // Where its pointer pointed at the tick (D72).
-        Some(via) => {
-            let size = via.pointer.size();
-            let column = trace
-                .header
-                .state
-                .iter()
-                .position(|item| item.via.is_none() && item.at == m.id.to_string() && item.size == size);
-            let bytes = column
-                .and_then(|c| trace.values(c)[(t - 1) as usize].clone())
-                .map(|hex| crate::trace::unhex(&hex))
-                .unwrap_or_default();
-            match via.pointer.target(&bytes, via.offset + offset) {
-                None => {
-                    say("wrote", format!("{path}: its pointer ({}) is null at tick {t}", m.id));
-                    return Ok(());
-                }
-                Some(Target::Id(id)) => id,
-                Some(Target::Linear(linear)) => {
-                    let session = Session::load(repo, name)?;
-                    Places::new(repo, &session).linear_id(linear)?
-                }
-            }
-        }
+    let Some(id) = located(repo, name, trace, m, offset, t)? else {
+        say("wrote", format!("{path}: its pointer ({}) is null at tick {t}", m.id));
+        return Ok(());
     };
     say("wrote", format!("{path} ({id}), between the sync points of ticks {} and {t}:", t - 1));
     let args: Vec<String> =
@@ -511,6 +511,52 @@ fn report(
     }
     port_code(repo, k, &writer.chain);
     Ok(())
+}
+
+/// Where `m`'s byte `offset` is at tick `t`: through its pointer then, if it has one (D72); none if that
+/// is null.
+fn located(repo: &Repo, name: &str, trace: &Trace, m: &Mapped, offset: u32, t: u64) -> Result<Option<Id>, String> {
+    let Some(via) = &m.via else {
+        return Id::new(m.id.module(), m.id.part(), m.id.offset() + offset).map(Some).map_err(|e| e.to_string());
+    };
+    let size = via.pointer.size();
+    let column = trace
+        .header
+        .state
+        .iter()
+        .position(|item| item.via.is_none() && item.at == m.id.to_string() && item.size == size);
+    let bytes = column
+        .and_then(|c| trace.values(c)[(t - 1) as usize].clone())
+        .map(|hex| crate::trace::unhex(&hex))
+        .unwrap_or_default();
+    Ok(match via.pointer.target(&bytes, via.offset + offset) {
+        None => None,
+        Some(Target::Id(id)) => Some(id),
+        Some(Target::Linear(linear)) => {
+            let session = Session::load(repo, name)?;
+            Some(Places::new(repo, &session).linear_id(linear)?)
+        }
+    })
+}
+
+/// Who last wrote `m` in the pass to tick `t` (from power-on, for tick 1), which tells the C library's
+/// leftovers (a heap's links) from what the program set there and the port should have (D102).
+fn last_writer(repo: &Repo, name: &str, trace: &Trace, k: &Knowledge, m: &Mapped, t: u64) -> Result<String, String> {
+    let Some(id) = located(repo, name, trace, m, 0, t)? else {
+        return Ok(format!("its pointer ({}) is null", m.id));
+    };
+    let args: Vec<String> =
+        [name, &id.to_string(), "--len", &m.size.to_string(), "--tick", &t.to_string(), "--ticks", "1", "--quiet"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    let writer = crate::watch::watched(repo, &args)?;
+    let Some(at) = writer.instruction else {
+        return Ok(format!("nothing wrote it in the pass to tick {t}"));
+    };
+    let named = |id: &Id| k.functions.get(id).map_or_else(|| id.to_string(), |d| d.name.clone());
+    let chain: Vec<String> = writer.chain.iter().take(3).map(named).collect();
+    Ok(format!("last written in the pass to tick {t} by {at} ({})", chain.join(" < ")))
 }
 
 /// Where the port does what the original's writing function did (D73): its code that names that
@@ -617,6 +663,15 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use crate::knowledge::{Field, Struct};
+
+    #[test]
+    fn an_unset_field_matches_while_the_original_s_is_unchanged() {
+        let mut found = Vec::new();
+        assert!(unset_matches("map", &json!([16, 0, 16]), &json!([16, 0, 16]), &mut found));
+        assert!(found.is_empty());
+        assert!(!unset_matches("map", &json!([16, 0, 16]), &json!([16, 1, 16]), &mut found));
+        assert_eq!(found, [("map[1]".to_owned(), json!(1), Value::Null)], "where it changed, the port has none");
+    }
 
     #[test]
     fn a_differing_path_is_located_in_its_item() {

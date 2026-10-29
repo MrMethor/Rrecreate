@@ -13,7 +13,8 @@ game's logic, tested on Arena (§12, D70, D71, D100): from a transplant at its f
 first dungeon's session to its end (the in-game menu, walking, collisions, the key's pickup, the gate, the
 creatures woken, the fists, the attacks and a rat's death, the rats' bites, the game's clock, the random
 generator), the 3D view's parts given to it as a part not ported (D84, D96, D98, D99); the gaps it found are
-D80-D99. Rrecreate began from Recreate's emulator and parts of its tooling
+D80-D99. M5 under way: a port reads and decodes the game's files, and the vault test program's port
+(`examples/vault`) matches from power-on through its title and play (D101, D102). Rrecreate began from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
 ## 1. The product
@@ -159,7 +160,8 @@ the session.
   original confirms or overrules.
 - **Assets (D78, M5):** the game's files are a source too. File tracing says which bytes of which file the
   program put where; formats are knowledge (`knowledge/formats.toml`); `rrc asset` extracts pictures,
-  palettes, sounds, music and levels, checked against what the original loaded.
+  palettes, sounds, music and levels, checked against what the original loaded. A port reads the game's files
+  through the runtime and decodes the common compressions with its codecs (D101).
 - **IDs:** `<MODULE>[#<n>]+<offset>`, where `#n` is an overlay (MZ) or an object (LE/LX) and the offset is in
   the loaded image, uppercase hex, 5 to 8 digits. The same form names functions and data. The module `MEM`
   is memory outside the programs' images, by linear address (`MEM+0046C`, the BIOS's timer count; D53).
@@ -269,6 +271,9 @@ the port branches on `rrc_runtime::keeps(NAME)` (D74).
   files in documented formats, so a port in any language can be compared; Rust ports get this from the runtime.
 - **First divergence:** the tick and the fields that differ, then *who wrote* on the original's side; on the
   port's side, its code for the function that wrote it, found by the ID it names (§6.6, D73).
+- **Unset fields:** from power-on, a field the port hasn't set yet (null) matches while the original's value is
+  the one at the first tick, memory the program hasn't set (a heap block's leftovers); the comparison names
+  who last wrote it before, which tells leftovers from data the port should have loaded (D102).
 - **Frames and sound:** in faithful mode, the port's rendering of each tick is compared with the original's
   frame as indexed pixels and palette, and sound as events per tick, not samples.
 - **Progress:** the share of the original's executed code exercised by sessions that match, and the share of

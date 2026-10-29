@@ -1,0 +1,11 @@
+# id	name	provenance	confidence	evidence
+VAULT.EXE+00072	unpack_runs	map		VAULT.MAP
+VAULT.EXE+000EF	unpack_lzss	map		VAULT.MAP
+VAULT.EXE+0021F	load	map		VAULT.MAP
+VAULT.EXE+00313	load_level	map		VAULT.MAP
+VAULT.EXE+00383	wait_tick	map		VAULT.MAP
+VAULT.EXE+00393	title_pass	map		VAULT.MAP
+VAULT.EXE+003BC	play_pass	map		VAULT.MAP
+VAULT.EXE+00637	main	map		VAULT.MAP
+VAULT.EXE+008FE	_fmalloc	map		VAULT.MAP: Watcom's far heap allocation
+VAULT.EXE+01436	__AllocSeg	map		VAULT.MAP: Watcom's far heap, a new segment from DOS

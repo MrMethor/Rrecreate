@@ -119,10 +119,18 @@ pub(crate) struct Writer {
 }
 
 /// Does what `rrc watch` does; and says who wrote last (nothing, if nothing wrote), or with `--before
-/// CYCLE` (for rrc's own use), last before that cycle.
+/// CYCLE` (for rrc's own use), last before that cycle. `--quiet` (rrc's own too) says nothing.
 pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
-    let a =
-        Args::parse(args, &["--len", "--tick", "--ticks", "--limit", "--lines", "--before"], &["--reads", "--cycles"])?;
+    let a = Args::parse(
+        args,
+        &["--len", "--tick", "--ticks", "--limit", "--lines", "--before"],
+        &["--reads", "--cycles", "--quiet"],
+    )?;
+    let say = |label: &str, text: &dyn std::fmt::Display| {
+        if !a.has("--quiet") {
+            say(label, text);
+        }
+    };
     let before: u64 = a.value("--before").map_or(Ok(u64::MAX), str::parse).map_err(|_| "--before is a cycle")?;
     let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles] [--limit N] \
                  [--lines N]";
@@ -167,7 +175,7 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     let watched = clockwork.ask("watch_end", Value::Null)?;
     let names = Names::new(&k, repo, &session)?;
     let span = if syncs.is_empty() { "the whole session".to_owned() } else { ticks_text(first, ends.len() as u64) };
-    say("watch", format!("{} ({id}, {len} bytes), {span}", names.data(&at, len)));
+    say("watch", &format!("{} ({id}, {len} bytes), {span}", names.data(&at, len)));
     // Each tick's accesses, those alike counted once (with --cycles, each on its own line). What runs
     // before the first sync point hit (loading, unpacking, the first screens) is "start".
     let mut lines: Vec<(String, String, usize)> = Vec::new();
@@ -188,22 +196,22 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
         }
     }
     for (tick, text, n) in lines.iter().take(lines_shown) {
-        say(tick, if *n > 1 { format!("{text} ({n} times)") } else { text.clone() });
+        say(tick, &if *n > 1 { format!("{text} ({n} times)") } else { text.clone() });
     }
     if lines.len() > lines_shown {
-        say("...", format!("{} more lines (--lines N shows more)", lines.len() - lines_shown));
+        say("...", &format!("{} more lines (--lines N shows more)", lines.len() - lines_shown));
     }
     if lines.is_empty() {
         say(
             "none",
-            if a.has("--reads") { "nothing read or wrote it" } else { "nothing wrote it (--reads for reads too)" },
+            &if a.has("--reads") { "nothing read or wrote it" } else { "nothing wrote it (--reads for reads too)" },
         );
     }
     let dropped = watched["dropped"].as_u64().unwrap_or(0);
     if dropped > 0 {
         say(
             "dropped",
-            format!("{dropped} accesses past the limit of {limit} (--limit N): the counts above stop there"),
+            &format!("{dropped} accesses past the limit of {limit} (--limit N): the counts above stop there"),
         );
     }
     let last = accesses.iter().rev().find(|access| access.kind == "write" && access.cycle < before);

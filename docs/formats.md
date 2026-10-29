@@ -433,4 +433,5 @@ inputs and the trace are JSON lines.
 - **Port trace** (`--out`, written by the port): the header
   `{"format":"rrc-port-trace","version":1,"session":"play","from":1}`, then a line per tick,
   `{"tick":1,"state":{…}}`, with the top-level fields of the state that changed since the line before (all at the
-  first), and last `{"end":1400}`.
+  first), and last `{"end":1400}`. A mapped field the port hasn't set yet is `null`: it matches while the
+  original's value is the one at the first tick (D102).

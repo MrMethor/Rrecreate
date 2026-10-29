@@ -1,0 +1,17 @@
+[game]
+name = "vault"
+title = "The vault game of testbins (testbins/src/vault.c): a game that loads its data from an archive"
+
+[original]
+program = "VAULT.EXE"
+
+[[version]]
+name = "1.0"
+
+[version.files]
+"VAULT.DAT" = "905e59e4adc290dd0cd510c90162408bf024a59a1b9df3fdceff106a673f46ba"
+"VAULT.EXE" = "c060638134d8c649a22311d68428d541d0b6172a89375f602bfc0d71563c6874"
+
+[port]
+# The port's program (src/main.rs); rrc compare runs it with `run` and its options.
+command = ["cargo", "run", "--quiet", "-p", "vault-port", "--"]

@@ -588,23 +588,10 @@ fn a_launcher_s_program_is_the_module() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-#[test]
-fn a_port_matches_the_original_tick_by_tick() {
-    // The example port (examples/toy) of the toy game (testbins/src/toy.c), built here.
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let (dir, mut rrc) = setup_file("toy", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
-    let port = built("toy-port", "toy-port", true);
-    let example = root.join("examples/toy");
-    for file in [
-        "mapping.toml",
-        "knowledge/functions.tsv",
-        "knowledge/data.tsv",
-        "knowledge/types.toml",
-        "knowledge/ticks.toml",
-        "sessions/play.toml",
-        "sessions/play.inputs",
-        "src/main.rs",
-    ] {
+/// The example port `example` in a test's port repository, with the workspace's `port` as its program.
+fn example_repository(rrc: &Rrc, example: &str, port: &Path, files: &[&str]) {
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("examples").join(example);
+    for file in files {
         std::fs::create_dir_all(rrc.repo.join(file).parent().unwrap()).unwrap();
         std::fs::copy(example.join(file), rrc.repo.join(file)).unwrap();
     }
@@ -612,14 +599,62 @@ fn a_port_matches_the_original_tick_by_tick() {
     let command = format!("command = [{:?}]", port.to_str().unwrap());
     let settings: Vec<String> =
         settings.lines().map(|l| if l.starts_with("command = ") { command.clone() } else { l.to_owned() }).collect();
-    std::fs::write(
-        rrc.repo.join("rrc.toml"),
-        settings.join(
-            "
-",
+    std::fs::write(rrc.repo.join("rrc.toml"), settings.join("\n")).unwrap();
+}
+
+#[test]
+fn a_port_from_power_on_loads_the_game_s_files() {
+    // The example port (examples/vault) of the vault game (testbins/src/vault.c): from power-on, through
+    // the title's loop and the play's, the levels decoded from the game's VAULT.DAT as the original
+    // loads them (M5).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, mut rrc) = setup_file("vault", "VAULT.EXE", &std::fs::read(root.join("testbins/bin/VAULT.EXE")).unwrap());
+    std::fs::copy(root.join("testbins/bin/VAULT.DAT"), dir.join("game").join("VAULT.DAT")).unwrap();
+    let port = built("vault-port", "vault-port", true);
+    let files = ["mapping.toml", "sessions/play.toml", "sessions/play.inputs", "src/main.rs"];
+    let knowledge = ["functions.tsv", "data.tsv", "types.toml", "ticks.toml"].map(|f| format!("knowledge/{f}"));
+    example_repository(&rrc, "vault", &port, &[&files[..], &knowledge.each_ref().map(String::as_str)[..]].concat());
+    rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
+    assert!(rrc.ok(&["game", dir.join("game").to_str().unwrap()]).contains("version   1.0"));
+    // Six seconds: Enter at 1.5 s loads the first level, its exit at 5.5 s the second.
+    rrc.ok(&["session", "set", "play", "--seconds", "6"]);
+    let recorded = rrc.ok(&["record", "play"]);
+    assert!(recorded.contains("trace     400 ticks"), "{recorded}");
+    let compared = rrc.ok(&["compare", "play"]);
+    assert!(compared.contains("match     every mapped field at all 400 ticks"), "{compared}");
+    // Until the first level, the map's buffer holds the far heap's links, which the port leaves unset
+    // (D102): who wrote them is the C library's allocator.
+    assert!(
+        compared.contains(
+            "unset     map at ticks 1-100: the original's held its value of tick 1, last written in the pass to \
+             tick 1 by VAULT.EXE+014C1 (__AllocSeg < _fmalloc < main)"
         ),
-    )
-    .unwrap();
+        "{compared}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_port_matches_the_original_tick_by_tick() {
+    // The example port (examples/toy) of the toy game (testbins/src/toy.c), built here.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, mut rrc) = setup_file("toy", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
+    let port = built("toy-port", "toy-port", true);
+    example_repository(
+        &rrc,
+        "toy",
+        &port,
+        &[
+            "mapping.toml",
+            "knowledge/functions.tsv",
+            "knowledge/data.tsv",
+            "knowledge/types.toml",
+            "knowledge/ticks.toml",
+            "sessions/play.toml",
+            "sessions/play.inputs",
+            "src/main.rs",
+        ],
+    );
     rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
     assert!(rrc.ok(&["game", dir.join("game").to_str().unwrap()]).contains("version   1.0"));
     assert!(rrc.ok(&["check"]).contains("mapping   15 fields mapped"));

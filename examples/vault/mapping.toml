@@ -1,0 +1,70 @@
+# The port's state and the original's items it is (docs/formats.md): rrc compare compares them at
+# every tick, and a transplant builds the port's state from them.
+
+[[map]]
+field = "last_count"
+at = "last_count"
+
+[[map]]
+field = "pass_count"
+at = "pass_count"
+
+[[map]]
+field = "scene"
+at = "scene"
+
+[[map]]
+field = "title_passes"
+at = "title_passes"
+
+[[map]]
+field = "level"
+at = "level"
+
+[[map]]
+field = "player.x"
+at = "player_x"
+
+[[map]]
+field = "player.y"
+at = "player_y"
+
+[[map]]
+field = "moves"
+at = "moves"
+
+[[map]]
+field = "bumps"
+at = "bumps"
+
+[[map]]
+field = "keys_held"
+at = "keys_held"
+
+[[map]]
+field = "loads"
+at = "loads"
+
+[[map]]
+field = "entries"
+at = "entries"
+
+[[map]]
+field = "directory"
+at = "directory"
+
+[[map]]
+field = "palette"
+at = "palette"
+
+[[map]]
+field = "map"
+via = "map"
+type = "u8[1024]"
+note = "on the heap: the level's cells, decoded from the archive (LZSS)"
+
+[[map]]
+field = "picture"
+via = "picture"
+type = "u8[64000]"
+note = "on the heap: the title, decoded from the archive (run-length)"

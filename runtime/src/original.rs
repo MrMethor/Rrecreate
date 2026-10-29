@@ -73,6 +73,34 @@ pub fn game_dir() -> Option<PathBuf> {
     })
 }
 
+/// A file of the person's copy of the game (M5), by the name the program opens it with: a DOS path from
+/// the game's folder, in any case, with `\` or `/` (`DATA\LEVEL1.MAP`).
+pub fn file(name: &str) -> Result<Vec<u8>, String> {
+    let dir = game_dir()
+        .ok_or("the game's files: run the port through rrc, or inside its port repository (rrc.local.toml's game)")?;
+    let path = find(&dir, name)?;
+    std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// `name`'s path under `dir`, each part matched without regard to case, as DOS matches it.
+fn find(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let mut path = dir.to_path_buf();
+    for part in name.split(['\\', '/']).filter(|p| !p.is_empty()) {
+        let exact = path.join(part);
+        if exact.exists() {
+            path = exact;
+            continue;
+        }
+        let entries = std::fs::read_dir(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let found = entries
+            .filter_map(Result::ok)
+            .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(part))
+            .ok_or_else(|| format!("{name}: the game's folder has no {part} in {}", path.display()))?;
+        path = found.path();
+    }
+    Ok(path)
+}
+
 /// The program as the port repository's analysis unpacked it, in the cache: what `rrc` would give.
 fn repository_program() -> Result<PathBuf, String> {
     let here = std::env::current_dir().map_err(|e| e.to_string())?;
