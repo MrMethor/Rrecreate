@@ -26,7 +26,7 @@ use crate::session::{Recorded, Session};
 use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 /// The oldest version this rrc reads: version 6 only added items read through pointers (D72).
 const OLDEST: u32 = 5;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
@@ -150,8 +150,8 @@ pub struct Header {
 }
 
 /// A read of a tick's pass that saw an input otherwise than the tick has, or than the same instruction's
-/// read before it in the pass (D93): `[input, ID, value, read]`. Version 5 and 6 traces have no `read`: one
-/// value an instruction, its first read's.
+/// read before it in the pass (D93): `[input, ID, value, read, bytes]`. Version 5 and 6 traces have no `read`:
+/// one value an instruction, its first read's; versions before 8 no `bytes`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "Vec<Value>", into = "Vec<Value>")]
 pub struct LateRead {
@@ -163,6 +163,9 @@ pub struct LateRead {
     pub value: Option<String>,
     /// Which of that instruction's reads of the input in the pass it was, from 1.
     pub read: u32,
+    /// The bytes it saw that differ from what the program should have read there, `[offset, value]`: the
+    /// tick's value with the program's own writes since (D97); none in traces before version 8.
+    pub bytes: Option<Vec<(u32, u8)>>,
 }
 
 impl TryFrom<Vec<Value>> for LateRead {
@@ -174,14 +177,30 @@ impl TryFrom<Vec<Value>> for LateRead {
         let at = v.get(1).and_then(Value::as_str).ok_or_else(wrong)?.to_owned();
         let value = v.get(2).and_then(Value::as_str).map(str::to_owned);
         let read = v.get(3).map_or(Some(1), Value::as_u64).ok_or_else(wrong)? as u32;
-        Ok(LateRead { input, at, value, read })
+        let bytes = match v.get(4) {
+            Some(list) => Some(byte_pairs(list).ok_or_else(wrong)?),
+            None => None,
+        };
+        Ok(LateRead { input, at, value, read, bytes })
     }
 }
 
 impl From<LateRead> for Vec<Value> {
     fn from(l: LateRead) -> Vec<Value> {
-        vec![json!(l.input), json!(l.at), json!(l.value), json!(l.read)]
+        let mut v = vec![json!(l.input), json!(l.at), json!(l.value), json!(l.read)];
+        if let Some(bytes) = l.bytes {
+            v.push(json!(bytes));
+        }
+        v
     }
+}
+
+/// `[[offset, value], ...]`.
+pub fn byte_pairs(list: &Value) -> Option<Vec<(u32, u8)>> {
+    list.as_array()?
+        .iter()
+        .map(|pair| Some((u32::try_from(pair.get(0)?.as_u64()?).ok()?, u8::try_from(pair.get(1)?.as_u64()?).ok()?)))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -799,7 +818,8 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
                     crate::edits::hex(&bytes)
                 });
                 let n = late["read"].as_u64().unwrap_or(1) as u32;
-                ticks[i].late.push(LateRead { input, at, value: read, read: n });
+                let bytes = Some(byte_pairs(&late["bytes"]).unwrap_or_default());
+                ticks[i].late.push(LateRead { input, at, value: read, read: n, bytes });
             }
         }
     }
@@ -1218,8 +1238,13 @@ mod tests {
         renamed.ticks[2].inputs.clear();
         assert_eq!(renamed.run_hash(), trace.run_hash());
         assert_eq!(late_text(&trace), None);
-        renamed.ticks[1].late =
-            vec![LateRead { input: 0, at: "GAME.EXE+00123".into(), value: Some("0200".into()), read: 2 }];
+        renamed.ticks[1].late = vec![LateRead {
+            input: 0,
+            at: "GAME.EXE+00123".into(),
+            value: Some("0200".into()),
+            read: 2,
+            bytes: Some(vec![(0, 2)]),
+        }];
         assert_eq!(Trace::parse(&renamed.to_text()).unwrap(), renamed);
         let late = late_text(&renamed).unwrap();
         let first = "1 tick reads an input after it changed since the sync point: elapsed at GAME.EXE+00123 in 1 (first \

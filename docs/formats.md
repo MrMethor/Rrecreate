@@ -329,7 +329,7 @@ JSON lines (D72): a header, a line per tick, and an end line.
  "edits":[{"tick":100,"at":"GAME.EXE+1E0A4","hex":"0200","edit":"door_state = 2"}]}
 {"tick":1,"sync":"play","cycle":20391734,"inputs":[[0,"0100"]],"state":[[0,"0000"], …],
  "frames":[[284,20380102,19,"61f5…","a3c0…"]],"sound":{"opl":[[2549120000,176,49]]}}
-{"tick":2,"sync":"play","cycle":20504101,"late":[[0,"GAME.EXE+0A3B2","0300",1]],"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
+{"tick":2,"sync":"play","cycle":20504101,"late":[[0,"GAME.EXE+0A3B2","0300",1,[[0,3]]]],"frames":[[285,20496230,19,"61f5…","a3c0…"]]}
 {"end":"the session's end","cycles":688000000,"frames":[[6020,687990122,19,"0e3a…","77d1…"]],"state_hash":"9c2c680ec5356ad6"}
 ```
 
@@ -346,13 +346,15 @@ JSON lines (D72): a header, a line per tick, and an end line.
   where memory isn't mapped. Empty lists are left out.
 - `edits` (in the header, only if the session has any): the scenario's writes, each at an ID with its bytes
   and the edit as the session has it (D64). A tick's state has its edits written.
-- `late`: `[index, ID, value, read]` for each read of the tick's pass that saw an input otherwise than the
-  same instruction's read before it there (the first, otherwise than the tick's value): it changed after the sync
-  point, before the program read it (D60). `ID` is the instruction (for a driver, the instruction after its
+- `late`: `[index, ID, value, read, bytes]` for each read of the tick's pass that saw an input otherwise than
+  the same instruction's read before it there (the first, otherwise than the tick's value): it changed after the
+  sync point, before the program read it (D60). `ID` is the instruction (for a driver, the instruction after its
   call), `read` which of its reads of the input it was, from 1 (D93), and the value what that read saw: the
   tick's value with the bytes it read (D68); a read that saw the tick's value again, after one that didn't, is
-  kept too. Version 5 and 6 traces have no `read`: one entry an instruction, its first read. The program's own
-  writes are followed, and so are its calls that change a driver's state (a mouse position set). Not counted: what interrupt
+  kept too. The program's own writes are followed, and so are its calls that change a driver's state (a mouse
+  position set): `bytes`, `[[offset, value]]`, are the bytes the read saw otherwise than the program should have
+  read them, the tick's value with its writes since (D97). Version 5 and 6 traces have no `read`: one entry an
+  instruction, its first read; versions before 8 no `bytes`. Not counted: what interrupt
   handlers read, the wait that ends the next tick (an instruction whose late reads were all in the call the next
   hit comes in, the last at most 40 of the program's instructions before it), and memory a host service reads
   for the program (the BIOS keyboard buffer through INT 16h).
@@ -402,8 +404,9 @@ inputs and the trace are JSON lines.
   then a line per tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
   whose value changed since they were last read (index in the header's list, bytes in hex as the trace has
   them); a value holds until it changes. A tick whose pass read inputs late has `late`,
-  `[[index, "GAME.EXE+04BB9", "0300", 1]]`: what each read saw, and which of that instruction's reads it was
-  (D68, D93), which the runtime's `Inputs::at_site(ID)` gives the port, a call a read. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
+  `[[index, "GAME.EXE+04BB9", "0300", 1, [[0, 3]]]]`: what each read saw, which of that instruction's reads it
+  was (D68, D93), and its bytes that differ from what the program should have read (D97), which the runtime's
+  `Inputs::at_site(ID)` gives the port, a call a read, over what the port wrote (`Inputs::write`). A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
   mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
   port sets in its state before writing the tick (D64). The last line is
   `{"end":"the session's end","ticks":1400}`.

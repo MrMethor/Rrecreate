@@ -87,10 +87,12 @@ pub fn fix(name: &str) {
 pub struct Inputs {
     values: BTreeMap<String, Vec<u8>>,
     /// By the ID of the instruction that read it: the reads that saw an input otherwise than the read
-    /// before (which of the instruction's reads, the input, the value), in order.
-    late: BTreeMap<String, Vec<(u32, String, Vec<u8>)>>,
+    /// before, in order of their numbers.
+    late: BTreeMap<String, Vec<files::LateRead>>,
     /// The reads made at each site so far this tick ([`Inputs::at_site`]).
     reads: std::cell::RefCell<BTreeMap<String, u32>>,
+    /// The program's own writes to inputs this tick, as the port made them ([`Inputs::write`]).
+    written: std::cell::RefCell<BTreeMap<String, BTreeMap<usize, u8>>>,
 }
 
 impl Inputs {
@@ -119,10 +121,48 @@ impl Inputs {
     /// without counting a read ([`Inputs::at_site`]).
     pub fn at_read(&self, site: &str, n: u32) -> Inputs {
         let mut values = self.values.clone();
-        for (_, name, value) in self.late.get(site).into_iter().flatten().filter(|(read, _, _)| *read <= n) {
-            values.insert(name.clone(), value.clone());
+        for (name, bytes) in self.written.borrow().iter() {
+            let value = values.entry(name.clone()).or_default();
+            for (&offset, &byte) in bytes {
+                if let Some(b) = value.get_mut(offset) {
+                    *b = byte;
+                }
+            }
+        }
+        // The last read there that saw a change, of each input: its reads since saw the same.
+        let mut last: BTreeMap<&str, &files::LateRead> = BTreeMap::new();
+        for l in self.late.get(site).into_iter().flatten().filter(|l| l.read <= n) {
+            last.insert(&l.name, l);
+        }
+        for (name, l) in last {
+            match &l.bytes {
+                // What the program should have read there (the tick's value and its writes), with what
+                // that read saw otherwise (D97).
+                Some(bytes) => {
+                    let value = values.entry(name.to_owned()).or_default();
+                    for &(offset, byte) in bytes {
+                        if let Some(b) = value.get_mut(offset) {
+                            *b = byte;
+                        }
+                    }
+                }
+                None => {
+                    values.insert(name.to_owned(), l.value.clone());
+                }
+            }
         }
         Inputs { values, ..Inputs::default() }
+    }
+
+    /// The program's own write to an input (a keyboard buffer it empties), which the port makes where the
+    /// original did (D97): `bytes` at `offset` of input `name`. The reads after it, through
+    /// [`Inputs::at_site`], see it, with what arrived since (the bytes a read saw otherwise).
+    pub fn write(&self, name: &str, offset: usize, bytes: &[u8]) {
+        let mut written = self.written.borrow_mut();
+        let input = written.entry(name.to_owned()).or_default();
+        for (i, &byte) in bytes.iter().enumerate() {
+            input.insert(offset + i, byte);
+        }
     }
 
     /// Whether the port's reads at `site` this tick have seen all the original's did: as many as its
@@ -131,7 +171,7 @@ impl Inputs {
     /// another way. It stops there and says so, as for a path not ported, instead of polling on.
     pub fn read_out(&self, site: &str) -> bool {
         let made = self.reads.borrow().get(site).copied().unwrap_or(0);
-        let last = self.late.get(site).and_then(|reads| reads.iter().map(|(read, _, _)| *read).max()).unwrap_or(0);
+        let last = self.late.get(site).and_then(|reads| reads.iter().map(|l| l.read).max()).unwrap_or(0);
         made >= last
     }
 
@@ -168,14 +208,15 @@ impl Inputs {
         self.values.insert(name.to_owned(), bytes);
     }
 
-    /// This tick's late reads, replacing the last tick's; no read made yet.
-    pub(crate) fn set_late(&mut self, late: &[(String, String, u32, Vec<u8>)]) {
+    /// This tick's late reads, replacing the last tick's; no read made yet, nothing written.
+    pub(crate) fn set_late(&mut self, late: &[files::LateRead]) {
         self.late.clear();
-        for (name, site, n, value) in late {
-            self.late.entry(site.clone()).or_default().push((*n, name.clone(), value.clone()));
+        for l in late {
+            self.late.entry(l.site.clone()).or_default().push(l.clone());
         }
-        self.late.values_mut().for_each(|reads| reads.sort_by_key(|(n, _, _)| *n));
+        self.late.values_mut().for_each(|reads| reads.sort_by_key(|l| l.read));
         self.reads.borrow_mut().clear();
+        self.written.borrow_mut().clear();
     }
 }
 
@@ -429,7 +470,14 @@ mod tests {
         );
         let file = InputsFile::parse(&text).unwrap();
         let site = |s: &str| s.to_owned();
-        assert_eq!(file.ticks[2].late[0], (site("elapsed"), site("GAME.EXE+04BB9"), 1, vec![6, 0]), "a first read");
+        let first = files::LateRead {
+            name: site("elapsed"),
+            site: site("GAME.EXE+04BB9"),
+            read: 1,
+            value: vec![6, 0],
+            bytes: None,
+        };
+        assert_eq!(file.ticks[2].late[0], first, "a first read");
         let mut inputs = Inputs::default();
         inputs.set("elapsed", vec![3, 0]);
         inputs.set_late(&file.ticks[2].late);
@@ -455,6 +503,28 @@ mod tests {
         assert_eq!(read_out, [false, false, true], "out once the third read, the last that saw a change, is made");
         inputs.set_late(&[]);
         assert_eq!(inputs.at_site("GAME.EXE+04BB9").u16("elapsed"), 3, "a late read is the tick's alone");
+    }
+
+    #[test]
+    fn a_read_sees_the_program_s_own_writes_with_what_arrived_since() {
+        // A key count of 1 at the sync point; the program empties the buffer, then a key arrives: the
+        // read that saw it differs from what the program should read (0) in the count, though it is the
+        // tick's value again.
+        let text = INPUTS.replace(
+            r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]]}"#,
+            r#"{"tick":3,"sync":"play","inputs":[[0,"0100"]],"late":[[0,"GAME.EXE+16E85","0100",4,[[0,1]]]]}"#,
+        );
+        let file = InputsFile::parse(&text).unwrap();
+        assert_eq!(file.ticks[2].late[0].bytes, Some(vec![(0, 1)]));
+        let mut inputs = Inputs::default();
+        inputs.set("elapsed", vec![1, 0]);
+        inputs.set_late(&file.ticks[2].late);
+        inputs.write("elapsed", 0, &[0, 0]);
+        let polls: Vec<u16> = (0..5).map(|_| inputs.at_site("GAME.EXE+16E85").u16("elapsed")).collect();
+        assert_eq!(polls, [0, 0, 0, 1, 1], "emptied until the key's read");
+        assert_eq!(inputs.u16("elapsed"), 1, "the tick's value, read at no site");
+        inputs.set_late(&file.ticks[2].late);
+        assert_eq!(inputs.at_site("GAME.EXE+16E85").u16("elapsed"), 1, "a new tick: nothing written");
     }
 
     #[test]

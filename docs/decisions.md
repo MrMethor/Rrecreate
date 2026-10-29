@@ -686,6 +686,18 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D97. A port makes the program's own writes to an input; trace version 8. Accepted 2026-10-29.
+A late read keeps the bytes it saw otherwise than the program should have read them (the tick's value with
+its own writes since, what Clockwork compares a read with since D60), as well as the value: the trace's late
+entries are `[input, ID, value, read, bytes]` (version 8; versions 5 to 7 are still read) and so are the
+inputs file's. The runtime's `Inputs::write(name, offset, bytes)` is the program's own write, which the port
+makes where the original did; a read through `at_site` is the tick's value, the port's writes this tick, and
+the bytes of that site's last read that saw a change.
+**Why:** Arena's message box (`ACD.EXE+1730C`, the gate's "the key opens the lock") empties the keyboard buffer
+(`+07112`) and waits for a key (`+16E85`). At the gate's tick a key was queued (count 1), the box emptied it,
+and Enter made it 1 again: the read that saw Enter differed from what the program should read (0) but
+equalled the tick's value, so a port given the value alone left the wait at its first read.
+
 ### D96. What a part not ported hands the ported code in the pass is an input. Accepted 2026-10-29.
 An input (`ticks.toml`) may name the part of the program that writes it (`part`) and the ported code's
 instructions that read it (`read_at`). Recording follows the reads of those instructions alone and doesn't

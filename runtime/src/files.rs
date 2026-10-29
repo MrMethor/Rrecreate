@@ -15,15 +15,28 @@ pub struct InputsFile {
 }
 
 /// A tick of the inputs file: the inputs whose values changed (a value holds until it changes), the
-/// inputs its pass read late (D68, D93: name, the reading instruction's ID, which of its reads, the value
-/// it read), and the fields a scenario's edit set at this tick (D64), by path, with the original's values.
+/// inputs its pass read late, and the fields a scenario's edit set at this tick (D64), by path, with the
+/// original's values.
 #[derive(Debug, Default, PartialEq)]
 pub struct InputsLine {
     pub tick: u64,
     pub sync: String,
     pub inputs: Vec<(String, Vec<u8>)>,
-    pub late: Vec<(String, String, u32, Vec<u8>)>,
+    pub late: Vec<LateRead>,
     pub set: Vec<(String, Value)>,
+}
+
+/// A read of the pass that saw an input otherwise than the read before it there (D68, D93): the input,
+/// the reading instruction's ID, which of its reads, the value it read (the tick's with its bytes), and
+/// its bytes that differ from what the program should have read, the tick's value with the program's own
+/// writes since (D97; none in files from traces before version 8).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LateRead {
+    pub name: String,
+    pub site: String,
+    pub read: u32,
+    pub value: Vec<u8>,
+    pub bytes: Option<Vec<(usize, u8)>>,
 }
 
 impl InputsFile {
@@ -61,7 +74,21 @@ impl InputsFile {
                 let site = read[1].as_str().unwrap_or_default().to_owned();
                 // An instruction's first read where the file doesn't say (before D93).
                 let n = read.get(3).map_or(Some(1), Value::as_u64).ok_or("a late read's number")? as u32;
-                late.push((name.clone(), site, n, unhex(read[2].as_str().unwrap_or_default())?));
+                let bytes = match read.get(4) {
+                    Some(list) => Some(
+                        list.as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|pair| match (pair[0].as_u64(), pair[1].as_u64()) {
+                                (Some(offset), Some(value)) => Ok((offset as usize, value as u8)),
+                                _ => Err("a late read's bytes are [offset, value]"),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                    None => None,
+                };
+                let value = unhex(read[2].as_str().unwrap_or_default())?;
+                late.push(LateRead { name: name.clone(), site, read: n, value, bytes });
             }
             let set =
                 v["set"].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect();

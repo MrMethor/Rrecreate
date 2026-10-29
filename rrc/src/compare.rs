@@ -296,8 +296,17 @@ fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Valu
     for t in &trace.ticks {
         let read: Vec<Value> = t.inputs.iter().filter_map(|(i, v)| v.as_ref().map(|v| json!([i, v]))).collect();
         let mut line = json!({"tick": t.tick, "sync": t.sync, "inputs": read});
-        let late: Vec<Value> =
-            t.late.iter().filter_map(|l| l.value.as_ref().map(|v| json!([l.input, l.at, v, l.read]))).collect();
+        // What each late read saw, and its bytes that differ from what the program should have read (D97).
+        let late: Vec<Value> = t
+            .late
+            .iter()
+            .filter_map(|l| {
+                l.value.as_ref().map(|v| match &l.bytes {
+                    Some(bytes) => json!([l.input, l.at, v, l.read, bytes]),
+                    None => json!([l.input, l.at, v, l.read]),
+                })
+            })
+            .collect();
         if !late.is_empty() {
             line["late"] = json!(late);
         }

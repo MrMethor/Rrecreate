@@ -220,7 +220,11 @@ loop that polls the mouse until a click), and the n-th call gets what the origin
 SESSION --tick N` says which read, `its read 3 there`). A loop that polls checks
 `tick.inputs.read_out("GAME.EXE+09017")` when what it waits for hasn't come: true once the port made as many
 reads there as the original's last that saw a change, so the original's loop had ended by then and the port's
-went another way; it stops there as at a path not ported, instead of polling forever (D94). To move one:
+went another way; it stops there as at a path not ported, instead of polling forever (D94). Where the
+program writes an input itself (it empties its keyboard buffer before a message box waits for a key), the
+port makes the same write, `tick.inputs.write("key_queue", 106, &[0, 0])`, and the reads after it see it with
+what arrived since (D97): a read is the tick's value, the port's writes, and the bytes that read saw otherwise.
+To move one:
 
 - move the sync point to the read: onto the instruction that reads the input (the load from the key array,
   the `int 33h`, the `in al, dx` of port 201h), or just before it in the same loop; not at the top of a pass
