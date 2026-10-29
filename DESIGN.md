@@ -8,11 +8,12 @@
 serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. Two blind
 tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 done: the runtime
 (`runtime/`), the mapping, transplants, the comparison with who wrote, paired checkpoints and scenario edits
-(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. M4 under way, a real
-game's logic, tested on Arena (§12, D70, D71): from a transplant, Arena's port matches its first dungeon's session
-(walking, collisions, the fists, the attacks and a rat's death, the rats' bites, the game's clock, the random
-generator) to the session's end, with the view's parts (creatures waking from the flats it draws, its animation)
-still fed (D84); the gaps it found are D80-D99. Rrecreate began from Recreate's emulator and parts of its tooling
+(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. M4 done, a real
+game's logic, tested on Arena (§12, D70, D71, D100): from a transplant at its first tick, Arena's port matches its
+first dungeon's session to its end (the in-game menu, walking, collisions, the key's pickup, the gate, the
+creatures woken, the fists, the attacks and a rat's death, the rats' bites, the game's clock, the random
+generator), the 3D view's parts given to it as a part not ported (D84, D96, D98, D99); the gaps it found are
+D80-D99. Rrecreate began from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
 ## 1. The product

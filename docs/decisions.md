@@ -686,6 +686,21 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D100. M4 is done: Arena's dungeon session matches from its first tick, the view's parts given. Accepted 2026-10-29, with the person.
+M4 closes with Arena's dungeon session (`cell`, 650 ticks: the in-game menu, the cell's ruby key, the gate,
+the corridor, the rats woken, a fight and a rat's death) matching every mapped field (86, 78 KB) from a
+transplant at its first tick to its end, the logic ported and the 3D view's parts given to the port as the
+toolkit gives a part not ported: its animation fed at the sync points (D84: the flats' animation, the hit
+effects), and what it hands the logic in the pass as inputs it writes (D96: the object under a click, the door
+it found, the cell it faces), as calls (D98: the creatures it wakes, the player's cell's text), as results (D99:
+the level's texts it reads from EMS) and as its writes to the map, a hook on the writing instruction (D98: the
+doors it steps). M6 ports the renderer and takes them out of the session's feeds and hooks.
+**Why:** porting the view's visibility for the logic's sake would be the renderer's work (M6) done for one
+game, while what the session showed is general: a part not ported hands the ported code data inside the pass.
+The tools for that (D93-D99) are what M4 is for. The person chose to close M4 with the view's parts given
+rather than ported, and to port the creatures' making and the key's pickup, which read level and creature
+data, within it.
+
 ### D99. A hook where a call into a part not ported returns gives the port its results. Accepted 2026-10-29.
 A hook (D98) may be put on the instruction a call into a part not ported returns to (or its `ret`), with the
 registers the call answers in: its runs are that part's results, in order, and the runtime's

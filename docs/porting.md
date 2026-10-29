@@ -254,7 +254,10 @@ that entry in a pass with those registers, and the port makes the same calls whe
 its step's place for that part: `for call in tick.inputs.calls("view_wakes") { wake(call.get("ax"), …) }`.
 The other way round, where the ported code calls a part not ported for a result (a lookup in data the port
 doesn't load yet), put the hook where that call returns, with the registers it answers in, and the port takes
-each result where it makes the call: `tick.inputs.next_call("level_texts")` (D99).
+each result where it makes the call: `tick.inputs.next_call("level_texts")` (D99). A hook on an instruction of
+the part that writes state the port has (the ray caster stepping a door in the map) gives its writes the same
+way, with the registers that hold the place and the value: the port makes them at that part's place, and the
+rest of that state stays the port's to compare, not fed (D100).
 
 Then the tick's **boundary values**: what the loop reads that comes from outside it (the elapsed time the
 waiting function measures, the key-state array, the mouse). To find them:
