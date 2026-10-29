@@ -686,6 +686,16 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D99. A hook where a call into a part not ported returns gives the port its results. Accepted 2026-10-29.
+A hook (D98) may be put on the instruction a call into a part not ported returns to (or its `ret`), with the
+registers the call answers in: its runs are that part's results, in order, and the runtime's
+`Inputs::next_call(name)` gives the port the next one where it makes the call (none past the last).
+**Why:** Arena's text lookup for a map cell (`ACD.EXE+29BF2` → `+006BE`) reads the level's INF text, which the
+level loader left in EMS (DS:CB88 points into the page frame): it is paged in for the read, so neither a sync
+point's value nor a late read of the frame (D96, which follows memory by its physical address) holds it, and
+loading the level's files is M5's. Picking up the cell's ruby key and waking a creature on a cell both call it;
+the port takes what it answered (the kind, the item's number, the list entry) as it took the renderer's calls.
+
 ### D98. The calls a part not ported makes into ported code are given the port; trace version 9. Accepted 2026-10-29.
 A hook (`ticks.toml` `[[hook]]`, `rrc hook`) names an entry of ported code that a part of the program not
 ported calls, and the registers it takes. Recording keeps each run of the entry in a tick's pass (outside

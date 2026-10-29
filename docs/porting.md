@@ -252,6 +252,9 @@ over nothing in a pass, or several times). Where the part calls ported code with
 `rrc hook GAME.EXE+25F11 view_wakes --part "the 3D view" --registers ax,bx,cl,di`. Recording keeps each run of
 that entry in a pass with those registers, and the port makes the same calls where the part would have, at
 its step's place for that part: `for call in tick.inputs.calls("view_wakes") { wake(call.get("ax"), …) }`.
+The other way round, where the ported code calls a part not ported for a result (a lookup in data the port
+doesn't load yet), put the hook where that call returns, with the registers it answers in, and the port takes
+each result where it makes the call: `tick.inputs.next_call("level_texts")` (D99).
 
 Then the tick's **boundary values**: what the loop reads that comes from outside it (the elapsed time the
 waiting function measures, the key-state array, the mouse). To find them:

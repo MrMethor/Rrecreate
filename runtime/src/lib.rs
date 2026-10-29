@@ -93,8 +93,10 @@ pub struct Inputs {
     reads: std::cell::RefCell<BTreeMap<String, u32>>,
     /// The program's own writes to inputs this tick, as the port made them ([`Inputs::write`]).
     written: std::cell::RefCell<BTreeMap<String, BTreeMap<usize, u8>>>,
-    /// The calls a part not ported made into ported code in the pass, by hook, in order (D98).
+    /// The calls a part not ported made into ported code in the pass, by hook, in order (D98), and how
+    /// many of each the port took ([`Inputs::next_call`]).
     calls: BTreeMap<String, Vec<Call>>,
+    taken: std::cell::RefCell<BTreeMap<String, usize>>,
 }
 
 /// A call a part of the program not ported made into ported code in the pass (D98): the registers it
@@ -177,6 +179,17 @@ impl Inputs {
         self.calls.get(name).map_or(&[], Vec::as_slice)
     }
 
+    /// The next of hook `name`'s runs in the tick's pass, none past the last: for a hook where a call the
+    /// ported code makes into a part not ported returns, that call's results (D99: the level's text a
+    /// cell has, read from data the port doesn't have yet). Each call is one return there, in order.
+    pub fn next_call(&self, name: &str) -> Option<&Call> {
+        let mut taken = self.taken.borrow_mut();
+        let n = taken.entry(name.to_owned()).or_default();
+        let call = self.calls.get(name)?.get(*n);
+        *n += 1;
+        call
+    }
+
     /// The program's own write to an input (a keyboard buffer it empties), which the port makes where the
     /// original did (D97): `bytes` at `offset` of input `name`. The reads after it, through
     /// [`Inputs::at_site`], see it, with what arrived since (the bytes a read saw otherwise).
@@ -245,6 +258,7 @@ impl Inputs {
     /// This tick's calls through hooks, replacing the last tick's.
     pub(crate) fn set_calls(&mut self, calls: &[(String, Call)]) {
         self.calls.clear();
+        self.taken.borrow_mut().clear();
         for (name, call) in calls {
             self.calls.entry(name.clone()).or_default().push(call.clone());
         }
@@ -576,8 +590,12 @@ mod tests {
         let calls: Vec<(u32, u32)> = inputs.calls("wake").iter().map(|c| (c.get("ax"), c.get("cl"))).collect();
         assert_eq!(calls, [(1472, 5), (96, 7)], "in order");
         assert!(inputs.calls("other").is_empty() && inputs.calls("wake")[0].get("dx") == 0);
+        let next: Vec<Option<u32>> = (0..3).map(|_| inputs.next_call("wake").map(|c| c.get("ax"))).collect();
+        assert_eq!(next, [Some(1472), Some(96), None], "results taken in order");
         inputs.set_calls(&file.ticks[1].calls);
         assert!(inputs.calls("wake").is_empty(), "a tick without calls");
+        inputs.set_calls(&file.ticks[2].calls);
+        assert_eq!(inputs.next_call("wake").map(|c| c.get("cl")), Some(5), "a new tick: none taken");
     }
 
     #[test]
