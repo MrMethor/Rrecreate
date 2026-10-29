@@ -203,6 +203,13 @@ note = "timer counts since the last pass (70 Hz)"
 name = "mouse"
 device = "mouse"                # or "joystick"; the size is the device's
 sync = ["menu"]                 # optional: read only at these sync points' ticks
+
+[[input]]                       # what a part of the program not ported writes (D96)
+name = "view_pick"
+at = "GAME.EXE+4855E"
+size = 2
+part = "the 3D view"            # what writes it: its writes aren't followed
+read_at = ["GAME.EXE+22DBB"]    # the ported code's reads of it, where the trace keeps what each saw
 ```
 
 `rrc sync` and `rrc input` write these. Each item may carry `provenance`, `confidence` and `evidence`, as the

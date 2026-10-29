@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 8;
+pub const PROTOCOL: u64 = 9;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -606,7 +606,19 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         "late_inputs" => {
             let items = r.get("sources").and_then(Value::as_array).ok_or("missing \"sources\"")?;
             let mut sources = Vec::new();
-            for item in items {
+            let mut parts = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                // A part's output (D96): the program's writes not followed, the reads of these alone.
+                if item.get("follow_writes").and_then(Value::as_bool) == Some(false) {
+                    let read_at = match optional(item, "read_at", Value::as_array, "a list of addresses")? {
+                        Some(list) => list
+                            .iter()
+                            .map(|p| addr(m, p.as_str().ok_or("sources: \"read_at\" lists addresses")?))
+                            .collect::<Result<Vec<_>, _>>()?,
+                        None => Vec::new(),
+                    };
+                    parts.push((i, read_at));
+                }
                 let source = match spec(item, "sources")? {
                     Spec::Memory(at, len) => dos::late::LateSource::Memory { at: addr(m, &at)?, len },
                     Spec::Device(device) => dos::late::LateSource::Device(device),
@@ -620,7 +632,11 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 };
                 sources.push((source, points));
             }
-            m.start_late_inputs(dos::late::LateInputs::new(sources));
+            let mut late = dos::late::LateInputs::new(sources);
+            for (i, read_at) in parts {
+                late.written_by_part(i, read_at);
+            }
+            m.start_late_inputs(late);
             Ok(json!({}))
         }
         "late_inputs_end" => {

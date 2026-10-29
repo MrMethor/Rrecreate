@@ -68,12 +68,13 @@ pub(crate) fn sync(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `rrc input [ID|DEVICE NAME [--size N] [--sync A,B] [--note TEXT] ...] | [NAME --remove]`.
+/// `rrc input [ID|DEVICE NAME [--size N] [--sync A,B] [--part TEXT --read-at A,B] [--note TEXT] ...] |
+/// [NAME --remove]`.
 pub(crate) fn input(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let options = [DECISION_OPTIONS.as_slice(), &["--size", "--sync", "--note"]].concat();
+    let options = [DECISION_OPTIONS.as_slice(), &["--size", "--sync", "--part", "--read-at", "--note"]].concat();
     let a = Args::parse(args, &options, &["--remove"])?;
-    let usage = "input [ID|mouse|joystick NAME [--size N] [--sync A,B] [--note TEXT] [--evidence TEXT] \
-                 [--confidence X] [--by WHO]] [NAME --remove]";
+    let usage = "input [ID|mouse|joystick NAME [--size N] [--sync A,B] [--part TEXT --read-at A,B] [--note TEXT] \
+                 [--evidence TEXT] [--confidence X] [--by WHO]] [NAME --remove]";
     let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if a.has("--remove") {
@@ -124,12 +125,26 @@ pub(crate) fn input(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     for unknown in sync.iter().filter(|s| !k.ticks.syncs.iter().any(|t| t.name == **s)) {
         say("note", format!("no sync point {unknown} yet: declare it (rrc sync) before recording"));
     }
+    // What a part not ported writes (D96), read where the ported code reads it.
+    let part = a.value("--part").unwrap_or_default().to_owned();
+    let read_at = list(a.value("--read-at"))
+        .iter()
+        .map(|id| crate::naming::place(repo, id).map(|id| id.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if !read_at.is_empty() && part.is_empty() {
+        return Err("--read-at goes with --part: what writes it, not ported (other inputs are read anywhere)".into());
+    }
+    if !part.is_empty() && !device.is_empty() {
+        return Err("--part is for memory a part of the program writes, not a device".into());
+    }
     let input = Input {
         name: name.clone(),
         at,
         device,
         size,
         sync,
+        part,
+        read_at,
         provenance: d.provenance,
         confidence: d.confidence,
         evidence: d.evidence,
@@ -164,5 +179,10 @@ fn sync_text(s: &Sync) -> String {
 fn input_text(i: &Input) -> String {
     let what = if i.device.is_empty() { format!("{}, {} bytes", i.at, i.size) } else { format!("the {}", i.device) };
     let at = if i.sync.is_empty() { String::new() } else { format!(", at {}", i.sync.join(", ")) };
-    format!("{} {what}{at} ({})", i.name, if i.provenance.is_empty() { "?" } else { &i.provenance })
+    let part = match (i.part.is_empty(), i.read_at.is_empty()) {
+        (true, _) => String::new(),
+        (false, true) => format!(", written by {}", i.part),
+        (false, false) => format!(", written by {}, read at {}", i.part, i.read_at.join(", ")),
+    };
+    format!("{} {what}{at}{part} ({})", i.name, if i.provenance.is_empty() { "?" } else { &i.provenance })
 }

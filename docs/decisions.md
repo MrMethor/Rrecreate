@@ -686,6 +686,18 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D96. What a part not ported hands the ported code in the pass is an input. Accepted 2026-10-29.
+An input (`ticks.toml`) may name the part of the program that writes it (`part`) and the ported code's
+instructions that read it (`read_at`). Recording follows the reads of those instructions alone and doesn't
+follow the program's writes to it, so each read there that saw it otherwise than the read before is kept as
+a late read (D68, D93), and the port reads it with `at_site` where the original's code did. Clockwork's
+`late_inputs` takes `follow_writes` and `read_at` (protocol revision 9).
+**Why:** Arena's renderer finds what is under a click while it draws its flats (`ACD.EXE+0C4BB`), keeps it at
+DS:CB5E with the flat's record at DS:D7DE, and calls the game's code through a hook (`+22DBB`), which
+`command_keys` then picks up (the cell's ruby key). World_loop clears it before the sync point, so feeding
+(D84, at sync points) gave the port nothing; porting the renderer's picking is M6's. The record is the
+renderer's buffer for every flat it draws, so only the ported code's read of it counts.
+
 ### D95. A mapped field can be some bits of its item. Accepted 2026-10-29.
 A `[[map]]` of an unsigned number may have a `mask`: the bits of the original's item that are the port's field.
 The transplant gives the port those bits, and the comparison compares those bits of both sides; the others are

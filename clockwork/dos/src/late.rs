@@ -15,6 +15,10 @@
 //! their source's sync point comes in (the waiting function, or the loop's own code), the last at most
 //! [`WAIT_TAIL`] of the program's instructions before it (interrupt handlers' don't count).
 //!
+//! A source can also be what a part of the program writes that a port doesn't have yet (D96: the
+//! object a renderer found under a click): its writes aren't followed, and only the reads of the
+//! instructions named for it count, the ported code's, so each finding is what that code read.
+//!
 //! The program's own writes change what it should read next; what interrupt handlers do is input
 //! arriving, and their reads aren't the pass's ([`crate::calls`] tells them apart, and the calls,
 //! so this turns call tracking on). Memory a host service reads for the program (the BIOS keyboard
@@ -84,6 +88,10 @@ struct Source {
     /// wait's?), and whether this tick's were reported (a hit of another source's sync point ended it).
     readers: Vec<Reader>,
     found: bool,
+    /// Whether the program's writes are what it should read next (not for a part's output, D96), and
+    /// the instructions whose reads count (none: all).
+    follow: bool,
+    read_at: Vec<u32>,
 }
 
 /// An instruction's reads of a source this tick.
@@ -153,9 +161,20 @@ impl LateInputs {
                 tick: None,
                 readers: Vec::new(),
                 found: false,
+                follow: true,
+                read_at: Vec::new(),
             })
             .collect();
         LateInputs { sources, ..LateInputs::default() }
+    }
+
+    /// Source `source` is what a part of the program writes (D96): its writes aren't followed, and
+    /// only the reads of the instructions at `read_at` (linear) count, none: all.
+    pub fn written_by_part(&mut self, source: usize, read_at: Vec<u32>) {
+        if let Some(s) = self.sources.get_mut(source) {
+            s.follow = false;
+            s.read_at = read_at;
+        }
     }
 
     /// The sources a hit of the sync point at `at` starts a tick for: their indexes and what they read.
@@ -208,6 +227,9 @@ impl LateInputs {
     /// The program read `value` at physical address `addr`.
     pub(crate) fn memory_read(&mut self, addr: u32, value: u8, read: Read) {
         for (i, s) in self.sources.iter_mut().enumerate() {
+            if !s.read_at.is_empty() && !s.read_at.contains(&read.at) {
+                continue;
+            }
             if let Some(byte) = s.byte(addr) {
                 let differ: &[(u32, u8)] = if s.expected[byte] != value { &[(byte as u32, value)] } else { &[] };
                 s.read(i, read, self.steps, differ);
@@ -217,7 +239,7 @@ impl LateInputs {
 
     /// The program wrote `value` at physical address `addr`: what it reads there next.
     pub(crate) fn memory_written(&mut self, addr: u32, value: u8) {
-        for s in &mut self.sources {
+        for s in self.sources.iter_mut().filter(|s| s.follow) {
             if let Some(byte) = s.byte(addr) {
                 s.expected[byte] = value;
             }
@@ -414,6 +436,29 @@ mod tests {
                 l(2000, 1, 2030, 9, 4, &[]),
                 l(2000, 1, 2040, 9, 5, &[(0, 1)]),
             ]
+        );
+    }
+
+    #[test]
+    fn a_part_s_output_is_read_where_the_ported_code_reads_it() {
+        let memory = LateSource::Memory { at: 0x100, len: 2 };
+        let mut late = LateInputs::new(vec![(memory, vec![])]);
+        late.written_by_part(0, vec![7]);
+        let read = |cycle, at| Read { cycle, at, call: None };
+        late.tick(0, 100, std::iter::once(0x100..0x102).collect(), vec![0, 0]);
+        late.steps = 110;
+        late.memory_written(0x100, 0xDE); // the part (a renderer) writes what it found
+        late.memory_read(0x100, 0xDE, read(110, 3)); // and reads it back: not the ported code's
+        late.steps = 120;
+        late.memory_read(0x100, 0xDE, read(120, 7)); // the ported code reads it: kept, though written
+        late.steps = 130;
+        late.memory_read(0x100, 0xDE, read(130, 7)); // again, the same: nothing new
+        late.steps = 1000;
+        late.hit(5, None);
+        let late = late.finish();
+        assert_eq!(
+            late.findings,
+            [Late { tick_cycle: 100, source: 0, cycle: 120, at: 7, read: 1, bytes: vec![(0, 0xDE)] }]
         );
     }
 }

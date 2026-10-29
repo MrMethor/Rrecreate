@@ -130,7 +130,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 8, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 9, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
@@ -219,6 +219,12 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["status"]).contains("every session is recorded; map the state: mapping.toml"));
     let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other"]);
     assert!(!ok && refused.contains("give --size N"), "{refused}");
+    // What a part not ported writes, read where the ported code reads it (D96).
+    let part = rrc.ok(&["input", "T.COM+0000F", "tally", "--part", "the loop", "--read-at", "T.COM+00000"]);
+    assert!(part.contains("written by the loop, read at T.COM+00000"), "{part}");
+    assert!(rrc.ok(&["record", "short"]).contains("same      run as before"), "Clockwork takes the source");
+    let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other", "--size", "2", "--read-at", "T.COM+00000"]);
+    assert!(!ok && refused.contains("--read-at goes with --part"), "{refused}");
     assert!(rrc.ok(&["input", "tally", "--remove"]).contains("removed   tally"));
     std::fs::remove_dir_all(&dir).ok();
 }

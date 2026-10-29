@@ -236,6 +236,15 @@ went another way; it stops there as at a path not ported, instead of polling for
 Record again until the reads left `late` are ones the sync point can't cover; the notes say which, and the
 port reads each with `at_site`.
 
+**What a part not ported hands the ported code in the pass (D96):** a part the port doesn't have yet may
+compute something the ported code reads before the next sync point, where `--feed` can't give it (D84 feeds at
+sync points): the renderer finds the object under a click while it draws, and calls the game's code with it.
+Declare that memory an input the part writes, with the ported code's instructions that read it: `rrc input
+GAME.EXE+4855E view_pick --size 2 --part "the 3D view" --read-at GAME.EXE+22DBB`. The program's writes to it
+aren't followed, so each read there that saw something other than the read before is kept, and the port reads
+it with `tick.inputs.at_site("GAME.EXE+22DBB")`, polling until `read_out` as a loop would (the part may hand
+over nothing in a pass, or several times).
+
 Then the tick's **boundary values**: what the loop reads that comes from outside it (the elapsed time the
 waiting function measures, the key-state array, the mouse). To find them:
 

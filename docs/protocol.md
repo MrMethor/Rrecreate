@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **8** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **9** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -48,7 +48,7 @@ A platform may add its own forms (`dos-pc`: `SEG:OFF`, `%PHYS`).
 
 ## Core operations
 
-**`hello`**: what the emulator is: `{"protocol": 8, "platform": "dos-pc", "emulator": "clockwork",
+**`hello`**: what the emulator is: `{"protocol": 9, "platform": "dos-pc", "emulator": "clockwork",
 "version": "0.1.0"}`. A tool refuses a revision or platform it doesn't speak.
 
 **Loading.** `load` `{"argv": [dir, program, options...]}`: a machine with the game's folder and program,
@@ -115,7 +115,8 @@ bytes read; `clockwork run --contracts` writes the same, `clockwork/dos/src/cont
 
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}]}` ... `uninit_end`: reads of memory nothing wrote
-(`reads`). `late_inputs` `{"sources": [{"at", "len"} or {"device"}, with "sync": [addr]]}` ...
+(`reads`). `late_inputs` `{"sources": [{"at", "len"} or {"device"}, with "sync": [addr]; a part's output also
+"follow_writes": false and "read_at": [addr], D96]}` ...
 `late_inputs_end`: input read after it changed since a tick began (D60). A source's tick begins at each
 counted hit of its sync points (`sync`; left out, any sync point's), where its value is kept; until the next,
 each read the program makes of it (a device: each call of its driver, read of its port) is compared with
@@ -180,6 +181,9 @@ An IBM PC with DOS (Clockwork).
    hit may have `from`, the byte it copied (D85).
 8. `late_inputs_end` answers each read that saw otherwise than its instruction's read before, with `read`, its
    number (D93).
+9. A `late_inputs` source of memory may have `"follow_writes": false` and `"read_at": [addr]`: what a part of
+   the program writes (D96), the program's writes not followed, and only the reads of those instructions
+   counted (none listed: all).
 
 ## Changing the protocol
 

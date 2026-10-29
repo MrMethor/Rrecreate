@@ -223,6 +223,12 @@ pub struct Input {
     /// Read only at these sync points (by name), else at all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sync: Vec<String>,
+    /// The part of the program, not ported, that writes it (D96: the renderer, for the object under a
+    /// click): its writes aren't followed, and the pass's reads by `read_at` (IDs; none: all) are kept.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub part: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_at: Vec<String>,
     /// Who decided, and from what (as `Decision`'s).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub provenance: String,

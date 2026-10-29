@@ -49,6 +49,12 @@ pub struct Item {
     /// An item read where a pointer points at each tick (D72), not at `at`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via: Option<ItemVia>,
+    /// An input a part of the program not ported writes (D96), and the instructions whose reads of it
+    /// are kept (none: all).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub part: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_at: Vec<String>,
 }
 
 /// Where an item read through a pointer is: the pointer's ID and how it points, and how far past
@@ -93,7 +99,8 @@ impl ItemVia {
 impl Item {
     fn from_input(i: &crate::knowledge::Input) -> Item {
         let (name, at, device) = (i.name.clone(), i.at.clone(), i.device.clone());
-        Item { name, at, device, size: i.bytes(), sync: i.sync.clone(), via: None }
+        let (part, read_at) = (i.part.clone(), i.read_at.clone());
+        Item { name, at, device, size: i.bytes(), sync: i.sync.clone(), via: None, part, read_at }
     }
 
     /// Whether an input is read at sync point `sync`.
@@ -103,7 +110,10 @@ impl Item {
 
     /// What Clockwork's `read` and a gate take for it.
     fn request(&self, places: &Places) -> Result<Value, String> {
-        if self.device.is_empty() {
+        if !self.part.is_empty() {
+            let read_at: Vec<String> = self.read_at.iter().map(|id| places.address(id)).collect::<Result<_, _>>()?;
+            Ok(json!({"at": places.address(&self.at)?, "len": self.size, "follow_writes": false, "read_at": read_at}))
+        } else if self.device.is_empty() {
             Ok(json!({"at": places.address(&self.at)?, "len": self.size}))
         } else {
             Ok(json!({ "device": self.device }))
