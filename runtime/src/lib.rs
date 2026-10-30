@@ -39,6 +39,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 pub use files::{InputsFile, PortState, StartState};
+/// The JSON values its traits take (`Simulation::transplant`, `Presentation::given`), for a port to read them.
+pub use serde_json;
 
 /// A port's game logic: its state, stepped one tick at a time (D21: deterministic, no clock, no
 /// hardware). The state serializes to the values `rrc` compares: the fields `mapping.toml` names,
@@ -288,14 +290,17 @@ pub struct Request {
     /// The original's screen at the first tick, for a port that starts from a transplant or a saved
     /// state (a frame's picture).
     pub screen: Option<String>,
+    /// The presentation's own state at the first tick, the original's (`rrc-presentation`, D110).
+    pub presentation: Option<String>,
 }
 
 impl Request {
     /// `run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK --save FILE]
-    /// [--to TICK] [--frames DIR [--screen FILE]]`
+    /// [--to TICK] [--frames DIR [--screen FILE] [--presentation FILE]]`
     pub fn parse(args: &[String]) -> Result<Request, String> {
         let usage = "usage: PORT run --inputs FILE --out FILE [--transplant FILE | --resume FILE] \
-                     [--save-at TICK --save FILE] [--to TICK] [--frames DIR [--screen FILE]]";
+                     [--save-at TICK --save FILE] [--to TICK] [--frames DIR [--screen FILE] \
+                     [--presentation FILE]]";
         let mut args = args.iter();
         if args.next().map(String::as_str) != Some("run") {
             return Err(usage.into());
@@ -315,6 +320,7 @@ impl Request {
                 "--to" => request.to = Some(tick(value()?)?),
                 "--frames" => request.frames = Some(value()?),
                 "--screen" => request.screen = Some(value()?),
+                "--presentation" => request.presentation = Some(value()?),
                 _ => return Err(format!("unknown option {flag}\n{usage}")),
             }
         }
@@ -386,6 +392,9 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         None => None,
     };
     let mut frame = given.clone().unwrap_or_else(|| present::Frame::new(320, 200));
+    if let Some(file) = &request.presentation {
+        drawer.given(files::PresentationState::read(file)?)?;
+    }
     let mut shown: Option<present::Frame> = None;
     // The pass the last tick began, which draws the next tick's frame.
     let mut pass: Option<String> = None;
@@ -549,6 +558,62 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
     }
 
+    impl present::Shows for Counter {
+        type Scene<'a> = &'a Counter;
+
+        fn scene(&self) -> &Counter {
+            self
+        }
+    }
+
+    /// A presentation that keeps a count of its own, as a drawing code's blink: each pass draws it.
+    #[derive(Default)]
+    struct Blinking {
+        blink: u8,
+    }
+
+    impl present::Presentation<Counter> for Blinking {
+        fn given(&mut self, own: Value) -> Result<(), String> {
+            self.blink = own["drawn"]["blink"].as_u64().ok_or("no drawn.blink")? as u8;
+            Ok(())
+        }
+        fn draw(&mut self, _: &str, _: &&Counter, frame: &mut present::Frame) {
+            self.blink = self.blink.wrapping_add(1);
+            frame.set(0, 0, self.blink);
+        }
+    }
+
+    /// The same without state of its own.
+    #[derive(Default)]
+    struct Plain;
+
+    impl present::Presentation<Counter> for Plain {}
+
+    #[test]
+    fn a_presentation_is_given_its_own_state_at_a_transplant() {
+        let d = dir("presentation");
+        std::fs::write(d.join("inputs.jsonl"), INPUTS).unwrap();
+        let start = r#"{"format":"rrc-state","version":1,"session":"walk","tick":2,"state":{}}"#;
+        std::fs::write(d.join("start.json"), start).unwrap();
+        let own = r#"{"format":"rrc-presentation","version":1,"session":"walk","tick":2,"state":{"drawn.blink":7}}"#;
+        std::fs::write(d.join("own.json"), own).unwrap();
+        let path = |f: &str| d.join(f).to_string_lossy().into_owned();
+        let request = Request {
+            inputs: path("inputs.jsonl"),
+            out: path("port.jsonl"),
+            transplant: Some(path("start.json")),
+            frames: Some(path("frames")),
+            presentation: Some(path("own.json")),
+            ..Request::default()
+        };
+        run_drawn::<Counter>(&request, &mut present::Drawn(Blinking::default())).unwrap();
+        let frame = present::Frame::decode(&std::fs::read(d.join("frames").join("3.frm")).unwrap()).unwrap();
+        assert_eq!(frame.pixels[0], 8, "tick 3's pass drew from the original's count, 7, on");
+        let refused = run_drawn::<Counter>(&request, &mut present::Drawn(Plain)).unwrap_err();
+        assert!(refused.contains("takes no state of its own") && refused.contains("drawn"), "{refused}");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
     #[test]
     fn a_scenario_s_edit_sets_fields_at_its_tick() {
         let d = dir("edit");
@@ -675,5 +740,7 @@ mod tests {
         assert!(Request::parse(&args("run --inputs i")).is_err());
         assert!(Request::parse(&args("run --inputs i --out o --save-at 5")).is_err());
         assert!(Request::parse(&args("run --inputs i --out o --transplant a --resume b")).is_err());
+        let r = Request::parse(&args("run --inputs i --out o --frames f --presentation p")).unwrap();
+        assert_eq!(r.presentation.as_deref(), Some("p"));
     }
 }

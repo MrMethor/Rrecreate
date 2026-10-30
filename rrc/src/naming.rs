@@ -49,6 +49,13 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         Ok(_) => {}
         Err(e) => problems.push(e),
     }
+    match mapping.resolve_present(&k) {
+        Ok(presented) if !presented.is_empty() => {
+            say("present", format!("{} fields of the presentation's own (D110)", presented.len()));
+        }
+        Ok(_) => {}
+        Err(e) => problems.push(e),
+    }
     let quirks = crate::quirks::Quirks::load(repo)?;
     if !quirks.quirks.is_empty() {
         say("quirks", quirks.quirks.len());

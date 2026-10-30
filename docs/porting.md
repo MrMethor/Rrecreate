@@ -454,6 +454,12 @@ screen is found where it was drawn), with the port's code for that function, as 
 (`draw_cell (GAME.EXE+004DD) is src/main.rs:251`). `rrc frame --screen` writes the original's screen at a
 tick.
 
+From a transplant or a resume the presentation gets the original's screen then, but not what its drawing code
+keeps that the screen doesn't show: what it drew last, an off-screen buffer, the frame an animation is at.
+Name those items and map them in `mapping.toml`'s `[[present]]` (D110), and `rrc compare --transplant T`
+reads them at tick T and gives them to `Presentation::given` before `start`; never guess them (a counter from 0,
+the screen for the buffer): the frames would differ later, or hide that they would.
+
 Sound is a presentation's too (`Presentation::sound`, `SOUNDS = true`; `DRAWS = false` for one that doesn't
 draw yet): what the pass before a tick made, by device, as the original's would be logged without times (the
 OPL's register writes, the speaker's states, digitized sounds started, MIDI bytes; the start-up's from

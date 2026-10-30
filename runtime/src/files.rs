@@ -147,6 +147,25 @@ impl StartState {
     }
 }
 
+/// The presentation's own state at a tick (`rrc-presentation`, D110): the original's values of its fields.
+pub struct PresentationState;
+
+impl PresentationState {
+    /// The state, its fields at their paths (`drawn.level`) in an object.
+    pub fn read(path: &str) -> Result<Value, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+        let v: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+        if v["format"] != "rrc-presentation" || v["version"] != 1 {
+            return Err(format!("{path}: not a presentation's state this runtime reads"));
+        }
+        let mut state = Value::Object(serde_json::Map::new());
+        for (field, value) in v["state"].as_object().cloned().unwrap_or_default() {
+            set_path(&mut state, &field, value).map_err(|e| format!("{path}: {e}"))?;
+        }
+        Ok(state)
+    }
+}
+
 /// A step of a path: a field, or an element.
 enum Step<'a> {
     Field(&'a str),

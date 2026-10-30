@@ -48,7 +48,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let mut session = Session::load(repo, name)?;
     let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
     let k = Knowledge::load(&repo.knowledge())?;
-    let mapped = Mapping::load(repo)?.resolve(&k)?;
+    let mapping = Mapping::load(repo)?;
+    let mapped = mapping.resolve(&k)?;
+    let presented = mapping.resolve_present(&k)?;
     if mapped.is_empty() {
         return Err(format!(
             "nothing is mapped: {MAPPING} names the port's fields and the original's items (docs/formats.md)"
@@ -94,6 +96,15 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         })?;
         std::fs::write(file("resume.json"), cache.get(&kept.port)?).map_err(|e| e.to_string())?;
         port_args.extend(["--resume".into(), file("resume.json")]);
+    }
+    // The presentation's own state there (D110), from the original's memory at that tick.
+    if let Some(t) = transplant.or(resume)
+        && !presented.is_empty()
+    {
+        let at = (&trace.header.session[..], t);
+        write_presentation(repo, &session, &k, &presented, at, &file("presentation.json"))?;
+        port_args.extend(["--presentation".into(), file("presentation.json")]);
+        say("given", format!("the presentation's own state at tick {t}: {} fields (D110)", presented.len()));
     }
     if let Some(t) = pair {
         let _ = std::fs::remove_file(file("pair.json"));
@@ -695,6 +706,41 @@ fn write_start(session: &str, mapped: &[Mapped], original: &[Vec<Value>], tick: 
     std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))
 }
 
+/// The presentation's own state (`rrc-presentation`, D110): its fields' items read at `tick`'s sync point
+/// from the session's snapshots (as `rrc peek` reads), as their types read them.
+fn write_presentation(
+    repo: &Repo,
+    session: &Session,
+    k: &Knowledge,
+    presented: &[Mapped],
+    (name, tick): (&str, u64),
+    path: &str,
+) -> Result<(), String> {
+    let places = Places::new(repo, session);
+    let ranges = presented
+        .iter()
+        .map(|m| Ok((places.address(&m.id.to_string())?, m.size)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let read = crate::peek::read_at(repo, session, &crate::trace::sync_points(k)?, tick, &ranges)?;
+    let r = Reader::of(k);
+    let mut state = serde_json::Map::new();
+    for (m, hex) in presented.iter().zip(read) {
+        let hex =
+            hex.ok_or_else(|| format!("the presentation's {} ({}) isn't in memory at tick {tick}", m.field, m.id))?;
+        let value = decode(&unhex(&hex)?, &m.ty, &r).map_err(|e| format!("{}: {e}", m.field))?;
+        state.insert(m.field.clone(), value);
+    }
+    let file = json!({"format": "rrc-presentation", "version": 1, "session": name, "tick": tick, "state": state});
+    std::fs::write(
+        path,
+        format!(
+            "{file}
+"
+        ),
+    )
+    .map_err(|e| format!("{path}: {e}"))
+}
+
 /// Builds the port if rrc.toml says how (`[port] build`), then runs it (`[port] command`) in the port
 /// repository.
 fn run_port(repo: &Repo, args: &[String]) -> Result<(), String> {
@@ -973,7 +1019,9 @@ fn keep_pair(
 
 /// Says which named data the mapping neither maps nor ignores: the state not compared yet.
 fn unmapped(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<(), String> {
-    let ignored = Mapping::load(repo)?.ignored(k)?;
+    let mapping = Mapping::load(repo)?;
+    let ignored = mapping.ignored(k)?;
+    let presented = mapping.resolve_present(k)?;
     let covered = |id: &Id, size: u32| {
         let inside = |at: &Id, n: u32| {
             at.module() == id.module()
@@ -981,7 +1029,8 @@ fn unmapped(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<(), String>
                 && at.offset() <= id.offset()
                 && id.offset() + size <= at.offset() + n
         };
-        mapped.iter().any(|m| inside(m.covers().0, m.covers().1)) || ignored.iter().any(|(at, n)| inside(at, *n))
+        mapped.iter().chain(&presented).any(|m| inside(m.covers().0, m.covers().1))
+            || ignored.iter().any(|(at, n)| inside(at, *n))
     };
     let inputs: Vec<String> = k.ticks.inputs.iter().map(|i| i.at.clone()).collect();
     let left: Vec<&str> = k

@@ -686,6 +686,25 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D110. A presentation starts from the original's own drawing state at a transplant or a resume. Accepted 2026-10-30, with the person.
+A port's presentation keeps state of its own, as the original's drawing code does: what it drew last, an
+off-screen buffer, the frame an animation is at, a cache. The screen doesn't show it, so from a transplant or a
+resume (D107's given screen) it can't be derived.
+- **Named:** `mapping.toml`'s `[[present]]` names the presentation's fields and the original's items, as
+  `[[map]]` names the simulation's (`field`, `at`, `type`; not through a pointer or masked yet).
+- **Read at the start only:** `rrc compare --transplant T` and `--resume T` read them at tick T's sync point
+  from the session's snapshots, as `rrc peek` does, and write `presentation.json` (`rrc-presentation`). They
+  aren't traced (an off-screen buffer is large and changes every pass) or compared (the frames show what they
+  do).
+- **Given:** the port runs with `--presentation FILE`, and the runtime gives the state (its fields at their
+  paths) to `Presentation::given` before `start`. From power-on, a presentation starts from its own start, as
+  the original's drawing code does.
+
+**Why:** guessing this state (redrawing everything, a counter from 0, the screen taken for the buffer) makes
+frames differ after a transplant, or hides that they would. Found on Arena's view (M6): its off-screen buffer,
+the lights' cache (`+0E12E`) and the liquid's animation frame; the vault's `draw` keeps what it drew last. The
+person: the toolkit is the priority, so the gap is fixed in the toolkit before the port goes on.
+
 ### D109. `rrc pass --functions`: every function a part runs. Accepted 2026-10-30.
 `rrc pass SESSION --tick N --in FUNCTION --functions` lists every function called beneath that function in the
 pass, at any depth, with how many times, in the order first called. The tree (`--depth`) shows a pass's order;

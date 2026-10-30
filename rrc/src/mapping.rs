@@ -3,7 +3,9 @@
 //! original's item it is: a data name or an ID, read as the knowledge's type for it or the one given;
 //! or, `via` a pointer, what the pointer points to at each tick (data on the heap); with a `mask`, only
 //! those bits of an unsigned number (D95: the others are a part's the port doesn't have, a renderer's
-//! scratch in a flags word, neither compared nor transplanted). `[[ignore]]` is the
+//! scratch in a flags word, neither compared nor transplanted). `[[present]]` is the presentation's own
+//! state (D110): its fields and the original's items the drawing code keeps, read at a transplant's or a
+//! resume's tick and given to the presentation, neither traced nor compared. `[[ignore]]` is the
 //! original's memory that may differ (padding, caches, driver internals), named so that nothing is left
 //! out silently. `rrc record` traces every mapped item; `rrc compare` compares them, and a transplant
 //! builds the port's state from them.
@@ -20,6 +22,8 @@ pub const MAPPING: &str = "mapping.toml";
 pub struct Mapping {
     #[serde(default, rename = "map", skip_serializing_if = "Vec::is_empty")]
     pub maps: Vec<Map>,
+    #[serde(default, rename = "present", skip_serializing_if = "Vec::is_empty")]
+    pub presents: Vec<Map>,
     #[serde(default, rename = "ignore", skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<Ignore>,
 }
@@ -144,6 +148,31 @@ impl Mapping {
                 resolved.mask = Some(mask);
             }
             mapped.push(resolved);
+        }
+        Ok(mapped)
+    }
+
+    /// The presentation's own fields (D110) with their items' IDs, types and sizes: each `at` an item, not
+    /// through a pointer or masked.
+    pub fn resolve_present(&self, k: &Knowledge) -> Result<Vec<Mapped>, String> {
+        let mut mapped: Vec<Mapped> = Vec::new();
+        for m in &self.presents {
+            let at = |e: String| format!("{MAPPING}: present {}: {e}", m.field);
+            if m.field.is_empty() || m.field.split('.').any(str::is_empty) {
+                return Err(at("a field is a path of names (drawn.level)".into()));
+            }
+            if mapped.iter().any(|other| other.field == m.field) {
+                return Err(at("mapped twice".into()));
+            }
+            if !m.via.is_empty() || m.mask.is_some() {
+                return Err(
+                    at("a presentation's item is at an ID or a name, not via a pointer or masked (yet)".into()),
+                );
+            }
+            if m.at.is_empty() {
+                return Err(at("no at: the original's item".into()));
+            }
+            mapped.push(direct(k, m).map_err(at)?);
         }
         Ok(mapped)
     }
@@ -280,20 +309,37 @@ mod tests {
                 map("player.x", "player_x", "i16"),
                 map("seed", "GAME.EXE+00104", "u32"),
             ],
-            ignores: vec![],
+            ..Mapping::default()
         };
         let mapped = m.resolve(&k).unwrap();
         assert_eq!((mapped[0].ty.as_str(), mapped[1].size, mapped[2].size), ("u16", 2, 4));
-        let wrong = |maps| Mapping { maps, ignores: vec![] }.resolve(&k).unwrap_err();
+        let wrong = |maps| Mapping { maps, ..Mapping::default() }.resolve(&k).unwrap_err();
         assert!(wrong(vec![map("x", "player_x", "")]).contains("no type"));
         assert!(wrong(vec![map("s", "score", "u32")]).contains("data.tsv says score is 2"));
         assert!(wrong(vec![map("s", "nothing", "u8")]).contains("no data named nothing"));
         assert!(wrong(vec![map("a", "score", ""), map("a", "player_x", "i16")]).contains("mapped twice"));
         let flags = |ty: &str| Map { mask: Some(0xFFFD), ..map("flags", "score", ty) };
         assert!(wrong(vec![flags("i16")]).contains("some bits of an unsigned number"));
-        let mapped = Mapping { maps: vec![flags("")], ignores: vec![] }.resolve(&k).unwrap();
+        let mapped = Mapping { maps: vec![flags("")], ..Mapping::default() }.resolve(&k).unwrap();
         assert_eq!(mapped[0].masked(&serde_json::json!(3)), serde_json::json!(1), "bit 1 isn't the field's");
         assert_eq!(mapped[0].masked(&serde_json::json!([3])), serde_json::json!([3]), "a number's bits only");
+    }
+
+    #[test]
+    fn a_presentation_s_own_state_is_named_as_the_simulation_s() {
+        // D110: an item at an ID or a name, in a type; not through a pointer or masked.
+        let k = knowledge();
+        let m = Mapping {
+            presents: vec![map("drawn.score", "score", ""), map("blink", "GAME.EXE+00104", "u8")],
+            ..Mapping::default()
+        };
+        let presented = m.resolve_present(&k).unwrap();
+        assert_eq!((presented[0].field.as_str(), presented[1].size), ("drawn.score", 1));
+        assert!(m.resolve(&k).unwrap().is_empty(), "not the simulation's");
+        let wrong = |presents| Mapping { presents, ..Mapping::default() }.resolve_present(&k).unwrap_err();
+        assert!(wrong(vec![via("trail", "trail", 0, "i16[32]")]).contains("not via a pointer or masked"));
+        assert!(wrong(vec![Map { mask: Some(1), ..map("b", "score", "") }]).contains("not via a pointer or masked"));
+        assert!(wrong(vec![map("a", "score", ""), map("a", "score", "")]).contains("present a: mapped twice"));
     }
 
     #[test]
@@ -301,7 +347,7 @@ mod tests {
         let k = knowledge();
         let m = Mapping {
             maps: vec![via("trail", "trail", 0, "i16[32]"), via("level.cells", "world.level", 4, "u8[64]")],
-            ignores: vec![],
+            ..Mapping::default()
         };
         let mapped = m.resolve(&k).unwrap();
         assert_eq!((mapped[0].id.to_string(), mapped[0].size), ("GAME.EXE+00110".into(), 64));
@@ -311,7 +357,7 @@ mod tests {
         assert_eq!(mapped[1].id.to_string(), "GAME.EXE+00122", "the field holding the pointer");
         let near = PointerKind::Near { base: "GAME.EXE+00000".parse().unwrap(), size: 2 };
         assert_eq!(mapped[1].via, Some(Via { name: "world.level".into(), pointer: near, offset: 4 }));
-        let wrong = |maps| Mapping { maps, ignores: vec![] }.resolve(&k).unwrap_err();
+        let wrong = |maps| Mapping { maps, ..Mapping::default() }.resolve(&k).unwrap_err();
         assert!(wrong(vec![via("t", "trail", 0, "")]).contains("needs a type"));
         assert!(wrong(vec![via("t", "score", 0, "u8")]).contains("u16 isn't a pointer type"));
         assert!(wrong(vec![via("t", "world.turn", 0, "u8")]).contains("isn't a pointer type"));

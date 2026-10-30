@@ -7,7 +7,9 @@
  * (PALETTE, stored) until Enter, which loads the first level. The play loop moves the player a cell for each
  * arrow key pressed on the level's map (LEVEL1 and LEVEL2, LZSS coded, decoded onto the heap): a wall stops
  * it and is counted, the exit loads the next level in the pass, or ends the game after the last. Esc ends it
- * too; the exit code is the moves' low byte.
+ * too; the exit code is the moves' low byte. After each play pass, draw shows what changed: the level, the
+ * player's cell, and the player's colour, which blinks by a count of passes only the drawing keeps (M6: a
+ * presentation's own state, D110).
  *
  * The state is in the named globals below, so the linker map gives every item's address; the map and the
  * picture are on the far heap, through far pointers. */
@@ -282,13 +284,16 @@ static void show_title(void)
     }
 }
 
-static unsigned char drawn_level, drawn_x, drawn_y;
+/* What draw keeps of its own: the level and the player's cell it drew last, and its passes, by which the
+ * player's colour blinks. */
+unsigned char drawn_level, drawn_x, drawn_y, blink;
 
 static void draw_cell(unsigned x, unsigned y)
 {
     static const unsigned char colours[4] = { 16, 40, 47, 16 };
     unsigned char __far *screen = MK_FP(0xA000, 0);
-    unsigned char c = (x == player_x && y == player_y) ? 15 : colours[map[y * CELLS + x] & 3];
+    unsigned char player = (blink & 32) ? 14 : 15;
+    unsigned char c = (x == player_x && y == player_y) ? player : colours[map[y * CELLS + x] & 3];
     unsigned i, j;
     for (j = 0; j < 6; j++) {
         for (i = 0; i < 6; i++) {
@@ -297,10 +302,12 @@ static void draw_cell(unsigned x, unsigned y)
     }
 }
 
-/* The level's cells when it changes, else the player's old and new cell. */
+/* The level's cells when it changes, else the player's old and new cell, else the player's when its colour
+ * changes (every 32 passes). */
 static void draw(void)
 {
     unsigned x, y;
+    blink++;
     if (drawn_level != level) {
         for (y = 0; y < CELLS; y++) {
             for (x = 0; x < CELLS; x++) {
@@ -310,6 +317,8 @@ static void draw(void)
         drawn_level = level;
     } else if (drawn_x != player_x || drawn_y != player_y) {
         draw_cell(drawn_x, drawn_y);
+        draw_cell(player_x, player_y);
+    } else if ((blink & 31) == 0) {
         draw_cell(player_x, player_y);
     }
     drawn_x = player_x;

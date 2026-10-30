@@ -10,7 +10,7 @@ name = "1.0"
 
 [version.files]
 "VAULT.DAT" = "905e59e4adc290dd0cd510c90162408bf024a59a1b9df3fdceff106a673f46ba"
-"VAULT.EXE" = "c060638134d8c649a22311d68428d541d0b6172a89375f602bfc0d71563c6874"
+"VAULT.EXE" = "4051c7cd23ecc54501bb264937d519e572feea7ca8a23401b0b60d982e03ec36"
 
 [port]
 # The port's program (src/main.rs); rrc compare runs it with `run` and its options.

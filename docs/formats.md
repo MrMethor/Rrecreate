@@ -318,6 +318,11 @@ via = "level_map"               # or: a pointer (named data, an ID, a path into 
 offset = 0                      # is where it points at each tick, this many bytes past (optional)
 type = "u8[4096]"               # needed: what it points to
 
+[[present]]                     # the presentation's own state (D110): what the drawing code keeps
+field = "drawn.blink"           # a path in what the presentation is given
+at = "blink"                    # the original's item: a data name, or an ID (not via a pointer or masked)
+type = "u8"                     # optional, as for [[map]]
+
 [[ignore]]                      # the original's memory that may differ (padding, caches, driver internals)
 at = "mouse_buffer"             # a data name, or an ID
 size = 0                        # bytes; 0: the data's size
@@ -338,6 +343,9 @@ doesn't have (a renderer's scratch in a flags word), so neither the transplant n
 and the comparison takes the port's value with the same mask.
 `rrc record` traces every mapped item (one that isn't named data under its field's name, and an item via a
 pointer as `*POINTER`, with the pointer). `rrc check` checks the mapping.
+`[[present]]` items are the presentation's own state (an off-screen buffer, what it drew last, an animation's
+frame): neither traced nor compared, but read at a transplant's or a resume's tick and given to the
+presentation (`--presentation`, below).
 
 ## `quirks.toml`: the quirk register
 
@@ -466,7 +474,7 @@ Pixels go row by row from the top left; text modes are drawn with their font, as
 
 ```
 run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK --save FILE] [--to TICK]
-    [--frames DIR [--screen FILE]]
+    [--frames DIR [--screen FILE] [--presentation FILE]]
 ```
 
 and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is
@@ -510,6 +518,11 @@ inputs and the trace are JSON lines.
   FILE` gives a port that starts from a transplant or a resumed state the original's screen then, a picture
   too. `rrc compare` asks for frames when the session's trace has screens, and compares each tick's frame with
   the original's screen pixel by pixel and colour by colour.
+- **Presentation's state** (`--presentation`, written by `rrc` at a transplant or a resume when `mapping.toml`
+  has `[[present]]`, D110): `{"format":"rrc-presentation","version":1,"session":"play","tick":200,
+  "state":{"drawn.blink":7}}`, each item's value at the tick (read from the session's snapshots, as `rrc peek`
+  reads) by its field's path. The runtime puts them at their paths in an object and gives it to the
+  presentation (`Presentation::given`) before its start.
 - **Sound** (D108): a port that sounds says so in its trace's header, `"sound":true`, and a tick's line has
   the sound the pass before it made (the start-up's at the first tick from power-on), by device, only devices
   with sound, without times: `"sound":{"opl":[[176,53]],"speaker":[{"tone":[2281,1141]},{"steady":false}]}`:

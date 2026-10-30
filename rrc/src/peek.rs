@@ -37,21 +37,35 @@ pub(crate) fn peek(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         let size = len.or_else(|| k.data.get(&id).and_then(|d| d.size)).unwrap_or(2);
         items.push((id.clone(), places.address(&id.to_string())?, size));
     }
-    let length_ms = (session.seconds * 1000.0) as u64;
-    let (mut clockwork, _, from) = crate::watch::open(repo, &session, &syncs, tick + 1)?;
-    crate::watch::to_tick(&mut clockwork, tick + 1, from.as_ref(), length_ms)?;
-    let ranges: Vec<_> = items.iter().map(|(_, at, size)| json!({"at": at, "len": size})).collect();
-    let read = clockwork.ask("read", json!({ "ranges": ranges }))?;
+    let ranges: Vec<(String, u32)> = items.iter().map(|(_, at, size)| (at.clone(), *size)).collect();
+    let read = read_at(repo, &session, &syncs, tick, &ranges)?;
     let names = Names::new(&k, repo, &session)?;
     say("tick", format!("{tick}: the state at its sync point"));
-    for ((id, at, size), hex) in items.iter().zip(read["data"].as_array().into_iter().flatten()) {
+    for ((id, at, size), hex) in items.iter().zip(read) {
         let name = names.data(at, *size);
-        match hex.as_str() {
-            Some(hex) => say("value", format!("{name} = {}", value(&k, id, *size, hex))),
+        match hex {
+            Some(hex) => say("value", format!("{name} = {}", value(&k, id, *size, &hex))),
             None => say("value", format!("{name}: not in memory")),
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Memory at tick `tick`'s sync point (the state at that tick): each range (an address as Clockwork takes
+/// it, a length) as hex, none where it isn't in memory. The session runs from the last snapshot before.
+pub(crate) fn read_at(
+    repo: &Repo,
+    session: &Session,
+    syncs: &[crate::trace::SyncPoint],
+    tick: u64,
+    ranges: &[(String, u32)],
+) -> Result<Vec<Option<String>>, String> {
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let (mut clockwork, _, from) = crate::watch::open(repo, session, syncs, tick + 1)?;
+    crate::watch::to_tick(&mut clockwork, tick + 1, from.as_ref(), length_ms)?;
+    let ranges: Vec<_> = ranges.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
+    let read = clockwork.ask("read", json!({ "ranges": ranges }))?;
+    Ok(read["data"].as_array().into_iter().flatten().map(|hex| hex.as_str().map(str::to_owned)).collect())
 }
 
 /// As the item's type reads it, if it is a whole named item with one; else a byte, word or doubleword

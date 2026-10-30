@@ -1,21 +1,21 @@
 # Sync points and boundary values (docs/formats.md).
 [[sync]]
 name = "title"
-at = "VAULT.EXE+00744"
+at = "VAULT.EXE+00760"
 provenance = "map"
-evidence = "VAULT.MAP: main's title loop calls wait_tick at +00741"
+evidence = "VAULT.MAP: main's title loop calls wait_tick at +0075D"
 note = "where the title loop's wait_tick returns: a title pass is next"
 
 [[sync]]
 name = "play"
-at = "VAULT.EXE+0075A"
+at = "VAULT.EXE+00776"
 provenance = "map"
-evidence = "VAULT.MAP: main's play loop calls wait_tick at +00757"
+evidence = "VAULT.MAP: main's play loop calls wait_tick at +00773"
 note = "where the play loop's wait_tick returns: a play pass is next"
 
 [[input]]
 name = "timer_count"
-at = "VAULT.EXE+02F2E"
+at = "VAULT.EXE+02F4E"
 size = 2
 provenance = "map"
 evidence = "VAULT.MAP"
@@ -23,7 +23,7 @@ note = "INT 08h's count, 70 Hz"
 
 [[input]]
 name = "key_down"
-at = "VAULT.EXE+02E96"
+at = "VAULT.EXE+02EB6"
 size = 128
 provenance = "map"
 evidence = "VAULT.MAP"

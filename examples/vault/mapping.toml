@@ -68,3 +68,21 @@ field = "picture"
 via = "picture"
 type = "u8[64000]"
 note = "on the heap: the title, decoded from the archive (run-length)"
+
+# The presentation's own state (D110): what draw keeps, given to Screen at a transplant or a resume.
+
+[[present]]
+field = "drawn.level"
+at = "drawn_level"
+
+[[present]]
+field = "drawn.x"
+at = "drawn_x"
+
+[[present]]
+field = "drawn.y"
+at = "drawn_y"
+
+[[present]]
+field = "drawn.blink"
+at = "blink"

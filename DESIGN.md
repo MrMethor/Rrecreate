@@ -180,7 +180,8 @@ the session.
 - **Simulation:** all game logic, stepped one tick at a time. Its state is one plain, serializable struct.
   It never sees the screen, the clock or the hardware.
 - **Presentation:** rendering and sound. Reads the simulation through the seams below, never changes it; runs
-  at any rate.
+  at any rate. It keeps state of its own as the original's drawing code does (what it drew last, an
+  off-screen buffer); a faithful one started mid-session is given the original's (D110).
 - **Platform:** window, input devices, audio output and file access (SDL3 on the desktop). It owns the main
   loop and calls the simulation and the presentation, so a web or mobile platform layer can be added without
   changing either.

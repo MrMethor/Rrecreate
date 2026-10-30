@@ -136,9 +136,18 @@ pub trait Presentation<S: Shows>: Default {
     /// Whether it sounds: its sound is compared with the original's.
     const SOUNDS: bool = false;
 
+    /// Its own state at a transplant or a resume (D110): the original's values of what `mapping.toml`'s
+    /// `[[present]]` maps there, at their fields' paths (`drawn.level`), before [`Presentation::start`]. A
+    /// presentation that keeps none has nothing mapped there and is given nothing.
+    fn given(&mut self, state: serde_json::Value) -> Result<(), String> {
+        let fields: Vec<&String> = state.as_object().map(|o| o.keys().collect()).unwrap_or_default();
+        Err(format!("the presentation takes no state of its own, but is given {fields:?} (mapping.toml's [[present]])"))
+    }
+
     /// The screen at the session's first tick. From power-on, `frame` is black and this draws what the
     /// original's start-up drew; from a transplant or a saved state, `frame` is the original's screen then
-    /// (`given`), and this takes up from it what it keeps of its own.
+    /// (`given`), and this takes up from it what it keeps of its own that [`Presentation::given`] didn't
+    /// give.
     fn start(&mut self, scene: &S::Scene<'_>, frame: &mut Frame, given: bool) {
         let _ = (scene, frame, given);
     }
@@ -158,6 +167,7 @@ pub trait Presentation<S: Shows>: Default {
 
 /// What a run draws and sounds with: nothing, or a simulation's presentation.
 pub(crate) trait Drawer<S> {
+    fn given(&mut self, own: serde_json::Value) -> Result<(), String>;
     fn start(&mut self, state: &S, frame: &mut Frame, given: bool);
     fn draw(&mut self, pass: &str, state: &S, frame: &mut Frame);
     fn sound(&mut self, pass: Option<&str>, state: &S, sounds: &mut Sounds);
@@ -170,6 +180,9 @@ pub(crate) trait Drawer<S> {
 pub(crate) struct Undrawn;
 
 impl<S> Drawer<S> for Undrawn {
+    fn given(&mut self, _: serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
     fn start(&mut self, _: &S, _: &mut Frame, _: bool) {}
     fn draw(&mut self, _: &str, _: &S, _: &mut Frame) {}
     fn sound(&mut self, _: Option<&str>, _: &S, _: &mut Sounds) {}
@@ -185,6 +198,9 @@ impl<S> Drawer<S> for Undrawn {
 pub(crate) struct Drawn<P>(pub P);
 
 impl<S: Shows, P: Presentation<S>> Drawer<S> for Drawn<P> {
+    fn given(&mut self, own: serde_json::Value) -> Result<(), String> {
+        self.0.given(own)
+    }
     fn start(&mut self, state: &S, frame: &mut Frame, given: bool) {
         self.0.start(&state.scene(), frame, given);
     }

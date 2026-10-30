@@ -4,14 +4,15 @@
 //!
 //! Before its first tick the original reads the archive's directory, takes the map's and the picture's
 //! buffers from the heap and shows the title, its palette and picture loaded: `start`. Then a tick begins
-//! where a loop's `wait_tick` returns: at `title` (VAULT.EXE+00744) a step is `title_pass`, at `play`
-//! (VAULT.EXE+0075A) `play_pass`. The inputs are the timer count (INT 08h's, 70 Hz) and the key states
+//! where a loop's `wait_tick` returns: at `title` (VAULT.EXE+00760) a step is `title_pass`, at `play`
+//! (VAULT.EXE+00776) `play_pass`. The inputs are the timer count (INT 08h's, 70 Hz) and the key states
 //! (INT 09h's).
 //!
 //! What it shows (M6, D107) is drawn apart from the game: the simulation's scene (the title's picture and
 //! palette, the level's map and the player) and `Screen`, which draws it as `show_title` and the play loop's
-//! `draw` draw it, its own record of what it drew as theirs is (`drawn_level`, `drawn_x`, `drawn_y`).
-//! `VAULT_BUG=colour` leaves a bug in: walls are drawn in colour 41.
+//! `draw` draw it, its own record of what it drew as theirs is (`drawn_level`, `drawn_x`, `drawn_y`) and its
+//! count of passes the player's colour blinks by (`blink`): from a transplant, the original's (D110,
+//! `mapping.toml`'s `[[present]]`). `VAULT_BUG=colour` leaves a bug in: walls are drawn in colour 41.
 //!
 //! Each function names the original's it reimplements by its ID (DESIGN.md §6.6), which `rrc compare`
 //! finds when that one wrote a value the port has otherwise.
@@ -245,16 +246,33 @@ struct Screen {
     /// What `draw` last drew: the level, and the player's cell.
     drawn_level: u8,
     drawn: (u8, u8),
+    /// `draw`'s passes: the player is drawn in 14 while bit 5 is set, else 15.
+    blink: u8,
+}
+
+/// What `draw` keeps of its own, as the original's at a transplant (D110).
+#[derive(Deserialize)]
+struct Drawn {
+    level: u8,
+    x: u8,
+    y: u8,
+    blink: u8,
 }
 
 impl Screen {
     /// `draw_cell` (VAULT.EXE+004DD): a cell in its colour (floor and start 16, a wall 40, the exit 47), the
-    /// player's 15.
+    /// player's 15, or 14 as it blinks.
     fn cell(&self, scene: &Scene, frame: &mut Frame, x: u8, y: u8) {
         const COLOURS: [u8; 4] = [16, 40, 47, 16];
         let map = scene.map.expect("a level is loaded in play");
         let colour = match map[usize::from(y) * CELLS + usize::from(x)] & 3 {
-            _ if (x, y) == scene.player => 15,
+            _ if (x, y) == scene.player => {
+                if self.blink & 32 != 0 {
+                    14
+                } else {
+                    15
+                }
+            }
             1 if std::env::var("VAULT_BUG").is_ok_and(|b| b == "colour") => 41,
             cell => COLOURS[usize::from(cell)],
         };
@@ -267,8 +285,15 @@ impl Screen {
 }
 
 impl Presentation<Vault> for Screen {
-    /// `show_title` (VAULT.EXE+0045D): the palette, then the picture. From a given screen, what `draw` drew
-    /// last isn't known: its next pass draws the whole level, which leaves the same pixels.
+    /// From a transplant, what the original's `draw` last drew and its passes (D110).
+    fn given(&mut self, own: rrc_runtime::serde_json::Value) -> Result<(), String> {
+        let drawn: Drawn =
+            rrc_runtime::serde_json::from_value(own["drawn"].clone()).map_err(|e| format!("drawn: {e}"))?;
+        (self.drawn_level, self.drawn, self.blink) = (drawn.level, (drawn.x, drawn.y), drawn.blink);
+        Ok(())
+    }
+
+    /// `show_title` (VAULT.EXE+0045D): the palette, then the picture; from a given screen, nothing.
     fn start(&mut self, scene: &Scene, frame: &mut Frame, given: bool) {
         if given {
             return;
@@ -277,12 +302,13 @@ impl Presentation<Vault> for Screen {
         frame.pixels.copy_from_slice(scene.picture);
     }
 
-    /// `draw` (VAULT.EXE+0058A), after each play pass: the level's cells when it changes, else the player's
-    /// old and new cell.
+    /// `draw` (VAULT.EXE+00595), after each play pass: the level's cells when it changes, else the player's
+    /// old and new cell, else the player's when its colour changes (every 32 passes).
     fn draw(&mut self, pass: &str, scene: &Scene, frame: &mut Frame) {
         if pass != "play" || scene.scene != 1 {
             return;
         }
+        self.blink = self.blink.wrapping_add(1);
         if self.drawn_level != scene.level {
             for y in 0..CELLS as u8 {
                 for x in 0..CELLS as u8 {
@@ -292,6 +318,8 @@ impl Presentation<Vault> for Screen {
             self.drawn_level = scene.level;
         } else if self.drawn != scene.player {
             self.cell(scene, frame, self.drawn.0, self.drawn.1);
+            self.cell(scene, frame, scene.player.0, scene.player.1);
+        } else if self.blink & 31 == 0 {
             self.cell(scene, frame, scene.player.0, scene.player.1);
         }
         self.drawn = scene.player;

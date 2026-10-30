@@ -628,7 +628,7 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(
         compared.contains(
             "unset     map at ticks 1-100: the original's held its value of tick 1, last written in the pass to \
-             tick 1 by VAULT.EXE+014C1 (__AllocSeg < _fmalloc < main)"
+             tick 1 by VAULT.EXE+014E1 (__AllocSeg < _fmalloc < main)"
         ),
         "{compared}"
     );
@@ -640,9 +640,23 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     let (drawn, ok) = rrc.run(&["compare", "play"]);
     assert!(!ok && drawn.contains("diverges  at tick 102 (play): the screen: 5580 pixels differ"), "{drawn}");
     assert!(drawn.contains("pixel   (64, 4): original 40, port 41"), "{drawn}");
-    assert!(drawn.contains("write MEM+A0540 = 28h (was 20h) by VAULT.EXE+00576 in draw_cell < draw < main"), "{drawn}");
+    assert!(drawn.contains("write MEM+A0540 = 28h (was 20h) by VAULT.EXE+00581 in draw_cell < draw < main"), "{drawn}");
     assert!(drawn.contains("port      draw_cell (VAULT.EXE+004DD) is src/main.rs:"), "{drawn}");
     rrc.env.pop();
+    // From a transplant mid-play (D110): the presentation is given what the original's draw keeps, the count
+    // its player's colour blinks by among it. Without it the screen can't show that count, and the colour
+    // blinks out of step.
+    let given = rrc.ok(&["compare", "play", "--transplant", "200"]);
+    assert!(given.contains("given     the presentation's own state at tick 200: 4 fields (D110)"), "{given}");
+    assert!(given.contains("screen    the port's frames are the original's screen at all 201 ticks"), "{given}");
+    let presented = std::fs::read_to_string(rrc.repo.join(".rrc/compare/play/presentation.json")).unwrap();
+    assert!(presented.contains(r#""format":"rrc-presentation""#) && presented.contains(r#""drawn.blink":"#));
+    let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
+    let unpresented = mapping.split("# The presentation's own state").next().unwrap();
+    std::fs::write(rrc.repo.join("mapping.toml"), unpresented).unwrap();
+    let (guessed, ok) = rrc.run(&["compare", "play", "--transplant", "200"]);
+    assert!(!ok && guessed.contains("the screen: 36 pixels differ"), "{guessed}");
+    std::fs::write(rrc.repo.join("mapping.toml"), mapping).unwrap();
 
     // The archive by its format (D103): its members; the title as PNG with its palette; a level decoded as
     // the original loaded it, found in its memory at the tick after the read.
@@ -653,7 +667,10 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(title.contains("picture   320 × 200, palette VAULT.DAT/PALETTE"), "{title}");
     assert!(std::fs::read(dir.join("title.png")).unwrap().starts_with(b"\x89PNG"));
     let checked = rrc.ok(&["asset", "VAULT.DAT/LEVEL2", "--session", "play"]);
-    assert!(checked.contains("read      in the pass to tick 374, by VAULT.EXE+009F0 < load < load_level < play_pass"));
+    assert!(
+        checked.contains("read      in the pass to tick 374, by VAULT.EXE+00A0C < load < load_level < play_pass"),
+        "{checked}"
+    );
     assert!(
         checked.contains(
             "original  equal: 2 ms after the read (in the pass to tick 374), its memory holds these 1024 bytes at \

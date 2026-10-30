@@ -12,8 +12,8 @@ test program (D101).
 | `rrc.toml` | The game (`VAULT.EXE` and `VAULT.DAT`, its version by hash) and the port's program |
 | `knowledge/` | The functions and data, named from the linker map (`VAULT.MAP`, provenance `map`), with the far heap's two functions; the archive's header and directory `entry`; the formats (`formats.toml`: the archive, the title, the palette, the levels); two sync points, one per loop (`title`, `play`, where `wait_tick` returns), and the inputs (INT 08h's timer count, INT 09h's key states) |
 | `sessions/play.*` | 9 seconds: the title, Enter, the first level walked to its exit (a wall bumped on the way), the second to its exit, where the program ends |
-| `mapping.toml` | The counters, the archive's directory, the palette, and the map and the picture on the heap through their far pointers (`via`) |
-| `src/main.rs` | The port: `start` is `main` before its first tick (the directory read, the palette and the title loaded); a step is the title's pass or the play's; its scene and `Screen`, which draws it as `show_title` and `draw` do (D107) |
+| `mapping.toml` | The counters, the archive's directory, the palette, and the map and the picture on the heap through their far pointers (`via`); the presentation's own state (`[[present]]`: what `draw` drew last and its blink's count, D110) |
+| `src/main.rs` | The port: `start` is `main` before its first tick (the directory read, the palette and the title loaded); a step is the title's pass or the play's; its scene and `Screen`, which draws it as `show_title` and `draw` do (D107), the player's colour blinking by `draw`'s count of passes, which a transplant gives it (`Presentation::given`, D110) |
 
 To run it, with `rrc` and `clockwork` built (`cargo build --release -p rrc -p clockwork`) and on the path:
 
@@ -27,7 +27,9 @@ rrc compare play
 `rrc compare play` says `match` at all 506 ticks, from power-on to the program's exit, and that the port's frames
 are the original's screen at every tick (the title, then the levels as the player walks). `VAULT_BUG=colour rrc
 compare play` draws walls in colour 41: the screen differs at tick 102, the first frame of play, and the
-comparison names the original's `draw_cell` as who drew the first pixel, and the port's. Before the first level
+comparison names the original's `draw_cell` as who drew the first pixel, and the port's. `rrc compare play
+--transplant 200` starts the port mid-play with what the original's `draw` keeps (`given  the presentation's own
+state at tick 200`); without `[[present]]` the player's colour blinks out of step. Before the first level
 the map's buffer holds what the far heap left in it, which the port leaves unset (`None`, D102): the comparison
 says so, `unset map at ticks 1-100`, and that `__AllocSeg` (called by `_fmalloc`) wrote it last.
 
