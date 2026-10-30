@@ -724,14 +724,17 @@ M6's first piece (DESIGN.md §6.1, §7):
 - **The comparison:** `rrc compare` asks for frames when the trace has screens, and compares each tick whose
   state matches: the pixels and the colours. At the first that differs, it says how many pixels and where,
   the first pixel with both indices, the colours, writes a picture of both and their differences, and in mode
-  13h finds who drew the first pixel (a watch of its byte at `MEM+A0000` + y × 320 + x in the pass to it) and
-  the port's code for that function (D73).
+  13h finds who drew the first pixel (a watch of its byte at `MEM+A0000` + y × 320 + x in the pass to it),
+  through copies (D85: a view drawn off the screen and copied to it is found where it was drawn), and the
+  port's code for that function (D73).
 
 Other video modes' pixels (planar, Mode X) find their writer as games need it; sound: D108.
 **Why:** a faithful port's frames must equal the original's (M6). Measured on the vault: its port's screen
 (the title, then both levels as the player walks) is the original's at all 506 ticks; a wall drawn in the
 wrong colour is found at tick 102, the first frame of play, 5580 pixels from (64, 4), drawn by `draw_cell <
-draw < main`, and the port's `draw_cell` named.
+draw < main`, and the port's `draw_cell` named. On Arena, a presentation that keeps the screen given at the
+transplant finds the view's 41105 pixels at tick 2, copied to the screen by `+0A7B4` from its buffer at
+`+50340`, where `+0D78C` (from `+0D4B4`) and then `+0B835` (from `+0BBB6`) drew the first.
 
 ### D106. M5 is done: the game's data, from a test program's power-on to Arena's assets. Accepted 2026-10-30, with the person.
 M5 closes with both its tests passing and the rest of its scope done, as the person asked before closing it:

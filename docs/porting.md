@@ -447,7 +447,8 @@ rrc frame first-level --tick 102 --screen
 (its memory and palette), pixel by pixel and colour by colour, once the state matches there. At the first
 frame that differs it says how many pixels and where, the first one with both indices, the colours that
 differ, writes a picture (the original's screen, the port's frame, the differing pixels in red), and in mode
-13h who drew the first pixel in the pass to it, with the port's code for that function, as for a value
+13h who drew the first pixel in the pass to it (through copies: a view drawn into a buffer and copied to the
+screen is found where it was drawn), with the port's code for that function, as for a value
 (`draw_cell (GAME.EXE+004DD) is src/main.rs:251`). `rrc frame --screen` writes the original's screen at a
 tick.
 

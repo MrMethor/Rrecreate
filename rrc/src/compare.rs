@@ -474,6 +474,8 @@ fn report_screen(
         .map(|s| s.to_string())
         .collect();
     let writer = crate::watch::watched(repo, &args)?;
+    // A pixel copied from a buffer (a view drawn off the screen) was decided where the buffer's was drawn.
+    let writer = through_copies(repo, name, k, writer, 1, t)?;
     port_code(repo, k, &writer.chain);
     Ok(())
 }
@@ -800,40 +802,8 @@ fn report(
             .iter()
             .map(|s| s.to_string())
             .collect();
-    let mut writer = crate::watch::watched(repo, &args)?;
-    // A copy's value was decided where its source was written (D85): who wrote that, before the copy, a
-    // few copies back.
-    for _ in 0..4 {
-        let Some(source) = writer.copied.clone() else { break };
-        let session = Session::load(repo, name)?;
-        let names = crate::watch::Names::new(k, repo, &session)?;
-        let Some(source_id) = names.id(&source) else { break };
-        let copier = writer.instruction.as_ref().map_or_else(|| "it".to_owned(), ToString::to_string);
-        say("copied", format!("{copier} copied it from {}: who wrote that before:", names.data(&source, size)));
-        let args: Vec<String> = [
-            name,
-            &source_id.to_string(),
-            "--len",
-            &size.to_string(),
-            "--tick",
-            &t.to_string(),
-            "--ticks",
-            "1",
-            "--lines",
-            "6",
-            "--before",
-            &writer.cycle.to_string(),
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let earlier = crate::watch::watched(repo, &args)?;
-        if earlier.instruction.is_none() {
-            say("copied", format!("nothing wrote it during tick {t} before the copy: it held its value from before"));
-            break;
-        }
-        writer = earlier;
-    }
+    let writer = crate::watch::watched(repo, &args)?;
+    let writer = through_copies(repo, name, k, writer, size, t)?;
     // A registered quirk at that code (D74): the port keeps it, or should.
     let quirks = crate::quirks::Quirks::load(repo)?;
     let at = |id: &Id| quirks.quirks.iter().find(|q| q.at == id.to_string());
@@ -888,6 +858,50 @@ fn last_writer(repo: &Repo, name: &str, trace: &Trace, k: &Knowledge, m: &Mapped
     let named = |id: &Id| k.functions.get(id).map_or_else(|| id.to_string(), |d| d.name.clone());
     let chain: Vec<String> = writer.chain.iter().take(3).map(named).collect();
     Ok(format!("last written in the pass to tick {t} by {at} ({})", chain.join(" < ")))
+}
+
+/// A copy's value was decided where its source was written (D85): who wrote that, before the copy, a few
+/// copies back; the last writer found.
+fn through_copies(
+    repo: &Repo,
+    name: &str,
+    k: &Knowledge,
+    mut writer: crate::watch::Writer,
+    size: u32,
+    t: u64,
+) -> Result<crate::watch::Writer, String> {
+    for _ in 0..4 {
+        let Some(source) = writer.copied.clone() else { break };
+        let session = Session::load(repo, name)?;
+        let names = crate::watch::Names::new(k, repo, &session)?;
+        let Some(source_id) = names.id(&source) else { break };
+        let copier = writer.instruction.as_ref().map_or_else(|| "it".to_owned(), ToString::to_string);
+        say("copied", format!("{copier} copied it from {}: who wrote that before:", names.data(&source, size)));
+        let args: Vec<String> = [
+            name,
+            &source_id.to_string(),
+            "--len",
+            &size.to_string(),
+            "--tick",
+            &t.to_string(),
+            "--ticks",
+            "1",
+            "--lines",
+            "6",
+            "--before",
+            &writer.cycle.to_string(),
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let earlier = crate::watch::watched(repo, &args)?;
+        if earlier.instruction.is_none() {
+            say("copied", format!("nothing wrote it during tick {t} before the copy: it held its value from before"));
+            break;
+        }
+        writer = earlier;
+    }
+    Ok(writer)
 }
 
 /// Where the port does what the original's writing function did (D73): its code that names that
