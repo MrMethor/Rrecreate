@@ -1,6 +1,7 @@
 //! `rrc pass SESSION --tick N` (D83): what one pass of the game's loop runs, in order: the calls made
 //! between tick N-1's sync point and tick N's, as a tree, each function by its name. A port's step is
-//! that pass, so the tree is its outline; `--in FUNCTION` shows what a function the pass calls runs.
+//! that pass, so the tree is its outline; `--in FUNCTION` shows what a function the pass calls runs, and
+//! `--functions` every function that runs there, at any depth, with how many times: what porting it takes.
 //! Clockwork's call tracker logs the calls (protocol revision 7); hardware interrupts' handlers run
 //! between them, and are left out unless asked for.
 
@@ -17,7 +18,7 @@ use crate::session::Session;
 use crate::trace::sync_points;
 use crate::watch::Names;
 
-const USAGE: &str = "pass SESSION --tick N [--depth N] [--in ID|NAME] [--interrupts] [--lines N]";
+const USAGE: &str = "pass SESSION --tick N [--depth N] [--in ID|NAME] [--functions] [--interrupts] [--lines N]";
 /// Levels of calls shown, and lines.
 const DEPTH: usize = 2;
 const LINES: usize = 150;
@@ -41,7 +42,7 @@ impl Call {
 }
 
 pub(crate) fn pass(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--tick", "--depth", "--in", "--lines"], &["--interrupts"])?;
+    let a = Args::parse(args, &["--tick", "--depth", "--in", "--lines"], &["--interrupts", "--functions"])?;
     let [name] = a.positionals(1, 1, USAGE)? else { unreachable!() };
     let number = |flag: &str, default: usize| -> Result<usize, String> {
         a.value(flag).map_or(Ok(default), str::parse).map_err(|_| format!("{flag} is a number"))
@@ -114,6 +115,17 @@ pub(crate) fn pass(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
         None => calls,
     };
+    if a.has("--functions") {
+        let called = functions(&shown);
+        say("functions", format!("{} called beneath it", called.len()));
+        for (target, n) in called.iter().take(lines) {
+            say("  call", format!("{} ×{n}", names.function(target)));
+        }
+        if called.len() > lines {
+            say("...", format!("{} more (--lines N)", called.len() - lines));
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let mut out = Vec::new();
     render(&shown, &names, 0, depth, &mut out);
     for line in out.iter().take(lines) {
@@ -123,6 +135,25 @@ pub(crate) fn pass(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         say("...", format!("{} more lines (--lines N, --depth N, --in FUNCTION)", out.len() - lines));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Every function the calls beneath `calls` call, at any depth, with how many times, in the order first
+/// called.
+fn functions(calls: &[Call]) -> Vec<(String, usize)> {
+    fn gather(calls: &[Call], called: &mut Vec<(String, usize)>) {
+        for c in calls {
+            match called.iter_mut().find(|(t, _)| *t == c.target) {
+                Some((_, n)) => *n += 1,
+                None => called.push((c.target.clone(), 1)),
+            }
+            gather(&c.calls, called);
+        }
+    }
+    let mut called = Vec::new();
+    for c in calls {
+        gather(&c.calls, &mut called);
+    }
+    called
 }
 
 /// The log's calls as a tree: a call's depth, less `base` (the frames open when the log began), is its
@@ -255,6 +286,12 @@ mod tests {
         assert_eq!(calls[0].calls[0].calls[0].target, "c");
         assert_eq!(calls[1].calls[0].target, "e", "deeper than the log saw begin: under the deepest");
         assert_eq!(calls[0].count(), 3);
+    }
+
+    #[test]
+    fn the_functions_beneath_a_call_are_counted_at_any_depth() {
+        let calls = tree(&[entry(0, "+0100"), entry(1, "+0200"), entry(2, "+0300"), entry(1, "+0300")], 0);
+        assert_eq!(functions(&calls), [("+0200".to_owned(), 1), ("+0300".to_owned(), 2)]);
     }
 
     #[test]

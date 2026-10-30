@@ -116,10 +116,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          memory at the end of tick N (its sync point), named or not, without
                          recording: as its type reads it, else as a number or bytes (--len: 2, or
                          the item's size)
-  pass SESSION --tick N [--depth N] [--in ID|NAME] [--interrupts] [--lines N]
+  pass SESSION --tick N [--depth N] [--in ID|NAME] [--functions] [--interrupts] [--lines N]
                          what tick N's pass runs, in order: the calls from tick N-1's sync point to
                          tick N's as a tree of named functions, --depth levels (2), a call repeated
-                         in a row once with a count; --in: under each call of that function
+                         in a row once with a count; --in: under each call of that function;
+                         --functions: every function called there, at any depth, how many times
   inputs SESSION [--tick N] [--ticks N | --from-ms MS [--to-ms MS]] [--at ID|SEG:OFF --len N]
                          boundary value candidates: memory the program reads that only interrupt
                          handlers or host services write (the key states, the timer counts), in the

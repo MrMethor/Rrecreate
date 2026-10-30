@@ -73,7 +73,9 @@ the original judges the port, not the code it was read from.
 A pass's order matters as much as its code: `rrc pass SESSION --tick N` shows the calls one pass makes, in
 order, by name (`--in FUNCTION` for one function's), which is the outline of the port's step (D83). A call
 made again in a row shows once with its count (`×8`), and a loop's calls made again round after round show
-once, then `the 4 calls above ×10800`.
+once, then `the 4 calls above ×10800`. `--in FUNCTION --functions` lists every function that runs beneath one,
+at any depth, with how many times: what porting a part takes (a renderer's fifty functions), to read and port
+one by one.
 
 ## 1. Set up
 

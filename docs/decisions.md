@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D109. `rrc pass --functions`: every function a part runs. Accepted 2026-10-30.
+`rrc pass SESSION --tick N --in FUNCTION --functions` lists every function called beneath that function in the
+pass, at any depth, with how many times, in the order first called. The tree (`--depth`) shows a pass's order;
+this shows a part's whole code, which is what porting it takes.
+**Why:** M6's Arena view: the tree folds below two levels (`+0C923`: "7177 calls below"), while porting the
+view means reading every function it runs. Measured: under the view's two entry points (`+0D4B4`, `+0C923`)
+at tick 2 of the cell session, 52 functions, from the cells' walk (`+0C9FF` ×2182) to the column drawer
+(`+0B835` ×770).
+
 ### D108. A port's sound is compared with the original's events, in order and without times. Accepted 2026-10-30.
 M6's second piece (DESIGN.md §6.1, §7):
 - **What is compared:** each tick's sound events by device, as Clockwork logs them for the trace (the OPL's
