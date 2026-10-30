@@ -26,7 +26,7 @@ use crate::session::{Recorded, Session};
 use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
 /// The oldest version this rrc reads: version 6 only added items read through pointers (D72).
 const OLDEST: u32 = 5;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
@@ -259,6 +259,10 @@ pub struct Tick {
     /// Sound events during the tick, by device (only those with events).
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub sound: serde_json::Map<String, Value>,
+    /// The screen at the sync point (its picture's hash in the cache), when it changed since the tick
+    /// before (D107; version 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -771,7 +775,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
         if keeping {
             asked.extend(data.iter().map(|(at, len)| json!({"at": at, "len": len})));
         }
-        let request = json!({"from": last_cycle, "ranges": asked, "until_ms": length_ms});
+        let request = json!({"from": last_cycle, "ranges": asked, "until_ms": length_ms, "screen": true});
         let ran = clockwork.ask("tick", request)?;
         let cycle = clockwork::number(&ran, "cycles")?;
         let Some(at) = ran["sync"]["at"].as_str() else {
@@ -815,6 +819,8 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
         let frames = pictures(&writer, &ran["frames"], &ran["images"], &mut picture);
         let sound = sound_events(&ran["sound"]);
         let skipped = ran["sync"]["skipped"].as_u64();
+        // The screen at the sync point, when it changed (D107).
+        let screen = ran["screen"].as_str().map(|hex| writer.put(unhex(hex)));
         ticks.push(Tick {
             tick: ticks.len() as u64 + 1,
             sync,
@@ -826,6 +832,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
             hooks: Vec::new(),
             frames,
             sound,
+            screen,
         });
         saver.tick(&mut clockwork, ticks.len() as u64, cycle, clockwork::number(&ran, "ms")?)?;
         last_cycle = cycle;
@@ -987,6 +994,26 @@ fn sound_events(answer: &Value) -> serde_json::Map<String, Value> {
     sound
 }
 
+/// A tick's sound events shown.
+const SOUND_SHOWN: usize = 12;
+
+/// A sound event without its time, as a port makes it (D108): an OPL write `A0=59`, the speaker `tone
+/// 2281/1141` or `steady on`, a digitized sound `pcm 11025`, a MIDI byte.
+fn sound_text(device: &str, event: &Value) -> String {
+    let n = |v: &Value| v.as_u64().unwrap_or(0);
+    match device {
+        "opl" => format!("{:X}={:02X}", n(&event[1]), n(&event[2])),
+        "speaker" => match (event[1].get("Steady"), event[1].get("Periodic")) {
+            (Some(on), _) => format!("steady {}", if on.as_bool() == Some(true) { "on" } else { "off" }),
+            (_, Some(p)) => format!("tone {}/{}", n(&p["period"]), n(&p["high"])),
+            _ => "one-shot".to_owned(),
+        },
+        "pcm" => format!("pcm {}{}", n(&event[1]), if event[2].as_bool() == Some(true) { " stereo" } else { "" }),
+        "midi" => format!("{:02X}", n(&event[1])),
+        _ => event.to_string(),
+    }
+}
+
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &["--tick", "--item", "--lines"], &["--path"])?;
     let usage = "trace SESSION [--tick N] [--item NAME [--lines N]] [--path]";
@@ -1049,7 +1076,14 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
         say("frames", tick.frames.len());
         for (device, events) in &tick.sound {
-            say("sound", format!("{device}: {} events", events.as_array().map_or(0, Vec::len)));
+            let events = events.as_array().cloned().unwrap_or_default();
+            let shown: Vec<String> = events.iter().take(SOUND_SHOWN).map(|e| sound_text(device, e)).collect();
+            let more = if events.len() > SOUND_SHOWN {
+                format!(" and {} more", events.len() - SOUND_SHOWN)
+            } else {
+                String::new()
+            };
+            say("sound", format!("{device}: {}{more}", shown.join(" ")));
         }
         return Ok(ExitCode::SUCCESS);
     }
@@ -1278,6 +1312,7 @@ mod tests {
             hooks: vec![],
             frames: vec![json!([n, n * 1000 - 10, 19, "61f5"])],
             sound: serde_json::Map::new(),
+            screen: None,
         };
         let one = |hex: &str| vec![(0, Some(hex.to_owned()))];
         let trace = Trace {

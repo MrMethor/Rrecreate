@@ -1,0 +1,16 @@
+[game]
+name = "chime"
+title = "The chime of testbins (testbins/src/chime.c): a note on the PC speaker and the OPL"
+
+[original]
+program = "CHIME.EXE"
+
+[[version]]
+name = "1.0"
+
+[version.files]
+"CHIME.EXE" = "6009428f77c4e4723e7052242ddc097dc6e006a578b6a10529b408bf1ab4bbb1"
+
+[port]
+# The port's program (src/main.rs); rrc compare runs it with `run` and its options.
+command = ["cargo", "run", "--quiet", "-p", "chime-port", "--"]

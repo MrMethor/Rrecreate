@@ -1,0 +1,10 @@
+# id	name	size	type	provenance	confidence	evidence
+CHIME.EXE+007DC	key_down	128	u8[128]	map		CHIME.MAP
+CHIME.EXE+00864	played	2	u16	map		CHIME.MAP
+CHIME.EXE+00866	pass_count	2	u16	map		CHIME.MAP
+CHIME.EXE+00868	last_count	2	u16	map		CHIME.MAP
+CHIME.EXE+0086A	timer_count	2	u16	map		CHIME.MAP
+CHIME.EXE+0086C	sounding	1	u8	map		CHIME.MAP
+CHIME.EXE+0086D	keys_held	1	u8	map		CHIME.MAP
+CHIME.EXE+0086E	playing	1	u8	map		CHIME.MAP
+CHIME.EXE+0086F	note	1	u8	map		CHIME.MAP

@@ -129,9 +129,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
   ports SESSION [PORT,...] [--tick N] [--ticks N]
                          the instructions that read and write each port (hex), or those given: the
                          display's retrace (3DA), the sound card, the joystick (201)
-  frame SESSION --tick N [--out FILE]
+  frame SESSION --tick N [--screen] [--out FILE]
                          the picture the original showed by the end of tick N, as a PNG (in
-                         .rrc/frames/ unless --out says where)
+                         .rrc/frames/ unless --out says where); --screen, what its screen held at the
+                         tick's sync point, which a port's frame is compared with
   trace SESSION [--tick N] [--item NAME [--lines N]] [--path]
                          a recorded trace: a summary, one tick, or one item over the ticks, values
                          read as data.tsv's types (an array as its elements that aren't zero);

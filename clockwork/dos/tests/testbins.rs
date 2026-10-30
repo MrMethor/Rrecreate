@@ -108,6 +108,32 @@ fn a_game_loads_what_it_shows_and_plays_from_an_archive() {
 }
 
 #[test]
+fn a_chime_sounds_on_the_speaker_and_the_opl() {
+    // CHIME.EXE: Space plays a note on the speaker and the OPL for 20 passes; Up picks a higher one. Three
+    // notes, the third cutting the second off.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testbins/bin");
+    let mut drive = Vfs::new();
+    drive.insert_file("CHIME.EXE", std::fs::read(dir.join("CHIME.EXE")).unwrap());
+    let mut m = Machine::with_program(Config::default(), drive, "CHIME.EXE", "").unwrap();
+    let press = |m: &mut Machine, at: u64, scan: u8, extended: bool| {
+        let prefix: &[u8] = if extended { &[0xE0] } else { &[] };
+        m.queue_scancodes(m.cycle_at_ms(at), &[prefix, &[scan]].concat());
+        m.queue_scancodes(m.cycle_at_ms(at + 60), &[prefix, &[scan | 0x80]].concat());
+    };
+    for (at, scan, extended) in [(500, 0x39, false), (1000, 0x48, true), (1300, 0x48, true), (1600, 0x39, false)] {
+        press(&mut m, at, scan, extended);
+    }
+    press(&mut m, 1800, 0x39, false);
+    press(&mut m, 2600, 0x01, false);
+    assert_eq!(m.run(4 * SECOND), Stop::Exited(3), "three notes played");
+    let log = m.audio_log();
+    let key_ons = log.opl.iter_from(0).filter(|w| w.register == 0xB0 && w.value & 0x20 != 0).count();
+    assert_eq!(key_ons, 3, "a key on for each note");
+    assert!(log.speaker.iter_from(0).count() >= 6, "the speaker on and off for each note");
+    assert!(m.diagnostics.is_empty(), "{:?}", m.diagnostics);
+}
+
+#[test]
 fn a_snapshot_on_disk_goes_on_exactly_as_the_machine_would_have() {
     // Files written and renamed, mode 13h and the DAC, a timer interrupt handler, x87 code: half
     // way through, saved and loaded again, each runs on to the same end as without the snapshot.

@@ -222,14 +222,20 @@ pub(crate) struct TraceWriter {
 }
 
 impl TraceWriter {
-    pub fn create(path: &str, session: &str, from: u64) -> Result<TraceWriter, String> {
+    /// `sounds`: the port's ticks have their sound (D108).
+    pub fn create(path: &str, session: &str, from: u64, sounds: bool) -> Result<TraceWriter, String> {
         let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
         let mut writer = TraceWriter { file: std::io::BufWriter::new(file), path: path.to_owned(), last: None };
-        writer.line(&json!({"format": "rrc-port-trace", "version": 1, "session": session, "from": from}))?;
+        let mut header = json!({"format": "rrc-port-trace", "version": 1, "session": session, "from": from});
+        if sounds {
+            header["sound"] = json!(true);
+        }
+        writer.line(&header)?;
         Ok(writer)
     }
 
-    pub fn tick(&mut self, tick: u64, state: Value) -> Result<(), String> {
+    /// The tick's state, its frame's picture file when it changed (D107), and its sound (D108).
+    pub fn tick(&mut self, tick: u64, state: Value, frame: Option<&str>, sound: Option<Value>) -> Result<(), String> {
         let state = match state {
             Value::Object(fields) => fields,
             other => Map::from_iter([("state".to_owned(), other)]),
@@ -241,7 +247,14 @@ impl TraceWriter {
             }
         };
         self.last = Some(state);
-        self.line(&json!({"tick": tick, "state": changed}))
+        let mut line = json!({"tick": tick, "state": changed});
+        if let Some(frame) = frame {
+            line["frame"] = json!(frame);
+        }
+        if let Some(sound) = sound.filter(|s| s.as_object().is_some_and(|o| !o.is_empty())) {
+            line["sound"] = sound;
+        }
+        self.line(&line)
     }
 
     pub fn end(mut self, last: u64) -> Result<(), String> {

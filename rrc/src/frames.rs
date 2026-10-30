@@ -1,5 +1,6 @@
 //! `rrc frame SESSION --tick N`: the picture the original showed by the end of a tick, as a PNG
-//! (what image viewers and agents read), from the session's trace. Traces keep each frame's picture
+//! (what image viewers and agents read), from the session's trace; with `--screen`, what its screen held at
+//! the tick's sync point, which a port's frame is compared with (D107). Traces keep each frame's picture
 //! in the cache as indexed pixels and the palette (D25; the format is in `docs/formats.md`).
 
 use std::io::{Read, Write};
@@ -14,8 +15,8 @@ use crate::session::Session;
 use crate::trace::Trace;
 
 pub(crate) fn frame(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--tick", "--out"], &[])?;
-    let [name] = a.positionals(1, 1, "frame SESSION --tick N [--out FILE]")? else { unreachable!() };
+    let a = Args::parse(args, &["--tick", "--out"], &["--screen"])?;
+    let [name] = a.positionals(1, 1, "frame SESSION --tick N [--screen] [--out FILE]")? else { unreachable!() };
     let tick: u64 = a.required("--tick")?.parse().map_err(|_| "--tick is a number")?;
     let session = Session::load(repo, name)?;
     let recorded = session.trace.ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
@@ -23,6 +24,22 @@ pub(crate) fn frame(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
     if tick == 0 || tick > trace.ticks.len() as u64 {
         return Err(format!("no tick {tick} (1 to {})", trace.ticks.len()));
+    }
+    if a.has("--screen") {
+        let screen = trace.ticks.iter().take_while(|t| t.tick <= tick).filter_map(|t| t.screen.as_ref()).last();
+        let hash = screen.ok_or_else(|| format!("the trace has no screen by tick {tick}: rrc record {name}"))?;
+        let picture = Picture::decode(&cache.get(hash)?)?;
+        let out = match a.value("--out") {
+            Some(path) => PathBuf::from(path),
+            None => repo.state()?.join("frames").join(format!("{name}-{tick}-screen.png")),
+        };
+        if let Some(dir) = out.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(&out, picture.png()).map_err(|e| format!("{}: {e}", out.display()))?;
+        say("screen", format!("at tick {tick}'s sync point, {} × {}", picture.width, picture.height));
+        say("png", crate::path_text(&out));
+        return Ok(ExitCode::SUCCESS);
     }
     let frame = trace.ticks.iter().take_while(|t| t.tick <= tick).flat_map(|t| &t.frames).last();
     let frame = frame.ok_or_else(|| format!("no frame was shown by tick {tick}"))?;

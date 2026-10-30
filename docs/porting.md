@@ -430,6 +430,34 @@ gets the mapped fields they wrote at that tick with its inputs. Edit through the
 count with the list it counts): a state play can't reach makes a divergence after it a false alarm, and
 `rrc compare` names the last edit before a divergence for that reason.
 
+## Frames and sound
+
+Once the logic matches, the port draws and sounds (M6, D107, D108). Its simulation never draws: it shows a scene, what there is
+to draw at a tick as meaning (the map, the player, the picture shown: `rrc_runtime::present::Shows`), and a
+presentation draws it (`Presentation`: `start`, the screen at the first tick; `draw`, what a pass drew onto
+the screen before), keeping its own state as the original's drawing code keeps its own (what it drew last).
+`main` becomes `rrc_runtime::main_drawn::<Game, Screen>()`; `examples/vault` is one.
+
+```bash
+rrc compare first-level
+rrc frame first-level --tick 102 --screen
+```
+
+`rrc compare` then compares each tick's frame with what the original's screen held at the tick's sync point
+(its memory and palette), pixel by pixel and colour by colour, once the state matches there. At the first
+frame that differs it says how many pixels and where, the first one with both indices, the colours that
+differ, writes a picture (the original's screen, the port's frame, the differing pixels in red), and in mode
+13h who drew the first pixel in the pass to it, with the port's code for that function, as for a value
+(`draw_cell (GAME.EXE+004DD) is src/main.rs:251`). `rrc frame --screen` writes the original's screen at a
+tick.
+
+Sound is a presentation's too (`Presentation::sound`, `SOUNDS = true`; `DRAWS = false` for one that doesn't
+draw yet): what the pass before a tick made, by device, as the original's would be logged without times (the
+OPL's register writes, the speaker's states, digitized sounds started, MIDI bytes; the start-up's from
+power-on). `rrc trace SESSION --tick N` shows the original's (`opl: A0=59 B0=35`, `speaker: tone 2281/1141`),
+and `rrc compare` compares the port's with them in order, device by device; at the first that differs it
+names the device, the event, and who wrote the device's ports in the pass (`examples/chime`).
+
 ## Quirks
 
 The original's bugs stay in the faithful port, each as a registered quirk (DESIGN.md §6.5, D74):

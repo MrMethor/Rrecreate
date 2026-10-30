@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 10;
+pub const PROTOCOL: u64 = 11;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -61,6 +61,7 @@ pub const MACHINE_OPS: &[&str] = &[
     "sound",
     "image",
     "screenshot",
+    "screen",
 ];
 
 struct State {
@@ -71,11 +72,13 @@ struct State {
     /// The watch's physical spans with the linear address each was watched at, to name what it
     /// reports as it was asked for when paging is on.
     watched: Vec<(Range<u32>, u32)>,
+    /// The fingerprint of the screen a `tick` last handed over (D107).
+    screen: Option<u64>,
 }
 
 impl State {
     fn new() -> State {
-        State { m: None, copies: BTreeMap::new(), image: 0..0, watched: Vec::new() }
+        State { m: None, copies: BTreeMap::new(), image: 0..0, watched: Vec::new(), screen: None }
     }
 }
 
@@ -219,6 +222,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let image = format!("@{:X}", st.image.start);
             let reply = json!({"psp": m.dos.psp, "image": image, "image_size": st.image.len(), "cycles": m.cpu.cycles});
             st.m = Some(m);
+            st.screen = None;
             return Ok(reply);
         }
         "forget" => {
@@ -229,6 +233,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let name = text(r, "name")?;
             let copy = st.copies.get(name).ok_or_else(|| format!("no copy {name:?}"))?;
             st.m = Some(copy.clone());
+            st.screen = None;
             return Ok(json!({"cycles": copy.cpu.cycles}));
         }
         "tick" => {
@@ -245,6 +250,16 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 reply["sound"] = handle(st, "sound", &span)?;
                 if let Some(m) = st.m.as_mut().filter(|m| m.frame_images.is_some()) {
                     reply["images"] = images(m);
+                }
+                // The screen at the sync point, when it changed since the last handed over (D107).
+                if flag(r, "screen")?.unwrap_or(false)
+                    && let Some(m) = st.m.as_mut()
+                {
+                    let (fingerprint, picture) = m.screen();
+                    if st.screen != Some(fingerprint) {
+                        st.screen = Some(fingerprint);
+                        reply["screen"] = json!(hex(&picture));
+                    }
                 }
             }
             return Ok(reply);
@@ -472,6 +487,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             Ok(json!({}))
         }
         "take_frame_images" => Ok(json!({ "images": images(m) })),
+        "screen" => Ok(json!({ "picture": hex(&m.screen().1) })),
         "coverage" => {
             if flag(r, "on")?.unwrap_or(true) {
                 m.start_coverage();
@@ -924,6 +940,31 @@ mod tests {
     fn ask_state(st: &mut State, request: Value) -> Result<Value, String> {
         let op = request["op"].as_str().unwrap().to_owned();
         guarded(st, |st| handle(st, &op, &request))
+    }
+
+    #[test]
+    fn a_tick_hands_over_the_screen_when_it_changed() {
+        let dir = game("screen");
+        let mut st = State::new();
+        ask_state(&mut st, json!({"op": "load", "argv": [dir.to_str().unwrap(), "T.COM"]})).unwrap();
+        ask_state(&mut st, json!({"op": "sync", "at": "+0000"})).unwrap();
+        let first = ask_state(&mut st, json!({"op": "tick", "from": 0, "screen": true})).unwrap();
+        let picture = first["screen"].as_str().expect("the first tick's screen");
+        let shown = ask_state(&mut st, json!({"op": "screen"})).unwrap();
+        assert_eq!(shown["picture"].as_str(), Some(picture), "the same screen, asked for");
+        let next = json!({"op": "tick", "from": first["cycles"], "screen": true});
+        assert!(
+            ask_state(&mut st, next).unwrap().get("screen").is_none(),
+            "an unchanged screen isn't handed over again"
+        );
+        // A record, not state: the same ticks without it give the same state hash.
+        let mut plain = State::new();
+        ask_state(&mut plain, json!({"op": "load", "argv": [dir.to_str().unwrap(), "T.COM"]})).unwrap();
+        ask_state(&mut plain, json!({"op": "sync", "at": "+0000"})).unwrap();
+        let ran = ask_state(&mut plain, json!({"op": "tick", "from": 0})).unwrap();
+        ask_state(&mut plain, json!({"op": "tick", "from": ran["cycles"]})).unwrap();
+        let hash = |st: &mut State| ask_state(st, json!({"op": "hash"})).unwrap()["state_hash"].clone();
+        assert_eq!(hash(&mut st), hash(&mut plain));
     }
 
     #[test]

@@ -16,7 +16,9 @@ generator), the 3D view's parts given to it as a part not ported (D84, D96, D98,
 D80-D99. M5 done, the game's data (D101-D106): a port reads and decodes the game's files, and the vault test
 program's port (`examples/vault`) matches from power-on through its title and play; formats are knowledge, and
 `rrc asset` extracts pictures, maps, sounds and music equal to what the original loaded (the vault's members;
-Arena's level map, title, sounds and music); the Arena port reads its level's texts itself. Rrecreate began
+Arena's level map, title, sounds and music); the Arena port reads its level's texts itself. M6 under way: a
+port draws and sounds through a presentation, its frames compared with the original's screen and its sound
+with the original's events (D107, D108). Rrecreate began
 from Recreate's emulator and parts of its tooling
 (§11); Recreate itself is disregarded (D69).
 
@@ -280,7 +282,9 @@ the port branches on `rrc_runtime::keeps(NAME)` (D74).
   the one at the first tick, memory the program hasn't set (a heap block's leftovers); the comparison names
   who last wrote it before, which tells leftovers from data the port should have loaded (D102).
 - **Frames and sound:** in faithful mode, the port's rendering of each tick is compared with the original's
-  frame as indexed pixels and palette, and sound as events per tick, not samples.
+  screen at the tick's sync point (its memory and palette, D107) as indexed pixels and palette, and sound as
+  events per tick, not samples (in order, by device, without their times, D108). At the first frame that
+  differs, who drew its first differing pixel is found as who wrote a value is.
 - **Progress:** the share of the original's executed code exercised by sessions that match, and the share of
   its state the mapping covers.
 

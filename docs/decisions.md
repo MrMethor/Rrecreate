@@ -686,6 +686,53 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D108. A port's sound is compared with the original's events, in order and without times. Accepted 2026-10-30.
+M6's second piece (DESIGN.md §6.1, §7):
+- **What is compared:** each tick's sound events by device, as Clockwork logs them for the trace (the OPL's
+  register writes, the speaker's states, digitized sounds started, MIDI bytes), in order, without their
+  times: a port can't make the emulated nanoseconds within a pass, and the order and values are what a
+  faithful sound backend reproduces. A speaker tone is its period and high time, without its origin.
+- **How a port sounds:** its presentation's `sound` makes what the pass before a tick made (with no pass, the
+  start-up's, from power-on), from the scene after it (`rrc_runtime::present::Sounds`). A presentation says
+  whether it draws and whether it sounds (`DRAWS`, `SOUNDS`): one that sounds says so in its trace's header,
+  and is compared there; one that doesn't draw isn't asked for frames. Its `start` runs at the first tick
+  whenever it draws or sounds, to take up the scene.
+- **The comparison:** after a tick's state and screen match, its sound, device by device. At the first that
+  differs: the device, the event (both sides'), and who wrote the device's I/O ports in the pass (`rrc
+  ports`). `rrc trace --tick N` shows a tick's events as a port makes them (`opl: A0=59 B0=35`).
+
+The writer is the instruction that wrote the port (in a C library's `outp`, the caller isn't named); a call
+chain for port writes comes as games need it. Digitized sound is compared by its starts, not its samples.
+**Why:** a faithful port's sound must be the original's (M6), and DESIGN.md §7 compares sound as events.
+`testbins/src/chime.c`, a note on the speaker and the OPL, is the test program: its port (`examples/chime`)
+sounds as the original at all 182 ticks, the instrument at start-up and three notes, one cutting another off
+(the speaker held high while the timer is set again); a note keyed an octave low is found at tick 36, its key
+on (`B0=35`, the port's `B0=31`).
+
+### D107. A port's frames are compared with the original's screen at each sync point. Accepted 2026-10-30.
+M6's first piece (DESIGN.md §6.1, §7):
+- **What is compared:** what the original's screen holds at a tick's sync point, its memory and palette
+  rendered as a frame's picture (indexed pixels and the DAC's colours), not the frames its display showed: a
+  retrace shows what was drawn by then, which depends on timing the logic doesn't have, while the screen at
+  the sync point is what the passes before it drew. Clockwork renders it on request (`screen`, and `tick`'s
+  `"screen": true`, when it changed; protocol 11), and the trace keeps it per tick (`screen`, version 10).
+- **How a port draws:** its simulation shows a scene (`rrc_runtime::present::Shows`, borrowed, as meaning), and
+  a presentation draws it: `start`, the screen at the first tick (drawn from power-on, or the original's given
+  from a transplant), and `draw`, what a pass drew onto the screen before. The presentation keeps its own
+  state, as the original's drawing code does, and never changes the simulation. `main_drawn` runs it; with
+  `--frames DIR` the runtime writes each frame that changed (`<tick>.frm`, `FRM1`, as Clockwork's pictures).
+- **The comparison:** `rrc compare` asks for frames when the trace has screens, and compares each tick whose
+  state matches: the pixels and the colours. At the first that differs, it says how many pixels and where,
+  the first pixel with both indices, the colours, writes a picture of both and their differences, and in mode
+  13h finds who drew the first pixel (a watch of its byte at `MEM+A0000` + y × 320 + x in the pass to it) and
+  the port's code for that function (D73).
+
+Other video modes' pixels (planar, Mode X) find their writer as games need it; sound: D108.
+**Why:** a faithful port's frames must equal the original's (M6). Measured on the vault: its port's screen
+(the title, then both levels as the player walks) is the original's at all 506 ticks; a wall drawn in the
+wrong colour is found at tick 102, the first frame of play, 5580 pixels from (64, 4), drawn by `draw_cell <
+draw < main`, and the port's `draw_cell` named.
+
 ### D106. M5 is done: the game's data, from a test program's power-on to Arena's assets. Accepted 2026-10-30, with the person.
 M5 closes with both its tests passing and the rest of its scope done, as the person asked before closing it:
 - The vault test program's port (`examples/vault`) reads its archive through the runtime and matches its

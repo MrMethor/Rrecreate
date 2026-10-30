@@ -130,7 +130,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 10, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 11, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
@@ -632,6 +632,17 @@ fn a_port_from_power_on_loads_the_game_s_files() {
         ),
         "{compared}"
     );
+    // Its frames (D107): the title, then the levels as the player walks, the original's screen at every
+    // tick's sync point. A wall drawn in the wrong colour: the first frame of play differs, and who drew the
+    // pixel is the original's draw_cell, which the port's names.
+    assert!(compared.contains("screen    the port's frames are the original's screen at all 400 ticks"), "{compared}");
+    rrc.env.push(("VAULT_BUG", "colour"));
+    let (drawn, ok) = rrc.run(&["compare", "play"]);
+    assert!(!ok && drawn.contains("diverges  at tick 102 (play): the screen: 5580 pixels differ"), "{drawn}");
+    assert!(drawn.contains("pixel   (64, 4): original 40, port 41"), "{drawn}");
+    assert!(drawn.contains("write MEM+A0540 = 28h (was 20h) by VAULT.EXE+00576 in draw_cell < draw < main"), "{drawn}");
+    assert!(drawn.contains("port      draw_cell (VAULT.EXE+004DD) is src/main.rs:"), "{drawn}");
+    rrc.env.pop();
 
     // The archive by its format (D103): its members; the title as PNG with its palette; a level decoded as
     // the original loaded it, found in its memory at the tick after the read.
@@ -657,6 +668,36 @@ fn a_port_from_power_on_loads_the_game_s_files() {
         ),
         "{palette}"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_port_s_sound_is_the_original_s() {
+    // The example port (examples/chime) of the chime (testbins/src/chime.c): its notes on the speaker and the
+    // OPL, made by its presentation, compared with the original's event by event, tick by tick (D108).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, mut rrc) = setup_file("chime", "CHIME.EXE", &std::fs::read(root.join("testbins/bin/CHIME.EXE")).unwrap());
+    let port = built("chime-port", "chime-port", true);
+    let files = ["mapping.toml", "sessions/play.toml", "sessions/play.inputs", "src/main.rs"];
+    let knowledge = ["functions.tsv", "data.tsv", "types.toml", "ticks.toml"].map(|f| format!("knowledge/{f}"));
+    example_repository(&rrc, "chime", &port, &[&files[..], &knowledge.each_ref().map(String::as_str)[..]].concat());
+    assert!(rrc.ok(&["game", dir.join("game").to_str().unwrap()]).contains("version   1.0"));
+    let recorded = rrc.ok(&["record", "play"]);
+    assert!(recorded.contains("trace     182 ticks"), "{recorded}");
+    // What the trace shows of a note's start: the OPL's writes and the speaker's tone.
+    let tick = rrc.ok(&["trace", "play", "--tick", "36"]);
+    assert!(tick.contains("sound     opl: A0=59 B0=35") && tick.contains("speaker: tone 2281/1141"), "{tick}");
+    let compared = rrc.ok(&["compare", "play"]);
+    assert!(compared.contains("match     every mapped field at all 182 ticks"), "{compared}");
+    assert!(compared.contains("sound     the port's sound is the original's at all 182 ticks"), "{compared}");
+    assert!(compared.contains("screen    not compared: the port draws no frames"), "{compared}");
+    // A note keyed an octave low: its key on differs, and who wrote the OPL's ports is named.
+    rrc.env.push(("CHIME_BUG", "block"));
+    let (heard, ok) = rrc.run(&["compare", "play"]);
+    assert!(!ok && heard.contains("diverges  at tick 36 (pass): the opl sound: 2 events, the port's 2"), "{heard}");
+    assert!(heard.contains("event   2: original B0=35, port B0=31"), "{heard}");
+    assert!(heard.contains("389h      written by CHIME.EXE+0030F (2)"), "{heard}");
+    rrc.env.pop();
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -1,0 +1,9 @@
+# id	name	provenance	confidence	evidence
+CHIME.EXE+0006A	opl	agent		chime.c's static opl, which CHIME.MAP doesn't list: main's last call before restoring the timer (+002D5), after speaker_off
+CHIME.EXE+000E5	speaker_off	agent		chime.c's static speaker_off: main's first call after the loop (+002CD)
+CHIME.EXE+000FE	instrument	agent		chime.c's static instrument: main's call before the loop (+002BB)
+CHIME.EXE+00156	wait_tick	map		CHIME.MAP
+CHIME.EXE+00166	pass	map		CHIME.MAP
+CHIME.EXE+00274	main	map		CHIME.MAP
+CHIME.EXE+00308	outp	map		CHIME.MAP: the C library's
+CHIME.EXE+00312	inp	map		CHIME.MAP: the C library's

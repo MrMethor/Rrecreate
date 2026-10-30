@@ -7,6 +7,8 @@ VAULT.EXE+00383	wait_tick	map		VAULT.MAP
 VAULT.EXE+00393	title_pass	map		VAULT.MAP
 VAULT.EXE+003BC	play_pass	map		VAULT.MAP
 VAULT.EXE+0045D	show_title	agent		vault.c's static show_title, which VAULT.MAP doesn't list: called by main, it loads PALETTE and TITLE (rrc asset --session)
+VAULT.EXE+004DD	draw_cell	agent		vault.c's static draw_cell, which VAULT.MAP doesn't list: it wrote the screen's byte MEM+A0540 (rrc compare play, VAULT_BUG=colour)
+VAULT.EXE+0058A	draw	agent		vault.c's static draw, which VAULT.MAP doesn't list: it calls draw_cell, main calls it after play_pass
 VAULT.EXE+00637	main	map		VAULT.MAP
 VAULT.EXE+008FE	_fmalloc	map		VAULT.MAP: Watcom's far heap allocation
 VAULT.EXE+01436	__AllocSeg	map		VAULT.MAP: Watcom's far heap, a new segment from DOS

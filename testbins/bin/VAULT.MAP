@@ -1,7 +1,7 @@
 Open Watcom Linker Version 2.0 beta Oct  1 2026 06:41:58 (64-bit)
 Copyright (c) 2002-2026 The Open Watcom Contributors. All Rights Reserved.
 Portions Copyright (c) 1985-2002 Sybase, Inc. All Rights Reserved.
-Created on:       26/10/29 19:42:58
+Created on:       26/10/30 08:11:29
 Executable Image: bin\VAULT.EXE
 creating a DOS executable
 
@@ -53,7 +53,7 @@ STACK                  STACK          DGROUP         02f5:0000       00000800
 Address        Symbol
 =======        ======
 
-Module: C:\Users\arnol\AppData\Local\Temp\claude\C--Users-arnol-Documents-Codes-Rrecreate--claude-worktrees-rrecreate-dos-rust-toolkit-c5f9db\ec1b1e8a-634a-4020-8f53-33a4134315e7\scratchpad\wobj\vault.obj(C:\Users\arnol\AppData\Local\Temp\claude\C--Users-arnol-Documents-Codes-Rrecreate--claude-worktrees-rrecreate-dos-rust-toolkit-c5f9db\ec1b1e8a-634a-4020-8f53-33a4134315e7\scratchpad\wobj\vault.obj)
+Module: obj\vault.obj(obj\vault.obj)
 01a2:10b6+     _directory
 01a2:1176+     _palette
 01a2:1476+     _key_down
@@ -242,4 +242,4 @@ C:\Users\arnol\Tools\openwatcom\lib286\dos\clibs.lib
 Stack size:  0800 (2048.)
 Memory size:  3750 (14160.)
 Entry point address: 0000:0ad6
-Link time: 00:00.07
+Link time: 00:00.69

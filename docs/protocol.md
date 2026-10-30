@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **10** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **11** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -63,7 +63,8 @@ image is (`image`, `@LINEAR`), `image_size` and `cycles`. `load_snapshot` `{"arg
 next tick); `max_ms` (default 60000) bounds a run to a sync point. A stop at a sync point says `sync`: `{"at",
 "hit"}` (and `skipped`, at a gated one). `tick` `{"from", "ranges", "max_ms"}` is a tick in one request: runs
 to the next tick, then answers as `read` (`data`), `frames` and `sound` since cycle `from` would, and with
-the pictures recorded meanwhile (`images`).
+the pictures recorded meanwhile (`images`); with `"screen": true`, `screen` too, the screen at the sync point as
+`screen` answers it, when it differs from the last a `tick` handed over (D107).
 
 **Sync points.** `sync` `{"at", "log": false, "gate": [...]}`: counts the hits of the instruction at `at`
 (`log`: their cycles too). With a gate (D48), a hit counts only when the gate's sources changed since the
@@ -143,7 +144,8 @@ picture is `FRM1`, the width and height (16-bit, little-endian) and a kind (0 in
 R, G, B at 0-63, then a byte a pixel; 1 RGB: 3 bytes a pixel), raw-deflated, pixels row by row from the top
 left. `sound` `{"from", "to"}`: the sound events then, by kind (the platform's kinds). `screenshot` `{"file"}`:
 the screen now as a picture file (PNG for `.png`, the platform's other format otherwise), answering its
-`width`, `height` and the last `frame`'s number.
+`width`, `height` and the last `frame`'s number. `screen`: what the screen's memory and palette hold now, as
+a frame's picture (`picture`, hex), which a port's frame at a sync point is compared with (D107).
 
 ## The `dos-pc` platform
 
@@ -189,6 +191,7 @@ An IBM PC with DOS (Clockwork).
    the program writes (D96), the program's writes not followed, and only the reads of those instructions
    counted (none listed: all).
 10. `entries`, `entries_end`: the runs of chosen entries with the registers (D98).
+11. `screen`, and `tick`'s `screen`: the screen at a sync point as a picture (D107).
 
 ## Changing the protocol
 

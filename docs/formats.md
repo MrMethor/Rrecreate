@@ -438,6 +438,9 @@ JSON lines (D72): a header, a line per tick, and an end line.
 - `sound`: the sound events since the tick before, by device, only those with events: `opl` `[ns, register,
   value]`, `speaker` `[pit_tick, waveform]`, `pcm` (digitized sound starts) `[ns, rate, stereo]`, `midi`
   `[pit_tick, byte]`, `cd` `[ns, sector, sectors]`.
+- `screen`: what the screen's memory and palette held at the tick's sync point, as a frame's picture would
+  show them (its hash in the cache, below), when it changed since the tick before (version 10, D107): what a
+  port's frame at the tick is compared with.
 - The end line says why the run stopped (`the session's end`, at exactly its length, or the program exiting,
   halting or faulting) and when, the frames and sound after the last tick, and Clockwork's hash of the
   machine's state then.
@@ -463,6 +466,7 @@ Pixels go row by row from the top left; text modes are drawn with their font, as
 
 ```
 run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK --save FILE] [--to TICK]
+    [--frames DIR [--screen FILE]]
 ```
 
 and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is
@@ -500,3 +504,15 @@ inputs and the trace are JSON lines.
   `{"tick":1,"state":{…}}`, with the top-level fields of the state that changed since the line before (all at the
   first), and last `{"end":1400}`. A mapped field the port hasn't set yet is `null`: it matches while the
   original's value is the one at the first tick (D102).
+- **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the
+  port draws it, a frame's picture (below, `FRM1`, indexed), in `DIR/<tick>.frm` when it changed since the tick
+  before, and the tick's line in the trace names it: `{"tick":102,"state":{…},"frame":"102.frm"}`. `--screen
+  FILE` gives a port that starts from a transplant or a resumed state the original's screen then, a picture
+  too. `rrc compare` asks for frames when the session's trace has screens, and compares each tick's frame with
+  the original's screen pixel by pixel and colour by colour.
+- **Sound** (D108): a port that sounds says so in its trace's header, `"sound":true`, and a tick's line has
+  the sound the pass before it made (the start-up's at the first tick from power-on), by device, only devices
+  with sound, without times: `"sound":{"opl":[[176,53]],"speaker":[{"tone":[2281,1141]},{"steady":false}]}`:
+  `opl` `[register, value]`, `speaker` `{"steady": on}`, `{"tone": [period, high]}` (timer ticks) or
+  `{"one_shot": true}`, `pcm` `[rate, stereo]`, `midi` a byte. `rrc compare` compares them with the original's
+  events of the tick, their times and a tone's origin left out, in order, device by device.

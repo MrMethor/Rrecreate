@@ -1,0 +1,3 @@
+description = "Space plays C5; Up twice and Space plays E5; Space again before it ends plays it again; Esc ends"
+inputs = "play.inputs"
+seconds = 3.0

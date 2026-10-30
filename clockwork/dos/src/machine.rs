@@ -1578,6 +1578,17 @@ impl Machine {
     pub fn take_frame_images(&mut self) -> Vec<(u64, Vec<u8>)> {
         self.frame_images.as_mut().map(|images| std::mem::take(&mut images.pending)).unwrap_or_default()
     }
+
+    /// What the screen's memory and palette hold now, as a frame's picture would show them, with a
+    /// fingerprint of it (D107): what a port's frame at a sync point is compared with. A record, not state:
+    /// it reads the machine and leaves the display's own fingerprint, which the state hash covers, alone.
+    pub fn screen(&self) -> (u64, Vec<u8>) {
+        let low_ram = self.mem.slice(0xB_0000, vga_draw::LOW_RAM_SIZE);
+        let picture = crate::frame_image::encode(&self.devices.vga, low_ram);
+        let mut h = Fnv64::default();
+        h.write(&picture);
+        (h.finish(), picture)
+    }
 }
 
 /// Code page 437 for the printable range; other bytes shown as '·'.

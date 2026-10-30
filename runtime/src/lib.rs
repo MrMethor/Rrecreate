@@ -20,12 +20,15 @@
 //! ```
 //!
 //! What the port loads from the person's copy of the game (the program's static data, the game's
-//! files) is in [`original`] (D82).
+//! files) is in [`original`] (D82). A port that draws (M6) shows its simulation's scene through a
+//! presentation and calls [`main_drawn`]; its frames are compared with the original's screen ([`present`],
+//! D107).
 
 pub mod audio;
 pub mod codecs;
 mod files;
 pub mod original;
+pub mod present;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
@@ -280,14 +283,19 @@ pub struct Request {
     pub save: Option<(u64, String)>,
     /// The last tick to run.
     pub to: Option<u64>,
+    /// Write the frames it draws into this folder (D107).
+    pub frames: Option<String>,
+    /// The original's screen at the first tick, for a port that starts from a transplant or a saved
+    /// state (a frame's picture).
+    pub screen: Option<String>,
 }
 
 impl Request {
     /// `run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK --save FILE]
-    /// [--to TICK]`
+    /// [--to TICK] [--frames DIR [--screen FILE]]`
     pub fn parse(args: &[String]) -> Result<Request, String> {
         let usage = "usage: PORT run --inputs FILE --out FILE [--transplant FILE | --resume FILE] \
-                     [--save-at TICK --save FILE] [--to TICK]";
+                     [--save-at TICK --save FILE] [--to TICK] [--frames DIR [--screen FILE]]";
         let mut args = args.iter();
         if args.next().map(String::as_str) != Some("run") {
             return Err(usage.into());
@@ -305,6 +313,8 @@ impl Request {
                 "--save-at" => save_at = Some(tick(value()?)?),
                 "--save" => save = Some(value()?),
                 "--to" => request.to = Some(tick(value()?)?),
+                "--frames" => request.frames = Some(value()?),
+                "--screen" => request.screen = Some(value()?),
                 _ => return Err(format!("unknown option {flag}\n{usage}")),
             }
         }
@@ -325,8 +335,17 @@ impl Request {
 
 /// A port's `main`: reads the command line, runs the request, and reports errors on stderr.
 pub fn main<S: Simulation>() -> ExitCode {
+    main_with::<S>(&mut present::Undrawn)
+}
+
+/// The `main` of a port that draws: its simulation's scene drawn by its presentation `P` (D107).
+pub fn main_drawn<S: Simulation + present::Shows, P: present::Presentation<S>>() -> ExitCode {
+    main_with::<S>(&mut present::Drawn(P::default()))
+}
+
+fn main_with<S: Simulation>(drawer: &mut dyn present::Drawer<S>) -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match Request::parse(&args).and_then(|request| run::<S>(&request)) {
+    match Request::parse(&args).and_then(|request| run_drawn::<S>(&request, drawer)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("port: error: {message}");
@@ -338,6 +357,12 @@ pub fn main<S: Simulation>() -> ExitCode {
 /// Runs the port as `request` says: from its start state (or a transplant, or a saved state) through
 /// the session's ticks, writing its state at every tick before it steps.
 pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
+    run_drawn::<S>(request, &mut present::Undrawn)
+}
+
+/// The same, with the frames `drawer` draws written when the request asks for them (D107): each one
+/// that changed, into `frames` as `<tick>.frm`, named on its tick's line.
+fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<S>) -> Result<(), String> {
     let inputs = InputsFile::read(&request.inputs)?;
     let (mut state, first) = match (&request.transplant, &request.resume) {
         (Some(file), _) => {
@@ -350,7 +375,20 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
         }
         _ => (S::start(), 1),
     };
-    let mut out = files::TraceWriter::create(&request.out, &inputs.session, first)?;
+    let sounding = drawer.sounds() && request.frames.is_some();
+    let mut out = files::TraceWriter::create(&request.out, &inputs.session, first, sounding)?;
+    let drawing = request.frames.as_deref().filter(|_| drawer.draws());
+    if let Some(dir) = drawing {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{dir}: {e}"))?;
+    }
+    let given = match &request.screen {
+        Some(file) => Some(present::Frame::decode(&std::fs::read(file).map_err(|e| format!("{file}: {e}"))?)?),
+        None => None,
+    };
+    let mut frame = given.clone().unwrap_or_else(|| present::Frame::new(320, 200));
+    let mut shown: Option<present::Frame> = None;
+    // The pass the last tick began, which draws the next tick's frame.
+    let mut pass: Option<String> = None;
     let mut current = Inputs::default();
     let mut last = 0;
     for line in &inputs.ticks {
@@ -373,14 +411,36 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
             }
             state = S::transplant(value)?;
         }
+        let mut drawn = None;
+        if drawing.is_some() || sounding {
+            match &pass {
+                None => drawer.start(&state, &mut frame, given.is_some()),
+                Some(pass) => drawer.draw(pass, &state, &mut frame),
+            }
+        }
+        if let Some(dir) = drawing {
+            if shown.as_ref() != Some(&frame) {
+                let name = format!("{}.frm", line.tick);
+                let path = std::path::Path::new(dir).join(&name);
+                std::fs::write(&path, frame.encode()).map_err(|e| format!("{}: {e}", path.display()))?;
+                shown = Some(frame.clone());
+                drawn = Some(name);
+            }
+        }
+        // The sound the pass before made (or the start-up, from power-on), as for the frame (D108).
+        let mut sounds = present::Sounds::default();
+        if sounding && (pass.is_some() || given.is_none()) {
+            drawer.sound(pass.as_deref(), &state, &mut sounds);
+        }
         let value = serialize(&state)?;
-        out.tick(line.tick, value.clone())?;
+        out.tick(line.tick, value.clone(), drawn.as_deref(), sounding.then(|| sounds.to_json()))?;
         if let Some((at, file)) = &request.save
             && *at == line.tick
         {
             PortState { tick: line.tick, state: value }.write(file)?;
         }
         state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current });
+        pass = Some(line.sync.clone());
         last = line.tick;
     }
     out.end(last)

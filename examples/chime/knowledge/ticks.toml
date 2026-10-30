@@ -1,0 +1,23 @@
+# Sync points and boundary values (docs/formats.md).
+[[sync]]
+name = "pass"
+at = "CHIME.EXE+002C8"
+provenance = "map"
+evidence = "CHIME.MAP: main's loop calls wait_tick at +002C5"
+note = "where the loop's wait_tick returns: a pass is next"
+
+[[input]]
+name = "timer_count"
+at = "CHIME.EXE+0086A"
+size = 2
+provenance = "map"
+evidence = "CHIME.MAP"
+note = "INT 08h's count, 70 Hz"
+
+[[input]]
+name = "key_down"
+at = "CHIME.EXE+007DC"
+size = 128
+provenance = "map"
+evidence = "CHIME.MAP"
+note = "INT 09h's key states, by scan code"

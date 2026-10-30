@@ -27,6 +27,7 @@ use crate::say;
 use crate::session::{Pair, Session};
 use crate::trace::Trace;
 use crate::values::{Reader, Target, at_path, decode, differences};
+use rrc_runtime::present::Frame;
 
 /// Fields shown of a divergence.
 const SHOWN: usize = 8;
@@ -101,6 +102,19 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     if let Some(t) = to {
         port_args.extend(["--to".into(), t.to_string()]);
     }
+    // The original's screen at each tick (D107): the port is asked for its frames when the trace has it.
+    let screens = screens(&trace);
+    if screens.iter().any(Option::is_some) {
+        let frames = work.join("frames");
+        if frames.is_dir() {
+            std::fs::remove_dir_all(&frames).map_err(|e| format!("{}: {e}", frames.display()))?;
+        }
+        port_args.extend(["--frames".into(), file("frames")]);
+        if let Some(hash) = transplant.or(resume).and_then(|t| screens[(t - 1) as usize].as_ref()) {
+            std::fs::write(file("screen.frm"), cache.get(hash)?).map_err(|e| e.to_string())?;
+            port_args.extend(["--screen".into(), file("screen.frm")]);
+        }
+    }
     run_port(repo, &port_args)?;
 
     // Tick by tick, the port's state against the original's.
@@ -116,6 +130,12 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     }
     let mut state = json!({});
     let (mut first, mut last, mut diverged) = (None, 0, None);
+    // The port's frame and the original's screen, decoded as they change.
+    let mut seen = Screens::default();
+    let mut drawn: Option<(u64, ScreenDiff)> = None;
+    // The port's sound, if it says it makes it (D108).
+    let sounding = header["sound"] == json!(true);
+    let mut heard: Option<(u64, SoundDiff)> = None;
     // The fields the port left unset (null), by the ticks they were (D102).
     let mut unset: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
     for line in lines {
@@ -123,6 +143,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         let Some(t) = v["tick"].as_u64() else { continue };
         for (key, value) in v["state"].as_object().into_iter().flatten() {
             state[key] = value.clone();
+        }
+        if let Some(frame) = v["frame"].as_str() {
+            seen.port(&work.join("frames").join(frame))?;
         }
         if t == 0 || t > ticks {
             return Err(format!("the port's trace has tick {t}; the session has 1 to {ticks}"));
@@ -146,6 +169,16 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             diverged = Some((t, found));
             break;
         }
+        if let Some(hash) = &screens[(t - 1) as usize]
+            && let Some(diff) = seen.compare(hash, &cache)?
+        {
+            drawn = Some((t, diff));
+            break;
+        }
+        if sounding && let Some(diff) = sound_differences(&trace.ticks[(t - 1) as usize].sound, &v["sound"]) {
+            heard = Some((t, diff));
+            break;
+        }
     }
     let first = first.ok_or("the port ran no tick")?;
     let bytes: u32 = mapped.iter().map(|m| m.size).sum();
@@ -156,8 +189,35 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         say("unset", format!("{field} at ticks {from}-{to}: the original's held its value of tick {first}, {writer}"));
     }
     let code = match diverged {
+        None if heard.is_some() => {
+            let (t, diff) = heard.as_ref().expect("a sound that differs");
+            if *t > first {
+                say("match", format!("every mapped field at all {} ticks", t - first + 1));
+            }
+            report_sound(repo, name, &trace, *t, diff)?;
+            ExitCode::from(1)
+        }
+        None if drawn.is_some() => {
+            let (t, diff) = drawn.as_ref().expect("a screen that differs");
+            if *t > first {
+                say("match", format!("every mapped field at all {} ticks", t - first + 1));
+            }
+            report_screen(repo, name, &trace, &k, *t, diff, &file(&format!("screen-{t}.png")))?;
+            ExitCode::from(1)
+        }
         None => {
             say("match", format!("every mapped field at all {} ticks", last - first + 1));
+            match seen.compared {
+                0 if screens.iter().any(Option::is_some) => say("screen", "not compared: the port draws no frames"),
+                0 => {}
+                _ => say(
+                    "screen",
+                    format!("the port's frames are the original's screen at all {} ticks", last - first + 1),
+                ),
+            }
+            if sounding {
+                say("sound", format!("the port's sound is the original's at all {} ticks", last - first + 1));
+            }
             ExitCode::SUCCESS
         }
         Some((t, found)) => {
@@ -170,6 +230,277 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     }
     unmapped(&k, &mapped, repo)?;
     Ok(code)
+}
+
+/// The devices whose sound is compared (D108), and the I/O ports that make it.
+const SOUND_DEVICES: [(&str, &str); 4] =
+    [("opl", "388,389"), ("speaker", "42,43,61"), ("pcm", ""), ("midi", "330,331")];
+
+/// Where a tick's sound differs: the device, the first event that differs (its index, the original's, the
+/// port's), and how many each made.
+#[derive(Debug, Clone, PartialEq)]
+struct SoundDiff {
+    device: &'static str,
+    at: usize,
+    original: Option<Value>,
+    port: Option<Value>,
+    counts: (usize, usize),
+}
+
+/// The original's sound events of a tick as a port makes them, without their times (D108): an OPL write
+/// `[register, value]`, the speaker `{"steady": on}`, `{"tone": [period, high]}` or `{"one_shot": true}`, a
+/// digitized sound `[rate, stereo]`, a MIDI byte.
+fn untimed(device: &str, events: Option<&Value>) -> Vec<Value> {
+    let events = events.and_then(Value::as_array).cloned().unwrap_or_default();
+    events
+        .iter()
+        .map(|e| match device {
+            "opl" | "pcm" => json!([e[1], e[2]]),
+            "midi" => e[1].clone(),
+            "speaker" => {
+                let wave = &e[1];
+                if let Some(on) = wave.get("Steady") {
+                    json!({ "steady": on })
+                } else if let Some(p) = wave.get("Periodic") {
+                    json!({ "tone": [p["period"], p["high"]] })
+                } else {
+                    json!({ "one_shot": true })
+                }
+            }
+            _ => e.clone(),
+        })
+        .collect()
+}
+
+/// An untimed sound event as `rrc trace` shows one: `B0=35`, `tone 2281/1141`, `steady off`, `pcm 11025`.
+fn untimed_text(device: &str, event: &Value) -> String {
+    let n = |v: &Value| v.as_u64().unwrap_or(0);
+    match device {
+        "opl" => format!("{:X}={:02X}", n(&event[0]), n(&event[1])),
+        "speaker" => match (event.get("steady"), event.get("tone")) {
+            (Some(on), _) => format!("steady {}", if on.as_bool() == Some(true) { "on" } else { "off" }),
+            (_, Some(t)) => format!("tone {}/{}", n(&t[0]), n(&t[1])),
+            _ => "one-shot".to_owned(),
+        },
+        "pcm" => format!("pcm {}{}", n(&event[0]), if event[1].as_bool() == Some(true) { " stereo" } else { "" }),
+        "midi" => format!("{:02X}", n(event)),
+        _ => event.to_string(),
+    }
+}
+
+/// How a tick's sound from the port differs from the original's, if it does.
+fn sound_differences(original: &serde_json::Map<String, Value>, port: &Value) -> Option<SoundDiff> {
+    for (device, _) in SOUND_DEVICES {
+        let theirs = untimed(device, original.get(device));
+        let ours = port.get(device).and_then(Value::as_array).cloned().unwrap_or_default();
+        if theirs != ours {
+            let at = theirs.iter().zip(&ours).take_while(|(a, b)| a == b).count();
+            return Some(SoundDiff {
+                device,
+                at,
+                original: theirs.get(at).cloned(),
+                port: ours.get(at).cloned(),
+                counts: (theirs.len(), ours.len()),
+            });
+        }
+    }
+    None
+}
+
+/// A tick whose sound differs: the device, its first event that differs, and who wrote the device's ports
+/// in the pass to it.
+fn report_sound(repo: &Repo, name: &str, trace: &Trace, t: u64, diff: &SoundDiff) -> Result<(), String> {
+    let tick = &trace.ticks[(t - 1) as usize];
+    let (theirs, ours) = diff.counts;
+    say(
+        "diverges",
+        format!("at tick {t} ({}): the {} sound: {theirs} events, the port's {ours}", tick.sync, diff.device),
+    );
+    let text = |e: &Option<Value>| e.as_ref().map_or_else(|| "none".to_owned(), |e| untimed_text(diff.device, e));
+    say("  event", format!("{}: original {}, port {}", diff.at + 1, text(&diff.original), text(&diff.port)));
+    let ports = SOUND_DEVICES.iter().find(|(d, _)| *d == diff.device).map_or("", |(_, p)| p);
+    if !ports.is_empty() {
+        say("wrote", format!("its ports ({ports}), between the sync points of ticks {} and {t}:", t.saturating_sub(1)));
+        let args: Vec<String> =
+            [name, ports, "--tick", &t.to_string(), "--ticks", "1"].iter().map(|s| s.to_string()).collect();
+        crate::watch::ports(repo, &args)?;
+    }
+    Ok(())
+}
+
+/// The original's screen at each tick (D107): the last one the trace kept by then, its picture's hash.
+fn screens(trace: &Trace) -> Vec<Option<String>> {
+    let mut last = None;
+    trace
+        .ticks
+        .iter()
+        .map(|t| {
+            if t.screen.is_some() {
+                last.clone_from(&t.screen);
+            }
+            last.clone()
+        })
+        .collect()
+}
+
+/// Where a port's frame and the original's screen differ: the pixels (how many, their box, the first, its
+/// index in each), the colours (index, the original's, the port's), or the size.
+#[derive(Debug, Clone, PartialEq)]
+struct ScreenDiff {
+    pixels: usize,
+    area: (usize, usize, usize, usize),
+    first: Option<(usize, usize, u8, u8)>,
+    colours: Vec<(usize, [u8; 3], [u8; 3])>,
+    sizes: Option<((usize, usize), (usize, usize))>,
+    original: Frame,
+    port: Frame,
+}
+
+/// The two sides' pictures, decoded once each as they change.
+#[derive(Default)]
+struct Screens {
+    port: Option<Frame>,
+    original: Option<(String, Frame)>,
+    /// How many ticks were compared.
+    compared: u64,
+}
+
+impl Screens {
+    fn port(&mut self, file: &std::path::Path) -> Result<(), String> {
+        let bytes = std::fs::read(file).map_err(|e| format!("the port's frame {}: {e}", file.display()))?;
+        self.port = Some(Frame::decode(&bytes).map_err(|e| format!("the port's frame {}: {e}", file.display()))?);
+        Ok(())
+    }
+
+    /// The port's frame against the original's screen `hash`; none when the port draws nothing.
+    fn compare(&mut self, hash: &str, cache: &Cache) -> Result<Option<ScreenDiff>, String> {
+        let Some(port) = &self.port else { return Ok(None) };
+        if self.original.as_ref().is_none_or(|(h, _)| h != hash) {
+            let frame = Frame::decode(&cache.get(hash)?)
+                .map_err(|e| format!("the original's screen: {e} (only indexed modes are compared)"))?;
+            self.original = Some((hash.to_owned(), frame));
+        }
+        self.compared += 1;
+        let (_, original) = self.original.as_ref().expect("decoded");
+        Ok(screen_differences(original, port))
+    }
+}
+
+/// How `port` differs from `original`, if it does.
+fn screen_differences(original: &Frame, port: &Frame) -> Option<ScreenDiff> {
+    let mut diff = ScreenDiff {
+        pixels: 0,
+        area: (usize::MAX, usize::MAX, 0, 0),
+        first: None,
+        colours: Vec::new(),
+        sizes: None,
+        original: original.clone(),
+        port: port.clone(),
+    };
+    if (original.width, original.height) != (port.width, port.height) {
+        diff.sizes = Some(((original.width, original.height), (port.width, port.height)));
+        return Some(diff);
+    }
+    for (i, (a, b)) in original.pixels.iter().zip(&port.pixels).enumerate() {
+        if a != b {
+            let (x, y) = (i % original.width, i / original.width);
+            diff.pixels += 1;
+            diff.first.get_or_insert((x, y, *a, *b));
+            let (x0, y0, x1, y1) = diff.area;
+            diff.area = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+        }
+    }
+    for (i, (a, b)) in original.palette.chunks(3).zip(port.palette.chunks(3)).enumerate() {
+        if a != b {
+            diff.colours.push((i, [a[0], a[1], a[2]], [b[0], b[1], b[2]]));
+        }
+    }
+    (diff.pixels > 0 || !diff.colours.is_empty()).then_some(diff)
+}
+
+/// A screen that differs at tick `t`: where, a picture of both and their differences, and who drew the
+/// original's first differing pixel (mode 13h: its byte at MEM+A0000 + y*320 + x) in the pass to it, with the port's
+/// code for that function (D73).
+fn report_screen(
+    repo: &Repo,
+    name: &str,
+    trace: &Trace,
+    k: &Knowledge,
+    t: u64,
+    diff: &ScreenDiff,
+    png: &str,
+) -> Result<(), String> {
+    let tick = &trace.ticks[(t - 1) as usize];
+    if let Some(((w0, h0), (w1, h1))) = diff.sizes {
+        say(
+            "diverges",
+            format!("at tick {t} ({}): the screen is {w0} × {h0}, the port's frame {w1} × {h1}", tick.sync),
+        );
+        return Ok(());
+    }
+    let (x0, y0, x1, y1) = diff.area;
+    let pixels = if diff.pixels == 0 {
+        "the same pixels".to_owned()
+    } else {
+        format!("{} pixels differ in ({x0}, {y0})-({x1}, {y1})", diff.pixels)
+    };
+    let colours = match diff.colours.len() {
+        0 => String::new(),
+        n => format!(", {n} colour{}", if n == 1 { "" } else { "s" }),
+    };
+    say("diverges", format!("at tick {t} ({}): the screen: {pixels}{colours}", tick.sync));
+    if let Some((x, y, a, b)) = diff.first {
+        say("  pixel", format!("({x}, {y}): original {a}, port {b}"));
+    }
+    for (i, a, b) in diff.colours.iter().take(4) {
+        say("  colour", format!("{i}: original {a:?}, port {b:?}"));
+    }
+    std::fs::write(png, side_by_side(diff).png()).map_err(|e| format!("{png}: {e}"))?;
+    say(
+        "png",
+        format!("{} (the original's, the port's, where they differ)", crate::path_text(std::path::Path::new(png))),
+    );
+    let Some((x, y, _, _)) = diff.first else { return Ok(()) };
+    // The video mode then: the last frame shown by the tick's end.
+    let mode = trace.ticks[..t as usize].iter().flat_map(|t| &t.frames).filter_map(|f| f[2].as_u64()).next_back();
+    if mode != Some(0x13) {
+        say("wrote", "who drew it is found in mode 13h (one byte a pixel from MEM+A0000) only");
+        return Ok(());
+    }
+    let at = format!("MEM+{:05X}", 0xA_0000 + y * 320 + x);
+    say("wrote", format!("({x}, {y}) ({at}), between the sync points of ticks {} and {t}:", t.saturating_sub(1)));
+    let args: Vec<String> = [name, &at, "--len", "1", "--tick", &t.to_string(), "--ticks", "1", "--lines", "4"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let writer = crate::watch::watched(repo, &args)?;
+    port_code(repo, k, &writer.chain);
+    Ok(())
+}
+
+/// The original's screen, the port's frame, and the original's with the pixels that differ in red, side by
+/// side.
+fn side_by_side(diff: &ScreenDiff) -> crate::frames::Picture {
+    let (w, h) = (diff.original.width, diff.original.height);
+    let colour = |f: &Frame, p: u8| -> [u8; 3] {
+        let c = &f.palette[3 * usize::from(p)..3 * usize::from(p) + 3];
+        [(c[0] << 2) | (c[0] >> 4), (c[1] << 2) | (c[1] >> 4), (c[2] << 2) | (c[2] >> 4)]
+    };
+    let mut rgb = Vec::with_capacity(w * 3 * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            rgb.extend(colour(&diff.original, diff.original.pixels[y * w + x]));
+        }
+        for x in 0..w {
+            rgb.extend(colour(&diff.port, diff.port.pixels[y * w + x]));
+        }
+        for x in 0..w {
+            let (a, b) = (diff.original.pixels[y * w + x], diff.port.pixels[y * w + x]);
+            let [r, g, b2] = colour(&diff.original, a);
+            rgb.extend(if a == b { [r / 3, g / 3, b2 / 3] } else { [255, 0, 0] });
+        }
+    }
+    crate::frames::Picture { width: w * 3, height: h, rgb }
 }
 
 /// A field the port left unset (null) is what the original's memory held before the program set it: it
@@ -663,6 +994,39 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use crate::knowledge::{Field, Struct};
+
+    #[test]
+    fn a_tick_s_sound_is_compared_without_its_times() {
+        let original: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "opl": [[100, 0xA0, 0x59], [200, 0xB0, 0x35]],
+            "speaker": [[7, {"Periodic": {"origin": 7, "period": 2281, "high": 1141}}], [9, {"Steady": false}]],
+        }))
+        .unwrap();
+        let port = json!({"opl": [[0xA0, 0x59], [0xB0, 0x35]], "speaker": [{"tone": [2281, 1141]}, {"steady": false}]});
+        assert_eq!(sound_differences(&original, &port), None);
+        let off = json!({"opl": [[0xA0, 0x59], [0xB0, 0x15]], "speaker": [{"tone": [2281, 1141]}, {"steady": false}]});
+        let diff = sound_differences(&original, &off).unwrap();
+        assert_eq!((diff.device, diff.at, diff.port), ("opl", 1, Some(json!([0xB0, 0x15]))));
+        let silent = sound_differences(&original, &json!({})).unwrap();
+        assert_eq!((silent.device, silent.counts), ("opl", (2, 0)));
+        assert_eq!(untimed_text("opl", &json!([0xB0, 0x35])), "B0=35");
+        assert_eq!(untimed_text("speaker", &json!({"tone": [2281, 1141]})), "tone 2281/1141");
+    }
+
+    #[test]
+    fn a_frame_differs_from_the_screen_by_its_pixels_and_colours() {
+        let original = Frame::new(4, 3);
+        assert_eq!(screen_differences(&original, &original), None);
+        let mut port = original.clone();
+        port.set(1, 2, 5);
+        port.set(3, 0, 5);
+        port.palette[3..6].copy_from_slice(&[1, 2, 3]);
+        let diff = screen_differences(&original, &port).unwrap();
+        assert_eq!((diff.pixels, diff.area, diff.first), (2, (1, 0, 3, 2), Some((3, 0, 0, 5))));
+        assert_eq!(diff.colours, [(1, [0, 0, 0], [1, 2, 3])]);
+        assert_eq!(side_by_side(&diff).width, 12);
+        assert!(screen_differences(&original, &Frame::new(4, 4)).unwrap().sizes.is_some());
+    }
 
     #[test]
     fn an_unset_field_matches_while_the_original_s_is_unchanged() {

@@ -17,6 +17,7 @@ Small C programs built with Open Watcom v2 for 16-bit DOS, each exercising one t
 | `MEDIUM.EXE` | medium | two code segments with far calls, a switch compiled to a jump table, recursion |
 | `TOY.EXE` | small | a toy game to port (M3, M4, `examples/toy/`): a 70 Hz timer and a keyboard handler of its own, a player, six enemies, a 32-bit random generator, a pointer to the nearest enemy, a trail on the far heap, packed status bits, text mode |
 | `VAULT.EXE` | small | a game that loads its data (M5): `VAULT.DAT`, an archive of named members, stored, run-length coded (PCX's code) or LZSS coded (Okumura's); the title picture and its palette in mode 13h, then two levels' maps decoded onto the heap, the second loaded mid-play; two loops (the title, play) |
+| `CHIME.EXE` | small | sound (M6): Space plays a note on the PC speaker (the timer's channel 2) and the OPL's channel 0 for 20 passes, Up and Down choose it; a note played while one sounds cuts it off; one loop |
 | `FLAT32.EXE` | flat, 32-bit | an LE executable under the CauseWay extender: code and data objects the extender places, a call through a pointer |
 | `FLAT4GW.EXE` | flat, 32-bit | the same under DOS/4GW: its stub runs `DOS4GW.EXE`, which loads it; it waits a quarter of a second before and after its work |
 | `CLIB32.EXE` | flat, 32-bit | Open Watcom's 32-bit C runtime (`clib3r`, math, the 387 emulator) linked in by a table of 190 functions' addresses, for its signature pack |

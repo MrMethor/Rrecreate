@@ -1,0 +1,15 @@
+[package]
+name = "chime-port"
+description = "The chime of testbins, ported with its sound: the speaker and the OPL as the original plays them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+rrc-runtime = { path = "../../runtime" }
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+# CHIME.EXE: Space plays C5; Up twice, Space plays E5; Space again before it ends cuts it off; Esc ends.
+500:{hold space 60}
+1000:{hold up 60}
+1300:{hold up 60}
+1600:{hold space 60}
+1800:{hold space 60}
+2600:{esc}
