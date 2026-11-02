@@ -105,6 +105,20 @@ pub(crate) fn decision(a: &Args, name: &str) -> Result<Decision, String> {
     })
 }
 
+/// A decision about an item decided before: what the call doesn't give again (its evidence, its confidence)
+/// kept, as a new type or size keeps the rest.
+fn kept(mut new: Decision, old: Option<&Decision>) -> Decision {
+    if let Some(old) = old {
+        if new.evidence.is_empty() {
+            new.evidence.clone_from(&old.evidence);
+        }
+        if new.confidence.is_none() {
+            new.confidence = old.confidence;
+        }
+    }
+    new
+}
+
 /// Fails if `name` names an item other than `id`.
 fn unique(k: &Knowledge, id: &Id, name: &str) -> Result<(), String> {
     match k.named(name) {
@@ -127,7 +141,8 @@ pub(crate) fn name(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Err(format!("{id} is data: rrc data"));
     }
     unique(&k, &id, name)?;
-    let old = k.functions.insert(id.clone(), decision(&a, name)?);
+    let decided = kept(decision(&a, name)?, k.functions.get(&id));
+    let old = k.functions.insert(id.clone(), decided);
     k.save(&repo.knowledge())?;
     say("function", format!("{id} {name}{}", old.map(|d| format!(" (was {})", d.name)).unwrap_or_default()));
     Ok(ExitCode::SUCCESS)
@@ -172,7 +187,8 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         None => k.data.get(&id).and_then(|d| d.size),
     };
     let ty = a.value("--type").map(str::to_owned).or_else(|| k.data.get(&id).map(|d| d.ty.clone())).unwrap_or_default();
-    let old = k.data.insert(id.clone(), Datum { decision: decision(&a, name)?, size, ty });
+    let decided = kept(decision(&a, name)?, k.data.get(&id).map(|d| &d.decision));
+    let old = k.data.insert(id.clone(), Datum { decision: decided, size, ty });
     k.save(&repo.knowledge())?;
     say("data", format!("{id} {name}{}", old.map(|d| format!(" (was {})", d.decision.name)).unwrap_or_default()));
     Ok(ExitCode::SUCCESS)

@@ -133,7 +133,11 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(doctor.contains("game      ") && doctor.contains(", protocol 11, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
-    rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--type", "u16"]);
+    rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--evidence", "step adds 1", "--confidence", "0.5"]);
+    // Given a type later, the rest is kept.
+    rrc.ok(&["data", "T.COM+0000F", "count", "--type", "u16"]);
+    let shown = rrc.ok(&["show", "count"]);
+    assert!(shown.contains("step adds 1") && shown.contains("0.5"), "{shown}");
     let (taken, ok) = rrc.run(&["data", "T.COM+00011", "count", "--size", "2"]);
     assert!(!ok && taken.contains("count names T.COM+0000F already"), "{taken}");
     // A name taken back, by its name or ID.
@@ -152,7 +156,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(!ok && refused.contains("takes no imports"), "a map is a build's truth: {refused}");
     let check = rrc.ok(&["check"]);
     assert!(check.contains("1 functions, 1 data, 0 types, 1 sync points"), "{check}");
-    assert!(rrc.ok(&["show", "count"]).contains("count (agent)"));
+    assert!(rrc.ok(&["show", "count"]).contains("count (agent, 0.5)"));
 
     rrc.ok(&["session", "add", "short", "--seconds", "0.005"]);
     let calls = rrc.ok(&["calls", "short", "--min", "10"]);
