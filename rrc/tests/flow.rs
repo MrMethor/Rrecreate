@@ -812,6 +812,13 @@ fn a_port_matches_the_original_tick_by_tick() {
     // The port's code for the function that wrote it (D73).
     assert!(diverged.contains("port      update (TOY.EXE+00114) is src/main.rs:"), "{diverged}");
     assert!(diverged.contains("quirk     bounces is at TOY.EXE+002FF"), "{diverged}");
+    // What the port noted in the pass to it (D115).
+    assert!(diverged.contains("noted     in the pass to tick 194: a bounce not counted (TOY.EXE+002FF)"), "{diverged}");
+    let (all, _) = rrc.run(&["compare", "play", "--notes"]);
+    assert!(
+        all.contains("note      a bounce not counted (TOY.EXE+002FF): first in the pass to tick 194, in 1 ticks"),
+        "{all}"
+    );
     rrc.ok(&["quirk", "bounces", "--remove"]);
     // The enemies fed from the original (D84): the rest is compared over the whole session.
     let fed = rrc.ok(&["compare", "play", "--feed", "enemies"]);

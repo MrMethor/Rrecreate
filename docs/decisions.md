@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D115. A port notes what it leaves out; the comparison says what the diverging pass reached. Accepted 2026-11-03.
+`rrc_runtime::note(what)` counts a note for the pass being run (and drawn); the port's trace carries each tick's
+notes, and `rrc compare` lists those of the pass to the tick that differs (`noted`), and how many there were
+in all (`--notes` lists each with the first tick it was made in and in how many ticks). A port marks the paths
+it doesn't port with it (Arena's `unported`).
+**Why:** on Arena (M6), finding which unported path a pass took meant patching the port's `unported()` to append
+to a file and removing it after, twice in a day; the comparison names the original's code that wrote a value,
+but nothing named the port's paths that were left out.
+
 ### D114. `rrc compare --feed` says what each feed changed. Accepted 2026-11-03.
 The runtime writes, at each tick a set changed fields, the port's own values before it (`"overrode"` in the
 port's trace); `rrc compare` judges them as it judges a divergence (the mapping's masks) and says, for each field

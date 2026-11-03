@@ -513,7 +513,8 @@ inputs and the trace are JSON lines.
   first), and last `{"end":1400}`. A mapped field the port hasn't set yet is `null`: it matches while the
   original's value is the one at the first tick (D102). A field a set changed (a scenario's edit, a fed field)
   is in `"overrode"` with the port's own value before it: `{"tick":605,"state":{…},"overrode":{"hit_effects":
-  […]}}` (D114).
+  […]}}` (D114). What the port noted (`rrc_runtime::note`) in the pass to a tick is in `"notes"`, with how many
+  times: `{"tick":194,"state":{…},"notes":{"a bounce not counted (TOY.EXE+002FF)":1}}` (D115).
 - **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the
   port draws it, a frame's picture (below, `FRM1`, indexed), in `DIR/<tick>.frm` when it changed since the tick
   before, and the tick's line in the trace names it: `{"tick":102,"state":{…},"frame":"102.frm"}`. `--screen

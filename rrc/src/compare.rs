@@ -33,8 +33,9 @@ use rrc_runtime::present::Frame;
 const SHOWN: usize = 8;
 
 pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--transplant", "--resume", "--to", "--pair", "--feed"], &[])?;
-    let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...]";
+    let a = Args::parse(args, &["--transplant", "--resume", "--to", "--pair", "--feed"], &["--notes"])?;
+    let usage =
+        "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] [--notes]";
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     let tick = |flag: &str| -> Result<Option<u64>, String> {
         a.value(flag)
@@ -82,6 +83,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     };
     // What each feed changed: ticks the port's own value differed, the first, and where (D114).
     let mut overrode: BTreeMap<String, (u64, u64, String)> = BTreeMap::new();
+    // What the port noted (D115): in all, the first tick and how many ticks; and in the pass to the last tick.
+    let mut noted: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    let mut noted_last: Vec<(String, u64)> = Vec::new();
     write_inputs(&trace, &sets, &file("inputs.jsonl"))?;
     let mut port_args =
         vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
@@ -157,6 +161,11 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         let Some(t) = v["tick"].as_u64() else { continue };
         for (key, value) in v["state"].as_object().into_iter().flatten() {
             state[key] = value.clone();
+        }
+        noted_last.clear();
+        for (what, n) in v["notes"].as_object().into_iter().flatten() {
+            noted.entry(what.clone()).or_insert((t, 0)).1 += 1;
+            noted_last.push((what.clone(), n.as_u64().unwrap_or(0)));
         }
         for (path, own) in v["overrode"].as_object().into_iter().flatten() {
             let Some(i) = mapped.iter().position(|m| m.field == *path && fed.contains(path)) else { continue };
@@ -262,6 +271,31 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             ExitCode::from(1)
         }
     };
+    // What the port noted in the pass to where it differs, and in all (D115).
+    if code != ExitCode::SUCCESS {
+        noted_last.sort_by_key(|(what, n)| (std::cmp::Reverse(*n), what.clone()));
+        for (what, n) in noted_last.iter().take(NOTES) {
+            say(
+                "noted",
+                format!(
+                    "in the pass to tick {last}: {what}{}",
+                    if *n > 1 { format!(" ({n} times)") } else { String::new() }
+                ),
+            );
+        }
+        if noted_last.len() > NOTES {
+            say("noted", format!("{} more in that pass (--notes lists every note)", noted_last.len() - NOTES));
+        }
+    }
+    if a.has("--notes") {
+        let mut all: Vec<(&String, &(u64, u64))> = noted.iter().collect();
+        all.sort_by_key(|(what, (first, _))| (*first, (*what).clone()));
+        for (what, (from, ticks)) in all {
+            say("note", format!("{what}: first in the pass to tick {from}, in {ticks} ticks"));
+        }
+    } else if !noted.is_empty() {
+        say("notes", format!("{} things the port noted in these ticks (--notes lists them)", noted.len()));
+    }
     if let Some(t) = pair {
         keep_pair(repo, &mut session, name, &k, t, &file("pair.json"), &cache)?;
     }
@@ -471,6 +505,9 @@ fn areas(differs: &[bool], width: usize) -> Vec<Area> {
 
 /// Areas shown at most.
 const AREAS: usize = 4;
+
+/// Notes shown at most for the pass that differs.
+const NOTES: usize = 6;
 
 /// How `port` differs from `original`, if it does.
 fn screen_differences(original: &Frame, port: &Frame) -> Option<ScreenDiff> {

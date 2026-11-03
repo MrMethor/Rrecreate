@@ -421,7 +421,10 @@ values of those fields (or groups) before every step, so the subsystem you port 
 session (D84); remove each from `--feed` once it is ported. For each field fed, `rrc compare` says how often the
 port's own value differed from the original's (`fed       hit_effects: the port's own differed at 3 of 650 ticks
 fed, first at tick 605 (hit_effects[16].look)`, D114): a feed doing work hides a difference, maybe a wrong
-mapping; one that never does can go. `unmapped` lists the
+mapping; one that never does can go. Mark each path the port leaves out with `rrc_runtime::note("what
+(GAME.EXE+01234)")` (D115): where the comparison diverges it lists the notes made in that pass (`noted`), the
+paths not ported it took, and `--notes` lists every note of the run with the first tick it was made in.
+`unmapped` lists the
 named data the mapping neither maps nor ignores: the state nothing compares yet.
 
 A scenario is set up by edits instead of play (D59, D64): where the game has a cheat or a debug mode, use it

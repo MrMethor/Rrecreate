@@ -87,6 +87,23 @@ pub fn fix(name: &str) {
     }
 }
 
+/// What the port noted since the trace's last line (D115): by what, how many times.
+static NOTES: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+
+/// Notes `what` for the comparison (D115): a path the port doesn't port yet, or anything it wants said where it
+/// diverges. `rrc compare` lists the notes of the pass to the tick that differs, and `--notes` all of them. A
+/// note changes nothing in the state.
+pub fn note(what: &str) {
+    if let Ok(mut notes) = NOTES.lock() {
+        *notes.entry(what.to_owned()).or_default() += 1;
+    }
+}
+
+/// The notes made since the last time, taken.
+fn notes_made() -> BTreeMap<String, u64> {
+    NOTES.lock().map(|mut notes| std::mem::take(&mut *notes)).unwrap_or_default()
+}
+
 /// The boundary values at a tick (D15, D49): each input's bytes, as the original's memory or a
 /// device held them at the sync point; and what the pass read of them later, where they had changed
 /// meanwhile (D68).
@@ -447,7 +464,14 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             drawer.sound(pass.as_deref(), &state, &mut sounds);
         }
         let value = serialize(&state)?;
-        out.tick(line.tick, value.clone(), drawn.as_deref(), sounding.then(|| sounds.to_json()), &overrode)?;
+        out.tick(
+            line.tick,
+            value.clone(),
+            drawn.as_deref(),
+            sounding.then(|| sounds.to_json()),
+            &overrode,
+            &notes_made(),
+        )?;
         if let Some((at, file)) = &request.save
             && *at == line.tick
         {

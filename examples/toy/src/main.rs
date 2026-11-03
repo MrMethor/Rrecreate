@@ -165,7 +165,10 @@ impl Simulation for Toy {
             if e.x < 0 || e.x > FIELD_W - 16 {
                 e.dx = e.dx.wrapping_neg();
                 e.x = e.x.wrapping_add(2i16.wrapping_mul(e.dx).wrapping_mul(elapsed));
-                if !bug("1") {
+                if bug("1") {
+                    // What a port notes where it leaves something out (D115).
+                    rrc_runtime::note("a bounce not counted (TOY.EXE+002FF)");
+                } else {
                     e.hits = e.hits.wrapping_add(1);
                 }
             }

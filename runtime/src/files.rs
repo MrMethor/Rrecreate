@@ -268,8 +268,8 @@ impl TraceWriter {
     }
 
     /// The tick's state, its frame's picture file when it changed (D107), and its sound (D108).
-    /// A tick's line: the state's changed fields, the frame, the sound, and the port's own values of the fields
-    /// a set changed (`overrode`, D114).
+    /// A tick's line: the state's changed fields, the frame, the sound, the port's own values of the fields a
+    /// set changed (`overrode`, D114), and what the port noted in the pass to it (`notes`, D115).
     pub fn tick(
         &mut self,
         tick: u64,
@@ -277,6 +277,7 @@ impl TraceWriter {
         frame: Option<&str>,
         sound: Option<Value>,
         overrode: &Map<String, Value>,
+        notes: &BTreeMap<String, u64>,
     ) -> Result<(), String> {
         let state = match state {
             Value::Object(fields) => fields,
@@ -298,6 +299,9 @@ impl TraceWriter {
         }
         if !overrode.is_empty() {
             line["overrode"] = Value::Object(overrode.clone());
+        }
+        if !notes.is_empty() {
+            line["notes"] = json!(notes);
         }
         self.line(&line)
     }
