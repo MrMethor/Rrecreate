@@ -134,7 +134,8 @@ rrc files first-level --file LEVEL1.MAP
 
 `rrc files` says which files the original read and wrote, how much, and by which code (with the functions it
 was called from). With `--file` it lists each read or write: where in the file, how many bytes, where in
-memory (named), by which code, when. A structure in memory leads to the file and offset it came from, the
+memory (named), by which code, when. In an archive `knowledge/formats.toml` describes, each access is named by
+its member (`+A9ECB9 (RAT1.CFA)`, D112), and `--file` takes a member's name too (`--file RAT1.CFA`). A structure in memory leads to the file and offset it came from, the
 file to the function that reads it, and a save routine's writes to which memory each part of a save is.
 
 Once the reader's code says how a kind of file is laid out and coded (and format documentation, as a source,

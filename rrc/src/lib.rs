@@ -150,8 +150,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          ported yet. Exits 1 if it diverges
   files SESSION [--file NAME] [--lines N]
                          the files the original reads and writes in the session: by file, how often,
-                         how much, by which code; with --file, each read or write: where in the file,
-                         how many bytes, where in memory, by which code, when
+                         how much, by which code; with --file, each read or write: where in the file
+                         (in an archive the formats know, its member), how many bytes, where in memory,
+                         by which code, when; --file also takes an archive's member (MEMBER, FILE/MEMBER)
   asset FILE[/MEMBER] [--session NAME] [--out FILE] [--lines N]
                          a file of the game or an archive's member, decoded by its format
                          (knowledge/formats.toml): an archive's members, a picture as PNG with its

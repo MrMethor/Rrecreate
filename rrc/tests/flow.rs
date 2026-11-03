@@ -260,7 +260,33 @@ fn the_files_a_program_reads_are_traced() {
     let one = rrc.ok(&["files", "s", "--file", "data.bin"]);
     assert!(one.contains("read      +0, 4 bytes, to buffer by T.COM+00014, at "), "{one}");
     let (none, ok) = rrc.run(&["files", "s", "--file", "OTHER.DAT"]);
-    assert!(!ok && none.contains("reads or writes no file named OTHER.DAT"), "{none}");
+    assert!(!ok && none.contains("reads or writes no file or archive member named OTHER.DAT"), "{none}");
+    // An archive's accesses are named by their members (D112): DATA.BIN made one, two members of 4 bytes and
+    // its directory at its end.
+    let mut archive = b"abcdefgh".to_vec();
+    for (name, size) in [(b"ONE\0", 4u32), (b"TWO\0", 4)] {
+        archive.extend_from_slice(name);
+        archive.extend_from_slice(&size.to_le_bytes());
+    }
+    std::fs::write(dir.join("game/DATA.BIN"), &archive).unwrap();
+    std::fs::write(
+        rrc.repo.join("knowledge/types.toml"),
+        "[[struct]]\nname = \"pack_entry\"\nsize = 8\nfields = [\n    { offset = 0, size = 4, name = \"name\", type = \"u8[4]\" },\n    { offset = 4, size = 4, name = \"size\", type = \"u32\" },\n]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rrc.repo.join("knowledge/formats.toml"),
+        "[[format]]\nname = \"pack\"\nfiles = [\"DATA.BIN\"]\nkind = \"archive\"\ndirectory = \"end\"\ncount = 2\nentry = \"pack_entry\"\n",
+    )
+    .unwrap();
+    let all = rrc.ok(&["files", "s"]);
+    assert!(all.contains("read      DATA.BIN: 1 times, 4 bytes, 1 members (--file DATA.BIN names them), by "), "{all}");
+    let named = rrc.ok(&["files", "s", "--file", "data.bin"]);
+    assert!(named.contains("read      +0 (ONE), 4 bytes, to buffer by T.COM+00014, at "), "{named}");
+    let member = rrc.ok(&["files", "s", "--file", "one"]);
+    assert!(member.contains("file      DATA.BIN/ONE: 1 accesses"), "{member}");
+    let (other, ok) = rrc.run(&["files", "s", "--file", "TWO"]);
+    assert!(!ok && other.contains("no file or archive member named TWO"), "{other}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

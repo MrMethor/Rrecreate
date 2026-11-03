@@ -3,7 +3,8 @@
 //! made it. A structure in memory leads to the file it came from and the function that reads that
 //! file; a save routine's writes show which memory each part of a save file is. The session runs once
 //! with Clockwork's file tracing; what it found is kept by the run, so asking again, about one file or
-//! all, runs nothing.
+//! all, runs nothing. An access to an archive the formats know is named by its member (D112), and a
+//! member's name picks its accesses as a file's does.
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -14,6 +15,7 @@ use crate::analysis::Analysis;
 use crate::args::Args;
 use crate::cache::Cache;
 use crate::clockwork::{self, Clockwork};
+use crate::formats::{Formats, Kind, Member};
 use crate::knowledge::Knowledge;
 use crate::places::Places;
 use crate::quirks::{When, code_text};
@@ -53,6 +55,8 @@ pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let code = |address: &str| code_text(&places, &k, analysis.as_ref(), address);
     let made = |x: &Access| made_by(x, &names, &code);
     let when = When::new(repo, &session);
+    let archives = archives(repo, &k, &accesses);
+    let member = |x: &Access| member_of(&archives, x);
     let time = |cycle: u64| {
         let ticks = when.text(cycle);
         let seconds = cycle as f64 * ms_per_cycle / 1000.0;
@@ -61,17 +65,45 @@ pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     match a.value("--file") {
         Some(file) => {
             let file = file.to_uppercase();
-            let mine: Vec<&Access> = accesses.iter().filter(|x| x.file.to_uppercase().ends_with(&file)).collect();
-            if mine.is_empty() {
-                return Err(format!("{name} reads or writes no file named {file}"));
+            // A file, or an archive's member (`MEMBER` or `FILE/MEMBER`).
+            let (in_file, in_member) = match file.split_once('/') {
+                Some((f, m)) => (f.to_owned(), Some(m.to_owned())),
+                None => (file.clone(), None),
+            };
+            let mut mine: Vec<&Access> = accesses
+                .iter()
+                .filter(|x| {
+                    x.file.to_uppercase().ends_with(&in_file)
+                        && in_member
+                            .as_ref()
+                            .is_none_or(|m| member(x).is_some_and(|(n, _)| n.name.to_uppercase() == *m))
+                })
+                .collect();
+            if mine.is_empty() && in_member.is_none() {
+                mine =
+                    accesses.iter().filter(|x| member(x).is_some_and(|(n, _)| n.name.to_uppercase() == file)).collect();
             }
-            say("file", format!("{}: {} accesses", mine[0].file, mine.len()));
+            if mine.is_empty() {
+                return Err(format!("{name} reads or writes no file or archive member named {file}"));
+            }
+            let what = match member(mine[0])
+                .filter(|_| in_member.is_some() || !mine[0].file.to_uppercase().ends_with(&file))
+            {
+                Some((m, _)) => format!("{}/{}", mine[0].file, m.name),
+                None => mine[0].file.clone(),
+            };
+            say("file", format!("{what}: {} accesses", mine.len()));
             for x in mine.iter().take(shown) {
                 let (verb, arrow) = if x.write { ("wrote", "from") } else { ("read", "to") };
+                let named = match member(x) {
+                    Some((m, 0)) => format!(" ({})", m.name),
+                    Some((m, within)) => format!(" ({} +{within:X})", m.name),
+                    None => String::new(),
+                };
                 say(
                     verb,
                     format!(
-                        "+{:X}, {} bytes, {arrow} {} by {}, {}",
+                        "+{:X}{named}, {} bytes, {arrow} {} by {}, {}",
                         x.offset,
                         x.len,
                         names.data(&x.at, x.len),
@@ -105,10 +137,16 @@ pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 let mut callers: Vec<(String, usize)> = callers.into_iter().collect();
                 callers.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
                 let by: Vec<String> = callers.iter().take(2).map(|(made, _)| made.clone()).collect();
+                let members: std::collections::BTreeSet<&str> =
+                    list.iter().filter_map(|x| member(x)).map(|(m, _)| m.name.as_str()).collect();
+                let members = match members.len() {
+                    0 => String::new(),
+                    n => format!(", {n} members (--file {file} names them)"),
+                };
                 say(
                     if *write { "wrote" } else { "read" },
                     format!(
-                        "{file}: {} times, {bytes} bytes, by {}{}, first {}",
+                        "{file}: {} times, {bytes} bytes{members}, by {}{}, first {}",
                         list.len(),
                         by.join(", "),
                         if callers.len() > 2 { format!(" and {} more", callers.len() - 2) } else { String::new() },
@@ -122,6 +160,37 @@ pub(crate) fn files(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The archives among the files the session touched, by their names as accessed: their members, as the
+/// formats lay them out in the game's copy (none without the game, or for a file no format makes an
+/// archive).
+fn archives(repo: &Repo, k: &Knowledge, accesses: &[Access]) -> BTreeMap<String, Vec<Member>> {
+    let (Ok(formats), Ok(game)) = (Formats::load(&repo.knowledge()), repo.game_dir()) else { return BTreeMap::new() };
+    let mut archives = BTreeMap::new();
+    for x in accesses {
+        if archives.contains_key(&x.file) {
+            continue;
+        }
+        let members = formats
+            .of(&x.file)
+            .filter(|f| f.kind == Kind::Archive)
+            .and_then(|f| {
+                let bytes = rrc_runtime::original::file_in(game, &x.file).ok()?;
+                formats.members(f, k, &bytes).ok()
+            })
+            .unwrap_or_default();
+        archives.insert(x.file.clone(), members);
+    }
+    archives
+}
+
+/// The archive member an access starts in, and where in it.
+fn member_of<'a>(archives: &'a BTreeMap<String, Vec<Member>>, x: &Access) -> Option<(&'a Member, usize)> {
+    let at = x.offset as usize;
+    let members = archives.get(&x.file)?;
+    let m = members.iter().find(|m| m.offset <= at && at < m.offset + m.packed)?;
+    Some((m, at - m.offset))
 }
 
 /// The code that made an access and the functions it was called from, as names where the knowledge has

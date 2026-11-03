@@ -686,6 +686,14 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D112. `rrc files` names an archive's accesses by their members. Accepted 2026-11-03.
+An access to a file the formats make an archive (`knowledge/formats.toml`, D103) is shown with the member it
+starts in, and where in it (`+A9ECB9 (RAT1.CFA)`); the summary counts an archive's members read; `--file`
+takes a member's name (`RAT1.CFA` or `GLOBAL.BSA/RAT1.CFA`) as it takes a file's. The members are laid out
+from the game's copy as `rrc asset` lays them out.
+**Why:** on Arena (M6), the creatures' pictures, the weapon's and the pointer's were reads of GLOBAL.BSA at
+offsets; naming them meant listing the archive with `rrc asset` and matching offsets by hand, four times.
+
 ### D111. Recording with nothing to add records nothing; `--run` is the check that a run repeats. Accepted 2026-11-03.
 `rrc record` whose trace would have the same items as the one recorded before says so (`kept`) and stops:
 a change to the mapping, a `[[present]]` entry or an item's type alone leaves the trace's items as they were.
