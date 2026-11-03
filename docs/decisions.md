@@ -686,6 +686,18 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D121. A port's sound is compared by the devices it makes; a live port knows whether its sample plays. Accepted 2026-11-03.
+A presentation names the devices whose sound it makes (`Presentation::SOUND_DEVICES`, every one by default):
+its trace's header lists them (`"sound":["pcm"]`) and `rrc compare` compares those only, saying which it
+doesn't. Live, `Host::pcm_playing` says whether the platform still plays the digitized sound last started, and
+`Inputs::with_calls` lets `Live::next` answer a hook as the comparison would from the original (a driver's
+status, D99).
+**Why:** Arena's sound is two parts of different size: the digitized sounds `play_sound` (ACD.EXE+23BCA) starts,
+at 68 of the cell session's ticks, and the music's OPL3 writes from Miles' XMIDI driver, at 349. A port that
+makes the first can't be compared while the second differs at every tick, as a state's subsystem not ported
+yet needed feeds (D84); and `play_sound` drops a sound while the driver's sample still plays (its status 2),
+which only the driver knows.
+
 ### D120. A port plays from where a session's original is: a start folder. Accepted 2026-11-03.
 `rrc start SESSION --tick N [--out DIR]` writes what a transplant at tick N gives a port, into a folder
 (`.rrc/start/SESSION-N`): the mapped fields' values (`state.json`), the presentation's own state

@@ -158,8 +158,13 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     // The port's frame and the original's screen, decoded as they change.
     let mut seen = Screens::default();
     let mut drawn: Option<(u64, ScreenDiff)> = None;
-    // The port's sound, if it says it makes it (D108).
-    let sounding = header["sound"] == json!(true);
+    // The port's sound, if it says it makes it (D108): every device's, or those it names (D121).
+    let made: Vec<&str> = match &header["sound"] {
+        Value::Bool(true) => SOUND_DEVICES.iter().map(|(d, _)| *d).collect(),
+        Value::Array(devices) => devices.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    let sounding = !made.is_empty();
     let mut heard: Option<(u64, SoundDiff)> = None;
     // The fields the port left unset (null), by the ticks they were (D102).
     let mut unset: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
@@ -214,7 +219,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             drawn = Some((t, diff));
             break;
         }
-        if sounding && let Some(diff) = sound_differences(&trace.ticks[(t - 1) as usize].sound, &v["sound"]) {
+        if sounding && let Some(diff) = sound_differences(&trace.ticks[(t - 1) as usize].sound, &v["sound"], &made) {
             heard = Some((t, diff));
             break;
         }
@@ -287,7 +292,13 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                 ),
             }
             if sounding {
-                say("sound", format!("the port's sound is the original's at all {} ticks", last - first + 1));
+                let unmade: Vec<&str> = SOUND_DEVICES.iter().map(|(d, _)| *d).filter(|d| !made.contains(d)).collect();
+                let whose =
+                    if unmade.is_empty() { "the port's".to_owned() } else { format!("the port's {}", made.join(", ")) };
+                say("sound", format!("{whose} sound is the original's at all {} ticks", last - first + 1));
+                if !unmade.is_empty() {
+                    say("unsounded", format!("{}: the port makes none yet, not compared", unmade.join(", ")));
+                }
             }
             ExitCode::SUCCESS
         }
@@ -385,8 +396,8 @@ fn untimed_text(device: &str, event: &Value) -> String {
 }
 
 /// How a tick's sound from the port differs from the original's, if it does.
-fn sound_differences(original: &serde_json::Map<String, Value>, port: &Value) -> Option<SoundDiff> {
-    for (device, _) in SOUND_DEVICES {
+fn sound_differences(original: &serde_json::Map<String, Value>, port: &Value, made: &[&str]) -> Option<SoundDiff> {
+    for &(device, _) in SOUND_DEVICES.iter().filter(|(d, _)| made.contains(d)) {
         let theirs = untimed(device, original.get(device));
         let ours = port.get(device).and_then(Value::as_array).cloned().unwrap_or_default();
         if theirs != ours {
@@ -1268,12 +1279,16 @@ mod tests {
         }))
         .unwrap();
         let port = json!({"opl": [[0xA0, 0x59], [0xB0, 0x35]], "speaker": [{"tone": [2281, 1141]}, {"steady": false}]});
-        assert_eq!(sound_differences(&original, &port), None);
+        let all = ["opl", "speaker", "pcm", "midi"];
+        assert_eq!(sound_differences(&original, &port, &all), None);
         let off = json!({"opl": [[0xA0, 0x59], [0xB0, 0x15]], "speaker": [{"tone": [2281, 1141]}, {"steady": false}]});
-        let diff = sound_differences(&original, &off).unwrap();
+        let diff = sound_differences(&original, &off, &all).unwrap();
         assert_eq!((diff.device, diff.at, diff.port), ("opl", 1, Some(json!([0xB0, 0x15]))));
-        let silent = sound_differences(&original, &json!({})).unwrap();
+        let silent = sound_differences(&original, &json!({}), &all).unwrap();
         assert_eq!((silent.device, silent.counts), ("opl", (2, 0)));
+        // A port that makes the speaker's sound only isn't compared on the OPL (D121).
+        let speaker = json!({"speaker": [{"tone": [2281, 1141]}, {"steady": false}]});
+        assert_eq!(sound_differences(&original, &speaker, &["speaker"]), None);
         assert_eq!(untimed_text("opl", &json!([0xB0, 0x35])), "B0=35");
         assert_eq!(untimed_text("speaker", &json!({"tone": [2281, 1141]})), "tone 2281/1141");
     }

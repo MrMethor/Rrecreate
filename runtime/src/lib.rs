@@ -286,6 +286,13 @@ impl Inputs {
     }
 
     /// This tick's calls through hooks, replacing the last tick's.
+    /// With `calls` through hook `name` in the pass, in order (D98): what a live platform's input handling
+    /// answers where a comparison gives the original's (a driver's status, D121).
+    pub fn with_calls(mut self, name: &str, calls: Vec<Call>) -> Inputs {
+        self.calls.insert(name.to_owned(), calls);
+        self
+    }
+
     pub(crate) fn set_calls(&mut self, calls: &[(String, Call)]) {
         self.calls.clear();
         self.taken.borrow_mut().clear();
@@ -431,7 +438,8 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         _ => (S::start(), 1),
     };
     let sounding = drawer.sounds() && request.frames.is_some();
-    let mut out = files::TraceWriter::create(&request.out, &inputs.session, first, sounding)?;
+    let devices = sounding.then(|| drawer.sound_devices());
+    let mut out = files::TraceWriter::create(&request.out, &inputs.session, first, devices)?;
     let drawing = request.frames.as_deref().filter(|_| drawer.draws());
     if let Some(dir) = drawing {
         std::fs::create_dir_all(dir).map_err(|e| format!("{dir}: {e}"))?;

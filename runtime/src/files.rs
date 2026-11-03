@@ -255,13 +255,13 @@ pub(crate) struct TraceWriter {
 }
 
 impl TraceWriter {
-    /// `sounds`: the port's ticks have their sound (D108).
-    pub fn create(path: &str, session: &str, from: u64, sounds: bool) -> Result<TraceWriter, String> {
+    /// `sounds`: the port's ticks have their sound (D108), the devices it makes (D121).
+    pub fn create(path: &str, session: &str, from: u64, sounds: Option<&[&str]>) -> Result<TraceWriter, String> {
         let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
         let mut writer = TraceWriter { file: std::io::BufWriter::new(file), path: path.to_owned(), last: None };
         let mut header = json!({"format": "rrc-port-trace", "version": 1, "session": session, "from": from});
-        if sounds {
-            header["sound"] = json!(true);
+        if let Some(devices) = sounds {
+            header["sound"] = json!(devices);
         }
         writer.line(&header)?;
         Ok(writer)

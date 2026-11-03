@@ -500,7 +500,12 @@ draw yet): what the pass before a tick made, by device, as the original's would 
 OPL's register writes, the speaker's states, digitized sounds started, MIDI bytes; the start-up's from
 power-on). `rrc trace SESSION --tick N` shows the original's (`opl: A0=59 B0=35`, `speaker: tone 2281/1141`),
 and `rrc compare` compares the port's with them in order, device by device; at the first that differs it
-names the device, the event, and who wrote the device's ports in the pass (`examples/chime`).
+names the device, the event, and who wrote the device's ports in the pass (`examples/chime`). A presentation
+that makes some devices' sound and not yet the others' (the digitized sounds before the music) names them,
+`SOUND_DEVICES = &["pcm"]`, and only those are compared; the comparison says which aren't (D121). Where the
+game asks a sound driver it doesn't port (whether a sample still plays), a hook gives the port the driver's
+answers in a comparison (D99), and live, `Host::pcm_playing` says whether the platform still plays the last
+sample, which `Live::next` answers with (`Inputs::with_calls`).
 
 ## Play
 

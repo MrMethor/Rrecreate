@@ -40,6 +40,11 @@ impl Audio {
         Ok(Audio { mixer, _device: device })
     }
 
+    /// Whether the digitized sound last started still plays (or is about to start).
+    pub(crate) fn pcm_playing(&self) -> bool {
+        self.mixer.lock().is_ok_and(|m| m.pcm.is_some() || m.pending.iter().any(|s| !s.pcm.is_empty()))
+    }
+
     /// A tick's sound, played from the output's next buffer.
     pub(crate) fn play(&self, sounds: &Sounds) {
         if sounds.is_empty() {

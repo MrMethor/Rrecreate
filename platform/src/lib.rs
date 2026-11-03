@@ -57,6 +57,8 @@ pub struct Host {
     /// 2 middle).
     pub mouse: Option<(i32, i32)>,
     pub buttons: u8,
+    /// Whether the digitized sound last started still plays: what a sound driver's status answers (D121).
+    pub pcm_playing: bool,
 }
 
 /// What the original's loop does next.
@@ -275,6 +277,7 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
             scancodes: keys::scancodes(&window),
             mouse: mouse(&window, &frame),
             buttons: buttons(&window),
+            pcm_playing: audio.as_ref().is_some_and(audio::Audio::pcm_playing),
         };
         for _ in 0..CATCH_UP {
             let (sync, inputs) = match state.next(&mut devices, &host) {

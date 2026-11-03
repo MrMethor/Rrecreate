@@ -138,6 +138,9 @@ pub trait Presentation<S: Shows>: Default {
     const DRAWS: bool = true;
     /// Whether it sounds: its sound is compared with the original's.
     const SOUNDS: bool = false;
+    /// The devices whose sound it makes (`opl`, `speaker`, `pcm`, `midi`): only those are compared, the others'
+    /// said not to be (D121: a port that makes the digitized sounds before the music).
+    const SOUND_DEVICES: &'static [&'static str] = &["opl", "speaker", "pcm", "midi"];
 
     /// Its own state at a transplant or a resume (D110): the original's values of what `mapping.toml`'s
     /// `[[present]]` maps there, at their fields' paths (`drawn.level`), before [`Presentation::start`]. A
@@ -174,9 +177,10 @@ pub(crate) trait Drawer<S> {
     fn start(&mut self, state: &S, frame: &mut Frame, given: bool);
     fn draw(&mut self, pass: &str, state: &S, frame: &mut Frame);
     fn sound(&mut self, pass: Option<&str>, state: &S, sounds: &mut Sounds);
-    /// Whether it draws, and whether it sounds.
+    /// Whether it draws, and whether it sounds, and with which devices.
     fn draws(&self) -> bool;
     fn sounds(&self) -> bool;
+    fn sound_devices(&self) -> &'static [&'static str];
 }
 
 /// A port that doesn't draw or sound (yet).
@@ -194,6 +198,9 @@ impl<S> Drawer<S> for Undrawn {
     }
     fn sounds(&self) -> bool {
         false
+    }
+    fn sound_devices(&self) -> &'static [&'static str] {
+        &[]
     }
 }
 
@@ -218,6 +225,9 @@ impl<S: Shows, P: Presentation<S>> Drawer<S> for Drawn<P> {
     }
     fn sounds(&self) -> bool {
         P::SOUNDS
+    }
+    fn sound_devices(&self) -> &'static [&'static str] {
+        P::SOUND_DEVICES
     }
 }
 

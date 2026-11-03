@@ -568,9 +568,10 @@ inputs and the trace are JSON lines.
   "state":{"drawn.blink":7}}`, each item's value at the tick (read from the session's snapshots, as `rrc peek`
   reads) by its field's path. The runtime puts them at their paths in an object and gives it to the
   presentation (`Presentation::given`) before its start.
-- **Sound** (D108): a port that sounds says so in its trace's header, `"sound":true`, and a tick's line has
+- **Sound** (D108): a port that sounds says so in its trace's header, with the devices it makes (D121:
+  `"sound":["pcm"]`; `true`, every device), and a tick's line has
   the sound the pass before it made (the start-up's at the first tick from power-on), by device, only devices
   with sound, without times: `"sound":{"opl":[[176,53]],"speaker":[{"tone":[2281,1141]},{"steady":false}]}`:
   `opl` `[register, value]`, `speaker` `{"steady": on}`, `{"tone": [period, high]}` (timer ticks) or
   `{"one_shot": true}`, `pcm` `[rate, stereo]`, `midi` a byte. `rrc compare` compares them with the original's
-  events of the tick, their times and a tone's origin left out, in order, device by device.
+  events of the tick, their times and a tone's origin left out, in order, device by device: those it makes.
