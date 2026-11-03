@@ -817,9 +817,17 @@ fn a_port_matches_the_original_tick_by_tick() {
     let fed = rrc.ok(&["compare", "play", "--feed", "enemies"]);
     assert!(fed.contains("fed       enemies: the original's values at every tick"), "{fed}");
     assert!(fed.contains("match     every mapped field at all 209 ticks"), "{fed}");
+    // What the feed hid (D114): the bounce the port didn't count.
+    assert!(fed.contains("fed       enemies: the port's own differed at "), "{fed}");
+    assert!(fed.contains("first at tick 194 (enemies[1].hits)"), "{fed}");
     let (unknown, ok) = rrc.run(&["compare", "play", "--feed", "nothing"]);
     assert!(!ok && unknown.contains("--feed nothing: no mapped field is it or in it"), "{unknown}");
     rrc.env.pop();
+    let needless = rrc.ok(&["compare", "play", "--feed", "enemies"]);
+    assert!(
+        needless.contains("fed       enemies: the port's own was the original's at all 208 ticks fed: the feed can go"),
+        "{needless}"
+    );
     // Another, in the trail on the heap (D72): who wrote it, where the far pointer pointed then.
     rrc.env.push(("TOY_BUG", "trail"));
     let (diverged, ok) = rrc.run(&["compare", "play"]);

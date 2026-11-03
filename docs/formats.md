@@ -511,7 +511,9 @@ inputs and the trace are JSON lines.
   `{"format":"rrc-port-trace","version":1,"session":"play","from":1}`, then a line per tick,
   `{"tick":1,"state":{…}}`, with the top-level fields of the state that changed since the line before (all at the
   first), and last `{"end":1400}`. A mapped field the port hasn't set yet is `null`: it matches while the
-  original's value is the one at the first tick (D102).
+  original's value is the one at the first tick (D102). A field a set changed (a scenario's edit, a fed field)
+  is in `"overrode"` with the port's own value before it: `{"tick":605,"state":{…},"overrode":{"hit_effects":
+  […]}}` (D114).
 - **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the
   port draws it, a frame's picture (below, `FRM1`, indexed), in `DIR/<tick>.frm` when it changed since the tick
   before, and the tick's line in the trace names it: `{"tick":102,"state":{…},"frame":"102.frm"}`. `--screen

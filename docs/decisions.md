@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D114. `rrc compare --feed` says what each feed changed. Accepted 2026-11-03.
+The runtime writes, at each tick a set changed fields, the port's own values before it (`"overrode"` in the
+port's trace); `rrc compare` judges them as it judges a divergence (the mapping's masks) and says, for each field
+fed, at how many ticks the port's own value differed from the original's, the first and where
+(`hit_effects[16].look`), or that it never did and the feed can go.
+**Why:** on Arena (M6), `hit_effects` was fed from the wrong memory (its entry's address off by 600h) and
+`flat_records` was mapped 490 bytes too long: the feeds matched by construction, so nothing showed it until the
+drawing needed the real data, weeks later; and nothing said which feeds a port no longer needed.
+
 ### D113. A screen difference is reported by its areas. Accepted 2026-11-03.
 When a port's frame differs from the original's screen in more than one area (pixels touching, diagonally too),
 `rrc compare` lists the largest four (`area`: its box, how many pixels, its first) and how many there are.

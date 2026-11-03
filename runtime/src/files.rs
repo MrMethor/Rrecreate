@@ -175,6 +175,20 @@ enum Step<'a> {
 /// Sets `value` at `path` (`player.x`, `enemies[2].alive`) in a serialized state, making the objects
 /// on the way; an element must be there already.
 pub fn set_path(state: &mut Value, path: &str, value: Value) -> Result<(), String> {
+    let steps = steps(path)?;
+    set(state, &steps, value).map_err(|()| format!("{path}: the port's state has no place there"))
+}
+
+/// The value at `path` in a serialized state, if it has one there.
+pub fn get_path<'a>(state: &'a Value, path: &str) -> Option<&'a Value> {
+    steps(path).ok()?.iter().try_fold(state, |at, step| match step {
+        Step::Field(field) => at.get(*field),
+        Step::Element(i) => at.get(*i),
+    })
+}
+
+/// A path's steps.
+fn steps(path: &str) -> Result<Vec<Step<'_>>, String> {
     let wrong = || format!("{path}: not a path of field names and [index]es");
     let mut steps = Vec::new();
     for part in path.split('.') {
@@ -192,7 +206,7 @@ pub fn set_path(state: &mut Value, path: &str, value: Value) -> Result<(), Strin
             return Err(wrong());
         }
     }
-    set(state, &steps, value).map_err(|()| format!("{path}: the port's state has no place there"))
+    Ok(steps)
 }
 
 fn set(at: &mut Value, steps: &[Step], value: Value) -> Result<(), ()> {
@@ -254,7 +268,16 @@ impl TraceWriter {
     }
 
     /// The tick's state, its frame's picture file when it changed (D107), and its sound (D108).
-    pub fn tick(&mut self, tick: u64, state: Value, frame: Option<&str>, sound: Option<Value>) -> Result<(), String> {
+    /// A tick's line: the state's changed fields, the frame, the sound, and the port's own values of the fields
+    /// a set changed (`overrode`, D114).
+    pub fn tick(
+        &mut self,
+        tick: u64,
+        state: Value,
+        frame: Option<&str>,
+        sound: Option<Value>,
+        overrode: &Map<String, Value>,
+    ) -> Result<(), String> {
         let state = match state {
             Value::Object(fields) => fields,
             other => Map::from_iter([("state".to_owned(), other)]),
@@ -272,6 +295,9 @@ impl TraceWriter {
         }
         if let Some(sound) = sound.filter(|s| s.as_object().is_some_and(|o| !o.is_empty())) {
             line["sound"] = sound;
+        }
+        if !overrode.is_empty() {
+            line["overrode"] = Value::Object(overrode.clone());
         }
         self.line(&line)
     }

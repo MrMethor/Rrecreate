@@ -412,10 +412,15 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         if request.to.is_some_and(|to| line.tick > to) {
             break;
         }
-        // A scenario's edit at this tick (D64): the original's values of the fields it set.
+        // A scenario's edit at this tick (D64), or a fed field (D84): the original's values of the fields
+        // set, and the port's own where they differed (D114: the comparison judges them).
+        let mut overrode = serde_json::Map::new();
         if !line.set.is_empty() {
             let mut value = serialize(&state)?;
             for (path, v) in &line.set {
+                if let Some(own) = files::get_path(&value, path).filter(|own| *own != v) {
+                    overrode.insert(path.clone(), own.clone());
+                }
                 files::set_path(&mut value, path, v.clone())?;
             }
             state = S::transplant(value)?;
@@ -442,7 +447,7 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             drawer.sound(pass.as_deref(), &state, &mut sounds);
         }
         let value = serialize(&state)?;
-        out.tick(line.tick, value.clone(), drawn.as_deref(), sounding.then(|| sounds.to_json()))?;
+        out.tick(line.tick, value.clone(), drawn.as_deref(), sounding.then(|| sounds.to_json()), &overrode)?;
         if let Some((at, file)) = &request.save
             && *at == line.tick
         {
@@ -627,7 +632,11 @@ mod tests {
         run::<Counter>(&request).unwrap();
         let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
         let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-        assert_eq!(lines[2], serde_json::json!({"tick": 2, "state": {"count": 100, "keys": [9]}}), "set, then written");
+        assert_eq!(
+            lines[2],
+            serde_json::json!({"tick": 2, "state": {"count": 100, "keys": [9]}, "overrode": {"count": 1, "keys[0]": 0}}),
+            "set, then written, with the port's own values it changed (D114)"
+        );
         assert_eq!(lines[3]["state"]["count"], 101, "and stepped from there");
         let mut state = serde_json::json!({"a": [{"b": 1}]});
         assert!(files::set_path(&mut state, "a[1].b", serde_json::json!(2)).is_err(), "no such element");

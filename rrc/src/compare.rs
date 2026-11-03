@@ -76,9 +76,12 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let file = |f: &str| work.join(f).to_string_lossy().into_owned();
     let after = transplant.or(resume).unwrap_or(0);
     let mut sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
-    if let Some(fields) = a.value("--feed") {
-        feed(&mut sets, &mapped, &original, fields, after)?;
-    }
+    let fed = match a.value("--feed") {
+        Some(fields) => feed(&mut sets, &mapped, &original, fields, after)?,
+        None => Vec::new(),
+    };
+    // What each feed changed: ticks the port's own value differed, the first, and where (D114).
+    let mut overrode: BTreeMap<String, (u64, u64, String)> = BTreeMap::new();
     write_inputs(&trace, &sets, &file("inputs.jsonl"))?;
     let mut port_args =
         vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
@@ -155,6 +158,15 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         for (key, value) in v["state"].as_object().into_iter().flatten() {
             state[key] = value.clone();
         }
+        for (path, own) in v["overrode"].as_object().into_iter().flatten() {
+            let Some(i) = mapped.iter().position(|m| m.field == *path && fed.contains(path)) else { continue };
+            let (m, theirs) = (&mapped[i], &original[i][(t.max(1) - 1) as usize]);
+            let mut differ = Vec::new();
+            differences(&m.field, theirs, &m.masked(own), 1, &mut differ);
+            if let Some((at, _, _)) = differ.first() {
+                overrode.entry(path.clone()).or_insert((0, t, at.clone())).0 += 1;
+            }
+        }
         if let Some(frame) = v["frame"].as_str() {
             seen.port(&work.join("frames").join(frame))?;
         }
@@ -194,6 +206,20 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let first = first.ok_or("the port ran no tick")?;
     let bytes: u32 = mapped.iter().map(|m| m.size).sum();
     say("compare", format!("{name}, ticks {first}-{last} of {ticks}: {} fields mapped ({bytes} bytes)", mapped.len()));
+    // What each feed did (D114): one the port's own never needed can go; one doing work hides a difference.
+    for field in &fed {
+        let ran = last.saturating_sub(first);
+        match overrode.get(field) {
+            None => say(
+                "fed",
+                format!("{field}: the port's own was the original's at all {ran} ticks fed: the feed can go"),
+            ),
+            Some((n, at, path)) => say(
+                "fed",
+                format!("{field}: the port's own differed at {n} of {ran} ticks fed, first at tick {at} ({path})"),
+            ),
+        }
+    }
     for (field, (from, to)) in &unset {
         let Some(m) = mapped.iter().find(|m| m.field == *field) else { continue };
         let writer = last_writer(repo, name, &trace, &k, m, first)?;
@@ -680,14 +706,14 @@ fn edit_sets(
 
 /// Feeds the port the original's values of `fields` (mapped fields, or the groups they are in: `random`
 /// for `random.seed`) at every tick after `after`, before it steps (D84): a subsystem not ported yet
-/// gives the one being ported what it reads, and matches by construction.
+/// gives the one being ported what it reads, and matches by construction. The mapped fields fed.
 fn feed(
     sets: &mut BTreeMap<u64, serde_json::Map<String, Value>>,
     mapped: &[Mapped],
     original: &[Vec<Value>],
     fields: &str,
     after: u64,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let wanted: Vec<&str> = fields.split(',').map(str::trim).filter(|f| !f.is_empty()).collect();
     let fed =
         |field: &str| wanted.iter().any(|w| field == *w || field.strip_prefix(*w).is_some_and(|r| r.starts_with('.')));
@@ -704,7 +730,7 @@ fn feed(
         }
     }
     say("fed", format!("{}: the original's values at every tick", names.join(", ")));
-    Ok(())
+    Ok(names)
 }
 
 /// The session's inputs, tick by tick (`rrc-inputs`): from the trace, what the port gets; and the
