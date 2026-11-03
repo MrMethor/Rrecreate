@@ -360,6 +360,8 @@ fn screens(trace: &Trace) -> Vec<Option<String>> {
 struct ScreenDiff {
     pixels: usize,
     area: (usize, usize, usize, usize),
+    /// The differing pixels' areas (D113), the largest first.
+    areas: Vec<Area>,
     first: Option<(usize, usize, u8, u8)>,
     colours: Vec<(usize, [u8; 3], [u8; 3])>,
     sizes: Option<((usize, usize), (usize, usize))>,
@@ -397,11 +399,59 @@ impl Screens {
     }
 }
 
+/// An area of differing pixels, each touching another (diagonally too): its box (x0, y0, x1, y1), how many,
+/// and its first (top row, then leftmost).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Area {
+    bounds: (usize, usize, usize, usize),
+    pixels: usize,
+    first: (usize, usize),
+}
+
+/// The areas the differing pixels make (`differs`, row by row, `width` a row), the largest first.
+fn areas(differs: &[bool], width: usize) -> Vec<Area> {
+    let mut seen = vec![false; differs.len()];
+    let mut found = Vec::new();
+    for start in 0..differs.len() {
+        if !differs[start] || seen[start] {
+            continue;
+        }
+        let first = (start % width, start / width);
+        let mut area = Area { bounds: (first.0, first.1, first.0, first.1), pixels: 0, first };
+        seen[start] = true;
+        let mut todo = vec![start];
+        while let Some(i) = todo.pop() {
+            let (x, y) = (i % width, i / width);
+            area.pixels += 1;
+            let (x0, y0, x1, y1) = area.bounds;
+            area.bounds = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            for (dx, dy) in [(-1i64, -1i64), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                if nx < 0 || ny < 0 || nx >= width as i64 {
+                    continue;
+                }
+                let j = ny as usize * width + nx as usize;
+                if j < differs.len() && differs[j] && !seen[j] {
+                    seen[j] = true;
+                    todo.push(j);
+                }
+            }
+        }
+        found.push(area);
+    }
+    found.sort_by_key(|a| (std::cmp::Reverse(a.pixels), a.first.1, a.first.0));
+    found
+}
+
+/// Areas shown at most.
+const AREAS: usize = 4;
+
 /// How `port` differs from `original`, if it does.
 fn screen_differences(original: &Frame, port: &Frame) -> Option<ScreenDiff> {
     let mut diff = ScreenDiff {
         pixels: 0,
         area: (usize::MAX, usize::MAX, 0, 0),
+        areas: Vec::new(),
         first: None,
         colours: Vec::new(),
         sizes: None,
@@ -420,6 +470,10 @@ fn screen_differences(original: &Frame, port: &Frame) -> Option<ScreenDiff> {
             let (x0, y0, x1, y1) = diff.area;
             diff.area = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
         }
+    }
+    if diff.pixels > 0 {
+        let differs: Vec<bool> = original.pixels.iter().zip(&port.pixels).map(|(a, b)| a != b).collect();
+        diff.areas = areas(&differs, original.width);
     }
     for (i, (a, b)) in original.palette.chunks(3).zip(port.palette.chunks(3)).enumerate() {
         if a != b {
@@ -462,6 +516,17 @@ fn report_screen(
     say("diverges", format!("at tick {t} ({}): the screen: {pixels}{colours}", tick.sync));
     if let Some((x, y, a, b)) = diff.first {
         say("  pixel", format!("({x}, {y}): original {a}, port {b}"));
+    }
+    // Its areas, when there is more than one (D113).
+    if diff.areas.len() > 1 {
+        for a in diff.areas.iter().take(AREAS) {
+            let (x0, y0, x1, y1) = a.bounds;
+            let pixels = if a.pixels == 1 { "1 pixel".to_owned() } else { format!("{} pixels", a.pixels) };
+            say("  area", format!("({x0}, {y0})-({x1}, {y1}): {pixels}, first ({}, {})", a.first.0, a.first.1));
+        }
+        if diff.areas.len() > AREAS {
+            say("  areas", format!("{} more, {} in all", diff.areas.len() - AREAS, diff.areas.len()));
+        }
     }
     for (i, a, b) in diff.colours.iter().take(4) {
         say("  colour", format!("{i}: original {a:?}, port {b:?}"));
@@ -1086,9 +1151,27 @@ mod tests {
         port.palette[3..6].copy_from_slice(&[1, 2, 3]);
         let diff = screen_differences(&original, &port).unwrap();
         assert_eq!((diff.pixels, diff.area, diff.first), (2, (1, 0, 3, 2), Some((3, 0, 0, 5))));
+        assert_eq!(diff.areas.len(), 2, "two pixels apart: two areas");
         assert_eq!(diff.colours, [(1, [0, 0, 0], [1, 2, 3])]);
         assert_eq!(side_by_side(&diff).width, 12);
         assert!(screen_differences(&original, &Frame::new(4, 4)).unwrap().sizes.is_some());
+    }
+
+    #[test]
+    fn differing_pixels_make_areas_largest_first() {
+        // A diagonal run of three (touching at their corners) and a lone pixel, on a 5 x 4 screen.
+        let mut differs = vec![false; 20];
+        for i in [4, 6, 12, 18] {
+            differs[i] = true;
+        }
+        let found = areas(&differs, 5);
+        assert_eq!(
+            found,
+            [
+                Area { bounds: (1, 1, 3, 3), pixels: 3, first: (1, 1) },
+                Area { bounds: (4, 0, 4, 0), pixels: 1, first: (4, 0) },
+            ]
+        );
     }
 
     #[test]

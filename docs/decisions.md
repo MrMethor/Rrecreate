@@ -686,6 +686,12 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D113. A screen difference is reported by its areas. Accepted 2026-11-03.
+When a port's frame differs from the original's screen in more than one area (pixels touching, diagonally too),
+`rrc compare` lists the largest four (`area`: its box, how many pixels, its first) and how many there are.
+**Why:** on Arena (M6), the bounding box and one pixel hid the shape: a wall's bottom edge one row short over
+two faces, or a scattered shift over the whole view; telling them apart meant decoding the PNG by hand.
+
 ### D112. `rrc files` names an archive's accesses by their members. Accepted 2026-11-03.
 An access to a file the formats make an archive (`knowledge/formats.toml`, D103) is shown with the member it
 starts in, and where in it (`+A9ECB9 (RAT1.CFA)`); the summary counts an archive's members read; `--file`
