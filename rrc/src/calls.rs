@@ -147,7 +147,10 @@ fn phases(repo: &Repo, session: &Session, k: &Knowledge) -> Result<Vec<Phase>, S
 }
 
 /// The calls made since `before` (the counts then), which become the counts now.
-fn since(clockwork: &mut Clockwork, before: &mut BTreeMap<String, u64>) -> Result<BTreeMap<String, u64>, String> {
+pub(crate) fn since(
+    clockwork: &mut Clockwork,
+    before: &mut BTreeMap<String, u64>,
+) -> Result<BTreeMap<String, u64>, String> {
     let answer = clockwork.ask("call_counts", Value::Null)?;
     let now: BTreeMap<String, u64> = answer["calls"]
         .as_array()

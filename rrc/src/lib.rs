@@ -22,6 +22,7 @@ mod naming;
 mod pass;
 mod peek;
 pub mod places;
+mod progress;
 pub mod quirks;
 pub mod repo;
 mod search;
@@ -150,6 +151,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          ported yet, and says what each feed changed; what the port noted
                          (rrc_runtime::note) in the pass that differs, --notes every note. Exits 1 if it
                          diverges
+  progress [--lines N]   how far the port is, as the sessions show it: the program's functions the
+                         original ran, those in passes the port matches (as rrc compare last left each
+                         session), and those of them the port's code names; the bytes of the data
+                         segment that change in each session's ticks, how many the mapping maps or
+                         ignores, and the largest places neither does
   files SESSION [--file NAME] [--lines N]
                          the files the original reads and writes in the session: by file, how often,
                          how much, by which code; with --file, each read or write: where in the file
@@ -220,6 +226,7 @@ pub fn main() -> ExitCode {
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
         Some("compare") => here().and_then(|repo| compare::compare(&repo, rest)),
+        Some("progress") => here().and_then(|repo| progress::progress(&repo, rest)),
         Some("quirk") => here().and_then(|repo| quirks::quirk(&repo, rest)),
         Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),
         Some("search") => here().and_then(|repo| search::search(&repo, rest)),

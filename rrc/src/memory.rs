@@ -88,6 +88,31 @@ pub fn load(repo: &Repo, span: &Span, wanted: &[u64]) -> Result<BTreeMap<u64, Ve
     Ok(found)
 }
 
+/// Each range's bytes that change over the kept span: those that differ, at some tick, from the first's
+/// (D117).
+pub fn changing(repo: &Repo, span: &Span) -> Result<Vec<Vec<bool>>, String> {
+    let cache = Cache::open(&repo.local)?;
+    let mut raw = Vec::new();
+    flate2::read::DeflateDecoder::new(&cache.get(&span.hash)?[..])
+        .read_to_end(&mut raw)
+        .map_err(|e| format!("kept memory: {e}"))?;
+    let mut first: Vec<Vec<u8>> = Vec::new();
+    let mut changed: Vec<Vec<bool>> = Vec::new();
+    decode(&raw, span.ranges.len(), |i, memory| {
+        if i == 0 {
+            first = memory.iter().map(|m| m.clone().unwrap_or_default()).collect();
+            changed = first.iter().map(|bytes| vec![false; bytes.len()]).collect();
+            return;
+        }
+        for ((now, then), changed) in memory.iter().zip(&first).zip(&mut changed) {
+            for ((now, then), changed) in now.iter().flatten().zip(then).zip(changed.iter_mut()) {
+                *changed |= now != then;
+            }
+        }
+    })?;
+    Ok(changed)
+}
+
 /// Each tick's ranges as bytes: the first tick whole, then what changed.
 fn encode(memory: &[Vec<Option<Vec<u8>>>]) -> Vec<u8> {
     let ranges = memory.first().map_or(0, Vec::len);

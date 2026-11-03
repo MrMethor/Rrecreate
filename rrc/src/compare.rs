@@ -234,6 +234,24 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         let writer = last_writer(repo, name, &trace, &k, m, first)?;
         say("unset", format!("{field} at ticks {from}-{to}: the original's held its value of tick {first}, {writer}"));
     }
+    // What this found, for `rrc progress` (D117): the passes that match, to the last tick that does.
+    let (matched, differs) = match (&diverged, &drawn, &heard) {
+        (Some((t, _)), _, _) => (t - 1, Some("state")),
+        (None, Some((t, _)), _) => (t - 1, Some("screen")),
+        (None, None, Some((t, _))) => (t - 1, Some("sound")),
+        (None, None, None) => (last, None),
+    };
+    let outcome = crate::progress::Outcome {
+        recorded: recorded.hash.clone(),
+        from: after,
+        first,
+        last,
+        matched: matched.max(after),
+        ticks,
+        fed: fed.clone(),
+        differs: differs.map(str::to_owned),
+    };
+    outcome.save(&work)?;
     let code = match diverged {
         None if heard.is_some() => {
             let (t, diff) = heard.as_ref().expect("a sound that differs");
@@ -1086,8 +1104,13 @@ fn port_code(repo: &Repo, k: &Knowledge, chain: &[Id]) {
         let name = k.functions.get(id).map_or_else(|| id.to_string(), |d| d.name.clone());
         if name == id.to_string() { name } else { format!("{name} ({id})") }
     };
+    let module = repo.module();
     for (i, id) in chain.iter().enumerate() {
-        let found = crate::sources::naming(&repo.root, &id.to_string(), 3);
+        // The program's own may be named by its offset alone.
+        let text = id.to_string();
+        let short = text.split_once('+').map(|(_, offset)| format!("+{offset}"));
+        let short = short.filter(|_| id.module() == module && id.part().is_none());
+        let found = crate::sources::naming(&repo.root, &text, short.as_deref(), 3);
         if found.is_empty() {
             continue;
         }

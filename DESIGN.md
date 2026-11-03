@@ -293,7 +293,8 @@ the port branches on `rrc_runtime::keeps(NAME)` (D74).
   events per tick, not samples (in order, by device, without their times, D108). At the first frame that
   differs, its areas are listed (D113), and who drew its first differing pixel is found as who wrote a value is.
 - **Progress:** the share of the original's executed code exercised by sessions that match, and the share of
-  its state the mapping covers.
+  its state the mapping covers (`rrc progress`, D117): the functions run in passes the port matches, and those
+  of them its code names; the bytes of the data segment that change, mapped, ignored or neither.
 
 ## 8. Save states and checkpoints
 

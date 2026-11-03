@@ -431,6 +431,14 @@ paths not ported it took, and `--notes` lists every note of the run with the fir
 `unmapped` lists the
 named data the mapping neither maps nor ignores: the state nothing compares yet.
 
+`rrc progress` says how far the port is, as the sessions show it (D117): of the program's functions the
+original ran in the sessions, those it ran in passes the port matches (as each session's last `rrc compare`
+left it), and how many of those the port's code names by ID (a bare `+0A2F0` names the program's own); then
+which ran in matching passes without code that names them, the most called first (a helper ported inside its
+caller, library code, a part fed); and, of the data segment the recording keeps at every tick, the bytes that
+change, how many the mapping maps or ignores, and the largest places that neither does, by name: the state to
+map next.
+
 A scenario is set up by edits instead of play (D59, D64): where the game has a cheat or a debug mode, use it
 first (it goes through the game's own code); otherwise
 

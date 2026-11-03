@@ -800,6 +800,20 @@ fn a_port_matches_the_original_tick_by_tick() {
                 .eq(again.lines().filter(|l| !l.starts_with("memory")))
     );
     assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
+    // How far the port is (D117): the functions the original ran in passes that match and those the port
+    // names; the state that changes, and how much of it is mapped.
+    let progress = rrc.ok(&["progress"]);
+    assert!(
+        progress.contains("session   play: ticks 1-209 of 209 match, from the port's start, no feed"),
+        "{progress}"
+    );
+    let code = "code      TOY.EXE ran 25 functions in the sessions; 25 (100%) in passes that match, and the port \
+                names 4 (16%) of those";
+    assert!(progress.contains(code), "{progress}");
+    assert!(progress.contains("unnamed   wait_tick (TOY.EXE+000F0): 210 calls in the sessions"), "{progress}");
+    // The trail on the heap is mapped through its pointer, where it pointed at each tick.
+    let state = "state     play: 107 bytes kept at every tick change; mapped 99 (92%), ignored 0 (0%), neither 8 (7%)";
+    assert!(progress.contains(state), "{progress}");
     // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value; a quirk
     // registered at that code is named (D74).
     rrc.ok(&["quirk", "bounces", "--at", "TOY.EXE+002FF", "--what", "counts a bounce"]);
@@ -812,6 +826,8 @@ fn a_port_matches_the_original_tick_by_tick() {
     // The port's code for the function that wrote it (D73).
     assert!(diverged.contains("port      update (TOY.EXE+00114) is src/main.rs:"), "{diverged}");
     assert!(diverged.contains("quirk     bounces is at TOY.EXE+002FF"), "{diverged}");
+    let progress = rrc.ok(&["progress"]);
+    assert!(progress.contains("session   play: ticks 1-193 of 209 match, then its state differs"), "{progress}");
     // What the port noted in the pass to it (D115).
     assert!(diverged.contains("noted     in the pass to tick 194: a bounce not counted (TOY.EXE+002FF)"), "{diverged}");
     let (all, _) = rrc.run(&["compare", "play", "--notes"]);

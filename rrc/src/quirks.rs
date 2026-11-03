@@ -143,7 +143,7 @@ fn list(repo: &Repo, register: &Quirks) -> Result<ExitCode, String> {
 
 /// Where the port's code names quirk `name`, or that it doesn't yet.
 fn say_sites(repo: &Repo, name: &str) {
-    let sites = crate::sources::naming(&repo.root, name, 3);
+    let sites = crate::sources::naming(&repo.root, name, None, 3);
     if sites.is_empty() {
         say("  port", format!("no code names it yet: branch on rrc_runtime::keeps({name:?})"));
     } else {

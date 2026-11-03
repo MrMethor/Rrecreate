@@ -686,6 +686,21 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D117. Progress is measured from the sessions: functions run in matching passes, the port's code, the state that changes. Accepted 2026-11-03.
+`rrc compare` keeps what it found (`outcome.json`: from which tick, to the last that matched, what was fed).
+`rrc progress` runs each recorded session once with Clockwork's call tracker counted at every tick (kept for the
+same run), and reports the program's functions the original ran in all the sessions, those it ran in passes
+the port matches, and those of them the port's code names by ID (by their bytes, where the analysis has
+them); the ones that ran in matching passes without code that names them, most called first; and, from the
+data segment each recording keeps at every tick (D92), the bytes that change, the share the mapping maps
+(with the presentation's own) or ignores, and the largest places neither does, by name. An offset alone in
+the port's code (`+0A2F0`) names the program's own function, for `rrc compare`'s port side (D73) too.
+**Why:** DESIGN.md §7 asked for the share of executed code exercised by matching sessions and of the state
+mapped, and nothing measured either: "how far is the port" was answered by reading notes. Functions alone would
+count a feed's subsystem as done, so the port naming them is the stronger number; the state that changes but
+nothing maps is the list of what to port next. Arena's port names most functions by `+OFFSET` alone, which D73's
+lookup missed.
+
 ### D116. Frames, sequences and packed pixels are formats; the check finds a stage of decoding at a tick. Accepted 2026-11-03.
 `knowledge/formats.toml` describes, beside archives and chunks: a `sequence`, members one after another, each a
 structure and the bytes its field counts, or of a size (a CIF's pictures, a SET's textures); a picture's

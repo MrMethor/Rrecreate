@@ -69,7 +69,10 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 - `knowledge.lock`: there while an `rrc` changes the knowledge files (from loading them to saving them), so
   two at once don't lose each other's changes; one older than a minute is taken over. The files themselves
   are written aside and renamed.
-- `compare/<session>/`: the files of the session's last `rrc compare` (below, "The port's files").
+- `compare/<session>/`: the files of the session's last `rrc compare` (below, "The port's files"), and
+  `outcome.json`, what it found, which `rrc progress` reads (D117): the recording's hash, the tick it started
+  from (`from`, 0 for the port's start), the ticks compared (`first`, `last`, of `ticks`), the last that matched
+  (`matched`), the fields fed and what differed after (`state`, `screen`, `sound` or none).
 - `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
 
