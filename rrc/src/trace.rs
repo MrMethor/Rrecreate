@@ -446,8 +446,14 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .map(|h| HookItem { name: h.name.clone(), at: h.at.clone(), registers: h.registers.clone() })
             .collect(),
     };
+    // The run asked for: the last recording's only if its input, options and length are the same (D123).
+    let identity = crate::cache::sha256(
+        format!("{}\n{}", crate::snapshots::run_identity(repo, &session)?, session.seconds).as_bytes(),
+    );
+    let same_run = session.trace.as_ref().is_some_and(|t| t.identity == identity);
     // Nothing to add: the trace recorded before has every item (D111); `--run` runs it again as a check.
     if !a.has("--run")
+        && same_run
         && let Some(before) = &session.trace
         && recorded_header(&Cache::open(&repo.local)?, &before.hash).is_some_and(|h| h == header)
     {
@@ -460,7 +466,16 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     // Only items added since the last recording, all in its kept memory: no run (D92).
-    let kept = if a.has("--run") { Err(String::new()) } else { from_kept(repo, &session, &header)? };
+    let kept = if a.has("--run") {
+        Err(String::new())
+    } else if let Some(before) = session.trace.as_ref().filter(|_| !same_run) {
+        Err(match before.identity.is_empty() {
+            true => "its last recording didn't keep what its run was asked to be".into(),
+            false => "its input, options or length changed since its last recording".into(),
+        })
+    } else {
+        from_kept(repo, &session, &header)?
+    };
     let (trace, snapshots, memory) = match kept {
         Ok(trace) => (trace, None, session.trace.as_ref().and_then(|t| t.memory.clone())),
         Err(why) => {
@@ -477,8 +492,8 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let hash = cache.put(text.as_bytes())?;
     let run = trace.run_hash();
     let ticks = trace.ticks.len() as u64;
-    let recorded =
-        Recorded { hash: hash.clone(), run: run.clone(), ticks, clockwork: trace.header.clockwork.clone(), memory };
+    let clockwork = trace.header.clockwork.clone();
+    let recorded = Recorded { hash: hash.clone(), run: run.clone(), ticks, clockwork, memory, identity };
     let before = session.trace.replace(recorded);
     // Paired checkpoints are of the run they were taken in (D63).
     let pairs = session.pairs.len();
@@ -697,7 +712,7 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<T
     }
     let key = crate::memory::key(repo, session, &header.syncs, "data")?;
     let ticks = old.ticks.len() as u64;
-    let span = crate::memory::kept(repo, &key, 1, ticks)?.filter(|s| &s.hash == memory);
+    let span = crate::memory::kept_by(repo, &key, memory)?.filter(|s| s.first == 1 && ticks <= s.last);
     let Some(span) = span.filter(|_| ticks > 0) else {
         return Ok(Err("the memory its last recording kept isn't in the cache, or is of another run".into()));
     };

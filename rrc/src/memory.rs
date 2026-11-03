@@ -50,6 +50,15 @@ pub fn kept(repo: &Repo, key: &str, first: u64, last: u64) -> Result<Option<Span
     Ok(index.spans.into_iter().find(|s| s.first <= first && last <= s.last && cache.has(&s.hash)))
 }
 
+/// The kept span a recording kept (its hash), if it still is: a longer run of the same session keeps its own
+/// span beside it, which may hold the same ticks.
+pub fn kept_by(repo: &Repo, key: &str, hash: &str) -> Result<Option<Span>, String> {
+    let cache = Cache::open(&repo.local)?;
+    let Some(text) = cache.recall("memory", key) else { return Ok(None) };
+    let index: Index = toml::from_str(&text).unwrap_or_default();
+    Ok(index.spans.into_iter().find(|s| s.hash == hash && cache.has(&s.hash)))
+}
+
 /// Keeps a span: `memory` has each tick's ranges from `first` on (none where memory isn't mapped).
 pub fn keep(
     repo: &Repo,

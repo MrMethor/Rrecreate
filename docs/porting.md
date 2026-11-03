@@ -352,7 +352,8 @@ Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and rec
 every named data item. A recording keeps the data segment at every tick (D92), so recording again after naming
 more of it takes seconds (`from the run recorded before`): only an item read through a pointer, a device, a
 change to the sync points, inputs, the session or Clockwork runs it again (`--run` always does). With nothing to
-add (a mapping or a type changed, the items not), it records nothing (`kept`, D111). Recording a session
+add (a mapping or a type changed, the items not), it records nothing (`kept`, D111); a changed input, option
+or length always runs again (D123). Recording a session
 again with `--run` must give the same run (`same`); after a knowledge change
 the trace differs and `rrc record` says the run is the same (`same run as before; the trace differs`). A run
 that differs is a Clockwork bug, or the session, the game or Clockwork changed: say so in the notes. Commit the

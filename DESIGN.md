@@ -159,7 +159,7 @@ the session.
   (D81, D88), `rrc pass` shows one pass's calls in order (D83), and `rrc files` says which file bytes went where,
   read or written by which code, an archive's by their members (D78, D79, D112). A recording keeps the data
   segment at every tick, so naming more of it records again without a run (D92), and with nothing to add it
-  records nothing (D111).
+  records nothing (D111), unless its input, options or length changed (D123).
 - **Outside sources (D32, D77):** for every game, look for source releases, reimplementations, format
   documentation, wikis, walkthroughs and community bug lists, and use what licences allow. They are
   expected, and not relied upon: evidence named with its provenance (`prior-art:<source>`), which the

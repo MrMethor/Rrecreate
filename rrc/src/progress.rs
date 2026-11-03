@@ -294,7 +294,7 @@ fn state(
     let Some(memory) = &recorded.memory else { return Ok(None) };
     let syncs = sync_points(k)?;
     let key = crate::memory::key(repo, session, &syncs, "data")?;
-    let span = crate::memory::kept(repo, &key, 1, recorded.ticks)?.filter(|s| &s.hash == memory);
+    let span = crate::memory::kept_by(repo, &key, memory)?.filter(|s| s.first == 1 && recorded.ticks <= s.last);
     let Some(span) = span else { return Ok(None) };
     let changing = crate::memory::changing(repo, &span)?;
     let places = Places::new(repo, session);

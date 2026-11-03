@@ -172,6 +172,13 @@ fn a_session_is_traced_tick_by_tick() {
     let kept = rrc.ok(&["record", "short"]);
     assert!(kept.contains("kept      the trace recorded before has every item"), "{kept}");
     assert!(rrc.ok(&["record", "short", "--run"]).contains("same      as the trace recorded before"), "deterministic");
+    // A run asked otherwise (its length, input or options) is run again, not kept (D123).
+    rrc.ok(&["session", "set", "short", "--seconds", "0.006"]);
+    let longer = rrc.ok(&["record", "short"]);
+    assert!(longer.contains("runs      the session: its input, options or length changed"), "{longer}");
+    rrc.ok(&["session", "set", "short", "--seconds", "0.005"]);
+    let back = rrc.ok(&["record", "short"]);
+    assert!(back.contains("runs      the session: its input") && back.contains("snapshots "), "{back}");
     // Reading more is another trace of the same run, from the memory kept with the last (D92).
     rrc.ok(&["data", "T.COM+00005", "delay", "--size", "2"]);
     let again = rrc.ok(&["record", "short"]);

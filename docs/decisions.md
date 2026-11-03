@@ -686,6 +686,16 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D123. A recording keeps what its run was asked to be; asked otherwise, `rrc record` runs again. Accepted 2026-11-03.
+A session's recorded trace keeps its run's identity: the game, Clockwork, the session's input, options, edits and
+the session it starts from (the identity snapshots are kept by, D76), and its length. `rrc record` keeps the
+trace (D111) or reads more from its kept memory (D92) only when that identity is the same; otherwise it runs
+the session (`runs the session: its input, options or length changed`). A recording from before keeps none,
+so it runs once. A recording's kept memory is found by its hash, not by the ticks it holds.
+**Why:** on Arena (M4), steering a new session in stretches (a line added to its input and its seconds raised,
+then recorded) gave `kept` with the old trace: D111 compared the trace's items only, so a changed input or
+length went unseen. porting.md already said that inputs and the session run it again.
+
 ### D122. The mapping follows pointers found through pointers, reads lists, and indexes arrays on the heap. Accepted 2026-11-03.
 A `[[map]]` via a pointer may follow more pointers (`then`: each a pointer type and how far past where the last
 points it is), read a list (`next`, where a node's pointer to the next is, and `count`, at most; the field is an

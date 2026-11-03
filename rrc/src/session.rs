@@ -80,6 +80,10 @@ pub struct Recorded {
     /// it (D92): its hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<String>,
+    /// What the run was asked to be (D123): its identity (the game, Clockwork, the session's input, options,
+    /// edits and the session it starts from) and its length. A recording asked otherwise runs again.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity: String,
 }
 
 /// A paired checkpoint: the port's state and the original's snapshot at the end of a tick both matched
