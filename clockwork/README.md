@@ -65,7 +65,10 @@ target/release/clockwork play "C:/Games/KEEN1" KEEN1.EXE --record keen.session
 speaker through the sound output, MIDI through the computer's synthesizer: `--midi-out NAME`, `--no-audio`).
 With `--record`, the input is saved as a session that `run DIR --replay keen.session` reproduces exactly.
 Session files are text: `<cycle> K <scancode hex>` for keys, `<cycle> M <x> <y> <buttons>` for the mouse
-(`<cycle> R <dx> <dy>` for relative motion), `<cycle> J <stick> <x> <y> <buttons>` for a joystick.
+(`<cycle> R <dx> <dy>` for relative motion), `<cycle> J <stick> <x> <y> <buttons>` for a joystick. The file is
+written as it is played, with `# at <cycle>` each emulated second (the input up to there is in it) and `# end
+<cycle>` when the window closes, so a tool can follow the play (`rrc play`). `play --load-snapshot FILE` plays
+from a snapshot: the input it still had to come is dropped, but the releases of keys held then.
 
 `unpack` undoes an executable packer (PKLITE, LZEXE, EXEPACK, DIET...) by running the program until the
 packer hands over; for a flat program under a DOS extender (an LE executable: CauseWay, DOS/4GW), it runs it

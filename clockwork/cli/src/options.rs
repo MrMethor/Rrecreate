@@ -55,8 +55,9 @@ options:
                      image.bin (from the load segment) and image.json, in protected mode
                      segments.json (the selector map) and the memory segments cover
   --save-snapshot FILE  run: afterwards, save the machine to FILE (without the game's files)
-  --load-snapshot FILE  run: go on from a snapshot instead of starting the program, for
-                     --seconds more (the game folder and CD must be those it was taken with)
+  --load-snapshot FILE  run, play: go on from a snapshot instead of starting the program, for
+                     --seconds more (the game folder and CD must be those it was taken with);
+                     play drops the input it still had to come, but the releases of keys held
   --save-changes DIR run: afterwards, write the files the program created or changed to DIR
                      (same paths as on C:; the game folder itself is never touched), e.g. what
                      an installer unpacked
@@ -72,7 +73,8 @@ options:
                      +OFF[:LEN] for an offset in the program's load image (as in function IDs)
   --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
                      (or: here, for the current CS:IP)
-  --record FILE      play: record keyboard input as a session
+  --record FILE      play: record the keyboard, mouse and joystick input as a session, written as
+                     it is played (# at CYCLE each emulated second: the input up to there is in)
   --no-audio         play: no sound and no MIDI output
   --midi-out NAME    play: send MIDI to the host MIDI output whose name contains NAME (default:
                      the first one, e.g. Microsoft GS Wavetable Synth; none: no MIDI)

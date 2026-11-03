@@ -12,7 +12,7 @@ use crate::repo::{Local, Repo};
 use crate::session::Session;
 
 /// The protocol's revision rrc speaks (`docs/protocol.md`).
-pub const PROTOCOL: u64 = 12;
+pub const PROTOCOL: u64 = 13;
 
 /// The platform rrc knows.
 pub const PLATFORM: &str = "dos-pc";
@@ -89,15 +89,32 @@ impl Clockwork {
             let file = crate::cache::Cache::open(&repo.local)?.path(&hash);
             let request = json!({ "argv": argv(repo, &session.options)?, "file": file });
             let mut loaded = clockwork.ask("load_snapshot", request)?;
-            let lines = match &session.inputs {
-                Some(name) => {
+            match (&session.replay, &session.from) {
+                // Recorded play (D124): the same play going on from the part before has, still to come in the
+                // snapshot, its input up to that part's end, and gets what follows; another starts there.
+                (Some(name), Some(from)) => {
                     let path = repo.sessions().join(name);
-                    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-                    text.lines().map(str::to_owned).collect()
+                    let base = Session::load(repo, &from.session)?;
+                    let after = match base.replay == session.replay {
+                        true => Some(crate::play::end_of(&path, base.seconds)?),
+                        false => None,
+                    };
+                    let request = json!({ "replay": path, "after": after, "replace": after.is_none() });
+                    clockwork.ask("input", request)?;
                 }
-                None => Vec::new(),
-            };
-            clockwork.ask("input", json!({ "lines": lines, "replace": true }))?;
+                _ => {
+                    let lines: Vec<String> = match &session.inputs {
+                        Some(name) => {
+                            let path = repo.sessions().join(name);
+                            let text =
+                                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                            text.lines().map(str::to_owned).collect()
+                        }
+                        None => Vec::new(),
+                    };
+                    clockwork.ask("input", json!({ "lines": lines, "replace": true }))?;
+                }
+            }
             crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
             return Ok((clockwork, loaded));
         }

@@ -22,6 +22,7 @@ mod naming;
 mod pass;
 mod peek;
 pub mod places;
+mod play;
 mod progress;
 pub mod quirks;
 pub mod repo;
@@ -153,6 +154,21 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          ported yet, and says what each feed changed; what the port noted
                          (rrc_runtime::note) in the pass that differs, --notes every note. Exits 1 if it
                          diverges
+  compare SESSION --lockstep
+                         the port in lockstep with the original (D124): from a transplant at tick 1, given
+                         the original's mapped state before every pass, every difference counted and none
+                         stopping it: each field its own pass left otherwise (in how many passes, the
+                         first, what), those it leaves unset, the frames and the sound that differ, what it
+                         noted; the whole census in .rrc/compare/SESSION/census.json. Exits 1 if anything
+                         differs
+  play NAME [--from SESSION --tick N] [--every SECONDS] [--replay FILE]
+                         the person plays the original in Clockwork's window, from the session's tick N
+                         (or power-on), recorded as the session NAME (sessions/NAME.session); every
+                         SECONDS of play (60) the part played since is recorded (sessions/NAME/1, 2, ...,
+                         each from the last tick of the one before) and compared in lockstep, and what
+                         differs or the port noted is said as it is first found; at the end, the whole
+                         play's census (.rrc/play/NAME/). --replay: a play recorded before
+                         (clockwork play --record), followed as if played now
   start SESSION --tick N [--out DIR]
                          where the session's original is at tick N, for the port to play from without
                          the original: the mapped fields' values, the presentation's own state and the
@@ -232,6 +248,7 @@ pub fn main() -> ExitCode {
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
         Some("compare") => here().and_then(|repo| compare::compare(&repo, rest)),
+        Some("play") => here().and_then(|repo| play::play(&repo, rest)),
         Some("start") => here().and_then(|repo| compare::start(&repo, rest)),
         Some("progress") => here().and_then(|repo| progress::progress(&repo, rest)),
         Some("quirk") => here().and_then(|repo| quirks::quirk(&repo, rest)),
@@ -269,7 +286,22 @@ pub(crate) fn path_text(path: &std::path::Path) -> String {
 fn say(label: &str, text: impl std::fmt::Display) {
     let line = format!("{label:<10}{text}");
     snapshots::captured(&line);
-    println!("{line}");
+    if !QUIET.get() {
+        println!("{line}");
+    }
+}
+
+thread_local! {
+    /// Whether `say` prints: not while `rrc play` records and compares a part (D124).
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` without its output.
+fn quietly<T>(f: impl FnOnce() -> T) -> T {
+    QUIET.set(true);
+    let result = f();
+    QUIET.set(false);
+    result
 }
 
 #[cfg(test)]

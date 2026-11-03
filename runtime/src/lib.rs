@@ -456,10 +456,15 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
     // The pass the last tick began, which draws the next tick's frame.
     let mut pass: Option<String> = None;
     let mut current = Inputs::default();
+    // The fed fields' values, each as it last changed (D124).
+    let mut feeding: BTreeMap<String, Value> = BTreeMap::new();
     let mut last = 0;
     for line in &inputs.ticks {
         for (name, bytes) in &line.inputs {
             current.set(name, bytes.clone());
+        }
+        for (path, value) in &line.fed {
+            feeding.insert(path.clone(), value.clone());
         }
         current.set_late(&line.late);
         current.set_calls(&line.calls);
@@ -472,9 +477,9 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         // A scenario's edit at this tick (D64), or a fed field (D84): the original's values of the fields
         // set, and the port's own where they differed (D114: the comparison judges them).
         let mut overrode = serde_json::Map::new();
-        if !line.set.is_empty() {
+        if !line.set.is_empty() || !feeding.is_empty() {
             let mut value = serialize(&state)?;
-            for (path, v) in &line.set {
+            for (path, v) in feeding.iter().chain(line.set.iter().map(|(p, v)| (p, v))) {
                 if let Some(own) = files::get_path(&value, path).filter(|own| *own != v) {
                     overrode.insert(path.clone(), own.clone());
                 }

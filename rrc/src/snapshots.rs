@@ -52,10 +52,15 @@ pub fn run_identity(repo: &Repo, session: &Session) -> Result<String, String> {
             None => Ok(String::new()),
         }
     };
+    // Recorded play: as far as the session runs (D124).
+    let replay = match &session.replay {
+        Some(name) => crate::play::identity(&repo.sessions().join(name), session.seconds)?,
+        None => String::new(),
+    };
     let original = &repo.settings.original;
     let mut identity = json!({
         "clockwork": exe, "files": files, "program": original.program, "options": original.options,
-        "session": session.options, "inputs": input(&session.inputs)?, "replay": input(&session.replay)?,
+        "session": session.options, "inputs": input(&session.inputs)?, "replay": replay,
     });
     // The session and tick it starts from (D118): that run's.
     if let Some(from) = &session.from {

@@ -15,8 +15,9 @@ pub struct InputsFile {
 }
 
 /// A tick of the inputs file: the inputs whose values changed (a value holds until it changes), the
-/// inputs its pass read late, and the fields a scenario's edit set at this tick (D64), by path, with the
-/// original's values.
+/// inputs its pass read late, the fields a scenario's edit set at this tick (D64), by path, with the
+/// original's values, and the fed fields' values that changed (D84, D124: each holds until it changes, and is
+/// given at every tick from its first).
 #[derive(Debug, Default, PartialEq)]
 pub struct InputsLine {
     pub tick: u64,
@@ -26,6 +27,7 @@ pub struct InputsLine {
     /// The calls a part not ported made into ported code in the pass, in order (D98): hook, registers.
     pub calls: Vec<(String, crate::Call)>,
     pub set: Vec<(String, Value)>,
+    pub fed: Vec<(String, Value)>,
 }
 
 /// A read of the pass that saw an input otherwise than the read before it there (D68, D93): the input,
@@ -50,7 +52,8 @@ impl InputsFile {
     pub fn parse(text: &str) -> Result<InputsFile, String> {
         let mut lines = text.lines().filter(|l| !l.trim().is_empty());
         let header: Value = serde_json::from_str(lines.next().ok_or("empty")?).map_err(|e| e.to_string())?;
-        if header["format"] != "rrc-inputs" || header["version"] != 1 {
+        // Version 2 adds `fed` (D124).
+        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1 | 2)) {
             return Err(format!("not an inputs file this runtime reads ({} {})", header["format"], header["version"]));
         }
         let names: Vec<String> = header["inputs"]
@@ -109,10 +112,12 @@ impl InputsFile {
                 let values = call[1].as_array().into_iter().flatten().map(|v| v.as_u64().unwrap_or(0) as u32);
                 calls.push((name.clone(), crate::Call { registers: registers.iter().cloned().zip(values).collect() }));
             }
-            let set =
-                v["set"].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect();
+            let paths = |key: &str| -> Vec<(String, Value)> {
+                v[key].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect()
+            };
+            let (set, fed) = (paths("set"), paths("fed"));
             let sync = v["sync"].as_str().unwrap_or_default().to_owned();
-            file.ticks.push(InputsLine { tick, sync, inputs, late, calls, set });
+            file.ticks.push(InputsLine { tick, sync, inputs, late, calls, set, fed });
         }
         Ok(file)
     }

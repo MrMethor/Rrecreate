@@ -3,6 +3,10 @@
 //! The emulator runs about one 70 Hz frame of virtual time per window refresh, a little more or
 //! less to keep pace with the sound output ([`crate::live_audio`]). Keys are delivered at the
 //! cycle where the emulator paused, which is what makes a recorded session replay exactly.
+//!
+//! From a snapshot (`--load-snapshot`, a session's tick), the input it still had to come is dropped but the
+//! releases of keys held then, as for a session started there (D118): the person's play takes its place.
+//! `--record` writes the play as it goes ([`Recording`]), so a tool can follow it.
 
 use std::process::ExitCode;
 
@@ -12,15 +16,24 @@ use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, Window, WindowOption
 use crate::gamepads::Gamepads;
 use crate::live_audio::LiveAudio;
 use crate::options::Options;
-use crate::session::Session;
+use crate::session::Recording;
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 400;
 
 pub fn run(o: &Options) -> Result<ExitCode, String> {
-    let program = o.program.clone().ok_or("play needs <program>")?;
-    let ips = o.ips.unwrap_or(8_000_000);
-    let mut m = crate::run::boot(o, &program, &o.args, ips)?;
+    let (mut m, program, ips) = match &o.load_snapshot {
+        Some(_) => {
+            let (mut m, program, ips) = crate::run::prepare(o)?;
+            m.replace_input();
+            (m, program, ips)
+        }
+        None => {
+            let program = o.program.clone().ok_or("play needs <program>")?;
+            let ips = o.ips.unwrap_or(8_000_000);
+            (crate::run::boot(o, &program, &o.args, ips)?, program, ips)
+        }
+    };
     m.stop_on_input_wait = false;
 
     let scale = match o.scale {
@@ -38,7 +51,13 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     let mut audio = (!o.no_audio).then(|| LiveAudio::start(o.midi_out.clone()));
     let mut gamepads = (o.joysticks > 0).then(|| Gamepads::start(o.joysticks)).flatten();
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
-    let mut recorded: Vec<(u64, Input)> = Vec::new();
+    let mut recording = match &o.record {
+        Some(path) => Some(Recording::create(path, &program, &o.args, ips, m.cpu.cycles)?),
+        None => None,
+    };
+    let record = |recording: &mut Option<Recording>, cycle: u64, input: Input| -> Result<(), String> {
+        recording.as_mut().map_or(Ok(()), |r| r.input(cycle, &input))
+    };
     let mut last_mouse = None;
     let mut stop = None;
 
@@ -49,18 +68,24 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
         let released = window.get_keys_released().into_iter().filter_map(|k| scancodes(k, false));
         for codes in pressed.chain(released) {
             m.queue_scancodes(now, &codes);
-            recorded.extend(codes.iter().map(|&c| (now, Input::Key(c))));
+            for &code in &codes {
+                record(&mut recording, now, Input::Key(code))?;
+            }
         }
         if let Some(mouse) = mouse_input(&window, &m)
             && Some(mouse) != last_mouse
         {
             m.queue_input(now, mouse);
-            recorded.push((now, mouse));
+            record(&mut recording, now, mouse)?;
             last_mouse = Some(mouse);
         }
         for input in gamepads.iter_mut().flat_map(Gamepads::changes) {
             m.queue_input(now, input);
-            recorded.push((now, input));
+            record(&mut recording, now, input)?;
+        }
+        // Every input up to now is written.
+        if let Some(recording) = &mut recording {
+            recording.at(now)?;
         }
         let cycles = audio.as_ref().map_or(cycles_per_frame, |a| a.frame_cycles(cycles_per_frame));
         match m.run(cycles) {
@@ -84,10 +109,9 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     for issue in &m.diagnostics {
         eprintln!("clockwork: issue: {issue}");
     }
-    if let Some(path) = &o.record {
-        let session = Session { program, args: o.args.clone(), instructions_per_second: ips, inputs: recorded };
-        session.save(path)?;
-        eprintln!("clockwork: recorded {} input events to {}", session.inputs.len(), path.display());
+    if let (Some(recording), Some(path)) = (recording, &o.record) {
+        let inputs = recording.end(m.cpu.cycles)?;
+        eprintln!("clockwork: recorded {inputs} input events to {}", path.display());
     }
     Ok(if matches!(stop, Some(Stop::Fault(_))) { ExitCode::from(2) } else { ExitCode::SUCCESS })
 }

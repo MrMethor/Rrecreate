@@ -46,8 +46,9 @@ pub struct Base {
     pub tick: u64,
 }
 
-/// Sessions based on others, one on another, at most this deep.
-const BASES: usize = 16;
+/// Sessions based on others, one on another, at most this deep (a play followed in parts is a part on the one
+/// before, D124).
+const BASES: usize = 1000;
 
 /// A write into the original's memory at a tick: at its sync point, before that pass reads.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -254,9 +255,6 @@ fn add_session(repo: &Repo, a: &Args, name: &str) -> Result<ExitCode, String> {
         (None, None) => None,
         _ => return Err("--from SESSION and --tick N go together".into()),
     };
-    if from.is_some() && replay.is_some() {
-        return Err("a session from another's tick takes an input script (--inputs), not recorded play".into());
-    }
     let session = Session { description, inputs, replay, seconds, options, from, ..Session::default() };
     if let Some(from) = &session.from {
         let (_, ms) = crate::snapshots::based(repo, &session)?.expect("a session from another's tick");

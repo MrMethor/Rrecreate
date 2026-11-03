@@ -84,6 +84,9 @@ platform's script language, read as a script file is (blank lines and `#` commen
 trimmed). A line whose time has passed is refused: its input would land later than it says. With `"replace":
 true`, the input still to come is dropped first (a snapshot's), but the releases of keys held now, so a held key
 is let go when it would have been (D118).
+`"replay": FILE` queues a recorded play's input (`clockwork play --record`, a session file): from now on, or
+with `"after": CYCLE` only that after the cycle, for a play followed in parts (D124); `lines` may be left out.
+It answers `queued`, how many.
 
 **Watches.** `watch` `{"ranges": [{"at", "len"}], "reads": false, "limit": 10000}` ... `watch_end`: each
 write (and read) of the watched bytes: `hits`, each `{"at", "kind", "value", "old", "cycle", "by", "chain"}`,
@@ -195,6 +198,7 @@ An IBM PC with DOS (Clockwork).
 10. `entries`, `entries_end`: the runs of chosen entries with the registers (D98).
 11. `screen`, and `tick`'s `screen`: the screen at a sync point as a picture (D107).
 12. `input` takes `"replace": true`: the input still to come dropped, but held keys' releases (D118).
+13. `input` takes `"replay"` and `"after"`: a recorded play's input (D124).
 
 ## Changing the protocol
 

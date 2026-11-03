@@ -426,12 +426,14 @@ evidence = "rrc suspects play: past enemies by GAME.EXE+002FF, offset 60"
 description = "the first level, up the main corridor"
 inputs = "walk.inputs"          # an input script (clockwork run --input-file), beside it (rrc session add
                                 # copies it here: edit this copy); or
-# replay = "play.session"       # play recorded by clockwork play --record
+# replay = "play.session"       # play recorded by clockwork play --record (rrc play writes it as it is played:
+                                # `# at CYCLE` each emulated second, the input up to there in; `# end CYCLE`)
 seconds = 86.0                  # emulated seconds it runs (from power-on, for a session from another's tick too)
 options = []                    # optional: more `clockwork run` options (rrc session --clockwork)
 
 [from]                          # optional: where it starts (D118): another session's tick, its tick 1
-session = "walk"                # its input replaces that session's from there (inputs only, no replay)
+session = "walk"                # its input replaces that session's from there; a recorded play that is the
+                                # session's too goes on after its end (a part of rrc play, D124)
 tick = 1200
 
 [trace]                         # written by rrc record
@@ -552,7 +554,7 @@ to the inputs' last (or `--to`'s), writing its state at each tick before steppin
 inputs and the trace are JSON lines.
 
 - **Inputs** (`--inputs`, written by `rrc`): the header
-  `{"format":"rrc-inputs","version":1,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`,
+  `{"format":"rrc-inputs","version":2,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`,
   then a line per tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
   whose value changed since they were last read (index in the header's list, bytes in hex as the trace has
   them); a value holds until it changes. A tick whose pass read inputs late has `late`,
@@ -563,7 +565,9 @@ inputs and the trace are JSON lines.
   calls through them `hooks`, `[[0, [1472, 5]]]` (the hook's index, the registers' values), which
   `Inputs::calls(name)` gives the port. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
   mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
-  port sets in its state before writing the tick (D64). The last line is
+  port sets in its state before writing the tick (D64). A tick has `fed`, of the same form, for fed fields (D84,
+  D124: `--feed`, `--lockstep`): their original values where they changed, each held until it changes and set at
+  every tick from its first (version 2; version 1 has no `fed`). The last line is
   `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each

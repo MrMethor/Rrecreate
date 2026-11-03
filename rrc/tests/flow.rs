@@ -130,7 +130,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 12, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 13, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--evidence", "step adds 1", "--confidence", "0.5"]);
@@ -859,7 +859,16 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(fed.contains("first at tick 194 (enemies[1].hits)"), "{fed}");
     let (unknown, ok) = rrc.run(&["compare", "play", "--feed", "nothing"]);
     assert!(!ok && unknown.contains("--feed nothing: no mapped field is it or in it"), "{unknown}");
+    // In lockstep (D124): the original's state before every pass, every difference counted, none stopping it.
+    let (census, ok) = rrc.run(&["compare", "play", "--lockstep"]);
+    assert!(!ok, "a difference fails: {census}");
+    assert!(census.contains("differs   enemies: in "), "{census}");
+    assert!(census.contains("first at play's tick 194 (enemies[1].hits: original 1, port 0)"), "{census}");
+    assert!(census.contains("note      a bounce not counted (TOY.EXE+002FF): in "), "{census}");
+    assert!(census.contains("census    ") && census.contains("census.json"), "{census}");
     rrc.env.pop();
+    let matched = rrc.ok(&["compare", "play", "--lockstep"]);
+    assert!(matched.contains("match     play: every mapped field, frame and sound in all 208 passes"), "{matched}");
     let needless = rrc.ok(&["compare", "play", "--feed", "enemies"]);
     assert!(
         needless.contains("fed       enemies: the port's own was the original's at all 208 ticks fed: the feed can go"),
@@ -980,6 +989,114 @@ fn a_session_starts_from_another_s_tick() {
     assert!(!rrc.ok(&["peek", "later", "--tick", "9", "score"]).contains("score = 77"), "not before its tick");
     let listed = rrc.ok(&["session"]);
     assert!(listed.contains("later: 3 s, 110 ticks, from play's tick 100, 1 edit"), "{listed}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_play_is_followed_in_parts_and_compared_in_lockstep() {
+    // D124: play recorded from play's tick 100 (1.4 s), right held from 2.2 s to 2.6 s, followed every 0.4 s of
+    // it, as far as its marks (every 0.25 s) allow: parts from 1.4, 1.9, 2.4 and 2.9 s, the key held across the
+    // third's start.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, mut rrc) = setup_file("followed", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
+    let port = built("toy-port", "toy-port", true);
+    example_repository(
+        &rrc,
+        "toy",
+        &port,
+        &[
+            "mapping.toml",
+            "knowledge/functions.tsv",
+            "knowledge/data.tsv",
+            "knowledge/types.toml",
+            "knowledge/ticks.toml",
+            "sessions/play.toml",
+            "sessions/play.inputs",
+            "src/main.rs",
+        ],
+    );
+    rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
+    rrc.ok(&["game", dir.join("game").to_str().unwrap()]);
+    rrc.ok(&["session", "set", "play", "--seconds", "3"]);
+    rrc.ok(&["record", "play"]);
+    let c = |ms: u64| ms * 8000;
+    let mut text = "# clockwork session v1
+program TOY.EXE
+args 
+ips 8000000
+"
+    .to_owned();
+    for (ms, lines) in [
+        (1400, vec!["# at"]),
+        (1650, vec!["# at"]),
+        (1900, vec!["# at"]),
+        (2150, vec!["# at"]),
+        (2200, vec!["K E0", "K 4D"]),
+        (2400, vec!["# at"]),
+        (2600, vec!["K E0", "K CD"]),
+        (2650, vec!["# at"]),
+        (2900, vec!["# at"]),
+        (3000, vec!["# end"]),
+    ] {
+        for line in lines {
+            let line = match line.strip_prefix("# ") {
+                Some(mark) => format!(
+                    "# {mark} {}
+",
+                    c(ms)
+                ),
+                None => format!(
+                    "{} {line}
+",
+                    c(ms)
+                ),
+            };
+            text.push_str(&line);
+        }
+    }
+    let recorded = dir.join("held.session");
+    std::fs::write(&recorded, text).unwrap();
+    let held = recorded.to_str().unwrap();
+    let args = ["play", "hold", "--from", "play", "--tick", "100", "--every", "0.4", "--replay", held];
+    let followed = rrc.ok(&args);
+    assert!(
+        followed
+            .contains("play      hold: from play's tick 100 (1.4 s from power-on), recorded in sessions/hold.session"),
+        "{followed}"
+    );
+    assert_eq!(followed.matches("passes match").count(), 4, "four parts, each matching: {followed}");
+    assert!(followed.contains("part      hold/4: "), "{followed}");
+    assert!(followed.contains("4 parts (sessions/hold/1 to 4)"), "{followed}");
+    assert!(followed.contains("match     hold: every mapped field, frame and sound in all "), "{followed}");
+    let (taken, ok) = rrc.run(&args);
+    assert!(!ok && taken.contains("there is a session hold already"), "{taken}");
+    // The parts, one from the last tick of the one before, are the play recorded whole: no input lost or
+    // given twice where a part begins.
+    let ticks: u64 = followed
+        .lines()
+        .find(|l| l.starts_with("play") && l.contains(" parts "))
+        .and_then(|l| l.rsplit(", ").next()?.strip_suffix(" ticks")?.parse().ok())
+        .unwrap_or_else(|| panic!("{followed}"));
+    let whole = rrc.ok(&["record", "hold"]);
+    assert!(whole.contains(&format!("trace     {ticks} ticks")), "{ticks}: {whole}");
+    let last = std::fs::read_to_string(rrc.repo.join("sessions/hold/4.toml")).unwrap();
+    let last: u64 =
+        last.lines().find_map(|l| l.strip_prefix("ticks = ")?.parse().ok()).unwrap_or_else(|| panic!("{last}"));
+    let values = |text: String| text.lines().filter(|l| l.starts_with("value")).map(str::to_owned).collect::<Vec<_>>();
+    let ends = |session: &str, tick: u64| {
+        values(rrc.ok(&["peek", session, "--tick", &tick.to_string(), "player_x", "score", "rng_seed"]))
+    };
+    assert_eq!(ends("hold", ticks), ends("hold/4", last));
+    // A port that doesn't count a bounce: said in the part it is first in, and where to look.
+    rrc.env.push(("TOY_BUG", "1"));
+    let args = ["play", "bugged", "--from", "play", "--tick", "100", "--every", "0.4", "--replay", held];
+    let bugged = rrc.ok(&args);
+    assert!(
+        bugged.contains("new       differs enemies: in ") && bugged.contains("enemies[1].hits: original 1, port 0"),
+        "{bugged}"
+    );
+    assert!(bugged.contains("next      rrc compare bugged/"), "{bugged}");
+    rrc.env.pop();
     std::fs::remove_dir_all(&dir).ok();
 }
 

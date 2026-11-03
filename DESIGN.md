@@ -288,6 +288,9 @@ the port branches on `rrc_runtime::keeps(NAME)` (D74).
 - **Feeds:** a subsystem not ported yet is given the original's values (D84); the comparison says, for each
   field fed, how often the port's own value differed, so a feed hiding a difference shows and one no longer
   needed can go (D114).
+- **Lockstep:** every field fed, each pass starts where the original's did, and every difference of the session
+  is counted at once: the census of what to port (D124). The person plays the original (`rrc play`), and rrc
+  follows the play in parts, each compared so as it is recorded.
 - **Unset fields:** from power-on, a field the port hasn't set yet (null) matches while the original's value is
   the one at the first tick, memory the program hasn't set (a heap block's leftovers); the comparison names
   who last wrote it before, which tells leftovers from data the port should have loaded (D102).

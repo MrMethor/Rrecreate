@@ -15,9 +15,14 @@
 //! in the driver's coordinates; buttons: bit 0 left, 1 right, 2 middle) or `<cycle> J <stick>
 //! <x> <y> <buttons>` (joystick 0 or 1; position -32767..=32767; buttons: bit 0 button 1, bit 1
 //! button 2). The older form `<cycle> <scancode>` is still read as a key.
+//!
+//! Written as it is played (`play --record`, [`Recording`]), the file has `# at <cycle>` every emulated
+//! second: every input up to that cycle is in the file above it; and `# end <cycle>` when the play
+//! stopped. Both are comments to a reader of the session.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 
 use dos::Input;
 
@@ -32,17 +37,11 @@ pub struct Session {
 const MAGIC: &str = "# clockwork session v1";
 
 impl Session {
+    #[cfg(test)]
     pub fn to_text(&self) -> String {
-        let mut out =
-            format!("{MAGIC}\nprogram {}\nargs {}\nips {}\n", self.program, self.args, self.instructions_per_second);
+        let mut out = header(&self.program, &self.args, self.instructions_per_second);
         for (cycle, input) in &self.inputs {
-            match input {
-                Input::Key(code) => writeln!(out, "{cycle} K {code:02X}"),
-                Input::Mouse { x, y, buttons } => writeln!(out, "{cycle} M {x} {y} {buttons}"),
-                Input::Joystick { stick, x, y, buttons } => writeln!(out, "{cycle} J {stick} {x} {y} {buttons}"),
-                Input::MouseMotion { dx, dy } => writeln!(out, "{cycle} R {dx} {dy}"),
-            }
-            .expect("writing to a String");
+            out.push_str(&line(*cycle, input));
         }
         out
     }
@@ -81,9 +80,72 @@ impl Session {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
+}
 
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        std::fs::write(path, self.to_text()).map_err(|e| format!("{}: {e}", path.display()))
+/// The file's first lines: the magic line, the program, its arguments and the speed.
+fn header(program: &str, args: &str, ips: u64) -> String {
+    format!("{MAGIC}\nprogram {program}\nargs {args}\nips {ips}\n")
+}
+
+/// An input's line.
+fn line(cycle: u64, input: &Input) -> String {
+    let mut out = String::new();
+    match input {
+        Input::Key(code) => writeln!(out, "{cycle} K {code:02X}"),
+        Input::Mouse { x, y, buttons } => writeln!(out, "{cycle} M {x} {y} {buttons}"),
+        Input::Joystick { stick, x, y, buttons } => writeln!(out, "{cycle} J {stick} {x} {y} {buttons}"),
+        Input::MouseMotion { dx, dy } => writeln!(out, "{cycle} R {dx} {dy}"),
+    }
+    .expect("writing to a String");
+    out
+}
+
+/// A session written while it is played, so that a tool can follow it: its inputs as they come, and
+/// `# at <cycle>` each emulated second once every input up to that cycle is written (flushed then).
+pub struct Recording {
+    file: std::io::BufWriter<std::fs::File>,
+    path: PathBuf,
+    /// Cycles between marks, and the cycle the next is due at.
+    every: u64,
+    next: u64,
+    inputs: usize,
+}
+
+impl Recording {
+    /// Starts the file at `path` for a play at `ips` from cycle `now`.
+    pub fn create(path: &Path, program: &str, args: &str, ips: u64, now: u64) -> Result<Recording, String> {
+        let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let file = std::io::BufWriter::new(file);
+        let mut recording = Recording { file, path: path.to_owned(), every: ips.max(1), next: now, inputs: 0 };
+        recording.write(&header(program, args, ips))?;
+        Ok(recording)
+    }
+
+    /// An input given at `cycle`.
+    pub fn input(&mut self, cycle: u64, input: &Input) -> Result<(), String> {
+        self.inputs += 1;
+        self.write(&line(cycle, input))
+    }
+
+    /// Every input up to `cycle` is written: a mark if one is due.
+    pub fn at(&mut self, cycle: u64) -> Result<(), String> {
+        if cycle < self.next {
+            return Ok(());
+        }
+        self.next = cycle + self.every;
+        self.write(&format!("# at {cycle}\n"))?;
+        self.file.flush().map_err(|e| format!("{}: {e}", self.path.display()))
+    }
+
+    /// The play stopped at `cycle`: the last mark. How many inputs it recorded.
+    pub fn end(mut self, cycle: u64) -> Result<usize, String> {
+        self.write(&format!("# end {cycle}\n"))?;
+        self.file.flush().map_err(|e| format!("{}: {e}", self.path.display()))?;
+        Ok(self.inputs)
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), String> {
+        self.file.write_all(text.as_bytes()).map_err(|e| format!("{}: {e}", self.path.display()))
     }
 }
 
@@ -125,6 +187,27 @@ mod tests {
         };
         assert_eq!(Session::parse(&session.to_text()), Ok(session));
         assert!(Session::parse("hello").is_err());
+    }
+
+    #[test]
+    fn a_recording_is_a_session_with_its_marks() {
+        let path = std::env::temp_dir().join(format!("clockwork-recording-{}.txt", std::process::id()));
+        let mut recording = Recording::create(&path, "GAME.EXE", "", 1000, 5000).unwrap();
+        recording.at(5000).unwrap();
+        recording.input(5200, &Input::Key(0x1E)).unwrap();
+        recording.at(5200).unwrap();
+        recording.input(6100, &Input::Mouse { x: 3, y: 4, buttons: 1 }).unwrap();
+        recording.at(6100).unwrap();
+        // Read while it is played: up to the last mark.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let marks: Vec<&str> = text.lines().filter(|l| l.starts_with("# at")).collect();
+        assert_eq!(marks, ["# at 5000", "# at 6100"], "one a second (1000 cycles here)");
+        assert_eq!(recording.end(6150).unwrap(), 2);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with("6100 M 3 4 1\n# at 6100\n# end 6150\n"), "{text}");
+        let session = Session::load(&path).unwrap();
+        assert_eq!(session.inputs, vec![(5200, Input::Key(0x1E)), (6100, Input::Mouse { x: 3, y: 4, buttons: 1 })]);
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

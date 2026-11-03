@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 12;
+pub const PROTOCOL: u64 = 13;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -440,7 +440,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "input" => {
             // As --input-file reads them: blank lines and comments are skipped.
-            let lines = strings(r, "lines")?;
+            let lines = if r.get("lines").is_some() { strings(r, "lines")? } else { Vec::new() };
             // The input still to come replaced (D118): but the releases of keys held now.
             if flag(r, "replace")?.unwrap_or(false) {
                 m.replace_input();
@@ -448,6 +448,21 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let scripts = lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty() && !l.starts_with('#'));
             for script in scripts.map(crate::input_script::Script::parse).collect::<Result<Vec<_>, _>>()? {
                 script.schedule(m)?;
+            }
+            // A recorded play (`play --record`): its input from now on, or after a cycle (D124: a play
+            // followed in parts, the part before having had it up to there).
+            if let Some(file) = r.get("replay").and_then(Value::as_str) {
+                let session = crate::session::Session::load(std::path::Path::new(file))?;
+                let after = r.get("after").and_then(Value::as_u64);
+                let now = m.cpu.cycles;
+                let mut queued = 0;
+                for &(cycle, input) in &session.inputs {
+                    if after.map_or(cycle >= now, |after| cycle > after) {
+                        m.queue_input(cycle, input);
+                        queued += 1;
+                    }
+                }
+                return Ok(json!({ "queued": queued }));
             }
             Ok(json!({}))
         }
@@ -987,6 +1002,29 @@ mod tests {
         let shot = ask_state(&mut st, json!({"op": "screenshot", "file": file.to_str().unwrap()})).unwrap();
         assert_eq!((shot["width"].as_u64(), shot["height"].as_u64()), (Some(720), Some(400)), "{shot}");
         assert!(std::fs::read(&file).unwrap().starts_with(b"\x89PNG"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_recorded_play_s_input_is_queued_from_now_or_after_a_cycle() {
+        let dir = game("replay");
+        let mut st = State::new();
+        ask_state(&mut st, json!({"op": "load", "argv": [dir.to_str().unwrap(), "T.COM"]})).unwrap();
+        ask_state(&mut st, json!({"op": "run", "until_ms": 100})).unwrap();
+        let now = ask_state(&mut st, json!({"op": "regs"})).unwrap()["cycles"].as_u64().unwrap();
+        let file = dir.join("play.txt");
+        let play = format!(
+            "# clockwork session v1\nprogram T.COM\nargs \nips 8000000\n{} K 1E\n{} K 9E\n{} K 1F\n# at {}\n",
+            now - 10,
+            now + 10,
+            now + 20,
+            now + 20
+        );
+        std::fs::write(&file, play).unwrap();
+        let from_now = json!({"op": "input", "replay": file.to_str().unwrap()});
+        assert_eq!(ask_state(&mut st, from_now).unwrap()["queued"], 2, "not the input before now");
+        let after = json!({"op": "input", "replay": file.to_str().unwrap(), "after": now + 10});
+        assert_eq!(ask_state(&mut st, after).unwrap()["queued"], 1, "only that after the cycle");
         std::fs::remove_dir_all(&dir).ok();
     }
 

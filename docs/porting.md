@@ -432,6 +432,26 @@ paths not ported it took, and `--notes` lists every note of the run with the fir
 `unmapped` lists the
 named data the mapping neither maps nor ignores: the state nothing compares yet.
 
+`rrc compare SESSION --lockstep` compares the whole session at once (D124): the port gets the original's mapped
+state before every pass, so each pass starts where the original's did, and every field its own pass leaves
+otherwise is counted with the first tick and what it was (`differs   player.position: in 12 of 774 passes, first
+at dungeon's tick 197 (player.position.x: original 2448, port 2432)`), with the fields it leaves unset, the frames
+and the sound that differ, and its notes; the census is in `.rrc/compare/SESSION/census.json`. It is the work
+list: take a difference, then `rrc compare SESSION --transplant T` with T the tick before its first, for who wrote
+the original's value.
+
+### The person plays
+
+Scripts reach what an agent can plan; the person reaches the rest. `rrc play NAME --from SESSION --tick N` opens
+Clockwork's window on the original from that tick (or power-on without `--from`): the person plays it, and the
+play is recorded as the session `NAME`. While they play, rrc follows: each minute of play (`--every`) becomes a
+part, `NAME/1`, `NAME/2`, ..., each from the last tick of the one before, recorded and compared in lockstep; what
+differs or the port noted is said as it is first found (`new differs`, `new note`), and at the end the whole
+play's census is listed, most passes first, with `next`: where to look first. The parts are sessions like any
+other: compare them, watch them, peek into them, and keep them, as the play's record of what to port. Recording
+runs at about the speed of play, so rrc follows a part or so behind and catches up when the window closes.
+`--replay FILE` follows a play recorded before with `clockwork play --record`.
+
 `rrc progress` says how far the port is, as the sessions show it (D117): of the program's functions the
 original ran in the sessions, those it ran in passes the port matches (as each session's last `rrc compare`
 left it), and how many of those the port's code names by ID (a bare `+0A2F0` names the program's own); then

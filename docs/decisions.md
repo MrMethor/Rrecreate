@@ -686,6 +686,32 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D124. The person plays the original; rrc follows the play in parts and compares the port in lockstep. Accepted 2026-11-03, with the person.
+`rrc play NAME [--from SESSION --tick N]` opens Clockwork's window on the original, from a session's tick (its
+snapshot, the input it still had to come dropped but held keys' releases, as D118) or power-on, and records the
+play as the session `NAME` (`sessions/NAME.session`, written as it is played: `# at CYCLE` each emulated second
+says the input up to there is in). While the person plays, rrc follows: every `--every` seconds of play (60) the
+part played since becomes a session of its own, `NAME/1`, `NAME/2`, ... in `sessions/NAME/`, each from the last
+tick of the part before (D118 with recorded play: the same play going on takes, after the snapshot's queue, the
+play's input after the part before's end), recorded and compared in lockstep; what differs or the port noted is
+said as it is first found, and the whole play's census kept in `.rrc/play/NAME/`.
+- **Lockstep** (`rrc compare SESSION --lockstep`): the port from a transplant at tick 1, given every mapped field's
+  original value before every pass (each fed, D84), so each pass starts where the original's did; every field its
+  own pass left otherwise is counted (passes, the first, what), none stopping it, with the fields it leaves unset,
+  the frames and sound that differ and its notes (D115). The inputs file feeds as values change (`fed`, held until
+  they change: `rrc-inputs` version 2), which `--feed` uses too.
+- **Recorded play's identity** is its input up to the session's end: a part's recording, snapshots and kept
+  memory stay its own while the play goes on. Sessions may be based one on another 1000 deep (16 before).
+- `--replay FILE` follows a play recorded before (`clockwork play --record`) mark by mark, as if played now.
+**Why:** steering the original by input scripts, one recording at a time, took an hour for a few minutes of
+Arena's dungeon (M4). The person playing gives in minutes what scripts can't, and the original is the
+specification: the port is compared with the play, not played, so its first divergence can't make the person's
+input meaningless; lockstep finds every divergence of a session at once, which the first-divergence comparison
+needs a run each for. Measured on Arena: recording runs at about the speed of play (147 s for the 157 s of the
+dungeon session), so each part is recorded alone; a lockstep comparison of its 775 ticks took 16 s and named nine
+fields, the screen, the sound and twelve paths not ported (the random encounters first). D77's "don't explore by
+playing" was about the agent: the person playing is what sessions are for.
+
 ### D123. A recording keeps what its run was asked to be; asked otherwise, `rrc record` runs again. Accepted 2026-11-03.
 A session's recorded trace keeps its run's identity: the game, Clockwork, the session's input, options, edits and
 the session it starts from (the identity snapshots are kept by, D76), and its length. `rrc record` keeps the

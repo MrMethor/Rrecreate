@@ -33,10 +33,18 @@ use rrc_runtime::present::Frame;
 const SHOWN: usize = 8;
 
 pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--transplant", "--resume", "--to", "--pair", "--feed"], &["--notes"])?;
-    let usage =
-        "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] [--notes]";
+    let a = Args::parse(args, &["--transplant", "--resume", "--to", "--pair", "--feed"], &["--notes", "--lockstep"])?;
+    let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] \
+                 [--notes] | compare SESSION --lockstep";
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
+    if a.has("--lockstep") {
+        let census = lockstep(repo, name)?;
+        let file = repo.state()?.join("compare").join(name.as_str()).join("census.json");
+        census.save(&file)?;
+        census.show(name, 20);
+        say("census", crate::path_text(&file));
+        return Ok(if census.differs() { ExitCode::from(1) } else { ExitCode::SUCCESS });
+    }
     let tick = |flag: &str| -> Result<Option<u64>, String> {
         a.value(flag)
             .map(|t| t.parse::<u64>().ok().filter(|&t| t > 0).ok_or(format!("{flag} is a tick number")))
@@ -83,9 +91,10 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let file = |f: &str| work.join(f).to_string_lossy().into_owned();
     let after = transplant.or(resume).unwrap_or(0);
-    let mut sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
+    let sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
+    let mut feeds = BTreeMap::new();
     let fed = match a.value("--feed") {
-        Some(fields) => feed(&mut sets, &mapped, &original, fields, after)?,
+        Some(fields) => feed(&mut feeds, &mapped, &original, fields, after)?,
         None => Vec::new(),
     };
     // What each feed changed: ticks the port's own value differed, the first, and where (D114).
@@ -93,7 +102,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     // What the port noted (D115): in all, the first tick and how many ticks; and in the pass to the last tick.
     let mut noted: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     let mut noted_last: Vec<(String, u64)> = Vec::new();
-    write_inputs(&trace, &sets, &file("inputs.jsonl"))?;
+    write_inputs(&trace, &sets, &feeds, &file("inputs.jsonl"))?;
     let mut port_args =
         vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
     if let Some(t) = transplant {
@@ -831,7 +840,7 @@ fn edit_sets(
 /// for `random.seed`) at every tick after `after`, before it steps (D84): a subsystem not ported yet
 /// gives the one being ported what it reads, and matches by construction. The mapped fields fed.
 fn feed(
-    sets: &mut BTreeMap<u64, serde_json::Map<String, Value>>,
+    feeds: &mut BTreeMap<u64, serde_json::Map<String, Value>>,
     mapped: &[Mapped],
     original: &[Vec<Value>],
     fields: &str,
@@ -848,17 +857,32 @@ fn feed(
     let mut names = Vec::new();
     for (m, values) in mapped.iter().zip(original).filter(|(m, _)| fed(&m.field)) {
         names.push(m.field.clone());
-        for (i, value) in values.iter().enumerate().skip(after as usize) {
-            sets.entry(i as u64 + 1).or_default().insert(m.field.clone(), value.clone());
-        }
+        feed_field(feeds, m, values, after);
     }
     say("fed", format!("{}: the original's values at every tick", names.join(", ")));
     Ok(names)
 }
 
-/// The session's inputs, tick by tick (`rrc-inputs`): from the trace, what the port gets; and the
-/// fields the scenario's edits set and those fed (`set`).
-fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Value>>, path: &str) -> Result<(), String> {
+/// The original's values of `m` from the tick after `after` on, as the inputs file feeds them (D124): where
+/// they changed, each holding until it changes.
+fn feed_field(feeds: &mut BTreeMap<u64, serde_json::Map<String, Value>>, m: &Mapped, values: &[Value], after: u64) {
+    let mut last: Option<&Value> = None;
+    for (i, value) in values.iter().enumerate().skip(after as usize) {
+        if last != Some(value) {
+            feeds.entry(i as u64 + 1).or_default().insert(m.field.clone(), value.clone());
+            last = Some(value);
+        }
+    }
+}
+
+/// The session's inputs, tick by tick (`rrc-inputs`): from the trace, what the port gets; the fields the
+/// scenario's edits set (`set`), and the fed fields' values where they changed (`fed`, D124).
+fn write_inputs(
+    trace: &Trace,
+    sets: &BTreeMap<u64, serde_json::Map<String, Value>>,
+    feeds: &BTreeMap<u64, serde_json::Map<String, Value>>,
+    path: &str,
+) -> Result<(), String> {
     let inputs: Vec<Value> = trace
         .header
         .inputs
@@ -871,7 +895,7 @@ fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Valu
             }
         })
         .collect();
-    let mut header = json!({"format": "rrc-inputs", "version": 1, "session": trace.header.session, "inputs": inputs});
+    let mut header = json!({"format": "rrc-inputs", "version": 2, "session": trace.header.session, "inputs": inputs});
     if !trace.header.hooks.is_empty() {
         let hooks: Vec<Value> =
             trace.header.hooks.iter().map(|h| json!({"name": h.name, "registers": h.registers})).collect();
@@ -904,12 +928,315 @@ fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Valu
         if let Some(set) = sets.get(&t.tick) {
             line["set"] = json!(set);
         }
+        if let Some(fed) = feeds.get(&t.tick) {
+            line["fed"] = json!(fed);
+        }
         text.push_str(&line.to_string());
         text.push('\n');
     }
     text.push_str(&json!({"end": trace.end.end, "ticks": trace.ticks.len()}).to_string());
     text.push('\n');
     std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Where the port's own passes differed from the original's in a lockstep comparison (D124): for a field, the
+/// screen, the sound or a note, in how many ticks, the first (its session and tick), and what it was there.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Seen {
+    pub ticks: u64,
+    pub session: String,
+    pub tick: u64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub what: String,
+}
+
+/// What a lockstep comparison found (D124): the port given the original's mapped state before every pass,
+/// every field its own pass left otherwise, the frames and the sound that differ, and what it noted.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Census {
+    /// The port's own passes compared.
+    pub passes: u64,
+    /// Fields its pass left otherwise than the original's.
+    pub fields: BTreeMap<String, Seen>,
+    /// Fields it leaves unset (null): not ported.
+    pub unset: BTreeMap<String, Seen>,
+    pub screen: Option<Seen>,
+    pub sound: Option<Seen>,
+    /// What it noted (`rrc_runtime::note`, D115): paths not ported.
+    pub notes: BTreeMap<String, Seen>,
+}
+
+impl Census {
+    /// Whether the port's state, frames or sound differ anywhere.
+    pub fn differs(&self) -> bool {
+        !self.fields.is_empty() || self.screen.is_some() || self.sound.is_some()
+    }
+
+    /// Adds `other`'s (a later part of the same play): counts summed, the first kept where it was.
+    pub fn add(&mut self, other: &Census) {
+        fn into(seen: &mut Option<Seen>, other: &Seen) {
+            match seen {
+                Some(seen) => seen.ticks += other.ticks,
+                None => *seen = Some(other.clone()),
+            }
+        }
+        self.passes += other.passes;
+        for (mine, theirs) in
+            [(&mut self.fields, &other.fields), (&mut self.unset, &other.unset), (&mut self.notes, &other.notes)]
+        {
+            for (key, seen) in theirs {
+                let mut slot = mine.remove(key);
+                into(&mut slot, seen);
+                mine.insert(key.clone(), slot.expect("added"));
+            }
+        }
+        if let Some(seen) = &other.screen {
+            into(&mut self.screen, seen);
+        }
+        if let Some(seen) = &other.sound {
+            into(&mut self.sound, seen);
+        }
+    }
+
+    /// Each thing `other` has that this hasn't: (its kind, its name, where first).
+    pub fn new_in<'a>(&self, other: &'a Census) -> Vec<(&'static str, &'a str, &'a Seen)> {
+        let mut new = Vec::new();
+        for (kind, mine, theirs) in [
+            ("differs", &self.fields, &other.fields),
+            ("unset", &self.unset, &other.unset),
+            ("note", &self.notes, &other.notes),
+        ] {
+            new.extend(
+                theirs.iter().filter(|(key, _)| !mine.contains_key(*key)).map(|(key, seen)| (kind, key.as_str(), seen)),
+            );
+        }
+        for (kind, mine, theirs) in [("screen", &self.screen, &other.screen), ("sound", &self.sound, &other.sound)] {
+            if let (None, Some(seen)) = (mine, theirs) {
+                new.push((kind, "", seen));
+            }
+        }
+        new
+    }
+
+    /// One line of a thing seen: kind, then the line's text.
+    pub fn line(kind: &str, key: &str, seen: &Seen, passes: u64) -> (String, String) {
+        let at = format!("first at {}'s tick {}", seen.session, seen.tick);
+        let what = if seen.what.is_empty() { String::new() } else { format!(" ({})", seen.what) };
+        let text = match kind {
+            "differs" => format!("{key}: in {} of {passes} passes, {at}{what}", seen.ticks),
+            "unset" => format!("{key}: the port leaves it unset, in {} passes, {at}", seen.ticks),
+            "screen" => format!("the port's frame differs at {} of {passes} ticks, {at}{what}", seen.ticks),
+            "sound" => format!("the port's sound differs at {} of {passes} ticks, {at}{what}", seen.ticks),
+            _ => format!("{key}: in {} passes, first in the pass to {}'s tick {}", seen.ticks, seen.session, seen.tick),
+        };
+        (kind.to_owned(), text)
+    }
+
+    /// Says what it found, `limit` lines of each kind at most, the most passes first.
+    pub fn show(&self, name: &str, limit: usize) {
+        fn ranked(map: &BTreeMap<String, Seen>) -> Vec<(&String, &Seen)> {
+            let mut all: Vec<(&String, &Seen)> = map.iter().collect();
+            all.sort_by(|a, b| b.1.ticks.cmp(&a.1.ticks).then(a.0.cmp(b.0)));
+            all
+        }
+        for (kind, map) in [("differs", &self.fields), ("unset", &self.unset)] {
+            let all = ranked(map);
+            for (key, seen) in all.iter().take(limit) {
+                let (kind, text) = Census::line(kind, key, seen, self.passes);
+                say(&kind, text);
+            }
+            if all.len() > limit {
+                say("more", format!("{} more fields {kind} (in census.json)", all.len() - limit));
+            }
+        }
+        for (kind, seen) in [("screen", &self.screen), ("sound", &self.sound)] {
+            if let Some(seen) = seen {
+                let (kind, text) = Census::line(kind, "", seen, self.passes);
+                say(&kind, text);
+            }
+        }
+        let notes = ranked(&self.notes);
+        for (key, seen) in notes.iter().take(limit) {
+            let (kind, text) = Census::line("note", key, seen, self.passes);
+            say(&kind, text);
+        }
+        if notes.len() > limit {
+            say("more", format!("{} more notes (in census.json)", notes.len() - limit));
+        }
+        if !self.differs() {
+            say("match", format!("{name}: every mapped field, frame and sound in all {} passes", self.passes));
+        }
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+/// `rrc compare SESSION --lockstep` (D124): the port from a transplant at tick 1, given the original's mapped
+/// state before every pass (every field fed); every difference counted, none stopping it: the fields its own
+/// pass left otherwise, the frames and sound that differ, what it noted.
+pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
+    let session = Session::load(repo, name)?;
+    let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
+    let k = Knowledge::load(&repo.knowledge())?;
+    let mapping = Mapping::load(repo)?;
+    let mapped = mapping.resolve(&k)?;
+    let presented = mapping.resolve_present(&k)?;
+    if mapped.is_empty() {
+        return Err(format!(
+            "nothing is mapped: {MAPPING} names the port's fields and the original's items (docs/formats.md)"
+        ));
+    }
+    let cache = Cache::open(&repo.local)?;
+    let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
+    let original = {
+        let places = Places::new(repo, &session);
+        let linear = |linear: u32| places.linear_id(linear).ok();
+        original_values(&trace, &mapped, &Reader::of(&k).with_linear(&linear), name)?
+    };
+    let mut census = Census::default();
+    let ticks = trace.ticks.len() as u64;
+    if ticks < 2 {
+        return Ok(census);
+    }
+    let work = repo.state()?.join("compare").join(name);
+    std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+    let file = |f: &str| work.join(f).to_string_lossy().into_owned();
+    let after = 1;
+    let sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
+    let mut feeds = BTreeMap::new();
+    for (m, values) in mapped.iter().zip(&original) {
+        feed_field(&mut feeds, m, values, after);
+    }
+    write_inputs(&trace, &sets, &feeds, &file("inputs.jsonl"))?;
+    write_start(&trace.header.session, &mapped, &original, after, &file("start.json"))?;
+    let mut port_args = vec![
+        "run".to_owned(),
+        "--inputs".into(),
+        file("inputs.jsonl"),
+        "--out".into(),
+        file("port.jsonl"),
+        "--transplant".into(),
+        file("start.json"),
+    ];
+    if !presented.is_empty() {
+        write_presentation(
+            repo,
+            &session,
+            &k,
+            &presented,
+            (&trace.header.session[..], after),
+            &file("presentation.json"),
+        )?;
+        port_args.extend(["--presentation".into(), file("presentation.json")]);
+    }
+    let screens = screens(&trace);
+    if screens.iter().any(Option::is_some) {
+        let frames = work.join("frames");
+        if frames.is_dir() {
+            std::fs::remove_dir_all(&frames).map_err(|e| format!("{}: {e}", frames.display()))?;
+        }
+        port_args.extend(["--frames".into(), file("frames")]);
+        if let Some(hash) = &screens[(after - 1) as usize] {
+            std::fs::write(file("screen.frm"), cache.get(hash)?).map_err(|e| e.to_string())?;
+            port_args.extend(["--screen".into(), file("screen.frm")]);
+        }
+    }
+    run_port(repo, &port_args)?;
+
+    let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
+    let mut lines = port_trace.lines().filter(|l| !l.trim().is_empty());
+    let header: Value =
+        serde_json::from_str(lines.next().ok_or("the port wrote an empty trace")?).map_err(|e| e.to_string())?;
+    if header["format"] != "rrc-port-trace" || header["version"] != 1 {
+        return Err(format!(
+            "the port's trace isn't rrc-port-trace version 1 ({} {})",
+            header["format"], header["version"]
+        ));
+    }
+    let made: Vec<&str> = match &header["sound"] {
+        Value::Bool(true) => SOUND_DEVICES.iter().map(|(d, _)| *d).collect(),
+        Value::Array(devices) => devices.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    let fields: BTreeMap<&str, usize> = mapped.iter().enumerate().map(|(i, m)| (m.field.as_str(), i)).collect();
+    let seen_at = |t: u64, what: String| Seen { ticks: 1, session: name.to_owned(), tick: t, what };
+    let count = |map: &mut BTreeMap<String, Seen>, key: &str, t: u64, what: String| match map.get_mut(key) {
+        Some(seen) => seen.ticks += 1,
+        None => {
+            map.insert(key.to_owned(), seen_at(t, what));
+        }
+    };
+    let mut screens_seen = Screens::default();
+    for line in lines {
+        let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
+        let Some(t) = v["tick"].as_u64() else { continue };
+        if t == 0 || t > ticks {
+            return Err(format!("the port's trace has tick {t}; the session has 1 to {ticks}"));
+        }
+        for (what, _) in v["notes"].as_object().into_iter().flatten() {
+            count(&mut census.notes, what, t, String::new());
+        }
+        if let Some(frame) = v["frame"].as_str() {
+            screens_seen.port(&work.join("frames").join(frame))?;
+        }
+        if t <= after {
+            continue;
+        }
+        census.passes += 1;
+        for (path, own) in v["overrode"].as_object().into_iter().flatten() {
+            let Some(&i) = fields.get(path.as_str()) else { continue };
+            let (m, theirs) = (&mapped[i], &original[i][(t - 1) as usize]);
+            if own.is_null() {
+                count(&mut census.unset, path, t, String::new());
+                continue;
+            }
+            let mut differ = Vec::new();
+            differences(&m.field, theirs, &m.masked(own), 1, &mut differ);
+            if let Some((at, o, p)) = differ.first() {
+                count(&mut census.fields, path, t, format!("{at}: original {o}, port {p}"));
+            }
+        }
+        if let Some(hash) = &screens[(t - 1) as usize]
+            && let Some(diff) = screens_seen.compare(hash, &cache)?
+        {
+            let what = match diff.sizes {
+                Some(((w, h), (pw, ph))) => format!("the original's is {w}x{h}, the port's {pw}x{ph}"),
+                None if diff.pixels > 0 => {
+                    let (x0, y0, x1, y1) = diff.area;
+                    format!("{} pixels in {x0},{y0}-{x1},{y1}", diff.pixels)
+                }
+                None => format!("{} palette colours", diff.colours.len()),
+            };
+            match &mut census.screen {
+                Some(seen) => seen.ticks += 1,
+                None => census.screen = Some(seen_at(t, what)),
+            }
+        }
+        if !made.is_empty()
+            && let Some(diff) = sound_differences(&trace.ticks[(t - 1) as usize].sound, &v["sound"], &made)
+        {
+            let text =
+                |e: &Option<Value>| e.as_ref().map_or_else(|| "none".to_owned(), |e| untimed_text(diff.device, e));
+            let what = format!(
+                "{} event {}: original {}, port {}",
+                diff.device,
+                diff.at + 1,
+                text(&diff.original),
+                text(&diff.port)
+            );
+            match &mut census.sound {
+                Some(seen) => seen.ticks += 1,
+                None => census.sound = Some(seen_at(t, what)),
+            }
+        }
+    }
+    Ok(census)
 }
 
 /// A transplant (`rrc-state`): the mapped fields' values at `tick`.
@@ -997,6 +1324,41 @@ fn write_presentation(
         ),
     )
     .map_err(|e| format!("{path}: {e}"))
+}
+
+/// Builds the port ahead of its runs (`rrc play`, D124: so no build competes with the person's window):
+/// `[port] build`, or for a `cargo run` command the same `cargo build`; nothing for another command.
+pub(crate) fn build_port(repo: &Repo) -> Result<(), String> {
+    let port = &repo.settings.port;
+    let command: Vec<String> = match port.command.split_first() {
+        _ if !port.build.is_empty() => port.build.clone(),
+        Some((cargo, rest)) if cargo == "cargo" && rest.first().is_some_and(|r| r == "run") => {
+            let mut command = vec![cargo.clone(), "build".to_owned()];
+            command.extend(rest[1..].iter().take_while(|a| *a != "--").cloned());
+            command
+        }
+        _ => return Ok(()),
+    };
+    let (program, rest) = command.split_first().ok_or("[port] build is empty")?;
+    let output = Command::new(program)
+        .args(rest)
+        .current_dir(&repo.root)
+        .output()
+        .map_err(|e| format!("building the port ({program}): {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let tail: Vec<&str> = stderr.lines().rev().take(8).collect();
+    Err(format!(
+        "building the port failed ({}):
+{}",
+        output.status,
+        tail.into_iter().rev().collect::<Vec<_>>().join(
+            "
+"
+        )
+    ))
 }
 
 /// Builds the port if rrc.toml says how (`[port] build`), then runs it (`[port] command`) in the port
