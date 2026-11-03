@@ -157,8 +157,9 @@ the session.
   and per-function memory use (which functions read and write each global); `rrc analyze --session` adds the
   functions a session called that Ghidra lacks to its analysis (D79) and the register contracts its run showed
   (D81, D88), `rrc pass` shows one pass's calls in order (D83), and `rrc files` says which file bytes went where,
-  read or written by which code (D78, D79). A recording keeps the data segment at every tick, so naming more
-  of it records again without a run (D92).
+  read or written by which code, an archive's by their members (D78, D79, D112). A recording keeps the data
+  segment at every tick, so naming more of it records again without a run (D92), and with nothing to add it
+  records nothing (D111).
 - **Outside sources (D32, D77):** for every game, look for source releases, reimplementations, format
   documentation, wikis, walkthroughs and community bug lists, and use what licences allow. They are
   expected, and not relied upon: evidence named with its provenance (`prior-art:<source>`), which the
@@ -278,14 +279,18 @@ the port branches on `rrc_runtime::keeps(NAME)` (D74).
 - **Files, not code:** the toolkit and a port exchange the session's boundary values, traces and port states as
   files in documented formats, so a port in any language can be compared; Rust ports get this from the runtime.
 - **First divergence:** the tick and the fields that differ, then *who wrote* on the original's side; on the
-  port's side, its code for the function that wrote it, found by the ID it names (§6.6, D73).
+  port's side, its code for the function that wrote it, found by the ID it names (§6.6, D73), and what the port
+  noted it left out in that pass (`rrc_runtime::note`, D115).
+- **Feeds:** a subsystem not ported yet is given the original's values (D84); the comparison says, for each
+  field fed, how often the port's own value differed, so a feed hiding a difference shows and one no longer
+  needed can go (D114).
 - **Unset fields:** from power-on, a field the port hasn't set yet (null) matches while the original's value is
   the one at the first tick, memory the program hasn't set (a heap block's leftovers); the comparison names
   who last wrote it before, which tells leftovers from data the port should have loaded (D102).
 - **Frames and sound:** in faithful mode, the port's rendering of each tick is compared with the original's
   screen at the tick's sync point (its memory and palette, D107) as indexed pixels and palette, and sound as
   events per tick, not samples (in order, by device, without their times, D108). At the first frame that
-  differs, who drew its first differing pixel is found as who wrote a value is.
+  differs, its areas are listed (D113), and who drew its first differing pixel is found as who wrote a value is.
 - **Progress:** the share of the original's executed code exercised by sessions that match, and the share of
   its state the mapping covers.
 
