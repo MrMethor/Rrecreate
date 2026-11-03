@@ -197,6 +197,6 @@ impl Live for Chime {
 }
 
 fn main() -> std::process::ExitCode {
-    rrc_platform::main::<Chime, Sound>("Chime: Space plays, Up and Down choose", Chime::start)
+    rrc_platform::main::<Chime, Sound>("Chime: Space plays, Up and Down choose", Some(Chime::start))
         .unwrap_or_else(rrc_runtime::main_drawn::<Chime, Sound>)
 }

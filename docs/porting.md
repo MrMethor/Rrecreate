@@ -513,7 +513,7 @@ handlers' work, and whether its loop takes a pass now, still waits, or ends), an
 
 ```rust
 fn main() -> ExitCode {
-    rrc_platform::main::<Game, Screen>("Game", Game::start).unwrap_or_else(rrc_runtime::main_drawn::<Game, Screen>)
+    rrc_platform::main::<Game, Screen>("Game", Some(Game::start)).unwrap_or_else(rrc_runtime::main_drawn::<Game, Screen>)
 }
 ```
 

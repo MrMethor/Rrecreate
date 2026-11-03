@@ -105,6 +105,68 @@ impl KeyStates {
     }
 }
 
+/// The mouse as an INT 33h driver reports it, the boundary value Clockwork's `mouse` device is (D49: 46 bytes of
+/// words): the buttons, the position in the driver's coordinates, the motion in mickeys, and each button's
+/// presses and releases (left, right, middle: how many, and where the last was).
+#[derive(Debug, Clone, Default)]
+pub struct MouseDriver {
+    pub buttons: u16,
+    pub x: i32,
+    pub y: i32,
+    pub mickeys: (i32, i32),
+    pub presses: [(u16, i32, i32); 3],
+    pub releases: [(u16, i32, i32); 3],
+}
+
+impl MouseDriver {
+    /// The host's mouse taken in: its position in the driver's coordinates (a screen pixel is `scale` of them:
+    /// (2, 1) in mode 13h's 640 × 200), its motion as mickeys (the driver's default ratio: 8 a pixel's 8 across, 16
+    /// down), its buttons' presses and releases.
+    pub fn take(&mut self, host: &Host, (sx, sy): (i32, i32)) {
+        if let Some((x, y)) = host.mouse {
+            let (x, y) = (x * sx, y * sy);
+            self.mickeys.0 += x - self.x;
+            self.mickeys.1 += 2 * (y - self.y);
+            (self.x, self.y) = (x, y);
+        }
+        let buttons = u16::from(host.buttons & 7);
+        for b in 0..3 {
+            let (now, was) = (buttons >> b & 1, self.buttons >> b & 1);
+            let changed = match (now, was) {
+                (1, 0) => Some(&mut self.presses[b]),
+                (0, 1) => Some(&mut self.releases[b]),
+                _ => None,
+            };
+            if let Some((count, x, y)) = changed {
+                (*count, *x, *y) = (count.wrapping_add(1), self.x, self.y);
+            }
+        }
+        self.buttons = buttons;
+    }
+
+    /// What it reports, as Clockwork's `mouse` device has it: the buttons, x, y (function 03h), the motion
+    /// (0Bh), then the presses (05h) and the releases (06h), each a count and the last one's x and y.
+    pub fn state(&self) -> [u8; 46] {
+        let mut words = vec![self.buttons, self.x as u16, self.y as u16, self.mickeys.0 as u16, self.mickeys.1 as u16];
+        for &(count, x, y) in self.presses.iter().chain(&self.releases) {
+            words.extend([count, x as u16, y as u16]);
+        }
+        let mut bytes = [0; 46];
+        for (chunk, word) in bytes.chunks_exact_mut(2).zip(words) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Read by a pass: its motion and its counts start again, as functions 0Bh, 05h and 06h clear them.
+    pub fn read(&mut self) {
+        self.mickeys = (0, 0);
+        for (count, _, _) in self.presses.iter_mut().chain(&mut self.releases) {
+            *count = 0;
+        }
+    }
+}
+
 /// How many times a timer interrupt at `hz` has come since play began.
 pub fn timer_count(ms: u64, hz: u64) -> u64 {
     ms * hz / 1000
@@ -116,15 +178,17 @@ pub fn inputs(values: &[(&str, &[u8])]) -> Inputs {
 }
 
 /// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound]`): the game's folder chosen,
-/// the port's start (`start`, from power-on, or the folder `rrc start` wrote, D120), then [`play`]; none when the
+/// the port's start (`start`, from power-on, or the folder `rrc start` wrote, D120: none for a port that doesn't
+/// start from power-on yet), then [`play`]; none when the
 /// command line asks for something else (a comparison's run, which the runtime's `main` takes):
 ///
 /// ```ignore
 /// fn main() -> ExitCode {
-///     rrc_platform::main::<Game, Screen>("Game", Game::start).unwrap_or_else(rrc_runtime::main_drawn::<Game, Screen>)
+///     rrc_platform::main::<Game, Screen>("Game", Some(Game::start))
+///         .unwrap_or_else(rrc_runtime::main_drawn::<Game, Screen>)
 /// }
 /// ```
-pub fn main<S: Live, P: Presentation<S>>(title: &str, start: fn() -> S) -> Option<std::process::ExitCode> {
+pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) -> Option<std::process::ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) != Some("play") {
         return None;
@@ -149,7 +213,14 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: fn() -> S) -> Optio
             Ok(started) => started,
             Err(e) => return Some(fail(&format!("{}: {e}", dir.display()))),
         },
-        None => Started { state: start(), presentation: None, screen: None },
+        None => match start {
+            Some(start) => Started { state: start(), presentation: None, screen: None },
+            None => {
+                return Some(fail(
+                    "this port plays from where a session is: rrc start SESSION --tick N, then --start DIR",
+                ));
+            }
+        },
     };
     Some(match play::<S, P>(title, started, sound) {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -190,12 +261,8 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
         presentation.sound(None, &state.scene(), &mut sounds);
         audio.play(&sounds);
     }
-    let options = WindowOptions {
-        resize: true,
-        scale: Scale::FitScreen,
-        scale_mode: ScaleMode::Stretch,
-        ..WindowOptions::default()
-    };
+    let options =
+        WindowOptions { resize: true, scale: Scale::X2, scale_mode: ScaleMode::Stretch, ..WindowOptions::default() };
     let mut window = Window::new(title, WIDTH, HEIGHT, options).map_err(|e| format!("a window: {e}"))?;
     window.set_target_fps(70);
     let started = Instant::now();
@@ -272,5 +339,21 @@ mod tests {
         assert_eq!(timer_count(1000, 70), 70);
         let i = inputs(&[("timer_count", &[3, 0]), ("key_down", &keys.0)]);
         assert_eq!((i.u16("timer_count"), i.u8_at("key_down", 0x48)), (3, 1));
+    }
+
+    #[test]
+    fn the_mouse_is_reported_as_the_driver_would() {
+        let mut mouse = MouseDriver::default();
+        mouse.take(&Host { mouse: Some((10, 20)), ..Host::default() }, (2, 1));
+        mouse.read();
+        // Moved 5 pixels right and 3 down, the left button pressed there.
+        mouse.take(&Host { mouse: Some((15, 23)), buttons: 1, ..Host::default() }, (2, 1));
+        let state = mouse.state();
+        let word = |i: usize| u16::from_le_bytes([state[2 * i], state[2 * i + 1]]);
+        assert_eq!((word(0), word(1), word(2)), (1, 30, 23), "buttons, x in 640 across, y");
+        assert_eq!((word(3), word(4)), (10, 6), "mickeys: 8 a pixel's 8 across, 16 down");
+        assert_eq!((word(5), word(6), word(7)), (1, 30, 23), "the left button's press");
+        mouse.read();
+        assert_eq!((mouse.mickeys, mouse.presses[0].0), ((0, 0), 0));
     }
 }

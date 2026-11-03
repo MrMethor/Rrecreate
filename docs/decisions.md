@@ -696,7 +696,9 @@ pass wrote into its own inputs (`Inputs::written`: a key queue the program empti
 **Why:** a port is playable before it reaches its stretch from power-on (Arena's dungeon comes after its intro,
 menus and the character's creation, which no session ports yet); the comparison already started from such a
 state at every transplant, so playing from it is the same start written down. Measured on the vault: tick 200's
-folder holds its 16 fields, the presentation's 4 and the screen.
+folder holds its 16 fields, the presentation's 4 and the screen; Arena's (`rrc start cell --tick 2`) its 117,
+the presentation's 7 and the screen, and `arena play --start .rrc/start/cell-2` walks and turns in the first
+dungeon in a window, the original's timer, keyboard handler and mouse driver ported as its `Live`.
 
 ### D119. The platform layer: a port plays in a window, its input handling made from the host's devices. Accepted 2026-11-03.
 `rrc_platform` (a crate beside the runtime, MIT; never Clockwork's crates) owns the loop of a port played live:
@@ -704,7 +706,8 @@ a window (minifb) showing the presentation's frames in their palette, the host's
 keyboard controller sends it (set 1, grey keys after E0h, no repeat) and the mouse in the screen's coordinates,
 and the presentation's sound played (tinyaudio): the OPL3's writes by Nuked OPL3 at its own 49 716 Hz, the
 speaker's tone as a square wave of the timer's period and high time, digitized sound at its rate, one at a time
-(`Sounds::samples`, which the comparison doesn't compare). A port's `Live::next` is the original's input
+(`Sounds::samples`, which the comparison doesn't compare); `MouseDriver` reports the mouse as an INT 33h
+driver does (Clockwork's 46-byte device). A port's `Live::next` is the original's input
 handling (its keyboard and timer handlers): from the devices, the boundary values a pass reads and whether the
 loop takes a pass, waits or ends. `rrc_platform::main` gives a port `play [--game DIR] [--no-sound]` beside its
 comparison runs. Saved games go to the port's saves (`rrc_runtime::original::save`; `.rrc/saves` or

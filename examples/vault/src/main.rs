@@ -364,6 +364,6 @@ impl Live for Vault {
 }
 
 fn main() -> std::process::ExitCode {
-    rrc_platform::main::<Vault, Screen>("Vault: Enter starts, the arrows walk", Vault::start)
+    rrc_platform::main::<Vault, Screen>("Vault: Enter starts, the arrows walk", Some(Vault::start))
         .unwrap_or_else(rrc_runtime::main_drawn::<Vault, Screen>)
 }
