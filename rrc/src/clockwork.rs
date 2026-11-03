@@ -12,7 +12,7 @@ use crate::repo::{Local, Repo};
 use crate::session::Session;
 
 /// The protocol's revision rrc speaks (`docs/protocol.md`).
-pub const PROTOCOL: u64 = 11;
+pub const PROTOCOL: u64 = 12;
 
 /// The platform rrc knows.
 pub const PLATFORM: &str = "dos-pc";
@@ -82,6 +82,25 @@ impl Clockwork {
     /// The session's run of the original, as [`Clockwork::original`] starts it; when a launcher starts
     /// a 16-bit game, `+OFF` counts from where the run will load the game (D57), and `loaded` says so.
     pub fn session(repo: &Repo, session: &Session) -> Result<(Clockwork, Value), String> {
+        // From another session's tick (D118): its snapshot there, with this session's input in place of the
+        // input still to come.
+        if let Some((hash, _)) = crate::snapshots::based(repo, session)? {
+            let mut clockwork = Clockwork::start(&find(&repo.local)?)?;
+            let file = crate::cache::Cache::open(&repo.local)?.path(&hash);
+            let request = json!({ "argv": argv(repo, &session.options)?, "file": file });
+            let mut loaded = clockwork.ask("load_snapshot", request)?;
+            let lines = match &session.inputs {
+                Some(name) => {
+                    let path = repo.sessions().join(name);
+                    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                    text.lines().map(str::to_owned).collect()
+                }
+                None => Vec::new(),
+            };
+            clockwork.ask("input", json!({ "lines": lines, "replace": true }))?;
+            crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
+            return Ok((clockwork, loaded));
+        }
         let (mut clockwork, mut loaded) = Clockwork::original(repo, &session.options(repo))?;
         crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
         Ok((clockwork, loaded))

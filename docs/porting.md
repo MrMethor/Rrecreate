@@ -439,6 +439,19 @@ caller, library code, a part fed); and, of the data segment the recording keeps 
 change, how many the mapping maps or ignores, and the largest places that neither does, by name: the state to
 map next.
 
+A scenario deep in the game needn't be played to from power-on each time: a session can start from another's
+tick (D118), with its own input from there:
+
+```bash
+rrc session add boss --from walk --tick 1200 --seconds 140 --inputs boss.inputs
+rrc record boss
+rrc compare boss --transplant 1
+```
+
+Its tick 1 is `walk`'s tick 1200; its input's times and `--seconds` count from power-on (`rrc session add` says
+when that tick is), and a key held there is let go when `walk` let go of it. The port starts from a transplant
+at its first tick, or a paired checkpoint; file tracing sees only what it reads from there.
+
 A scenario is set up by edits instead of play (D59, D64): where the game has a cheat or a debug mode, use it
 first (it goes through the game's own code); otherwise
 

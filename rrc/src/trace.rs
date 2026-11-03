@@ -574,14 +574,15 @@ pub(crate) fn begin(
         requests.push(request);
         names.insert(at, s.name.clone());
     }
-    // The scenario's edits, written when their ticks are counted (D64).
+    // The scenario's edits, written when their ticks are counted (D64): Clockwork counts those before a
+    // based session's first too (D118).
     let mut edits = Vec::new();
     if !session.edits.is_empty() {
         let k = Knowledge::load(&repo.knowledge())?;
+        let before = session.base(repo)?.map_or(0, |(_, before)| before);
         for w in crate::edits::resolve(&k, &session.edits)? {
-            edits.push(
-                json!({"tick": w.tick, "at": places.address(&w.id.to_string())?, "hex": crate::edits::hex(&w.bytes)}),
-            );
+            let (at, hex) = (places.address(&w.id.to_string())?, crate::edits::hex(&w.bytes));
+            edits.push(json!({"tick": w.tick + before, "at": at, "hex": hex}));
         }
     }
     // The places first: finding where the game's program goes may take a run of its own.

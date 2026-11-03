@@ -1,7 +1,7 @@
 //! Sessions (DESIGN.md §7): what to reproduce. A session is a TOML file in `sessions/` naming its input
 //! (an input script, or play recorded by `clockwork play --record`, kept beside it), its length and the
-//! edits that set up its scenario (D59, D64); `rrc record` adds the hashes of its trace and its run
-//! (D44, D54), and `rrc compare --pair` its paired checkpoints (D63).
+//! edits that set up its scenario (D59, D64), or the session and tick it starts from (D118); `rrc record`
+//! adds the hashes of its trace and its run (D44, D54), and `rrc compare --pair` its paired checkpoints (D63).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -25,6 +25,10 @@ pub struct Session {
     /// More `clockwork run` options for this session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
+    /// The session and tick it starts from (D118): its tick 1 is that tick, and its input replaces that
+    /// session's from there; its input's times and `seconds` count from power-on, as that session's do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<Base>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<Recorded>,
     /// Paired checkpoints (D63): where the port matched, its state and the original's snapshot.
@@ -34,6 +38,16 @@ pub struct Session {
     #[serde(default, rename = "edit", skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<Edit>,
 }
+
+/// Where a session based on another starts: that session's tick.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Base {
+    pub session: String,
+    pub tick: u64,
+}
+
+/// Sessions based on others, one on another, at most this deep.
+const BASES: usize = 16;
 
 /// A write into the original's memory at a tick: at its sync point, before that pass reads.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -96,6 +110,36 @@ impl Session {
         write_toml(&Session::path(repo, name), self)
     }
 
+    /// The session it starts from, if it is based on one (D118), and the ticks Clockwork counted before its
+    /// first: those before its base's tick, through the bases' bases.
+    pub fn base(&self, repo: &Repo) -> Result<Option<(Session, u64)>, String> {
+        let mut before = 0;
+        let mut at = self.from.clone();
+        let mut first = None;
+        for _ in 0..BASES {
+            let Some(from) = at else { return Ok(first.map(|base| (base, before))) };
+            if from.tick == 0 {
+                return Err(format!("a session starts from {}'s tick {}: ticks count from 1", from.session, from.tick));
+            }
+            let base = Session::load(repo, &from.session)?;
+            before += from.tick - 1;
+            at = base.from.clone();
+            first.get_or_insert(base);
+        }
+        Err(format!("sessions based on one another more than {BASES} deep, or in a ring"))
+    }
+
+    /// The session from power-on it starts from, through its bases (itself if it has none): the program is
+    /// where that one put it.
+    pub fn root(&self, repo: &Repo) -> Result<Session, String> {
+        let mut session = self.clone();
+        for _ in 0..=BASES {
+            let Some(from) = &session.from else { return Ok(session) };
+            session = Session::load(repo, &from.session)?;
+        }
+        Err(format!("sessions based on one another more than {BASES} deep, or in a ring"))
+    }
+
     /// The `clockwork run` options that play it.
     pub fn options(&self, repo: &Repo) -> Vec<String> {
         let file = |name: &str| repo.sessions().join(name).to_string_lossy().into_owned();
@@ -125,10 +169,11 @@ pub fn names(repo: &Repo) -> Result<Vec<String>, String> {
 }
 
 pub(crate) fn session(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let valued = ["--inputs", "--replay", "--seconds", "--description", "--clockwork", "--type", "--note"];
+    let valued =
+        ["--inputs", "--replay", "--seconds", "--description", "--clockwork", "--type", "--note", "--from", "--tick"];
     let a = Args::parse(args, &valued, &["--remove"])?;
-    let usage = "session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT] \
-                 [--clockwork OPTIONS] | set NAME [--seconds N] [--description TEXT] [--clockwork OPTIONS] | \
+    let usage = "session [add NAME --seconds N (--inputs FILE | --replay FILE | --from SESSION --tick N [--inputs \
+                 FILE]) [--description TEXT] [--clockwork OPTIONS] | set NAME [--seconds N] [--description TEXT] [--clockwork OPTIONS] | \
                  edit NAME TICK AT (VALUE [--type T] [--note TEXT] | --remove)]";
     match a.positionals(0, 5, usage)? {
         [] => {
@@ -139,7 +184,8 @@ pub(crate) fn session(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                     0 => String::new(),
                     n => format!(", {n} edit{}", if n == 1 { "" } else { "s" }),
                 };
-                say("session", format!("{name}: {} s, {trace}{edits}{}", s.seconds, note(&s.description)));
+                let from = s.from.as_ref().map_or(String::new(), |f| format!(", from {}'s tick {}", f.session, f.tick));
+                say("session", format!("{name}: {} s, {trace}{from}{edits}{}", s.seconds, note(&s.description)));
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -195,7 +241,40 @@ fn add_session(repo: &Repo, a: &Args, name: &str) -> Result<ExitCode, String> {
     };
     let description = a.value("--description").unwrap_or_default().to_owned();
     let options = a.value("--clockwork").map(clockwork_options).unwrap_or_default();
-    Session { description, inputs, replay, seconds, options, ..Session::default() }.save(repo, name)?;
+    // From another session's tick (D118): where it starts, which its input's times and its seconds pass.
+    let from = match (a.value("--from"), a.value("--tick")) {
+        (Some(session), Some(tick)) => {
+            let tick = tick.parse().ok().filter(|&t: &u64| t > 0).ok_or("--tick is a tick number")?;
+            Some(Base { session: session.to_owned(), tick })
+        }
+        (None, None) => None,
+        _ => return Err("--from SESSION and --tick N go together".into()),
+    };
+    if from.is_some() && replay.is_some() {
+        return Err("a session from another's tick takes an input script (--inputs), not recorded play".into());
+    }
+    let session = Session { description, inputs, replay, seconds, options, from, ..Session::default() };
+    if let Some(from) = &session.from {
+        let (_, ms) = crate::snapshots::based(repo, &session)?.expect("a session from another's tick");
+        if seconds * 1000.0 <= ms as f64 {
+            return Err(format!(
+                "{}'s tick {} is at {:.1} s from power-on: --seconds counts from power-on too, so more",
+                from.session,
+                from.tick,
+                ms as f64 / 1000.0
+            ));
+        }
+        say(
+            "from",
+            format!(
+                "{}'s tick {} ({:.1} s from power-on) is its tick 1; its input's times and --seconds count from power-on",
+                from.session,
+                from.tick,
+                ms as f64 / 1000.0
+            ),
+        );
+    }
+    session.save(repo, name)?;
     say("session", format!("{name}: {seconds} s"));
     say("next", format!("rrc record {name}"));
     Ok(ExitCode::SUCCESS)

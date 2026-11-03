@@ -81,7 +81,9 @@ machine's state hash, as the emulator's `run` prints it.
 
 **Input.** `input` `{"lines": ["MS:STEPS", ...]}`: scripted input at emulated times from power-on, in the
 platform's script language, read as a script file is (blank lines and `#` comments skipped, line ends
-trimmed). A line whose time has passed is refused: its input would land later than it says.
+trimmed). A line whose time has passed is refused: its input would land later than it says. With `"replace":
+true`, the input still to come is dropped first (a snapshot's), but the releases of keys held now, so a held key
+is let go when it would have been (D118).
 
 **Watches.** `watch` `{"ranges": [{"at", "len"}], "reads": false, "limit": 10000}` ... `watch_end`: each
 write (and read) of the watched bytes: `hits`, each `{"at", "kind", "value", "old", "cycle", "by", "chain"}`,
@@ -192,6 +194,7 @@ An IBM PC with DOS (Clockwork).
    counted (none listed: all).
 10. `entries`, `entries_end`: the runs of chosen entries with the registers (D98).
 11. `screen`, and `tick`'s `screen`: the screen at a sync point as a picture (D107).
+12. `input` takes `"replace": true`: the input still to come dropped, but held keys' releases (D118).
 
 ## Changing the protocol
 

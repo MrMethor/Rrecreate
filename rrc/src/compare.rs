@@ -47,6 +47,13 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         return Err("--transplant or --resume, not both".into());
     }
     let mut session = Session::load(repo, name)?;
+    // A session from another's tick starts where the port's start isn't (D118).
+    if let Some(from) = session.from.as_ref().filter(|_| transplant.is_none() && resume.is_none()) {
+        return Err(format!(
+            "{name} starts at {}'s tick {}: compare it from a transplant (--transplant 1) or a paired checkpoint",
+            from.session, from.tick
+        ));
+    }
     let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
     let k = Knowledge::load(&repo.knowledge())?;
     let mapping = Mapping::load(repo)?;

@@ -57,6 +57,11 @@ pub fn run_identity(repo: &Repo, session: &Session) -> Result<String, String> {
         "clockwork": exe, "files": files, "program": original.program, "options": original.options,
         "session": session.options, "inputs": input(&session.inputs)?, "replay": input(&session.replay)?,
     });
+    // The session and tick it starts from (D118): that run's.
+    if let Some(from) = &session.from {
+        let base = Session::load(repo, &from.session)?;
+        identity["from"] = json!({"run": run_identity(repo, &base)?, "tick": from.tick});
+    }
     // The scenario's edits, as the bytes they write (D64); none leaves the identity as before.
     if !session.edits.is_empty() {
         let k = crate::knowledge::Knowledge::load(&repo.knowledge())?;
@@ -133,6 +138,36 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     let mut loaded = clockwork.ask("load_snapshot", json!({ "argv": argv, "file": file }))?;
     crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
     Ok((clockwork, loaded))
+}
+
+/// Where a session based on another starts (D118): that session's snapshot at the end of the tick before
+/// its tick, in the cache, and its time from power-on (ms); kept for that session's run and sync points. None
+/// for a session from power-on.
+pub fn based(repo: &Repo, session: &Session) -> Result<Option<(String, u64)>, String> {
+    let Some(from) = &session.from else { return Ok(None) };
+    let base = Session::load(repo, &from.session)?;
+    let k = crate::knowledge::Knowledge::load(&repo.knowledge())?;
+    let syncs = crate::trace::sync_points(&k)?;
+    let key = sha256(format!("based 1\n{}\n{}", key(repo, &base, &syncs)?, from.tick).as_bytes());
+    let cache = Cache::open(&repo.local)?;
+    let kept = cache.recall("based", &key).and_then(|text| {
+        let (hash, ms) = text.split_once(' ')?;
+        Some((hash.to_owned(), ms.trim().parse::<u64>().ok()?)).filter(|(hash, _)| cache.has(hash))
+    });
+    if let Some(kept) = kept {
+        return Ok(Some(kept));
+    }
+    let (mut clockwork, _, taken) = crate::watch::open(repo, &base, &syncs, from.tick)?;
+    let length_ms = (base.seconds * 1000.0) as u64;
+    let ms = crate::watch::to_tick(&mut clockwork, from.tick, taken.as_ref(), length_ms)
+        .map_err(|e| format!("{}'s tick {}: {e}", from.session, from.tick))?;
+    let file = repo.state()?.join(format!("snapshot-{}.tmp", std::process::id()));
+    clockwork.ask("save", json!({ "file": file }))?;
+    let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let _ = std::fs::remove_file(&file);
+    let hash = cache.put(&bytes)?;
+    cache.remember("based", &key, &format!("{hash} {ms}"))?;
+    Ok(Some((hash, ms)))
 }
 
 /// A snapshot of the session's original at the end of tick `tick`, in the cache (a paired checkpoint's,

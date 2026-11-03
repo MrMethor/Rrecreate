@@ -130,7 +130,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 11, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 12, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--evidence", "step adds 1", "--confidence", "0.5"]);
@@ -900,5 +900,71 @@ tick = 150"
     let (missing, ok) = rrc.run(&["compare", "play"]);
     assert!(!ok && missing.contains("lifes: original 3, port missing"), "{missing}");
     assert!(missing.contains("start     at the port's first tick"), "{missing}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_session_starts_from_another_s_tick() {
+    // D118: the toy game from play's tick 100 (1.4 s from power-on, left held), with play's input from there,
+    // with none, and with an edit.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, mut rrc) = setup_file("based", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
+    let port = built("toy-port", "toy-port", true);
+    example_repository(
+        &rrc,
+        "toy",
+        &port,
+        &[
+            "mapping.toml",
+            "knowledge/functions.tsv",
+            "knowledge/data.tsv",
+            "knowledge/types.toml",
+            "knowledge/ticks.toml",
+            "sessions/play.toml",
+            "sessions/play.inputs",
+            "src/main.rs",
+        ],
+    );
+    rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
+    rrc.ok(&["game", dir.join("game").to_str().unwrap()]);
+    rrc.ok(&["session", "set", "play", "--seconds", "3"]);
+    rrc.ok(&["record", "play"]);
+    // Play's input after tick 100: its times count from power-on.
+    let rest = dir.join("rest.inputs");
+    std::fs::write(&rest, "2200:{hold right 3000}\n").unwrap();
+    let (early, ok) = rrc.run(&["session", "add", "early", "--from", "play", "--tick", "100", "--seconds", "1"]);
+    assert!(!ok && early.contains("is at 1.4 s from power-on: --seconds counts from power-on too"), "{early}");
+    let rest_arg = rest.to_str().unwrap();
+    let args = ["session", "add", "later", "--from", "play", "--tick", "100", "--seconds", "3", "--inputs", rest_arg];
+    let added = rrc.ok(&args);
+    assert!(added.contains("from      play's tick 100 (1.4 s from power-on) is its tick 1"), "{added}");
+    let recorded = rrc.ok(&["record", "later"]);
+    assert!(recorded.contains("trace     110 ticks"), "{recorded}");
+    // Its tick 1 is play's tick 100; it goes on as play did, the left key let go when play let go of it.
+    let values = |text: String| text.lines().filter(|l| l.starts_with("value")).map(str::to_owned).collect::<Vec<_>>();
+    for (t, u) in [("1", "100"), ("50", "149"), ("100", "199")] {
+        let later = values(rrc.ok(&["peek", "later", "--tick", t, "player_x", "score", "rng_seed"]));
+        let play = values(rrc.ok(&["peek", "play", "--tick", u, "player_x", "score", "rng_seed"]));
+        assert!(!later.is_empty() && later == play, "tick {t} of later, {u} of play: {later:?} {play:?}");
+    }
+    // Without input from there the player stops when left is let go, and right is never held.
+    rrc.ok(&["session", "add", "still", "--from", "play", "--tick", "100", "--seconds", "3"]);
+    rrc.ok(&["record", "still"]);
+    let x = |session: &str, tick: &str| values(rrc.ok(&["peek", session, "--tick", tick, "player_x"]));
+    assert_eq!(x("still", "50"), x("play", "149"));
+    assert_eq!(x("still", "100"), x("still", "50"), "still");
+    assert_ne!(x("still", "100"), x("play", "199"), "play went right");
+    // The port compares from a transplant at its first tick, not from the port's start.
+    let (unstarted, ok) = rrc.run(&["compare", "later"]);
+    assert!(!ok && unstarted.contains("starts at play's tick 100: compare it from a transplant"), "{unstarted}");
+    let compared = rrc.ok(&["compare", "later", "--transplant", "1"]);
+    assert!(compared.contains("match     every mapped field at all 110 ticks"), "{compared}");
+    // An edit at its tick 10 is at its tick 10.
+    rrc.ok(&["session", "edit", "later", "10", "score", "77"]);
+    rrc.ok(&["record", "later"]);
+    assert!(rrc.ok(&["peek", "later", "--tick", "10", "score"]).contains("value     score = 77"));
+    assert!(!rrc.ok(&["peek", "later", "--tick", "9", "score"]).contains("score = 77"), "not before its tick");
+    let listed = rrc.ok(&["session"]);
+    assert!(listed.contains("later: 3 s, 110 ticks, from play's tick 100, 1 edit"), "{listed}");
     std::fs::remove_dir_all(&dir).ok();
 }

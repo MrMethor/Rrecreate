@@ -261,7 +261,8 @@ the port branches on `rrc_runtime::keeps(NAME)` (D74).
 
 ## 7. Comparison
 
-- **Sessions:** input scripts, recorded play (`clockwork play --record`), and the game's own demo recordings.
+- **Sessions:** input scripts, recorded play (`clockwork play --record`), and the game's own demo recordings; a
+  session may start from another's tick, with its own input from there (D118).
 - **Sync points:** addresses in the original where a tick ends (one per loop: menus, play, demo playback),
   where the loop's wait is over and the pass hasn't read its inputs yet (D47); a session's timeline is its
   sequence of sync hits. A loop that polls as fast as the CPU runs, with no wait, has a gated sync point: a

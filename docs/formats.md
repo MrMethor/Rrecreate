@@ -399,8 +399,12 @@ description = "the first level, up the main corridor"
 inputs = "walk.inputs"          # an input script (clockwork run --input-file), beside it (rrc session add
                                 # copies it here: edit this copy); or
 # replay = "play.session"       # play recorded by clockwork play --record
-seconds = 86.0                  # emulated seconds it runs
+seconds = 86.0                  # emulated seconds it runs (from power-on, for a session from another's tick too)
 options = []                    # optional: more `clockwork run` options (rrc session --clockwork)
+
+[from]                          # optional: where it starts (D118): another session's tick, its tick 1
+session = "walk"                # its input replaces that session's from there (inputs only, no replay)
+tick = 1200
 
 [trace]                         # written by rrc record
 hash = "6e7f…"                  # the trace, in the cache
@@ -423,7 +427,9 @@ snapshot = "b9b3…"              # Clockwork's snapshot at the end of the tick,
 ```
 
 Recording a session again must give the same run (D44, D60), and with the same knowledge the same trace:
-`rrc record` says which of the two changed.
+`rrc record` says which of the two changed. A session from another's tick starts from that session's snapshot at
+the end of the tick before (kept in the cache for that session's run); its ticks, its edits' ticks among them,
+count from 1 there, and its input's times from power-on, as Clockwork's do.
 
 ## Traces
 

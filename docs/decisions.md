@@ -686,6 +686,20 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D118. A session can start from another session's tick. Accepted 2026-11-03.
+A session's `[from]` names another session and a tick (`rrc session add NAME --from SESSION --tick N`): its runs
+start from that session's snapshot at the end of tick N - 1 (kept in the cache for that session's run and sync
+points), with the input still to come replaced by its own (`input` with `"replace": true`, protocol revision 12:
+Clockwork drops the snapshot's input to come but the releases of keys held then). Its tick 1 is that session's
+tick N; Clockwork's tick count goes on, so its edits are offset by the ticks before; its input's times and
+`seconds` count from power-on, as Clockwork's do. Its run identity includes that session's and the tick; the
+program is where the session from power-on put it. The port compares it from a transplant or a paired checkpoint.
+**Why:** D64 left it for later: a scenario deep in a game was reached by its input and edits from power-on at
+every run, and every command ran those minutes again. Measured on the toy game: from play's tick 100 with play's
+input from there, ticks 1, 50 and 100 hold play's 100, 149 and 199; with none, the player stops when left is let
+go; an edit at its tick 10 lands there; the port matches its 110 ticks from a transplant.
+**Supersedes:** D64's "Not yet" (a session based on a snapshot).
+
 ### D117. Progress is measured from the sessions: functions run in matching passes, the port's code, the state that changes. Accepted 2026-11-03.
 `rrc compare` keeps what it found (`outcome.json`: from which tick, to the last that matched, what was fed).
 `rrc progress` runs each recorded session once with Clockwork's call tracker counted at every tick (kept for the

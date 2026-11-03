@@ -65,6 +65,8 @@ pub struct Placement {
 /// loader), so another program a launcher runs first doesn't count (Daggerfall's runs REPORT.EXE
 /// before FALL.EXE).
 pub fn placement(repo: &Repo, session: &Session) -> Result<Placement, String> {
+    // A session from another's tick has the program where the one from power-on put it (D118).
+    let session = &session.root(repo)?;
     let cache = Cache::open(&repo.local)?;
     let run = crate::snapshots::run_identity(repo, session)?;
     let key = sha256(format!("{run}\n{}\n{}", repo.module_file(), crate::cache::own_build()?).as_bytes());
@@ -195,7 +197,8 @@ impl<'a> Places<'a> {
             let image = if launched_16bit(self.repo) {
                 placement(self.repo, self.session)?.image
             } else {
-                let (_, loaded) = Clockwork::original(self.repo, &self.session.options(self.repo))?;
+                let root = self.session.root(self.repo)?;
+                let (_, loaded) = Clockwork::original(self.repo, &root.options(self.repo))?;
                 (clockwork::linear(&loaded, "image")?, clockwork::number(&loaded, "image_size")? as u32)
             };
             let _ = self.image.set(image);

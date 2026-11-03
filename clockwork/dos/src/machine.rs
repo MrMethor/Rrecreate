@@ -1075,6 +1075,36 @@ impl Machine {
         self.next_event = self.next_event.min(cycle);
     }
 
+    /// Drops the scheduled input still to come, but the releases of keys held now (a release whose press is
+    /// still to come goes too): a session started from another's snapshot gets its own input, and a key held
+    /// at the snapshot is let go when it would have been (D118). Mouse and joystick events all go.
+    pub fn replace_input(&mut self) {
+        let mut kept = VecDeque::new();
+        // Keys pressed after now (whether extended, the code), whose releases go with them.
+        let mut later: Vec<(bool, u8)> = Vec::new();
+        let mut extended = None;
+        for (cycle, input) in std::mem::take(&mut self.inputs) {
+            let Input::Key(code) = input else { continue };
+            if code == 0xE0 {
+                extended = Some(cycle);
+                continue;
+            }
+            let prefix = extended.take();
+            let key = (prefix.is_some(), code & 0x7F);
+            if code & 0x80 == 0 {
+                later.push(key);
+            } else if let Some(i) = later.iter().position(|&k| k == key) {
+                later.remove(i);
+            } else {
+                if let Some(at) = prefix {
+                    kept.push_back((at, Input::Key(0xE0)));
+                }
+                kept.push_back((cycle, input));
+            }
+        }
+        self.inputs = kept;
+    }
+
     /// Types ASCII text (US layout) starting at `cycle`, one key every `spacing` cycles, each
     /// held for half that time. Returns the cycle after the last key is released. Characters
     /// that have no key are skipped.

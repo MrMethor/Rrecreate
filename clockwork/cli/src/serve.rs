@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 11;
+pub const PROTOCOL: u64 = 12;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -441,6 +441,10 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         "input" => {
             // As --input-file reads them: blank lines and comments are skipped.
             let lines = strings(r, "lines")?;
+            // The input still to come replaced (D118): but the releases of keys held now.
+            if flag(r, "replace")?.unwrap_or(false) {
+                m.replace_input();
+            }
             let scripts = lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty() && !l.starts_with('#'));
             for script in scripts.map(crate::input_script::Script::parse).collect::<Result<Vec<_>, _>>()? {
                 script.schedule(m)?;

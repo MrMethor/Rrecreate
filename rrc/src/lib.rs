@@ -87,11 +87,13 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          --all: every function that refers to data, not the first ten; --session:
                          code made at run time, from the session's memory (by tick N, or its last
                          snapshot)
-  session [add NAME --seconds N (--inputs FILE | --replay FILE) [--description TEXT]
-          [--clockwork OPTIONS]]
+  session [add NAME --seconds N (--inputs FILE | --replay FILE | --from SESSION --tick N [--inputs FILE])
+          [--description TEXT] [--clockwork OPTIONS]]
                          the sessions, or a new one: an input script (clockwork run --input-file) or
                          play recorded by clockwork play --record, and how many emulated seconds;
-                         --clockwork: more `clockwork run` options for it (\"--joystick 1\")
+                         --from: starting at another session's tick (its tick 1), with its own input
+                         from there (times and seconds from power-on); --clockwork: more `clockwork
+                         run` options for it (\"--joystick 1\")
   session set NAME [--seconds N] [--description TEXT] [--clockwork OPTIONS]
                          change a session
   session edit NAME TICK AT (VALUE [--type T] [--note TEXT] | --remove)
