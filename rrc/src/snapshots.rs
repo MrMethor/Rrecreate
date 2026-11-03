@@ -153,13 +153,9 @@ pub fn based(repo: &Repo, session: &Session) -> Result<Option<(String, u64)>, St
     let base = Session::load(repo, &from.session)?;
     let k = crate::knowledge::Knowledge::load(&repo.knowledge())?;
     let syncs = crate::trace::sync_points(&k)?;
-    let key = sha256(format!("based 1\n{}\n{}", key(repo, &base, &syncs)?, from.tick).as_bytes());
+    let key = based_key(repo, &base, &syncs, from.tick)?;
     let cache = Cache::open(&repo.local)?;
-    let kept = cache.recall("based", &key).and_then(|text| {
-        let (hash, ms) = text.split_once(' ')?;
-        Some((hash.to_owned(), ms.trim().parse::<u64>().ok()?)).filter(|(hash, _)| cache.has(hash))
-    });
-    if let Some(kept) = kept {
+    if let Some(kept) = kept_based(&cache, &key) {
         return Ok(Some(kept));
     }
     let (mut clockwork, _, taken) = crate::watch::open(repo, &base, &syncs, from.tick)?;
@@ -173,6 +169,27 @@ pub fn based(repo: &Repo, session: &Session) -> Result<Option<(String, u64)>, St
     let hash = cache.put(&bytes)?;
     cache.remember("based", &key, &format!("{hash} {ms}"))?;
     Ok(Some((hash, ms)))
+}
+
+/// Whether where `session` starts is kept already: [`based`] then needs no run (`rrc play` says when it does).
+pub fn based_kept(repo: &Repo, session: &Session) -> Result<bool, String> {
+    let Some(from) = &session.from else { return Ok(true) };
+    let base = Session::load(repo, &from.session)?;
+    let syncs = crate::trace::sync_points(&crate::knowledge::Knowledge::load(&repo.knowledge())?)?;
+    Ok(kept_based(&Cache::open(&repo.local)?, &based_key(repo, &base, &syncs, from.tick)?).is_some())
+}
+
+/// The key a base's snapshot at `tick` is kept under: its run and sync points, and the tick.
+fn based_key(repo: &Repo, base: &Session, syncs: &[SyncPoint], tick: u64) -> Result<String, String> {
+    Ok(sha256(format!("based 1\n{}\n{tick}", key(repo, base, syncs)?).as_bytes()))
+}
+
+/// The snapshot and its ms kept under `key`, if its snapshot is in the cache.
+fn kept_based(cache: &Cache, key: &str) -> Option<(String, u64)> {
+    cache.recall("based", key).and_then(|text| {
+        let (hash, ms) = text.split_once(' ')?;
+        Some((hash.to_owned(), ms.trim().parse::<u64>().ok()?)).filter(|(hash, _)| cache.has(hash))
+    })
 }
 
 /// A snapshot of the session's original at the end of tick `tick`, in the cache (a paired checkpoint's,

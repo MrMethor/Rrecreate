@@ -134,9 +134,22 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         from: from.clone(),
         ..Session::default()
     };
-    // Where the play starts: the session's tick (its snapshot there), or power-on.
+    // Where the play starts: the session's tick (its snapshot there), or power-on. Said first, and what takes
+    // time before the window opens, so the terminal never sits silent.
+    let start = match &from {
+        Some(f) => format!("{}'s tick {}", f.session, f.tick),
+        None => "power-on".to_owned(),
+    };
+    say("play", format!("{name}: the original from {start}, recorded in sessions/{file}"));
+    if !crate::snapshots::based_kept(repo, &session)? {
+        say(
+            "start",
+            format!("the original's state at {start} isn't kept: made now from that session's run (minutes, once)"),
+        );
+    }
     let based = crate::quietly(|| crate::snapshots::based(repo, &session))?;
     // The port built now: a build while the person plays would slow the window.
+    say("port", "built first, so that no build slows the window");
     let built = crate::compare::build_port(repo);
     let start_ms = based.as_ref().map_or(0, |(_, ms)| *ms);
     let mut window = match a.value("--replay") {
@@ -159,7 +172,6 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         Some(f) => format!("{}'s tick {} ({:.1} s from power-on)", f.session, f.tick, start_ms as f64 / 1000.0),
         None => "power-on".to_owned(),
     };
-    say("play", format!("{name}: from {start}, recorded in sessions/{file}"));
     if window.is_some() {
         say("window", "play in it; close it to stop. What the port does otherwise shows here as it is found");
     }

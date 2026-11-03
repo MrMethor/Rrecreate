@@ -1060,10 +1060,11 @@ ips 8000000
     let args = ["play", "hold", "--from", "play", "--tick", "100", "--every", "0.4", "--replay", held];
     let followed = rrc.ok(&args);
     assert!(
-        followed
-            .contains("play      hold: from play's tick 100 (1.4 s from power-on), recorded in sessions/hold.session"),
+        followed.contains("play      hold: the original from play's tick 100, recorded in sessions/hold.session"),
         "{followed}"
     );
+    assert!(followed.contains("start     the original's state at play's tick 100 isn't kept: made now"), "{followed}");
+    assert!(followed.contains("play      hold: 0:02 played from play's tick 100 (1.4 s from power-on)"), "{followed}");
     assert_eq!(followed.matches("passes match").count(), 4, "four parts, each matching: {followed}");
     assert!(followed.contains("part      hold/4: "), "{followed}");
     assert!(followed.contains("4 parts (sessions/hold/1 to 4)"), "{followed}");
