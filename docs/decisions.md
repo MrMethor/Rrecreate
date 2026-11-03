@@ -686,6 +686,21 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D116. Frames, sequences and packed pixels are formats; the check finds a stage of decoding at a tick. Accepted 2026-11-03.
+`knowledge/formats.toml` describes, beside archives and chunks: a `sequence`, members one after another, each a
+structure and the bytes its field counts, or of a size (a CIF's pictures, a SET's textures); a picture's
+`frames`, each at its place in the header's `offsets` (a CFA) or patched from the one before (`deltas =
+"patches"`, a DFA), a path naming one (`RAT1.CFA/3`); pixels packed in `pixel_bits` with a `stride`, through a
+table of `colours`; a format of files of one size (`bytes`: headerless textures among pictures with headers).
+The runtime's codecs add counted runs (`rle`), packed bits (`unpack_bits`) and `patches`, which the port
+decodes with. `rrc asset` writes frames side by side; its check takes `--tick N` (what the original decodes
+only when it draws) and finds what it decoded or a stage of it (`Opened::stages`: a CFA frame's runs before its
+bits are unpacked).
+**Why:** M5 was done with Arena's level, title, sounds and music, but its creatures, effects, animated flats,
+weapons, keys and textures (CFA, DFA, CIF, SET, flags 1 and 2) were decoded only in the port's own code, and
+`rrc asset` could neither extract them nor check them. The original holds a CFA frame only while drawing it, and
+then as its runs left it (RAT1.CFA frame 9 at the cell session's tick 488, 800 bytes), not as pixels.
+
 ### D115. A port notes what it leaves out; the comparison says what the diverging pass reached. Accepted 2026-11-03.
 `rrc_runtime::note(what)` counts a note for the pass being run (and drawn); the port's trace carries each tick's
 notes, and `rrc compare` lists those of the pass to the tick that differs (`noted`), and how many there were

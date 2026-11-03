@@ -1,7 +1,10 @@
-//! `rrc asset PATH` (D78, D103, D105): a file of the game, or an archive's member (`FILE/MEMBER`), decoded
-//! by its format (`knowledge/formats.toml`): an archive's members listed, a picture written as PNG with its
-//! palette, a sound as WAV, music as MIDI, the decoded bytes kept in the cache. With `--session`, the check: where the session's original
-//! read those bytes (file tracing), and whether its memory holds what this decoded, at moments after.
+//! `rrc asset PATH` (D78, D103, D105, D116): a file of the game, or an archive's member (`FILE/MEMBER`),
+//! decoded by its format (`knowledge/formats.toml`): an archive's members listed, a picture written as PNG
+//! with its palette (its frames side by side, or the one its path names: `RAT1.CFA/3`), a sound as WAV, music
+//! as MIDI, the decoded bytes kept in the cache. With `--session`, the check: where the session's original
+//! read those bytes (file tracing), and whether its memory holds what this decoded, or a frame as a step of
+//! its decoding left it, at moments after the read, or at `--tick N` (what the original decodes when it
+//! draws).
 
 use std::process::ExitCode;
 
@@ -23,7 +26,7 @@ use crate::session::Session;
 use crate::trace::sync_points;
 use crate::watch::Names;
 
-const USAGE: &str = "asset FILE[/MEMBER] [--session NAME] [--out FILE] [--lines N]";
+const USAGE: &str = "asset FILE[/MEMBER][/FRAME] [--session NAME [--tick N]] [--out FILE] [--lines N]";
 /// Members listed.
 const SHOWN: usize = 40;
 /// The bytes a search of the original's memory starts from.
@@ -40,9 +43,13 @@ const CHUNK: u32 = 0x10_0000;
 const MEMORY: u32 = 64 * CHUNK;
 
 pub(crate) fn asset(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--session", "--out", "--lines"], &[])?;
+    let a = Args::parse(args, &["--session", "--out", "--lines", "--tick"], &[])?;
     let [path] = a.positionals(1, 1, USAGE)? else { unreachable!() };
     let shown: usize = a.value("--lines").map_or(Ok(SHOWN), str::parse).map_err(|_| "--lines is a count")?;
+    let tick: Option<u64> = a.value("--tick").map(str::parse).transpose().map_err(|_| "--tick is a tick")?;
+    if tick.is_some() && a.value("--session").is_none() {
+        return Err(format!("--tick is the check's, with --session ({USAGE})"));
+    }
     let k = Knowledge::load(&repo.knowledge())?;
     let formats = Formats::load(&repo.knowledge())?;
     let game = repo.game_dir()?;
@@ -69,12 +76,14 @@ pub(crate) fn asset(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let cache = Cache::open(&repo.local)?;
     say("hash", cache.put(&opened.bytes)?);
     match opened.format.as_ref().map(|f| f.kind) {
-        Some(Kind::Archive | Kind::Chunks) => {
+        Some(Kind::Archive | Kind::Chunks | Kind::Sequence) => {
             let format = opened.format.as_ref().expect("a format");
             let members = formats.members(format, &k, &opened.bytes)?;
             say("members", members.len());
             for m in members.iter().take(shown) {
-                let of = formats.of(&format!("{path}/{}", m.name)).map(|f| format!(", {} ({})", f.name, f.kind_text()));
+                let of = formats
+                    .of(&format!("{path}/{}", m.name), m.size)
+                    .map(|f| format!(", {} ({})", f.name, f.kind_text()));
                 say(
                     "member",
                     format!(
@@ -108,11 +117,16 @@ pub(crate) fn asset(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 }
                 None => None,
             };
-            let picture = picture(&opened.bytes, width, height, palette.as_ref().map(|(_, p, bits)| (&p[..], *bits)))?;
+            // Its frames side by side.
+            let frames = opened.frames.max(1);
+            let pixels = strip(&opened.bytes, (width, height), frames);
+            let palette_bits = palette.as_ref().map(|(_, p, bits)| (&p[..], *bits));
+            let picture = picture(&pixels, width * frames, height, palette_bits)?;
             let out = written(repo, a.value("--out"), path, "png", &picture.png())?;
             let shown_with =
                 palette.map_or("grey, as it has no palette".to_owned(), |(p, _, _)| format!("palette {p}"));
-            say("picture", format!("{width} × {height}, {shown_with}"));
+            let side = if frames > 1 { format!(", {frames} frames side by side") } else { String::new() };
+            say("picture", format!("{width} × {height}{side}, {shown_with}"));
             say("png", crate::path_text(&out));
         }
         Some(Kind::Palette) => {
@@ -154,7 +168,7 @@ pub(crate) fn asset(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         Some(Kind::Data) | None => {}
     }
     if let Some(name) = a.value("--session") {
-        check(repo, name, &k, &opened)?;
+        check(repo, name, &k, &opened, tick)?;
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -201,6 +215,21 @@ fn wav(samples: &[u8], rate: u32) -> Vec<u8> {
     out
 }
 
+/// Frames of `width` × `height` one after another, laid side by side: the rows of a picture `frames` wide.
+fn strip(pixels: &[u8], (width, height): (usize, usize), frames: usize) -> Vec<u8> {
+    if frames <= 1 {
+        return pixels.to_vec();
+    }
+    let mut out = Vec::with_capacity(width * height * frames);
+    for row in 0..height {
+        for f in 0..frames {
+            let at = f * width * height + row * width;
+            out.extend(pixels.get(at..at + width).unwrap_or(&[]));
+        }
+    }
+    out
+}
+
 /// A picture's indices in its palette's colours (6 bits to 8), or grey.
 fn picture(pixels: &[u8], width: usize, height: usize, palette: Option<(&[u8], u8)>) -> Result<Picture, String> {
     if pixels.len() < width * height {
@@ -219,8 +248,9 @@ fn picture(pixels: &[u8], width: usize, height: usize, palette: Option<(&[u8], u
 }
 
 /// Where the session's original read the asset's bytes, and whether its memory holds them decoded after
-/// that (D103): the original is the check of a format, as of the port's loader.
-fn check(repo: &Repo, name: &str, k: &Knowledge, opened: &Opened) -> Result<(), String> {
+/// that (D103), or at `tick` (D116: a frame the original decodes when it draws), or as a step of their
+/// decoding left them (`Opened::stages`): the original is the check of a format, as of the port's loader.
+fn check(repo: &Repo, name: &str, k: &Knowledge, opened: &Opened, tick: Option<u64>) -> Result<(), String> {
     let session = Session::load(repo, name)?;
     let (accesses, ms_per_cycle) = traced(repo, &session)?;
     let file = opened.file.to_uppercase().replace('\\', "/");
@@ -230,82 +260,123 @@ fn check(repo: &Repo, name: &str, k: &Knowledge, opened: &Opened) -> Result<(), 
         .filter(|x| !x.write && x.file.to_uppercase().replace('\\', "/").ends_with(&file))
         .filter(|x| (x.offset as usize) < end && start < x.offset as usize + x.len as usize)
         .collect();
-    let Some(first) = reads.first() else {
-        say("original", format!("{name} doesn't read +{start:X} to +{end:X} of {} (rrc files {name})", opened.file));
-        return Ok(());
-    };
-    // The read that completes them: all their bytes are read by then.
-    let mut covered = vec![false; opened.packed];
-    let mut last = first;
-    for x in &reads {
-        let from = (x.offset as usize).max(start) - start;
-        let to = (x.offset as usize + x.len as usize).min(end) - start;
-        covered[from..to].fill(true);
-        last = x;
-        if covered.iter().all(|&c| c) {
-            break;
-        }
-    }
+    let unread = format!("{name} doesn't read +{start:X} to +{end:X} of {}", opened.file);
     let when = When::new(repo, &session);
-    let tick = when.tick(last.cycle).ok_or_else(|| format!("{name} isn't recorded, or read it after its last tick"))?;
     let names = Names::new(k, repo, &session)?;
     let places = Places::new(repo, &session);
     let analysis = Analysis::load(repo)?;
     let code = |address: &str| code_text(&places, k, analysis.as_ref(), address);
-    say("read", format!("{}, by {}", when.text(first.cycle), made_by(first, &names, &code)));
+    // The read that completes them: all their bytes are read by then.
+    let last = match reads.first() {
+        Some(first) => {
+            let mut covered = vec![false; opened.packed];
+            let mut last = first;
+            for x in &reads {
+                let from = (x.offset as usize).max(start) - start;
+                let to = (x.offset as usize + x.len as usize).min(end) - start;
+                covered[from..to].fill(true);
+                last = x;
+                if covered.iter().all(|&c| c) {
+                    break;
+                }
+            }
+            say("read", format!("{}, by {}", when.text(first.cycle), made_by(first, &names, &code)));
+            Some(*last)
+        }
+        None if tick.is_some() => {
+            say("read", unread);
+            None
+        }
+        None => {
+            say("original", format!("{unread} (rrc files {name})"));
+            return Ok(());
+        }
+    };
+    let at_tick = match (tick, last) {
+        (Some(t), _) => t,
+        (None, Some(last)) => {
+            when.tick(last.cycle).ok_or_else(|| format!("{name} isn't recorded, or read it after its last tick"))?
+        }
+        (None, None) => unreachable!("returned above"),
+    };
 
-    // The machine at the read, from the last snapshot before its pass; then its memory searched at moments
-    // after it, until it holds them all.
+    // The machine at the tick, from the last snapshot before its pass; without one, its memory searched at
+    // moments after the read, until it holds them all.
     let syncs = sync_points(k)?;
     let length_ms = (session.seconds * 1000.0) as u64;
-    let (mut clockwork, _, from) = crate::watch::open(repo, &session, &syncs, tick)?;
-    crate::watch::to_tick(&mut clockwork, tick, from.as_ref(), length_ms)?;
-    let now = crate::clockwork::number(&clockwork.ask("regs", Value::Null)?, "cycles")?;
-    if last.cycle > now {
-        clockwork.ask("run", json!({ "cycles": last.cycle - now }))?;
-    }
-    let wanted = &opened.bytes;
-    let mut best: Option<(u64, Seen)> = None;
+    let (mut clockwork, _, from) = crate::watch::open(repo, &session, &syncs, at_tick)?;
+    crate::watch::to_tick(&mut clockwork, at_tick, from.as_ref(), length_ms)?;
+    // What is looked for: the decoded bytes, then each stage of them, the last first.
+    let wanted: Vec<(&str, &[u8])> = std::iter::once(("", &opened.bytes[..]))
+        .chain(opened.stages.iter().rev().map(|(step, bytes)| (step.as_str(), &bytes[..])))
+        .collect();
+    let blobs: Vec<&[u8]> = wanted.iter().map(|(_, b)| *b).collect();
+    // The best seen: any whole, the decoded bytes before a stage; else the most of the decoded bytes.
+    let rank = |w: usize, s: &Seen| {
+        if s.whole(blobs[w].len()) {
+            (1, usize::MAX - w)
+        } else if w == 0 {
+            (0, s.agrees())
+        } else {
+            (0, 0)
+        }
+    };
+    let keep = |after: u64, seens: Vec<Seen>, best: &mut Option<(u64, usize, Seen)>| {
+        for (w, s) in seens.into_iter().enumerate() {
+            if best.as_ref().is_none_or(|(_, bw, b)| rank(w, &s) > rank(*bw, b)) {
+                *best = Some((after, w, s));
+            }
+        }
+    };
+    let whole = |best: &Option<(u64, usize, Seen)>| best.as_ref().is_some_and(|(_, w, s)| s.whole(blobs[*w].len()));
+    let mut best: Option<(u64, usize, Seen)> = None;
     let mut after = 0;
-    for step in std::iter::once(1).chain((0..LATER).map(|i| 1u64 << i)) {
-        clockwork.ask("run", json!({ "ms": step }))?;
-        after += step;
-        let seen = seen(&mut clockwork, wanted, false)?;
-        let whole = seen.whole(wanted.len());
-        if best.as_ref().is_none_or(|(_, b)| seen.agrees() > b.agrees()) {
-            best = Some((after, seen));
+    match (tick, last) {
+        (None, Some(last)) => {
+            let now = crate::clockwork::number(&clockwork.ask("regs", Value::Null)?, "cycles")?;
+            if last.cycle > now {
+                clockwork.ask("run", json!({ "cycles": last.cycle - now }))?;
+            }
+            for step in std::iter::once(1).chain((0..LATER).map(|i| 1u64 << i)) {
+                clockwork.ask("run", json!({ "ms": step }))?;
+                after += step;
+                keep(after, seen(&mut clockwork, &blobs, false)?, &mut best);
+                if whole(&best) {
+                    break;
+                }
+            }
         }
-        if whole {
-            break;
-        }
+        _ => keep(0, seen(&mut clockwork, &blobs, false)?, &mut best),
     }
     // Not all there: extended memory too, at the last moment.
-    if best.as_ref().is_some_and(|(_, b)| !b.whole(wanted.len())) {
-        let seen = seen(&mut clockwork, wanted, true)?;
-        if best.as_ref().is_none_or(|(_, b)| seen.agrees() > b.agrees()) {
-            best = Some((after, seen));
-        }
+    if !whole(&best) {
+        keep(after, seen(&mut clockwork, &blobs, true)?, &mut best);
     }
-    let at_cycle = |ms: u64| last.cycle + (ms as f64 / ms_per_cycle.max(f64::MIN_POSITIVE)) as u64;
+    let at_cycle = |from: u64, ms: u64| from + (ms as f64 / ms_per_cycle.max(f64::MIN_POSITIVE)) as u64;
     // A place by its named data, in the program's image or outside it.
     let named = |at: u32, n: usize| {
         let address = places.linear_id(at).and_then(|id| places.address(&id.to_string()));
         address.map_or_else(|_| format!("@{at:X}"), |address| names.data(&address, n as u32))
     };
-    let Some((ms, seen)) = best else { return Ok(()) };
-    let moment = format!("{ms} ms after the read ({})", when.text(at_cycle(ms)));
-    let n = wanted.len();
+    let Some((ms, w, seen)) = best else { return Ok(()) };
+    let moment = match (tick, last) {
+        (Some(t), _) => format!("at tick {t}"),
+        (None, Some(last)) => format!("{ms} ms after the read ({})", when.text(at_cycle(last.cycle, ms))),
+        (None, None) => unreachable!("returned above"),
+    };
+    let (step, bytes) = wanted[w];
+    let n = bytes.len();
+    let what = if w == 0 { format!("these {n} bytes") } else { format!("them as {step} leaves them ({n} bytes)") };
     match seen.found {
         Some((at, m)) if m == n => {
-            say("original", format!("equal: {moment}, its memory holds these {n} bytes at {}", named(at, n)))
+            say("original", format!("equal: {moment}, its memory holds {what} at {}", named(at, n)))
         }
         _ if seen.rows.is_some() => {
             let (at, row, apart, count) = seen.rows.expect("rows");
             say(
                 "original",
                 format!(
-                    "equal: {moment}, its memory holds these {n} bytes as {count} rows of {row}, {apart} bytes apart, \
-                     from {}",
+                    "equal: {moment}, its memory holds {what} as {count} rows of {row}, {apart} bytes apart, from {}",
                     named(at, row)
                 ),
             )
@@ -313,16 +384,16 @@ fn check(repo: &Repo, name: &str, k: &Knowledge, opened: &Opened) -> Result<(), 
         Some((at, m)) => say(
             "original",
             format!(
-                "differs: {moment}, its memory holds at most the first {m} of these {n} bytes, at {}; byte {m} is \
-                 {:02X} there, {:02X} here",
+                "differs: {moment}, its memory holds at most the first {m} of {what}, at {}; byte {m} is {:02X} \
+                 there, {:02X} here",
                 named(at, m),
                 seen.next.unwrap_or(0),
-                wanted[m]
+                bytes[m]
             ),
         ),
         None => say(
             "original",
-            format!("not found: up to {moment}, its memory nowhere holds the first {} of these bytes", n.min(ANCHOR)),
+            format!("not found: {moment}, its memory nowhere holds the first {} of these bytes", n.min(ANCHOR)),
         ),
     }
     Ok(())
@@ -347,10 +418,10 @@ impl Seen {
     }
 }
 
-/// The machine's memory by linear address, searched for `wanted`: conventional memory with the high memory
-/// area, and with `extended`, extended memory a megabyte at a time, to the first that isn't there or reads all
-/// FFh (past the machine's memory).
-fn seen(clockwork: &mut Clockwork, wanted: &[u8], extended: bool) -> Result<Seen, String> {
+/// The machine's memory by linear address, searched for each of `wanted`: conventional memory with the high
+/// memory area, and with `extended`, extended memory a megabyte at a time, to the first that isn't there or
+/// reads all FFh (past the machine's memory).
+fn seen(clockwork: &mut Clockwork, wanted: &[&[u8]], extended: bool) -> Result<Vec<Seen>, String> {
     let mut read = |at: u32, len: u32| -> Result<Option<Vec<u8>>, String> {
         let read = clockwork.ask("read", json!({"ranges": [{"at": format!("@{at:X}"), "len": len}]}))?;
         Ok(read["data"][0].as_str().map(crate::trace::unhex))
@@ -365,15 +436,20 @@ fn seen(clockwork: &mut Clockwork, wanted: &[u8], extended: bool) -> Result<Seen
         memory.extend(bytes);
         at += CHUNK;
     }
-    let found = longest(&memory, wanted);
-    let next = found.and_then(|(at, m)| memory.get(at as usize + m).copied());
-    let rows = match found {
-        Some((at, m)) if m < wanted.len() => {
-            rows(&memory, wanted, at as usize, m).map(|(apart, count)| (at, m, apart, count))
-        }
-        _ => None,
-    };
-    Ok(Seen { found, next, rows })
+    Ok(wanted
+        .iter()
+        .map(|wanted| {
+            let found = longest(&memory, wanted);
+            let next = found.and_then(|(at, m)| memory.get(at as usize + m).copied());
+            let rows = match found {
+                Some((at, m)) if m < wanted.len() => {
+                    rows(&memory, wanted, at as usize, m).map(|(apart, count)| (at, m, apart, count))
+                }
+                _ => None,
+            };
+            Seen { found, next, rows }
+        })
+        .collect())
 }
 
 /// `wanted` in rows of `row` bytes from `at`, each the same distance after the last (within 64 KB): that
@@ -417,6 +493,13 @@ fn longest(memory: &[u8], wanted: &[u8]) -> Found {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frames_are_laid_side_by_side() {
+        // Two frames of 2 × 2: their rows side by side.
+        assert_eq!(strip(&[1, 2, 3, 4, 5, 6, 7, 8], (2, 2), 2), [1, 2, 5, 6, 3, 4, 7, 8]);
+        assert_eq!(strip(&[1, 2, 3, 4], (2, 2), 1), [1, 2, 3, 4]);
+    }
 
     #[test]
     fn samples_make_a_wav_file() {

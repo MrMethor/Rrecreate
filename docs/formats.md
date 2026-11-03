@@ -237,13 +237,13 @@ A device's state is bytes, like memory (little-endian):
 
 ## `knowledge/formats.toml`: the game's file formats
 
-Each kind of file or archive member (D78, D103), which `rrc asset` decodes by and `rrc check` checks:
+Each kind of file or archive member (D78, D103, D116), which `rrc asset` decodes by and `rrc check` checks:
 
 ```toml
 [[format]]
 name = "archive"
 files = ["VAULT.DAT"]               # names in the game's folder, `*` and `?` as DOS has them, any case
-kind = "archive"                    # archive, chunks, picture, palette, map or data
+kind = "archive"                    # archive, chunks, sequence, picture, palette, sound, music, map or data
 header = "archive_header"           # a structure of types.toml at its start
 directory = 6                       # where its directory (or its first chunk) begins
 count = "header.count"              # how many entries: a number, or a field of the header
@@ -267,7 +267,10 @@ palette = "VAULT.DAT/PALETTE"       # a file or member of kind palette (`bits`: 
   member (without `offset`, each follows the last from `data`, else past the header), and `packed` (its bytes
   in the file) and `method` (its codec, by `methods`) when they are coded; `chunks`, tagged chunks from
   `directory` (0), each a tag of `tag` bytes (4), its length (`length`: `u16` or `u32`) and that many bytes, a
-  member named by its tag; `picture`, `width` × `height` palette indices shown with `palette`; `palette`,
+  member named by its tag; `sequence`, members one after another from `directory` (0), named by their number
+  from 0, each its `entry` (a structure, if it has one) and `size` bytes after it (a number, or the entry's
+  field: `size = "entry.length"`; members of a number may end the file short); `picture`, `width` × `height`
+  palette indices shown with `palette`, in `frames` (below); `palette`,
   colours of three bytes; `map`, `width` × `height` cells; `sound`, unsigned 8-bit mono samples at `rate` a
   second (`coded = "voc"`: a Creative Voice File's, at its rate), written as WAV; `music`, XMIDI (`.XMI`) or a
   standard MIDI file, written as MIDI (D105); `data`, anything else.
@@ -282,7 +285,17 @@ palette = "VAULT.DAT/PALETTE"       # a file or member of kind palette (`bits`: 
   size. `voc` is a Creative Voice File's samples (`rrc_runtime::audio`, D105). A header may be a plain type
   (`header = "u16"`, `size = "header"`).
 - A member is decoded by its container's method, then by its own format; a member's members are named on
-  (`START.MIF/LEVL/MAP1`, D104).
+  (`START.MIF/LEVL/MAP1`, D104). `bytes = 4096` makes a format that of the files it names of that size only
+  (headerless textures among pictures with headers): a file's format is the first that names it and fits.
+- **Frames (D116):** a picture has `frames` of `width` × `height` (else 1), a path's last part naming one
+  (`RAT1.CFA/3`, from 0). Each is at its place in `offsets`, the header's array of places from the file's start
+  (`offsets = "header.offsets"`), coded alone; or, with `deltas = "patches"`, the first is the coded bytes and
+  each after it is the one before patched by the bytes after them (each a `u16` of the bytes after it, a `u16`
+  count, then a `u16` place, a `u16` length and that many bytes). Pixels packed in fewer than 8 bits:
+  `pixel_bits` each, high bits first, `stride` bytes a row (else as many as the width takes); the coded bytes
+  decode to `stride` × `height`, and each value is a place in the table of colours at `colours` (from the
+  file's start) when it has one. `rle` is the counted runs (a byte under 80h, that many + 1 bytes as they are;
+  from 80h, the next byte (& 7Fh) + 1 times).
 
 ```toml
 [[format]]
@@ -297,6 +310,21 @@ mask = 0x0F
 methods = { 0 = "stored", 4 = "lzss" }
 packed = "header.length"
 palette = "after"
+
+[[format]]
+name = "packed_frames"
+files = ["*.CFA"]
+kind = "picture"
+header = "cfa_header"
+width = "header.width"
+height = "header.height"
+frames = "header.frames"
+offsets = "header.offsets"         # each frame's place in the file
+coded = "rle"
+pixel_bits = "header.bits"
+stride = "header.row"
+colours = 0x4C                     # the colours packed values index
+palette = "PAL.COL"
 ```
 
 ## `mapping.toml`: the port's state and the original's

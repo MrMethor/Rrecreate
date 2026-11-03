@@ -1,12 +1,13 @@
-//! The game's file formats as knowledge (D78, D103): `knowledge/formats.toml` says, for each kind of file
-//! or archive member, what it is (an archive's members, tagged chunks, a picture, a palette, a map, data),
-//! the structure at its start (a type of `types.toml`), how its bytes are coded (the runtime's codecs, which
-//! a port decodes with too), the function that reads it and the provenance. `rrc asset` decodes by it.
+//! The game's file formats as knowledge (D78, D103, D116): `knowledge/formats.toml` says, for each kind of
+//! file or archive member, what it is (an archive's members, tagged chunks, members one after another, a
+//! picture and its frames, a palette, a map, data), the structure at its start (a type of `types.toml`), how
+//! its bytes are coded (the runtime's codecs, which a port decodes with too), the function that reads it and
+//! the provenance. `rrc asset` decodes by it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use rrc_runtime::codecs::{Lzss, lzhuf, runs};
+use rrc_runtime::codecs::{Lzss, lzhuf, patches, rle, runs, unpack_bits};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -21,14 +22,18 @@ pub struct Formats {
     pub formats: Vec<Format>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// A directory of entries, each a member's name, place, size and coding.
     Archive,
     /// Tagged chunks one after another, each a member named by its tag.
     Chunks,
-    /// `width` × `height` palette indices, with the `palette` it is shown in.
+    /// Members one after another, named by their number from 0: each its `entry` (a structure, if it has one)
+    /// and `size` bytes after it (a number, or the entry's field: `entry.length`).
+    Sequence,
+    /// `width` × `height` palette indices, with the `palette` it is shown in; `frames` of them, a member's
+    /// path naming one (`RAT1.CFA/3`).
     Picture,
     /// Colours of three bytes (`bits` each: 6, the VGA DAC's, or 8).
     Palette,
@@ -39,6 +44,7 @@ pub enum Kind {
     Sound,
     /// Music: XMIDI (`.XMI`), or a standard MIDI file.
     Music,
+    #[default]
     Data,
 }
 
@@ -47,6 +53,7 @@ impl Kind {
         match self {
             Kind::Archive => "archive",
             Kind::Chunks => "chunks",
+            Kind::Sequence => "sequence",
             Kind::Picture => "picture",
             Kind::Palette => "palette",
             Kind::Map => "map",
@@ -65,7 +72,7 @@ pub enum Number {
     Field(String),
 }
 
-/// How bytes are coded: a codec by name (`stored`, `runs`, `lzss`, `lzhuf`, `voc`), or one with its parameters
+/// How bytes are coded: a codec by name (`stored`, `runs`, `rle`, `lzss`, `lzhuf`, `voc`), or one with its parameters
 /// (`{codec = "lzss", fill = 0}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -150,6 +157,7 @@ impl Codec {
         };
         Ok(match self.codec.as_str() {
             "runs" => runs(packed, size),
+            "rle" => rle(packed, size),
             "lzhuf" => lzhuf(packed, size),
             "lzss" => self.lzss()?.decode(packed, size),
             // A sound's samples: `Formats::open` reads them with their rate.
@@ -160,16 +168,20 @@ impl Codec {
 }
 
 /// The codecs a format may name.
-const CODECS: [&str; 5] = ["stored", "runs", "lzss", "lzhuf", "voc"];
+const CODECS: [&str; 6] = ["stored", "runs", "rle", "lzss", "lzhuf", "voc"];
 
 /// A kind of file or member.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Format {
     pub name: String,
     /// The files it is: names in the game's folder (`DATA\*.IMG`), or an archive's members
     /// (`VAULT.DAT/LEVEL*`); `*` and `?` as DOS has them, in any case.
     pub files: Vec<String>,
+    /// The format of those of this many bytes only (headerless textures among pictures with a header): a
+    /// file's format is the first that names it and fits its size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
     pub kind: Kind,
     /// The structure at its start (a type of `types.toml`), whose fields the numbers here may name
     /// (`header.width`).
@@ -186,10 +198,11 @@ pub struct Format {
     /// How many bytes past the header are coded (else all): what follows them is the file's too (a palette).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packed: Option<Number>,
-    /// How many bytes they decode to (else as many as `width` × `height`, or as the codec gives).
+    /// How many bytes they decode to (else as many as `width` × `height`, or as the codec gives); a sequence's
+    /// members, how many bytes each after its entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<Number>,
-    /// An archive's directory, or the first chunk: where it begins (`end`: the file's last bytes).
+    /// An archive's directory, or the first chunk or member: where it begins (`end`: the file's last bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory: Option<Number>,
     /// Where an archive's members begin when its entries have no `offset`: each follows the last (else
@@ -200,7 +213,8 @@ pub struct Format {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<Number>,
     /// An archive's entry (a structure of `types.toml`): its `name`, `offset` and `size`, and if its members
-    /// are coded, `packed` (their bytes in the file) and `method`, which `methods` gives the codec of.
+    /// are coded, `packed` (their bytes in the file) and `method`, which `methods` gives the codec of. A
+    /// sequence's: the structure each member begins with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -214,6 +228,26 @@ pub struct Format {
     pub width: Option<Number>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<Number>,
+    /// A picture's frames: how many (else 1). Each is at its place in `offsets` (the header's array of them,
+    /// from the file's start: `header.offsets`) and coded alone; or, with `deltas = "patches"`, each after
+    /// the first is the one before it patched (`rrc_runtime::codecs::patches`), the patches following the
+    /// first's coded bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offsets: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deltas: Option<String>,
+    /// A picture's pixels packed `pixel_bits` each (else 8), the first in a byte's high bits, `stride` bytes a
+    /// row (else as many as its width takes): its coded bytes decode to `stride` × `height`. Packed in fewer
+    /// than 8 bits, a pixel's value is a place in its table of colours, at `colours` from the file's start,
+    /// when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pixel_bits: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stride: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colours: Option<Number>,
     /// A picture's palette: a file or member of kind `palette`, or `after`, the bytes after its coded ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
@@ -242,8 +276,11 @@ pub struct Member {
     pub codec: Codec,
 }
 
+/// Bytes as the steps of a decoding left them, each by the step.
+pub type Stages = Vec<(String, Vec<u8>)>;
+
 /// A file or member decoded: its bytes, the codecs that decoded them, its header's values, where its
-/// bytes are in its file.
+/// bytes are in its file; a picture's frames, and the bytes before its decoding's last step.
 #[derive(Debug, Clone)]
 pub struct Opened {
     pub file: String,
@@ -258,6 +295,11 @@ pub struct Opened {
     pub after: Vec<u8>,
     /// A sound's samples a second.
     pub rate: Option<u32>,
+    /// A picture's frames in its bytes, one after another (1 when the path names one).
+    pub frames: usize,
+    /// One frame's bytes before its decoding's last step, each as a step left them (a CFA frame's after its
+    /// runs, before its pixels are unpacked): what the original may hold of it instead.
+    pub stages: Stages,
 }
 
 impl Formats {
@@ -270,9 +312,12 @@ impl Formats {
         }
     }
 
-    /// The format of a file or member (`FILE/MEMBER`): the first that names it.
-    pub fn of(&self, path: &str) -> Option<&Format> {
-        self.formats.iter().find(|f| f.files.iter().any(|pattern| matches(pattern, path)))
+    /// The format of a file or member (`FILE/MEMBER`) of `len` bytes: the first that names it and fits its
+    /// size.
+    pub fn of(&self, path: &str, len: usize) -> Option<&Format> {
+        self.formats
+            .iter()
+            .find(|f| f.bytes.is_none_or(|n| n == len as u64) && f.files.iter().any(|pattern| matches(pattern, path)))
     }
 
     /// What's wrong with them: a type `types.toml` lacks, a codec there isn't, an archive without its
@@ -308,7 +353,22 @@ impl Formats {
                 Kind::Picture if f.width.is_none() || f.height.is_none() => {
                     problems.push(format!("{at}: a picture needs its width and height"));
                 }
+                Kind::Sequence if f.size.is_none() => {
+                    problems.push(format!("{at}: a sequence needs its members' size"));
+                }
                 _ => {}
+            }
+            let framed = [&f.frames, &f.pixel_bits, &f.stride, &f.colours].iter().any(|n| n.is_some())
+                || f.offsets.is_some()
+                || f.deltas.is_some();
+            if framed && f.kind != Kind::Picture {
+                problems.push(format!("{at}: frames, offsets, deltas, pixel_bits, stride and colours are a picture's"));
+            }
+            if let Some(deltas) = f.deltas.as_deref().filter(|d| *d != "patches") {
+                problems.push(format!("{at}: deltas are patches, not {deltas}"));
+            }
+            if f.offsets.is_some() && f.deltas.is_some() {
+                problems.push(format!("{at}: frames by their offsets or by deltas, not both"));
             }
             if let Some(id) = Some(&f.read_by).filter(|r| !r.is_empty())
                 && let Err(e) = crate::knowledge::parse_id(id)
@@ -320,10 +380,11 @@ impl Formats {
     }
 
     /// A file of the game (`name`) or a member of an archive or chunked file (`FILE/MEMBER`; a member's member,
-    /// `START.MIF/LEVL/MAP1`; `#2` for the second of a name), decoded by its format.
+    /// `START.MIF/LEVL/MAP1`; `#2` for the second of a name), decoded by its format; a picture's frame by its
+    /// number (`RAT1.CFA/3`).
     pub fn open(&self, k: &Knowledge, game: &Path, path: &str) -> Result<Opened, String> {
-        let mut parts = path.split('/');
-        let file = parts.next().unwrap_or_default();
+        let parts: Vec<&str> = path.split('/').collect();
+        let file = parts[0];
         let bytes = rrc_runtime::original::file_in(game, file)?;
         let mut opened = Opened {
             file: file.to_owned(),
@@ -335,12 +396,22 @@ impl Formats {
             bytes,
             after: Vec::new(),
             rate: None,
+            frames: 1,
+            stages: Vec::new(),
         };
         // The path as the formats name it: each member by its name, without `#n`.
         let mut named = file.to_owned();
-        for wanted in parts {
-            let container =
-                self.of(&named).ok_or_else(|| format!("{named}: no format in {FORMATS} names it, so no members"))?;
+        let mut frame = None;
+        for (i, &wanted) in parts.iter().enumerate().skip(1) {
+            let container = self
+                .of(&named, opened.bytes.len())
+                .ok_or_else(|| format!("{named}: no format in {FORMATS} names it, so no members"))?;
+            if container.kind == Kind::Picture && i + 1 == parts.len() {
+                let n = wanted.parse::<usize>();
+                frame =
+                    Some(n.map_err(|_| format!("{path}: {named} is a picture, and {wanted} isn't one of its frames"))?);
+                break;
+            }
             let members = self.members(container, k, &opened.bytes)?;
             let m = find_member(&members, wanted).ok_or_else(|| {
                 let names: Vec<&str> = members.iter().take(12).map(|m| m.name.as_str()).collect();
@@ -361,13 +432,14 @@ impl Formats {
             }
             named = format!("{named}/{}", m.name);
         }
-        let Some(format) = self.of(&named) else { return Ok(opened) };
+        let Some(format) = self.of(&named, opened.bytes.len()) else { return Ok(opened) };
         opened.format = Some(format.clone());
-        if matches!(format.kind, Kind::Archive | Kind::Chunks) {
+        if matches!(format.kind, Kind::Archive | Kind::Chunks | Kind::Sequence) {
             return Ok(opened);
         }
         // Its header, then the coded bytes (`packed` of them, or the rest), then what follows them.
-        let mut body = std::mem::take(&mut opened.bytes);
+        let whole = std::mem::take(&mut opened.bytes);
+        let mut body = whole.clone();
         if let Some(ty) = &format.header {
             let n = size(ty, &k.types)? as usize;
             let head = body.get(..n).ok_or_else(|| format!("{path}: shorter than its header ({ty}, {n} bytes)"))?;
@@ -377,10 +449,6 @@ impl Formats {
         let number = |n: &Option<Number>| resolve(n.as_ref(), opened.header.as_ref());
         let coded = number(&format.packed)?.unwrap_or(body.len()).min(body.len());
         let after = body.split_off(coded);
-        let cells = match (number(&format.width)?, number(&format.height)?) {
-            (Some(w), Some(h)) => Some(w * h),
-            _ => None,
-        };
         let codec = match (&format.coded, &format.method) {
             (Some(coded), _) => Some(coded.codec()),
             (None, Some(method)) => {
@@ -395,6 +463,25 @@ impl Formats {
             (None, None) => None,
         };
         opened.rate = number(&format.rate)?.map(|r| r as u32);
+        if format.kind == Kind::Picture {
+            let frames = format.frames(opened.header.as_ref(), &whole, &body, &after, codec.as_ref())?;
+            opened.codecs.extend(frames.steps);
+            let count = frames.pixels.len();
+            (opened.bytes, opened.stages) = match frame {
+                Some(f) => {
+                    let pixels = frames.pixels.get(f).cloned().ok_or_else(|| {
+                        format!("{path}: {named} has {count} frame{} (from 0)", if count == 1 { "" } else { "s" })
+                    })?;
+                    (pixels, frames.stages[f].clone())
+                }
+                None if count == 1 => (frames.pixels.concat(), frames.stages.concat()),
+                None => (frames.pixels.concat(), Vec::new()),
+            };
+            opened.frames = if frame.is_some() { 1 } else { count };
+            opened.after = after;
+            return Ok(opened);
+        }
+        let cells = format.dimensions(opened.header.as_ref())?.map(|(w, h)| w * h);
         if let Some(codec) = codec {
             let size = number(&format.size)?.or(cells).unwrap_or(usize::MAX);
             if codec.codec == "voc" {
@@ -468,6 +555,50 @@ impl Formats {
                 }
                 Ok(members)
             }
+            Kind::Sequence => {
+                let head = match &f.entry {
+                    Some(ty) => size(ty, &k.types)? as usize,
+                    None => 0,
+                };
+                let (mut members, mut i) = (Vec::new(), start);
+                while i < bytes.len() {
+                    let n = members.len();
+                    let entry = match &f.entry {
+                        Some(ty) => {
+                            let b = bytes
+                                .get(i..i + head)
+                                .ok_or_else(|| at(&format!("member {n}'s entry runs past its end")))?;
+                            Some(decode(b, ty, &Reader::of(k))?)
+                        }
+                        None => None,
+                    };
+                    let size =
+                        field(f.size.as_ref(), "entry", entry.as_ref())?.ok_or_else(|| at("a sequence's size"))?;
+                    let mut len = head + size;
+                    if len == 0 {
+                        return Err(at(&format!("member {n} has no bytes")));
+                    }
+                    // Members of a size may end the file short (a file cut short); an entry says how many follow.
+                    if i + len > bytes.len() {
+                        if f.entry.is_some() {
+                            return Err(at(&format!(
+                                "member {n}: {len} bytes at +{i:X}, past its {} bytes",
+                                bytes.len()
+                            )));
+                        }
+                        len = bytes.len() - i;
+                    }
+                    members.push(Member {
+                        name: n.to_string(),
+                        offset: i,
+                        packed: len,
+                        size: len,
+                        codec: Codec::stored(),
+                    });
+                    i += len;
+                }
+                Ok(members)
+            }
             Kind::Chunks => {
                 let tag = f.tag.unwrap_or(4);
                 let width = match f.length.as_deref().unwrap_or("u16") {
@@ -530,17 +661,128 @@ fn name_text(v: &Value) -> String {
 
 /// A number: as written, or the header's field it names.
 fn resolve(n: Option<&Number>, header: Option<&Value>) -> Result<Option<usize>, String> {
+    field(n, "header", header)
+}
+
+/// A number: as written, or the field of `root` it names (`header.width`, a sequence's `entry.length`).
+fn field(n: Option<&Number>, root: &str, value: Option<&Value>) -> Result<Option<usize>, String> {
     match n {
         None => Ok(None),
         Some(Number::Is(v)) => Ok(Some(*v as usize)),
         Some(Number::Field(path)) => {
-            let field = path.strip_prefix("header").ok_or_else(|| format!("{path}: a number or header.FIELD"))?;
-            let header = header.ok_or_else(|| format!("{path}: the format has no header"))?;
-            at_leaf(header, field)
+            let field = path.strip_prefix(root).ok_or_else(|| format!("{path}: a number or {root}.FIELD"))?;
+            let value = value.ok_or_else(|| format!("{path}: the format has no {root}"))?;
+            at_leaf(value, field)
                 .and_then(Value::as_u64)
                 .map(|v| Some(v as usize))
-                .ok_or_else(|| format!("{path}: no such number in the header"))
+                .ok_or_else(|| format!("{path}: no such number in the {root}"))
         }
+    }
+}
+
+/// The numbers of the header's array field `path` names (`header.offsets`).
+fn numbers(path: &str, header: Option<&Value>) -> Result<Vec<usize>, String> {
+    let field = path.strip_prefix("header").ok_or_else(|| format!("{path}: the header's field, header.FIELD"))?;
+    let header = header.ok_or_else(|| format!("{path}: the format has no header"))?;
+    let array = at_leaf(header, field).and_then(Value::as_array).ok_or_else(|| format!("{path}: no such array"))?;
+    Ok(array.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect())
+}
+
+/// A picture's frames decoded: each one's pixels, and its bytes before the last step (`Opened::stages`); the
+/// steps after its codec.
+struct Frames {
+    pixels: Vec<Vec<u8>>,
+    stages: Vec<Stages>,
+    steps: Vec<String>,
+}
+
+impl Format {
+    /// Its frames, from the whole file's bytes (`whole`), its coded ones (`body`) and those after them.
+    fn frames(
+        &self,
+        header: Option<&Value>,
+        whole: &[u8],
+        body: &[u8],
+        after: &[u8],
+        codec: Option<&Codec>,
+    ) -> Result<Frames, String> {
+        let number = |n: &Option<Number>| resolve(n.as_ref(), header);
+        let (width, height) = self.dimensions(header)?.ok_or("a picture needs its width and height")?;
+        let count = number(&self.frames)?.unwrap_or(1);
+        let bits = number(&self.pixel_bits)?.unwrap_or(8);
+        if !(1..=8).contains(&bits) {
+            return Err(format!("{}: {bits} bits a pixel (1 to 8)", self.name));
+        }
+        let stride = number(&self.stride)?.unwrap_or((width * bits).div_ceil(8));
+        let size = number(&self.size)?.unwrap_or(stride * height);
+        let packed = bits < 8 || stride != width;
+        let colours = match number(&self.colours)? {
+            Some(at) if bits < 8 => {
+                let table =
+                    whole.get(at..).ok_or_else(|| format!("{}: its colours at +{at:X}, past its end", self.name))?;
+                Some(&table[..table.len().min(1 << bits)])
+            }
+            _ => None,
+        };
+        // A frame's coded bytes to its pixels, and what its codec left before they were unpacked.
+        let decode = |code: &[u8]| -> Result<(Stages, Vec<u8>), String> {
+            let decoded = match codec {
+                Some(c) => c.decode(code, size)?,
+                None => code[..code.len().min(size)].to_vec(),
+            };
+            if !packed {
+                return Ok((Vec::new(), decoded));
+            }
+            let pixels = unpack_bits(&decoded, bits as u8, (width, height), stride, colours);
+            Ok((vec![(codec.map_or("stored", |c| c.codec.as_str()).to_owned(), decoded)], pixels))
+        };
+        let mut frames = Frames { pixels: Vec::new(), stages: Vec::new(), steps: Vec::new() };
+        if let Some(c) = codec.filter(|c| c.codec != "stored") {
+            frames.steps.push(c.codec.clone());
+        }
+        if packed {
+            frames.steps.push(format!("{bits} bits a pixel"));
+        }
+        match (&self.offsets, self.deltas.as_deref()) {
+            (Some(offsets), _) => {
+                let places = numbers(offsets, header)?;
+                for f in 0..count {
+                    let at =
+                        *places.get(f).ok_or_else(|| format!("frame {f}: {offsets} has {} places", places.len()))?;
+                    let code = whole.get(at..).ok_or_else(|| format!("frame {f} at +{at:X}, past its end"))?;
+                    let (stages, pixels) = decode(code)?;
+                    frames.stages.push(stages);
+                    frames.pixels.push(pixels);
+                }
+            }
+            (None, Some(_)) => {
+                let (stages, mut pixels) = decode(body)?;
+                frames.stages.push(stages);
+                frames.pixels.push(pixels.clone());
+                let mut at = 0;
+                for f in 1..count {
+                    let chunk = after
+                        .get(at..)
+                        .filter(|c| c.len() >= 4)
+                        .ok_or_else(|| format!("frame {f}'s patches, past its end"))?;
+                    at += patches(&mut pixels, chunk);
+                    frames.stages.push(Vec::new());
+                    frames.pixels.push(pixels.clone());
+                }
+                if count > 1 {
+                    frames.steps.push("patches".into());
+                }
+            }
+            (None, None) if count <= 1 => {
+                let (stages, pixels) = decode(body)?;
+                frames.stages.push(stages);
+                frames.pixels.push(pixels);
+            }
+            (None, None) => {
+                return Err(format!("{}: {count} frames, without offsets or deltas to find them", self.name));
+            }
+        }
+        Ok(frames)
     }
 }
 
@@ -613,27 +855,8 @@ mod tests {
             name: "level".into(),
             files: vec!["*.MIF".into()],
             kind: Kind::Chunks,
-            header: None,
-            coded: None,
-            method: None,
-            mask: None,
-            packed: None,
-            size: None,
             directory: Some(Number::Is(2)),
-            data: None,
-            count: None,
-            entry: None,
-            methods: BTreeMap::new(),
-            tag: None,
-            length: None,
-            width: None,
-            height: None,
-            palette: None,
-            rate: None,
-            bits: None,
-            read_by: String::new(),
-            provenance: String::new(),
-            evidence: String::new(),
+            ..Format::default()
         };
         let bytes = b"\0\0MHDR\x01\x00\x07MAP1\x02\x00\x01\x02MAP1\x00\x00";
         let members = Formats::default().members(&f, &Knowledge::default(), bytes).unwrap();
@@ -715,5 +938,106 @@ mod tests {
         let runs = formats.open(&k, &dir, "P.BSA/RUN").unwrap();
         assert_eq!((runs.offset, runs.bytes.as_slice()), (2 + snd.len(), &[9, 9, 9][..]));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn frames_at_their_places_unpack_their_bits_through_their_colours() {
+        // A 4 × 2 picture of 2 bits a pixel, a byte a row, two frames: the header (width, height, row, bits,
+        // frames, the frames' places), four colours, then each frame's counted runs.
+        let k = Knowledge {
+            types: toml::from_str(
+                "[[struct]]\nname = \"ani\"\nsize = 12\nfields = [\
+                 {offset = 0, size = 2, name = \"width\", type = \"u16\"},\
+                 {offset = 2, size = 2, name = \"height\", type = \"u16\"},\
+                 {offset = 4, size = 2, name = \"row\", type = \"u16\"},\
+                 {offset = 6, size = 1, name = \"bits\", type = \"u8\"},\
+                 {offset = 7, size = 1, name = \"frames\", type = \"u8\"},\
+                 {offset = 8, size = 4, name = \"offsets\", type = \"u16[2]\"}]\n",
+            )
+            .unwrap(),
+            ..Knowledge::default()
+        };
+        let formats: Formats = toml::from_str(
+            "[[format]]\nname = \"ani\"\nfiles = [\"*.ANI\"]\nkind = \"picture\"\nheader = \"ani\"\n\
+             width = \"header.width\"\nheight = \"header.height\"\nframes = \"header.frames\"\n\
+             offsets = \"header.offsets\"\ncoded = \"rle\"\npixel_bits = \"header.bits\"\nstride = \"header.row\"\n\
+             colours = 12\n",
+        )
+        .unwrap();
+        assert!(formats.problems(&k).is_empty(), "{:?}", formats.problems(&k));
+        let file = [&[4, 0, 2, 0, 1, 0, 2, 2, 16, 0, 19, 0][..], &[10, 20, 30, 40], &[0x01, 0x1B, 0xE4], &[0x81, 0xFF]]
+            .concat();
+        let dir = std::env::temp_dir().join(format!("rrc-formats-frames-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("A.ANI"), &file).unwrap();
+        let first = formats.open(&k, &dir, "A.ANI/0").unwrap();
+        assert_eq!(first.bytes, [10, 20, 30, 40, 40, 30, 20, 10]);
+        assert_eq!(first.stages, [("rle".to_owned(), vec![0x1B, 0xE4])], "what the runs left, before the bits");
+        assert_eq!((first.frames, first.codecs.as_slice()), (1, &["rle".to_owned(), "2 bits a pixel".to_owned()][..]));
+        let all = formats.open(&k, &dir, "a.ani").unwrap();
+        assert_eq!((all.frames, &all.bytes[8..]), (2, &[40; 8][..]), "the frames one after another");
+        assert!(formats.open(&k, &dir, "A.ANI/2").unwrap_err().contains("has 2 frames"));
+        assert!(formats.open(&k, &dir, "A.ANI/X").unwrap_err().contains("isn't one of its frames"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn frames_after_the_first_are_it_patched() {
+        // A 3 × 1 picture of two frames: the first's two bytes of runs, then a frame's patch, at 1 a 9.
+        let k = Knowledge {
+            types: toml::from_str(
+                "[[struct]]\nname = \"dlt\"\nsize = 8\nfields = [\
+                 {offset = 0, size = 2, name = \"frames\", type = \"u16\"},\
+                 {offset = 2, size = 2, name = \"width\", type = \"u16\"},\
+                 {offset = 4, size = 2, name = \"height\", type = \"u16\"},\
+                 {offset = 6, size = 2, name = \"length\", type = \"u16\"}]\n",
+            )
+            .unwrap(),
+            ..Knowledge::default()
+        };
+        let formats: Formats = toml::from_str(
+            "[[format]]\nname = \"dlt\"\nfiles = [\"*.DLT\"]\nkind = \"picture\"\nheader = \"dlt\"\n\
+             width = \"header.width\"\nheight = \"header.height\"\nframes = \"header.frames\"\n\
+             packed = \"header.length\"\ncoded = \"rle\"\ndeltas = \"patches\"\n",
+        )
+        .unwrap();
+        assert!(formats.problems(&k).is_empty(), "{:?}", formats.problems(&k));
+        let file = [&[2, 0, 3, 0, 1, 0, 2, 0][..], &[0x82, 5], &[7, 0, 1, 0, 1, 0, 1, 0, 9]].concat();
+        let dir = std::env::temp_dir().join(format!("rrc-formats-deltas-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("B.DLT"), &file).unwrap();
+        let all = formats.open(&k, &dir, "B.DLT").unwrap();
+        assert_eq!((all.frames, all.bytes.as_slice()), (2, &[5, 5, 5, 5, 9, 5][..]));
+        assert_eq!(all.codecs, ["rle", "patches"]);
+        assert_eq!(formats.open(&k, &dir, "B.DLT/1").unwrap().bytes, [5, 9, 5]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_sequence_s_members_follow_one_another_and_a_format_may_be_of_a_size() {
+        // C.SEQ: each member a byte of how many follow. D.SET: members of 3 bytes, the last cut short; those
+        // of 3 bytes are textures.
+        let formats: Formats = toml::from_str(
+            "[[format]]\nname = \"seq\"\nfiles = [\"C.SEQ\"]\nkind = \"sequence\"\nentry = \"u8\"\nsize = \"entry\"\n\
+             [[format]]\nname = \"set\"\nfiles = [\"D.SET\"]\nkind = \"sequence\"\nsize = 3\n\
+             [[format]]\nname = \"texture\"\nfiles = [\"D.SET/*\"]\nbytes = 3\nkind = \"picture\"\nwidth = 3\nheight = 1\n",
+        )
+        .unwrap();
+        let k = Knowledge::default();
+        assert!(formats.problems(&k).is_empty(), "{:?}", formats.problems(&k));
+        let members = formats.members(&formats.formats[0], &k, &[2, 7, 8, 1, 9]).unwrap();
+        let placed: Vec<(&str, usize, usize)> = members.iter().map(|m| (m.name.as_str(), m.offset, m.packed)).collect();
+        assert_eq!(placed, [("0", 0, 3), ("1", 3, 2)], "each member with its entry");
+        assert!(formats.members(&formats.formats[0], &k, &[2, 7, 8, 5, 9]).unwrap_err().contains("past its 5 bytes"));
+        let members = formats.members(&formats.formats[1], &k, &[1, 2, 3, 4, 5, 6, 7]).unwrap();
+        assert_eq!(members.iter().map(|m| m.packed).collect::<Vec<_>>(), [3, 3, 1], "the last cut short");
+        assert_eq!(formats.of("D.SET/0", 3).map(|f| f.name.as_str()), Some("texture"));
+        assert_eq!(formats.of("D.SET/2", 1), None, "not of the texture's size");
+        let wrong: Formats = toml::from_str(
+            "[[format]]\nname = \"w\"\nfiles = [\"W\"]\nkind = \"data\"\nframes = 2\ndeltas = \"xor\"\n",
+        )
+        .unwrap();
+        let problems = wrong.problems(&k).join("; ");
+        assert!(problems.contains("are a picture's") && problems.contains("deltas are patches, not xor"), "{problems}");
     }
 }

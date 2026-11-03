@@ -22,6 +22,78 @@ pub fn runs(packed: &[u8], size: usize) -> Vec<u8> {
     out
 }
 
+/// Counted runs, as PackBits counts them but for its high bit: a count byte under 80h, the count + 1 bytes
+/// after it as they are; from 80h, the byte after it (count & 7Fh) + 1 times. Up to `size` bytes, or as many as
+/// `packed` gives (Arena's pictures, flags 1 and 2, and its animations' frames).
+pub fn rle(packed: &[u8], size: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(size);
+    let mut i = 0;
+    while i < packed.len() && out.len() < size {
+        let count = packed[i];
+        let n = (usize::from(count & 0x7F) + 1).min(size - out.len());
+        if count & 0x80 == 0 {
+            let to = (i + 1 + n).min(packed.len());
+            out.extend_from_slice(&packed[i + 1..to]);
+            i += 1 + usize::from(count) + 1;
+        } else {
+            let Some(&value) = packed.get(i + 1) else { break };
+            out.extend(std::iter::repeat_n(value, n));
+            i += 2;
+        }
+    }
+    out
+}
+
+/// Counted runs whose coded bytes are counted first (a `u16`, how many follow): `rle` of them, and how many
+/// bytes they took with their count.
+pub fn rle_counted(packed: &[u8], size: usize) -> (Vec<u8>, usize) {
+    let count = packed.get(..2).map_or(0, |b| usize::from(u16::from_le_bytes([b[0], b[1]])));
+    let coded = packed.get(2..2 + count).unwrap_or(packed.get(2..).unwrap_or(&[]));
+    (rle(coded, size), 2 + count)
+}
+
+/// Pixels packed `bits` a pixel (1 to 8), the first in each byte's high bits, `stride` bytes a row: `width` ×
+/// `height` of them, each its field's value (through `lookup` when it has one: a colour table).
+pub fn unpack_bits(
+    packed: &[u8],
+    bits: u8,
+    (width, height): (usize, usize),
+    stride: usize,
+    lookup: Option<&[u8]>,
+) -> Vec<u8> {
+    let bits = usize::from(bits.clamp(1, 8));
+    let mask = (1u16 << bits) - 1;
+    let mut out = Vec::with_capacity(width * height);
+    for row in 0..height {
+        for column in 0..width {
+            let bit = row * stride * 8 + column * bits;
+            let byte = |i: usize| u16::from(packed.get(i).copied().unwrap_or(0));
+            let window = (byte(bit / 8) << 8) | byte(bit / 8 + 1);
+            let value = ((window >> (16 - bits - bit % 8)) & mask) as u8;
+            out.push(lookup.map_or(value, |table| table.get(usize::from(value)).copied().unwrap_or(0)));
+        }
+    }
+    out
+}
+
+/// A frame's changes from the one before, written over `frame` (an animation's frames after its first):
+/// how many bytes follow (`u16`), then how many patches (`u16`), each a place in the frame (`u16`), a length
+/// (`u16`) and that many bytes. How many bytes it took, with its first count.
+pub fn patches(frame: &mut [u8], chunk: &[u8]) -> usize {
+    let word = |i: usize| chunk.get(i..i + 2).map_or(0, |b| usize::from(u16::from_le_bytes([b[0], b[1]])));
+    let (size, count) = (word(0), word(2));
+    let mut at = 4;
+    for _ in 0..count {
+        let (place, length) = (word(at), word(at + 2));
+        let bytes = chunk.get(at + 4..at + 4 + length).unwrap_or(&[]);
+        if let Some(to) = frame.get_mut(place..place + bytes.len()) {
+            to.copy_from_slice(bytes);
+        }
+        at += 4 + length;
+    }
+    2 + size
+}
+
 /// An LZSS variant: a ring of `ring` bytes (a power of two) filled with `fill` below `start`, where
 /// writing begins, and matches of `shortest` bytes and more. A flag byte comes before each eight items,
 /// its low bit first: 1 a literal byte, 0 a match of two bytes, the low 8 bits of its place in the ring,
@@ -371,6 +443,33 @@ mod tests {
         assert_eq!((code[0], length[0], code[0x1F]), (0, 3, 0));
         assert_eq!((code[0x20], length[0x20], code[0x50], length[0x50]), (1, 4, 4, 5));
         assert_eq!((code[0xFF], length[0xFF]), (63, 8));
+    }
+
+    #[test]
+    fn counted_runs_copy_under_80h_and_repeat_from_it() {
+        // 01h: two bytes as they are; 82h: three of the next; 80h: one.
+        assert_eq!(rle(&[0x01, 0xAA, 0xBB, 0x82, 0x07, 0x80, 0x09], 6), [0xAA, 0xBB, 7, 7, 7, 9]);
+        assert_eq!(rle(&[0x83, 0x05], 2), [5, 5], "no more than asked for");
+        let (frame, took) = rle_counted(&[4, 0, 0x81, 0x03, 0x00, 0x04, 0xFF], 3);
+        assert_eq!((frame, took), (vec![3, 3, 4], 6), "its count, then four coded bytes");
+    }
+
+    #[test]
+    fn packed_pixels_unpack_high_bits_first_through_their_colours() {
+        // 3 x 2 at 3 bits, 2 bytes a row: 101 000 011 / 001 111 000.
+        let packed = [0b1010_0001, 0b1000_0000, 0b0011_1100, 0];
+        assert_eq!(unpack_bits(&packed, 3, (3, 2), 2, None), [5, 0, 3, 1, 7, 0]);
+        let colours: Vec<u8> = (0..8).map(|c| c + 40).collect();
+        assert_eq!(unpack_bits(&packed, 3, (3, 2), 2, Some(&colours)), [45, 40, 43, 41, 47, 40]);
+    }
+
+    #[test]
+    fn patches_change_a_frame_where_they_say() {
+        let mut frame = [0u8; 6];
+        // 13 bytes follow: 2 patches, 2 bytes at 1 and 1 byte at 5; then the next frame's.
+        let chunk = [13, 0, 2, 0, 1, 0, 2, 0, 0xAA, 0xBB, 5, 0, 1, 0, 0xCC, 0xEE];
+        assert_eq!(patches(&mut frame, &chunk), 15);
+        assert_eq!(frame, [0, 0xAA, 0xBB, 0, 0, 0xCC]);
     }
 
     #[test]

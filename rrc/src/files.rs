@@ -172,11 +172,10 @@ fn archives(repo: &Repo, k: &Knowledge, accesses: &[Access]) -> BTreeMap<String,
         if archives.contains_key(&x.file) {
             continue;
         }
-        let members = formats
-            .of(&x.file)
-            .filter(|f| f.kind == Kind::Archive)
-            .and_then(|f| {
-                let bytes = rrc_runtime::original::file_in(game, &x.file).ok()?;
+        let members = rrc_runtime::original::file_in(game, &x.file)
+            .ok()
+            .and_then(|bytes| {
+                let f = formats.of(&x.file, bytes.len()).filter(|f| f.kind == Kind::Archive)?;
                 formats.members(f, k, &bytes).ok()
             })
             .unwrap_or_default();

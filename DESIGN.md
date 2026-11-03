@@ -165,9 +165,10 @@ the session.
   expected, and not relied upon: evidence named with its provenance (`prior-art:<source>`), which the
   original confirms or overrules.
 - **Assets (D78, M5):** the game's files are a source too. File tracing says which bytes of which file the
-  program put where; formats are knowledge (`knowledge/formats.toml`); `rrc asset` extracts pictures,
-  palettes, sounds, music and levels, checked against what the original loaded: its memory at moments after
-  file tracing's reads is searched for what was decoded (D103, D104). A port reads the game's files through the
+  program put where; formats are knowledge (`knowledge/formats.toml`); `rrc asset` extracts pictures and their
+  frames, palettes, sounds, music and levels, checked against what the original loaded: its memory at moments
+  after file tracing's reads, or at a tick it draws in, is searched for what was decoded or a step of it (D103,
+  D104, D116). A port reads the game's files through the
   runtime and decodes the common compressions with its codecs, and its sounds (Creative's Voice Files) and
   music (XMIDI, as MIDI) with its audio module, which `rrc asset` decodes with too (D101, D105).
 - **IDs:** `<MODULE>[#<n>]+<offset>`, where `#n` is an overlay (MZ) or an object (LE/LX) and the offset is in

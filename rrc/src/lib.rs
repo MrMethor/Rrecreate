@@ -155,12 +155,13 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          how much, by which code; with --file, each read or write: where in the file
                          (in an archive the formats know, its member), how many bytes, where in memory,
                          by which code, when; --file also takes an archive's member (MEMBER, FILE/MEMBER)
-  asset FILE[/MEMBER] [--session NAME] [--out FILE] [--lines N]
+  asset FILE[/MEMBER][/FRAME] [--session NAME [--tick N]] [--out FILE] [--lines N]
                          a file of the game or an archive's member, decoded by its format
-                         (knowledge/formats.toml): an archive's members, a picture as PNG with its
-                         palette, a sound as WAV, music as MIDI, the bytes kept in the cache; with
-                         --session, where the original read
-                         them and whether its memory holds them decoded after that
+                         (knowledge/formats.toml): an archive's or a sequence's members, a picture as
+                         PNG with its palette (its frames side by side, or the one named), a sound as
+                         WAV, music as MIDI, the bytes kept in the cache; with --session, where the
+                         original read them and whether its memory holds them decoded, or as a step
+                         of their decoding left them, after the read or at --tick N
   search SESSION CONDITION... [--type T] [--step N] [--at ID --len N] [--lines N]
                          the places in the data segment (LE: the data objects; or the range given)
                          whose values, read as T (u16 unless --type says), meet every condition over

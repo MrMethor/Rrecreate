@@ -140,20 +140,24 @@ file to the function that reads it, and a save routine's writes to which memory 
 
 Once the reader's code says how a kind of file is laid out and coded (and format documentation, as a source,
 what it is), write it in `knowledge/formats.toml` (`docs/formats.md`): an archive's directory, tagged chunks,
-a picture with its palette, a map; its header a structure of `types.toml`; its coding one of the toolkit's
-codecs (PCX run-length, LZSS with its parameters).
+a picture with its palette and its frames, members one after another, a map; its header a structure of
+`types.toml`; its coding one of the toolkit's codecs (PCX run-length, counted runs, LZSS with its parameters,
+LZHUF), pixels packed in bits through a table of colours, frames patched from the one before.
 
 ```bash
 rrc asset LEVELS.DAT
 rrc asset LEVELS.DAT/LEVEL1 --session first-level
 rrc asset TITLE.IMG
+rrc asset GLOBAL.BSA/RAT1.CFA/9 --session cell --tick 488
 ```
 
 `rrc asset` decodes a file or an archive's member by its format: an archive's members, a picture as PNG with
 its palette, a sound as WAV, music as MIDI (in `.rrc/assets/`), the bytes in the cache. With `--session`, the original checks it (D103):
 where the session read those bytes and by which code, and whether the original's memory holds what this
 decoded at moments after the read (1 ms, then doubling to about 4 s), `equal` and when and where (a map laid
-out in a wider grid is found as its rows), or how far it agrees (D104). A format that decodes equal is the one
+out in a wider grid is found as its rows), or how far it agrees (D104). What the original decodes when it draws
+(an animation's frame) is searched for at a tick it is drawn in, `--tick N`, and found as decoded or as a step
+of its decoding left it (a frame's runs before its bits are unpacked, D116). A format that decodes equal is the one
 the port's loader decodes by (`rrc_runtime::codecs`). A game's own coding, which no codec of the toolkit is,
 is the port's code, checked by the comparison as the loaded data it makes (mapped state).
 
