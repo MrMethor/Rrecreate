@@ -219,7 +219,12 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             drawn = Some((t, diff));
             break;
         }
-        if sounding && let Some(diff) = sound_differences(&trace.ticks[(t - 1) as usize].sound, &v["sound"], &made) {
+        // From a transplant or a resume the pass to the first tick was the original's: its sound isn't compared.
+        let own_pass = after == 0 || t > after;
+        if sounding
+            && own_pass
+            && let Some(diff) = sound_differences(&trace.ticks[(t - 1) as usize].sound, &v["sound"], &made)
+        {
             heard = Some((t, diff));
             break;
         }
@@ -702,7 +707,9 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
             .iter()
             .position(|item| match &m.via {
                 Some(via) => {
-                    item.via.as_ref().is_some_and(|v| v.at == at && v.offset == via.offset) && item.size == m.size
+                    item.via.as_ref().is_some_and(|v| v.at == at && v.offset == via.offset)
+                        && item.name == via.item_name()
+                        && item.size == m.size
                 }
                 None => item.via.is_none() && item.at == at && item.size == m.size,
             })
@@ -713,7 +720,7 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
             let value = match &last {
                 Some((h, v)) if *h == hex => v.clone(),
                 _ => match &hex {
-                    Some(h) => m.masked(&decode(&unhex(h)?, &m.ty, r).map_err(|e| format!("{}: {e}", m.field))?),
+                    Some(h) => decoded(m, &unhex(h)?, r).map_err(|e| format!("{}: {e}", m.field))?,
                     None => Value::Null,
                 },
             };
@@ -722,7 +729,50 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
         }
         all.push(values);
     }
+    // An index into an array on the heap (D122): where the field's pointer points, as an element of where the
+    // array's pointer points then.
+    for (i, m) in mapped.iter().enumerate() {
+        let Some((array, width, count)) = &m.into else { continue };
+        let a = mapped.iter().find(|a| a.field == *array).ok_or_else(|| format!("{}: into {array}", m.field))?;
+        let via = a.via.as_ref().ok_or_else(|| format!("{}: into {array}, not through a pointer", m.field))?;
+        let kind = crate::values::PointerKind::of_type(&m.ty, r.types)
+            .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
+        let column = |at: &str, size: u32| {
+            trace.header.state.iter().position(|item| item.via.is_none() && item.at == at && item.size == size)
+        };
+        let lacks = || format!("the trace of {name} lacks {}'s pointers: rrc record {name}", m.field);
+        let own = column(&m.id.to_string(), m.size).ok_or_else(lacks)?;
+        let base = column(&a.id.to_string(), via.pointer.size()).ok_or_else(lacks)?;
+        let index = |p: &Option<String>, b: &Option<String>| -> Value {
+            let target = |hex: &Option<String>, kind: &crate::values::PointerKind, past: u32| {
+                hex.as_deref().and_then(|h| unhex(h).ok()).and_then(|bytes| kind.target(&bytes, past))
+            };
+            let apart = match (target(p, &kind, 0), target(b, &via.pointer, via.offset)) {
+                (Some(Target::Linear(p)), Some(Target::Linear(b))) => p.checked_sub(b),
+                (Some(Target::Id(p)), Some(Target::Id(b))) if p.module() == b.module() && p.part() == b.part() => {
+                    p.offset().checked_sub(b.offset())
+                }
+                _ => None,
+            };
+            match apart.filter(|d| d % width == 0 && d / width < *count) {
+                Some(d) => Value::from(d / width),
+                None => Value::Null,
+            }
+        };
+        all[i] = trace.values(own).iter().zip(&trace.values(base)).map(|(p, b)| index(p, b)).collect();
+    }
     Ok(all)
+}
+
+/// A field's value from its item's bytes: as its type reads them (its mask's bits), or a list's nodes, one
+/// after another, as an array (D122).
+fn decoded(m: &Mapped, bytes: &[u8], r: &Reader) -> Result<Value, String> {
+    if m.via.as_ref().is_some_and(|v| v.next.is_some()) {
+        let nodes =
+            bytes.chunks_exact(m.size as usize).map(|node| decode(node, &m.ty, r)).collect::<Result<Vec<_>, _>>()?;
+        return Ok(Value::Array(nodes));
+    }
+    Ok(m.masked(&decode(bytes, &m.ty, r)?))
 }
 
 /// The fields the port gets set by the scenario's edits after tick `after` (D64), by tick: the mapped
@@ -1354,6 +1404,7 @@ mod tests {
             size,
             via: None,
             mask: None,
+            into: None,
         };
         let m = mapped("enemies", "GAME.EXE+00100", "enemy[6]", 60);
         assert_eq!(locate(&m, "enemies[3].y", &types), Some((32, 2)));

@@ -686,6 +686,20 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D122. The mapping follows pointers found through pointers, reads lists, and indexes arrays on the heap. Accepted 2026-11-03.
+A `[[map]]` via a pointer may follow more pointers (`then`: each a pointer type and how far past where the last
+points it is), read a list (`next`, where a node's pointer to the next is, and `count`, at most; the field is an
+array of its nodes, a null pointer ending it), and a pointer field may be read as the index of the element it
+points to in a mapped array through a pointer (`into`, null elsewhere). `rrc record` follows them read by read
+at each tick (an item `*actors[next +4, 8]`); a comparison and a transplant decode them. Also: from a transplant
+or a resume, the first tick's sound isn't compared (its pass was the original's).
+**Why:** D72 left "a pointer found through another (a list's links on the heap), and `into` an array on the
+heap" for when a game needed them; a game's actors, projectiles and messages live in such lists. Measured on
+`testbins/src/list.c` (LIST.EXE): its four actors in a list on the far heap, the third leaving it at pass 50,
+read as an array of four then three; the second's hits through the first's next pointer; a far pointer into an
+array on the heap read as 6 at tick 10 and 4 at tick 60.
+**Supersedes:** D72's "Not yet".
+
 ### D121. A port's sound is compared by the devices it makes; a live port knows whether its sample plays. Accepted 2026-11-03.
 A presentation names the devices whose sound it makes (`Presentation::SOUND_DEVICES`, every one by default):
 its trace's header lists them (`"sound":["pcm"]`) and `rrc compare` compares those only, saying which it

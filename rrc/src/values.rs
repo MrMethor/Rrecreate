@@ -30,6 +30,14 @@ enum Kind<'a> {
     Enum(&'a Enum),
 }
 
+/// An array type's element type and count (`enemy[6]`), none for another type.
+pub fn array_of<'a>(ty: &'a str, types: &'a Types) -> Option<(&'a str, u32)> {
+    match kind(ty, types) {
+        Ok(Kind::Array(element, count)) => Some((element, count)),
+        _ => None,
+    }
+}
+
 fn kind<'a>(ty: &'a str, types: &'a Types) -> Result<Kind<'a>, String> {
     if let Some((element, count)) = array(ty)? {
         return Ok(Kind::Array(element, count));

@@ -8,7 +8,9 @@
 //! resume's tick and given to the presentation, neither traced nor compared. `[[ignore]]` is the
 //! original's memory that may differ (padding, caches, driver internals), named so that nothing is left
 //! out silently. `rrc record` traces every mapped item; `rrc compare` compares them, and a transplant
-//! builds the port's state from them.
+//! builds the port's state from them. Through a pointer, more pointers may be followed (`then`), a list's
+//! nodes read to its end (`next`), and a pointer read as the index of the element it points to in a mapped
+//! array on the heap (`into`, D122).
 
 use ids::Id;
 
@@ -48,8 +50,29 @@ pub struct Map {
     /// The bits of the item (an unsigned number) that are the field; none: all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<u64>,
+    /// After `via`, the pointers found through it one after another (D122): each a pointer of type `pointer`,
+    /// `offset` bytes past where the last points; the item is where the last of them points.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub then: Vec<Step>,
+    /// A list (D122): the item is its first node, each node's pointer to the next `next` bytes into it (of the
+    /// last pointer's kind), to a null one, at most `count` nodes; the field is an array of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// The item, a pointer, read as the index of the element it points to in the mapped field `into` (an
+    /// array through a pointer): null where it points elsewhere (D122).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub into: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+}
+
+/// A pointer found through another (`Map::then`): its type, and how far past where the last points it is.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Step {
+    pub offset: u32,
+    pub pointer: String,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -78,6 +101,8 @@ pub struct Mapped {
     pub via: Option<Via>,
     /// The bits that are the field ([`Map::mask`]).
     pub mask: Option<u64>,
+    /// The array it is an index into ([`Map::into`]): its field, its elements' size and how many.
+    pub into: Option<(String, u32, u32)>,
 }
 
 /// How a mapped item is found through a pointer: the pointer as the mapping names it, how it points,
@@ -87,15 +112,32 @@ pub struct Via {
     pub name: String,
     pub pointer: PointerKind,
     pub offset: u32,
+    /// The pointers found through it one after another: how far past where the last points, and how each points.
+    pub then: Vec<(u32, PointerKind)>,
+    /// A list's: where in a node its pointer to the next is, and how many nodes at most.
+    pub next: Option<(u32, u32)>,
 }
 
 impl Via {
-    /// What the trace calls the item: `*trail`, `*world.level+4`.
+    /// What the trace calls the item: `*trail`, `*world.level+4`, `*actors>+6+2` (a pointer found 6 bytes past
+    /// where `actors` points, the item 2 past where that one points), `*actors[next +4, 8]` (a list).
     pub fn item_name(&self) -> String {
-        match self.offset {
-            0 => format!("*{}", self.name),
-            n => format!("*{}+{n}", self.name),
+        let mut name = format!("*{}", self.name);
+        for (offset, _) in &self.then {
+            name.push_str(&format!(">+{offset}"));
         }
+        if self.offset != 0 {
+            name.push_str(&format!("+{}", self.offset));
+        }
+        if let Some((next, count)) = self.next {
+            name.push_str(&format!("[next +{next}, {count}]"));
+        }
+        name
+    }
+
+    /// How the pointer that leads to the item points: the last found, or the first.
+    pub fn last_pointer(&self) -> &PointerKind {
+        self.then.last().map_or(&self.pointer, |(_, p)| p)
     }
 }
 
@@ -148,6 +190,25 @@ impl Mapping {
                 resolved.mask = Some(mask);
             }
             mapped.push(resolved);
+        }
+        // An index into an array on the heap (D122): its field, through a pointer, an array.
+        for (i, m) in self.maps.iter().enumerate().filter(|(_, m)| !m.into.is_empty()) {
+            let at = |e: String| format!("{MAPPING}: {}: {e}", m.field);
+            let array = mapped
+                .iter()
+                .find(|a| a.field == m.into)
+                .ok_or_else(|| at(format!("into {}: no such field", m.into)))?;
+            if array.via.as_ref().is_none_or(|v| !v.then.is_empty() || v.next.is_some()) {
+                return Err(at(format!("into {}: an array through one pointer (via, without then or next)", m.into)));
+            }
+            let Some((element, count)) = values::array_of(&array.ty, &k.types) else {
+                return Err(at(format!("into {}: its type {} isn't an array", m.into, array.ty)));
+            };
+            let width = values::size(element, &k.types)?;
+            if PointerKind::of_type(&mapped[i].ty, &k.types).is_none() {
+                return Err(at(format!("into: {} isn't a pointer type", mapped[i].ty)));
+            }
+            mapped[i].into = Some((m.into.clone(), width, count));
         }
         Ok(mapped)
     }
@@ -218,7 +279,10 @@ fn direct(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     if k.ticks.inputs.iter().any(|i| i.at == id.to_string()) {
         return Err(format!("{} is an input: the port gets it with each tick's inputs", m.at));
     }
-    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None, mask: None })
+    if !m.then.is_empty() || m.next.is_some() {
+        return Err("then and next go with via: the pointers to follow".into());
+    }
+    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None, mask: None, into: None })
 }
 
 /// A field mapped to what a pointer points to (D72).
@@ -239,8 +303,26 @@ fn via(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     }
     let size = values::size(&m.ty, &k.types)?;
     let id = values::moved(&id, offset).ok_or("past the address space")?;
-    let via = Via { name: m.via.clone(), pointer, offset: m.offset };
-    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: Some(via), mask: None })
+    let mut then = Vec::new();
+    for step in &m.then {
+        let kind = PointerKind::of_type(&step.pointer, &k.types).ok_or_else(|| {
+            format!("then: {} isn't a pointer type (far, or a [[pointer]] of types.toml)", step.pointer)
+        })??;
+        then.push((step.offset, kind));
+    }
+    let next = match (m.next, m.count) {
+        (Some(next), Some(count)) if count > 0 => {
+            let width = then.last().map_or(&pointer, |(_, p)| p).size();
+            if next + width > size {
+                return Err(format!("next +{next}: a node of {} is {size} bytes, too few for its pointer there", m.ty));
+            }
+            Some((next, count))
+        }
+        (None, None) => None,
+        _ => return Err("a list takes next (where a node points to the next) and count (how many at most)".into()),
+    };
+    let via = Via { name: m.via.clone(), pointer, offset: m.offset, then, next };
+    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: Some(via), mask: None, into: None })
 }
 
 /// The ID a mapping (or an edit) names: an ID, or a data name.
@@ -351,12 +433,18 @@ mod tests {
         };
         let mapped = m.resolve(&k).unwrap();
         assert_eq!((mapped[0].id.to_string(), mapped[0].size), ("GAME.EXE+00110".into(), 64));
-        assert_eq!(mapped[0].via, Some(Via { name: "trail".into(), pointer: PointerKind::Far, offset: 0 }));
+        assert_eq!(
+            mapped[0].via,
+            Some(Via { name: "trail".into(), pointer: PointerKind::Far, offset: 0, then: vec![], next: None })
+        );
         assert_eq!(mapped[1].via.as_ref().unwrap().item_name(), "*world.level+4");
         assert_eq!(mapped[0].covers(), (&mapped[0].id, 4), "the pointer");
         assert_eq!(mapped[1].id.to_string(), "GAME.EXE+00122", "the field holding the pointer");
         let near = PointerKind::Near { base: "GAME.EXE+00000".parse().unwrap(), size: 2 };
-        assert_eq!(mapped[1].via, Some(Via { name: "world.level".into(), pointer: near, offset: 4 }));
+        assert_eq!(
+            mapped[1].via,
+            Some(Via { name: "world.level".into(), pointer: near, offset: 4, then: vec![], next: None })
+        );
         let wrong = |maps| Mapping { maps, ..Mapping::default() }.resolve(&k).unwrap_err();
         assert!(wrong(vec![via("t", "trail", 0, "")]).contains("needs a type"));
         assert!(wrong(vec![via("t", "score", 0, "u8")]).contains("u16 isn't a pointer type"));

@@ -975,3 +975,65 @@ fn a_session_starts_from_another_s_tick() {
     assert!(listed.contains("later: 3 s, 110 ticks, from play's tick 100, 1 edit"), "{listed}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn state_behind_pointers_is_mapped_through_them() {
+    // D122: testbins/src/list.c's actors in a list on the far heap (`actors`, each's `next` at +4), an array on
+    // the heap (`table`) and a pointer into it (`current`); a tick ends where `pass` returns (+00147).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, rrc) = setup_file("list", "LIST.EXE", &std::fs::read(root.join("testbins/bin/LIST.EXE")).unwrap());
+    rrc.ok(&["init", "--program", "LIST.EXE"]);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap()]);
+    for (id, name, size, ty) in [
+        ("LIST.EXE+02528", "table", "4", "far"),
+        ("LIST.EXE+0252C", "current", "4", "far"),
+        ("LIST.EXE+02530", "actors", "4", "far"),
+        ("LIST.EXE+02534", "pass_count", "2", "u16"),
+    ] {
+        rrc.ok(&["data", id, name, "--size", size, "--type", ty, "--by", "human"]);
+    }
+    rrc.ok(&["sync", "LIST.EXE+00147", "pass", "--by", "human", "--evidence", "where pass returns to main's loop"]);
+    std::fs::write(
+        rrc.repo.join("knowledge/types.toml"),
+        "[[struct]]\nname = \"actor\"\nsize = 8\nfields = [\n\
+         { offset = 0, size = 2, name = \"x\", type = \"i16\" },\n\
+         { offset = 2, size = 2, name = \"hits\", type = \"i16\" },\n\
+         { offset = 4, size = 4, name = \"next\", type = \"far\" },\n]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rrc.repo.join("mapping.toml"),
+        "[[map]]\nfield = \"pass_count\"\nat = \"pass_count\"\n\n\
+         [[map]]\nfield = \"actors\"\nvia = \"actors\"\ntype = \"actor\"\nnext = 4\ncount = 8\n\n\
+         [[map]]\nfield = \"table\"\nvia = \"table\"\ntype = \"i16[8]\"\n\n\
+         [[map]]\nfield = \"current\"\nat = \"current\"\ntype = \"far\"\ninto = \"table\"\n\n\
+         [[map]]\nfield = \"second_hits\"\nvia = \"actors\"\nthen = [{ offset = 4, pointer = \"far\" }]\noffset = 2\n\
+         type = \"i16\"\n",
+    )
+    .unwrap();
+    assert!(rrc.ok(&["check"]).contains("mapping   5 fields mapped"));
+    rrc.ok(&["session", "add", "run", "--seconds", "2"]);
+    let recorded = rrc.ok(&["record", "run"]);
+    assert!(recorded.contains("trace     100 ticks"), "{recorded}");
+    // The mapped fields' values at a tick, as a transplant would give them (rrc start, D120).
+    let state = |tick: &str| -> serde_json::Value {
+        let out = dir.join(format!("start-{tick}"));
+        rrc.ok(&["start", "run", "--tick", tick, "--out", out.to_str().unwrap()]);
+        let text = std::fs::read_to_string(out.join("state.json")).unwrap();
+        serde_json::from_str::<serde_json::Value>(&text).unwrap()["state"].clone()
+    };
+    let xs = |s: &serde_json::Value| -> Vec<i64> {
+        s["actors"].as_array().unwrap().iter().map(|a| a["x"].as_i64().unwrap()).collect()
+    };
+    // After 10 passes: each actor moved by its place in the list + 1 each pass; the array written at
+    // pass & 7; `current` at (pass × 3) & 7; the second actor's hits through the first's next.
+    let ten = state("10");
+    assert_eq!((ten["pass_count"].as_i64(), xs(&ten)), (Some(10), vec![10, 30, 50, 70]), "{ten}");
+    assert_eq!(ten["table"], serde_json::json!([8, 9, 10, 3, 4, 5, 6, 7]), "{ten}");
+    assert_eq!((ten["current"].as_i64(), ten["second_hits"].as_i64()), (Some(6), Some(1)), "{ten}");
+    // At pass 50 the third left the list: three, the last now third.
+    let sixty = state("60");
+    assert_eq!(xs(&sixty), vec![60, 130, 260], "{sixty}");
+    assert_eq!(sixty["current"].as_i64(), Some(4), "(60 × 3) & 7: {sixty}");
+    std::fs::remove_dir_all(&dir).ok();
+}

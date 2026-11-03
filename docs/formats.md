@@ -354,6 +354,27 @@ via = "level_map"               # or: a pointer (named data, an ID, a path into 
 offset = 0                      # is where it points at each tick, this many bytes past (optional)
 type = "u8[4096]"               # needed: what it points to
 
+[[map]]
+field = "actors"                # a list on the heap (D122): the field is an array of its nodes
+via = "actors"                  # the pointer to the first node
+type = "actor"                  # a node
+next = 4                        # where in a node its pointer to the next is (of the last pointer's kind)
+count = 64                      # at most this many nodes; a null pointer ends it
+
+[[map]]
+field = "target_hits"           # through a pointer found through another (D122)
+via = "player"
+then = [{ offset = 12, pointer = "far" }]   # the far pointer 12 bytes past where `player` points
+offset = 2                      # the item: 2 bytes past where that one points
+type = "i16"
+
+[[map]]
+field = "current"
+at = "current"
+type = "far"
+into = "table"                  # read as the index of the element of the mapped `table` (through a pointer,
+                                # an array) it points to at each tick: null elsewhere (D122)
+
 [[present]]                     # the presentation's own state (D110): what the drawing code keeps
 field = "drawn.blink"           # a path in what the presentation is given
 at = "blink"                    # the original's item: a data name, or an ID (not via a pointer or masked)
@@ -373,7 +394,9 @@ index of the element it points to (`into`), or the ID it points to (`GAME.EXE+20
 isn't known, `SEGMENT:OFFSET`).
 The port's state, serialized as JSON, has the same numbers, arrays and objects at the mapped paths; what it has
 beyond them is its own. A mapped item is named data of the type's size, or an ID; an input can't be mapped (the
-port gets it with each tick's inputs). An item `via` a pointer is found at each tick: null while the pointer is.
+port gets it with each tick's inputs). An item `via` a pointer is found at each tick: null while the pointer is,
+or one of the pointers `then` names is; a list (`next`, `count`) is its nodes, each after the last's pointer to
+it, to a null one (D122).
 A `mask` (on a `u8`, `u16` or `u32`) keeps those bits of the original's value: the others are a part's the port
 doesn't have (a renderer's scratch in a flags word), so neither the transplant nor the comparison takes them,
 and the comparison takes the port's value with the same mask.

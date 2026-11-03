@@ -326,6 +326,11 @@ fn state(
             cover(linear(&m.id)?, m.size, 2);
             continue;
         };
+        // Through more pointers, or a list (D122): not placed here.
+        if !via.then.is_empty() || via.next.is_some() {
+            through += 1;
+            continue;
+        }
         let at = m.id.to_string();
         let pointer =
             trace.header.state.iter().position(|i| i.via.is_none() && i.at == at && i.size == via.pointer.size());

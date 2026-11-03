@@ -70,29 +70,76 @@ pub struct ItemVia {
     pub size: u32,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub offset: u32,
+    /// The pointers found through it one after another (D122).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub then: Vec<ItemStep>,
+    /// A list's (D122): where in a node its pointer to the next is, and how many nodes at most; the item's
+    /// value is its nodes one after another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<(u32, u32)>,
+}
+
+/// A pointer found through another (D122): how far past where the last points it is, and how it points.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ItemStep {
+    pub offset: u32,
+    pub pointer: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub base: String,
+    pub size: u32,
 }
 
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
 
+/// How a pointer points, as a trace writes it: `near` (and its base), `far` or `segment`.
+fn pointer_text(p: &PointerKind) -> (&'static str, String) {
+    match p {
+        PointerKind::Near { base, .. } => ("near", base.to_string()),
+        PointerKind::Far => ("far", String::new()),
+        PointerKind::Segment => ("segment", String::new()),
+    }
+}
+
+fn pointer_kind(pointer: &str, base: &str, size: u32) -> Result<PointerKind, String> {
+    match pointer {
+        "near" => Ok(PointerKind::Near { base: crate::knowledge::parse_id(base)?, size }),
+        "far" => Ok(PointerKind::Far),
+        "segment" => Ok(PointerKind::Segment),
+        other => Err(format!("a trace's pointer is near or far, not {other:?}")),
+    }
+}
+
 impl ItemVia {
     fn of(m: &crate::mapping::Mapped, via: &crate::mapping::Via) -> ItemVia {
-        let (pointer, base) = match &via.pointer {
-            PointerKind::Near { base, .. } => ("near", base.to_string()),
-            PointerKind::Far => ("far", String::new()),
-            PointerKind::Segment => ("segment", String::new()),
-        };
-        ItemVia { at: m.id.to_string(), pointer: pointer.into(), base, size: via.pointer.size(), offset: via.offset }
+        let (pointer, base) = pointer_text(&via.pointer);
+        let then = via
+            .then
+            .iter()
+            .map(|(offset, p)| {
+                let (pointer, base) = pointer_text(p);
+                ItemStep { offset: *offset, pointer: pointer.into(), base, size: p.size() }
+            })
+            .collect();
+        ItemVia {
+            at: m.id.to_string(),
+            pointer: pointer.into(),
+            base,
+            size: via.pointer.size(),
+            offset: via.offset,
+            then,
+            next: via.next,
+        }
     }
 
     pub fn kind(&self) -> Result<PointerKind, String> {
-        match self.pointer.as_str() {
-            "near" => Ok(PointerKind::Near { base: crate::knowledge::parse_id(&self.base)?, size: self.size }),
-            "far" => Ok(PointerKind::Far),
-            "segment" => Ok(PointerKind::Segment),
-            other => Err(format!("a trace's pointer is near or far, not {other:?}")),
-        }
+        pointer_kind(&self.pointer, &self.base, self.size)
+    }
+
+    /// The pointers found through it, with how far past where the last points each is.
+    fn steps(&self) -> Result<Steps, String> {
+        self.then.iter().map(|s| Ok((s.offset, pointer_kind(&s.pointer, &s.base, s.size)?))).collect()
     }
 }
 
@@ -923,8 +970,23 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
 }
 
 /// The items read through pointers (D72): each one's index in the state, where it is past where its
-/// pointer points, how the pointer points, and the pointer's index.
-struct Pointers(Vec<(usize, u32, PointerKind, usize)>);
+/// pointer points, how the pointer points, the pointer's index; and the pointers found through it, and a
+/// list's next pointer and count (D122).
+struct Pointers(Vec<Pointed>);
+
+/// An item read through a pointer: its index in the state, where it is past where the last pointer points, how
+/// its pointer points, the pointer's index; the pointers found through it, and a list's next pointer and count.
+struct Pointed {
+    item: usize,
+    offset: u32,
+    kind: PointerKind,
+    pointer: usize,
+    then: Steps,
+    next: Option<(u32, u32)>,
+}
+
+/// Pointers found through another: how far past where the last points each is, and how it points.
+type Steps = Vec<(u32, PointerKind)>;
 
 impl Pointers {
     fn new(state: &[Item]) -> Result<Pointers, String> {
@@ -935,7 +997,8 @@ impl Pointers {
                 .iter()
                 .position(|p| p.via.is_none() && p.at == via.at && p.size == via.size)
                 .ok_or_else(|| format!("{}: its pointer {} isn't traced", item.name, via.at))?;
-            found.push((i, via.offset, via.kind()?, pointer));
+            let (offset, kind, then, next) = (via.offset, via.kind()?, via.steps()?, via.next);
+            found.push(Pointed { item: i, offset, kind, pointer, then, next });
         }
         Ok(Pointers(found))
     }
@@ -953,8 +1016,15 @@ impl Pointers {
         let mut all: Vec<Option<String>> =
             state.iter().map(|item| if item.via.is_none() { values.next().flatten() } else { None }).collect();
         let (mut ranges, mut which) = (Vec::new(), Vec::new());
-        for (i, offset, kind, pointer) in &self.0 {
+        for Pointed { item: i, offset, kind, pointer, then, next } in &self.0 {
             let bytes = all[*pointer].as_deref().map(unhex).unwrap_or_default();
+            // Through more pointers, or a list (D122): followed read by read.
+            if !then.is_empty() || next.is_some() {
+                let size = state[*i].size;
+                all[*i] = followed(clockwork, places, (kind, kind.target(&bytes, 0)), then, *offset, size, *next)?
+                    .map(|bytes| crate::edits::hex(&bytes));
+                continue;
+            }
             let at = match kind.target(&bytes, *offset) {
                 None => continue,
                 Some(Target::Id(id)) => places.address(&id.to_string())?,
@@ -971,6 +1041,54 @@ impl Pointers {
         }
         Ok(all)
     }
+}
+
+/// An item found through pointers (D122): from where the first, `pointer`, points (`first`), each pointer of `then` read
+/// `offset` past where the last points; the item `offset` past where the last points, `size` bytes; or a
+/// list's nodes, each's next pointer `next` bytes into it, to a null one or `count`. None where a pointer is
+/// null (a list ends there) or memory isn't mapped.
+#[allow(clippy::too_many_arguments)]
+fn followed(
+    clockwork: &mut Clockwork,
+    places: &Places,
+    (pointer, first): (&PointerKind, Option<Target>),
+    then: &[(u32, PointerKind)],
+    offset: u32,
+    size: u32,
+    next: Option<(u32, u32)>,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut read = |target: &Target, past: u32, len: u32| -> Result<Option<Vec<u8>>, String> {
+        let at = match target {
+            Target::Id(id) => {
+                let id = crate::values::moved(id, past).ok_or("a pointer past the address space")?;
+                places.address(&id.to_string())?
+            }
+            Target::Linear(linear) => clockwork::Address::Linear(linear.wrapping_add(past)).to_string(),
+        };
+        let answer = clockwork.ask("read", json!({ "ranges": [{"at": at, "len": len}] }))?;
+        Ok(answer["data"][0].as_str().map(unhex))
+    };
+    let Some(mut target) = first else { return Ok(None) };
+    let mut kind: Option<&PointerKind> = None;
+    for (past, step) in then {
+        let Some(bytes) = read(&target, *past, step.size())? else { return Ok(None) };
+        let Some(found) = step.target(&bytes, 0) else { return Ok(None) };
+        (target, kind) = (found, Some(step));
+    }
+    let Some((at, count)) = next else { return read(&target, offset, size) };
+    // A list's next pointers point as the last pointer followed did.
+    let kind = kind.unwrap_or(pointer);
+    let mut nodes = Vec::new();
+    for _ in 0..count {
+        let Some(node) = read(&target, offset, size)? else { break };
+        let pointer = node.get(at as usize..(at + kind.size()) as usize).map(<[u8]>::to_vec);
+        nodes.extend(node);
+        match pointer.and_then(|p| kind.target(&p, 0)) {
+            Some(found) => target = found,
+            None => break,
+        }
+    }
+    Ok(Some(nodes))
 }
 
 /// Hex as bytes (what isn't hex is left out).
