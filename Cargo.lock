@@ -164,6 +164,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 name = "chime-port"
 version = "0.1.0"
 dependencies = [
+ "rrc-platform",
  "rrc-runtime",
  "serde",
 ]
@@ -1202,6 +1203,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rrc-platform"
+version = "0.1.0"
+dependencies = [
+ "minifb",
+ "nuked-opl3",
+ "rrc-runtime",
+ "serde",
+ "tinyaudio",
+]
+
+[[package]]
 name = "rrc-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1607,6 +1619,7 @@ dependencies = [
 name = "vault-port"
 version = "0.1.0"
 dependencies = [
+ "rrc-platform",
  "rrc-runtime",
  "serde",
 ]

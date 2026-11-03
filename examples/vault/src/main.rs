@@ -14,9 +14,13 @@
 //! count of passes the player's colour blinks by (`blink`): from a transplant, the original's (D110,
 //! `mapping.toml`'s `[[present]]`). `VAULT_BUG=colour` leaves a bug in: walls are drawn in colour 41.
 //!
+//! `vault-port play` plays it in a window (D119): `Devices` are the original's INT 08h and INT 09h handlers,
+//! given the host's clock and keyboard.
+//!
 //! Each function names the original's it reimplements by its ID (DESIGN.md §6.6), which `rrc compare`
 //! finds when that one wrote a value the port has otherwise.
 
+use rrc_platform::{Host, KeyStates, Live, Next};
 use rrc_runtime::codecs::{Lzss, runs};
 use rrc_runtime::original::file;
 use rrc_runtime::present::{Frame, Presentation, Shows};
@@ -326,6 +330,40 @@ impl Presentation<Vault> for Screen {
     }
 }
 
+/// The original's input handling, played live: INT 09h's key states (`on_keyboard`) and INT 08h's count at 70 Hz
+/// (`on_timer`), whose change `wait_tick` (VAULT.EXE+00383) waits for.
+#[derive(Default)]
+struct Devices {
+    keys: KeyStates,
+    count: u16,
+}
+
+impl Live for Vault {
+    type Devices = Devices;
+
+    /// `main`'s loops (VAULT.EXE+00653): the title's while its scene is 0, play's while it is 1, each until
+    /// Escape is down; a pass each time the count moves.
+    fn next(&self, devices: &mut Devices, host: &Host) -> Next {
+        devices.keys.take(&host.scancodes);
+        let sync = match self.scene {
+            0 => "title",
+            1 => "play",
+            _ => return Next::End,
+        };
+        if devices.keys.0[0x01] != 0 {
+            return Next::End;
+        }
+        let count = rrc_platform::timer_count(host.ms, 70) as u16;
+        if count == devices.count {
+            return Next::Wait;
+        }
+        devices.count = count;
+        let inputs = rrc_platform::inputs(&[("timer_count", &count.to_le_bytes()), ("key_down", &devices.keys.0)]);
+        Next::Tick(sync.into(), inputs)
+    }
+}
+
 fn main() -> std::process::ExitCode {
-    rrc_runtime::main_drawn::<Vault, Screen>()
+    rrc_platform::main::<Vault, Screen>("Vault: Enter starts, the arrows walk", Vault::start)
+        .unwrap_or_else(rrc_runtime::main_drawn::<Vault, Screen>)
 }

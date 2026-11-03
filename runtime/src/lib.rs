@@ -225,6 +225,12 @@ impl Inputs {
         }
     }
 
+    /// The program's own writes to input `name` this tick ([`Inputs::write`]), by offset: what a live platform's
+    /// input handling takes up for the next tick (D119), as the original's handlers would find them.
+    pub fn written(&self, name: &str) -> BTreeMap<usize, u8> {
+        self.written.borrow().get(name).cloned().unwrap_or_default()
+    }
+
     /// Whether the port's reads at `site` this tick have seen all the original's did: as many as its
     /// last there that saw a change (none: from the start). A loop polling there that hasn't seen what
     /// ends it never would (each read after sees the same), while the original's ended: the port went
@@ -375,6 +381,32 @@ fn main_with<S: Simulation>(drawer: &mut dyn present::Drawer<S>) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Where a port starts playing from (D120): its state, and what its presentation is given there (its own state,
+/// the screen), from a folder `rrc start` wrote; or its start, from power-on.
+pub struct Started<S> {
+    pub state: S,
+    pub presentation: Option<Value>,
+    pub screen: Option<present::Frame>,
+}
+
+/// The start folder `dir` (`rrc start`): the state the original's mapped values give (`state.json`, a
+/// transplant), the presentation's own (`presentation.json`) and the screen (`screen.frm`) if it has them.
+pub fn started<S: Simulation>(dir: &std::path::Path) -> Result<Started<S>, String> {
+    let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    let start = files::StartState::read(&path("state.json"))?;
+    let state = S::transplant(start.overlay(serialize(&S::start())?)?)?;
+    let presentation = if dir.join("presentation.json").is_file() {
+        Some(files::PresentationState::read(&path("presentation.json"))?)
+    } else {
+        None
+    };
+    let screen = match std::fs::read(dir.join("screen.frm")) {
+        Ok(bytes) => Some(present::Frame::decode(&bytes)?),
+        Err(_) => None,
+    };
+    Ok(Started { state, presentation, screen })
 }
 
 /// Runs the port as `request` says: from its start state (or a transplant, or a saved state) through
@@ -584,6 +616,25 @@ mod tests {
         let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
         let first: Value = serde_json::from_str(trace.lines().nth(1).unwrap()).unwrap();
         assert_eq!(first, serde_json::json!({"tick": 3, "state": {"count": 40, "keys": [], "player": {"x": -2}}}));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_start_folder_gives_the_state_the_presentation_and_the_screen() {
+        // D120: what `rrc start` writes, read as a port plays from it.
+        let d = dir("started");
+        let start = r#"{"format":"rrc-state","version":1,"session":"walk","tick":3,"state":{"count":40}}"#;
+        std::fs::write(d.join("state.json"), start).unwrap();
+        let bare = started::<Counter>(&d).unwrap();
+        assert_eq!((bare.state.count, bare.presentation.is_none(), bare.screen.is_none()), (40, true, true));
+        let own = r#"{"format":"rrc-presentation","version":1,"session":"walk","tick":3,"state":{"shade":7}}"#;
+        std::fs::write(d.join("presentation.json"), own).unwrap();
+        let mut screen = present::Frame::new(320, 200);
+        screen.set(1, 2, 9);
+        std::fs::write(d.join("screen.frm"), screen.encode()).unwrap();
+        let full = started::<Counter>(&d).unwrap();
+        assert_eq!(full.presentation, Some(serde_json::json!({"shade": 7})));
+        assert_eq!(full.screen, Some(screen));
         std::fs::remove_dir_all(&d).ok();
     }
 

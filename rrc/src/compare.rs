@@ -852,6 +852,50 @@ fn write_inputs(trace: &Trace, sets: &BTreeMap<u64, serde_json::Map<String, Valu
 }
 
 /// A transplant (`rrc-state`): the mapped fields' values at `tick`.
+/// `rrc start SESSION --tick N [--out DIR]` (D120): where the session's original is at tick N, for the port to
+/// start from without the original running: the mapped fields' values (`state.json`, a transplant's), the
+/// presentation's own state (`presentation.json`, D110) and the screen (`screen.frm`), in a folder.
+pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
+    let a = Args::parse(args, &["--tick", "--out"], &[])?;
+    let [name] = a.positionals(1, 1, "start SESSION --tick N [--out DIR]")? else { unreachable!() };
+    let tick: u64 = a.required("--tick")?.parse().ok().filter(|&t| t > 0).ok_or("--tick is a tick number")?;
+    let session = Session::load(repo, name)?;
+    let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
+    let k = Knowledge::load(&repo.knowledge())?;
+    let mapping = Mapping::load(repo)?;
+    let (mapped, presented) = (mapping.resolve(&k)?, mapping.resolve_present(&k)?);
+    let cache = Cache::open(&repo.local)?;
+    let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
+    if tick > trace.ticks.len() as u64 {
+        return Err(format!("{name} has {} ticks, not {tick}", trace.ticks.len()));
+    }
+    let original = {
+        let places = Places::new(repo, &session);
+        let linear = |linear: u32| places.linear_id(linear).ok();
+        original_values(&trace, &mapped, &Reader::of(&k).with_linear(&linear), name)?
+    };
+    let dir = match a.value("--out") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => repo.state()?.join("start").join(format!("{name}-{tick}")),
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let file = |f: &str| dir.join(f).to_string_lossy().into_owned();
+    write_start(&trace.header.session, &mapped, &original, tick, &file("state.json"))?;
+    let mut has = vec![format!("{} fields mapped", mapped.len())];
+    if !presented.is_empty() {
+        write_presentation(repo, &session, &k, &presented, (&trace.header.session, tick), &file("presentation.json"))?;
+        has.push(format!("the presentation's own {}", presented.len()));
+    }
+    if let Some(hash) = &screens(&trace)[(tick - 1) as usize] {
+        std::fs::write(file("screen.frm"), cache.get(hash)?).map_err(|e| e.to_string())?;
+        has.push("the screen".into());
+    }
+    say("start", format!("{name}'s tick {tick}: {}", has.join(", ")));
+    say("folder", crate::path_text(&dir));
+    say("next", format!("the port plays from it: PORT play --start {}", crate::path_text(&dir)));
+    Ok(ExitCode::SUCCESS)
+}
+
 fn write_start(session: &str, mapped: &[Mapped], original: &[Vec<Value>], tick: u64, path: &str) -> Result<(), String> {
     let state: serde_json::Map<String, Value> =
         mapped.iter().zip(original).map(|(m, values)| (m.field.clone(), values[(tick - 1) as usize].clone())).collect();

@@ -84,6 +84,9 @@ pub struct Sounds {
     /// (rate, stereo) of each digitized sound started.
     pub pcm: Vec<(u32, bool)>,
     pub midi: Vec<u8>,
+    /// The samples of each digitized sound started, as `pcm` lists them (unsigned 8-bit; left then right when
+    /// stereo): what a platform plays (D119). The comparison compares the starts, not these (D108).
+    pub samples: Vec<std::sync::Arc<Vec<u8>>>,
 }
 
 /// What the PC speaker does from a change on: steady (pushed out or not), or a tone of the timer's

@@ -27,3 +27,6 @@ at start-up, each note's speaker tone and OPL key on, its end, and a note played
 high while the timer is set again). `CHIME_BUG=block rrc compare play` keys the OPL an octave low: the sound
 differs at tick 36, its second OPL event (`B0=35`, the port's `B0=31`), and the comparison lists who wrote the
 OPL's ports in that pass.
+
+`cargo run --release -p chime-port -- play` plays it (D119): Space plays the note, Up and Down choose, Esc ends
+it, the speaker and the OPL heard as the original's.

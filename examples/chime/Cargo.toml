@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 rrc-runtime = { path = "../../runtime" }
+rrc-platform = { path = "../../platform" }
 serde.workspace = true
 
 [lints]

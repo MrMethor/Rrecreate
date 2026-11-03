@@ -686,6 +686,35 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D120. A port plays from where a session's original is: a start folder. Accepted 2026-11-03.
+`rrc start SESSION --tick N [--out DIR]` writes what a transplant at tick N gives a port, into a folder
+(`.rrc/start/SESSION-N`): the mapped fields' values (`state.json`), the presentation's own state
+(`presentation.json`, D110) and the screen (`screen.frm`). `rrc_runtime::started` reads one as a comparison's
+transplant does, and `PORT play --start DIR` plays from it: the original isn't run, only read once, from the
+person's copy, and nothing extracted is committed (D82). The platform hands a live port's `Live::wrote` what a
+pass wrote into its own inputs (`Inputs::written`: a key queue the program empties), for its handlers.
+**Why:** a port is playable before it reaches its stretch from power-on (Arena's dungeon comes after its intro,
+menus and the character's creation, which no session ports yet); the comparison already started from such a
+state at every transplant, so playing from it is the same start written down. Measured on the vault: tick 200's
+folder holds its 16 fields, the presentation's 4 and the screen.
+
+### D119. The platform layer: a port plays in a window, its input handling made from the host's devices. Accepted 2026-11-03.
+`rrc_platform` (a crate beside the runtime, MIT; never Clockwork's crates) owns the loop of a port played live:
+a window (minifb) showing the presentation's frames in their palette, the host's keyboard as the PC's
+keyboard controller sends it (set 1, grey keys after E0h, no repeat) and the mouse in the screen's coordinates,
+and the presentation's sound played (tinyaudio): the OPL3's writes by Nuked OPL3 at its own 49 716 Hz, the
+speaker's tone as a square wave of the timer's period and high time, digitized sound at its rate, one at a time
+(`Sounds::samples`, which the comparison doesn't compare). A port's `Live::next` is the original's input
+handling (its keyboard and timer handlers): from the devices, the boundary values a pass reads and whether the
+loop takes a pass, waits or ends. `rrc_platform::main` gives a port `play [--game DIR] [--no-sound]` beside its
+comparison runs. Saved games go to the port's saves (`rrc_runtime::original::save`; `.rrc/saves` or
+`RRC_SAVES`), never into the person's game folder, whose saves are read.
+**Why:** M6 asks for a port that plays in a window with sound, and DESIGN.md §6.1 for a platform that owns the
+loop and turns devices into what the simulation reads. minifb and tinyaudio instead of SDL3: Clockwork's `play`
+uses them already, they need no native library, and the seams keep a later SDL3 or web platform the same.
+Measured on the examples: the vault's title shows in its palette, Enter starts play and the arrows walk; the
+chime's keys arrive as 39h, B9h, and Esc ends it as the original's loop ends.
+
 ### D118. A session can start from another session's tick. Accepted 2026-11-03.
 A session's `[from]` names another session and a tick (`rrc session add NAME --from SESSION --tick N`): its runs
 start from that session's snapshot at the end of tick N - 1 (kept in the cache for that session's run and sync

@@ -502,6 +502,31 @@ power-on). `rrc trace SESSION --tick N` shows the original's (`opl: A0=59 B0=35`
 and `rrc compare` compares the port's with them in order, device by device; at the first that differs it
 names the device, the event, and who wrote the device's ports in the pass (`examples/chime`).
 
+## Play
+
+A port that draws and sounds plays in a window (D119): `rrc_platform` owns the loop, shows the presentation's
+frames, gives the host's keyboard as the PC's (scan codes, set 1) and the mouse in the screen's coordinates,
+and plays the sound (the OPL3 by Nuked OPL3, the speaker, digitized sound). What a comparison gives the port
+from the original's memory, the boundary values, a live port makes from those devices as the original's
+handlers did: implement `rrc_platform::Live` (`next`: from the host's devices, the original's keyboard and timer
+handlers' work, and whether its loop takes a pass now, still waits, or ends), and make `main`
+
+```rust
+fn main() -> ExitCode {
+    rrc_platform::main::<Game, Screen>("Game", Game::start).unwrap_or_else(rrc_runtime::main_drawn::<Game, Screen>)
+}
+```
+
+so `PORT play [--game DIR] [--start DIR] [--no-sound]` plays and anything else runs a comparison as before. A
+port that doesn't reach a stretch from power-on yet (the menus and the character's creation before a dungeon)
+plays from where a session's original is (D120): `rrc start SESSION --tick N` writes the mapped fields' values,
+the presentation's own state and the screen there into `.rrc/start/SESSION-N`, made once from the person's copy,
+and `PORT play --start .rrc/start/SESSION-N` plays from them without the original running. Its `Live::wrote`
+takes what a pass wrote into its own inputs (a keyboard queue the program empties) into the handlers' state. A game the port
+saves goes through `rrc_runtime::original::save` and `saved` (the port's saves, `.rrc/saves` of its repository
+or `RRC_SAVES`; the person's in the game's folder are read, never written). `examples/vault` and
+`examples/chime` play so (`cargo run -p vault-port -- play --game testbins/bin`).
+
 ## Quirks
 
 The original's bugs stay in the faithful port, each as a registered quirk (DESIGN.md §6.5, D74):

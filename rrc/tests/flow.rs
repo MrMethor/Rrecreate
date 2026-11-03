@@ -690,6 +690,13 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     let (guessed, ok) = rrc.run(&["compare", "play", "--transplant", "200"]);
     assert!(!ok && guessed.contains("the screen: 36 pixels differ"), "{guessed}");
     std::fs::write(rrc.repo.join("mapping.toml"), mapping).unwrap();
+    // Where the original is at a tick, for the port to play from without it (D120).
+    let start = rrc.ok(&["start", "play", "--tick", "200"]);
+    assert!(start.contains("play's tick 200: 16 fields mapped, the presentation's own 4, the screen"), "{start}");
+    let folder = rrc.repo.join(".rrc/start/play-200");
+    let state = std::fs::read_to_string(folder.join("state.json")).unwrap();
+    assert!(state.contains(r#""format":"rrc-state""#) && state.contains(r#""tick":200"#), "{state}");
+    assert!(folder.join("presentation.json").is_file() && folder.join("screen.frm").is_file());
 
     // The archive by its format (D103): its members; the title as PNG with its palette; a level decoded as
     // the original loaded it, found in its memory at the tick after the read.

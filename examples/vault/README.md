@@ -43,3 +43,6 @@ rrc asset VAULT.DAT/LEVEL2 --session play    # decoded as the original loaded it
 
 The last says where the session read the level (in the pass to tick 374, by `load` from `load_level`) and
 that the original's memory holds the 1024 bytes it decoded 2 ms after the read.
+
+`cargo run --release -p vault-port -- play --game ../../testbins/bin` plays it in a window (D119): Enter
+starts, the arrows walk, Esc ends it.

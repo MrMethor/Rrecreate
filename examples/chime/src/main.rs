@@ -11,8 +11,12 @@
 //! start-up, and for each pass the note that stopped and the note that started. `CHIME_BUG=block` leaves a
 //! bug in: the OPL keys a note on an octave low.
 //!
+//! `chime-port play` plays it in a window, with its sound (D119): `Devices` are the original's INT 08h and
+//! INT 09h handlers, given the host's clock and keyboard.
+//!
 //! Each function names the original's it reimplements by its ID (DESIGN.md §6.6).
 
+use rrc_platform::{Host, KeyStates, Live, Next};
 use rrc_runtime::present::{Presentation, Shows, Sounds, Speaker};
 use rrc_runtime::{Simulation, Tick};
 use serde::{Deserialize, Serialize};
@@ -165,6 +169,34 @@ fn speaker_off(sounds: &mut Sounds) {
     sounds.speaker.push(Speaker::Steady(false));
 }
 
+/// The original's input handling, played live: INT 09h's key states (`on_keyboard`) and INT 08h's count at 70 Hz
+/// (`on_timer`), whose change `wait_tick` (CHIME.EXE+00156) waits for.
+#[derive(Default)]
+struct Devices {
+    keys: KeyStates,
+    count: u16,
+}
+
+impl Live for Chime {
+    type Devices = Devices;
+
+    /// `main`'s loop (CHIME.EXE+00274): on until Escape is down, a pass each time the count moves.
+    fn next(&self, devices: &mut Devices, host: &Host) -> Next {
+        devices.keys.take(&host.scancodes);
+        if devices.keys.0[0x01] != 0 {
+            return Next::End;
+        }
+        let count = rrc_platform::timer_count(host.ms, 70) as u16;
+        if count == devices.count {
+            return Next::Wait;
+        }
+        devices.count = count;
+        let inputs = rrc_platform::inputs(&[("timer_count", &count.to_le_bytes()), ("key_down", &devices.keys.0)]);
+        Next::Tick("pass".into(), inputs)
+    }
+}
+
 fn main() -> std::process::ExitCode {
-    rrc_runtime::main_drawn::<Chime, Sound>()
+    rrc_platform::main::<Chime, Sound>("Chime: Space plays, Up and Down choose", Chime::start)
+        .unwrap_or_else(rrc_runtime::main_drawn::<Chime, Sound>)
 }

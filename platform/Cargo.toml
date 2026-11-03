@@ -1,0 +1,25 @@
+[package]
+name = "rrc-platform"
+description = "The platform layer a Rust port plays on: a window, the keyboard and mouse as the PC's, the sound played"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "rrc_platform"
+
+# Never Clockwork's crates (DESIGN.md §3): a port plays without the emulator.
+[dependencies]
+rrc-runtime = { path = "../runtime" }
+minifb = "0.29"
+tinyaudio = "2"
+# Nuked OPL3 in Rust (LGPL-2.1-or-later), as Clockwork renders the original's OPL with.
+nuked-opl3 = "0.1"
+
+[dev-dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

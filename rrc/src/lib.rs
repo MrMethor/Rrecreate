@@ -153,6 +153,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          ported yet, and says what each feed changed; what the port noted
                          (rrc_runtime::note) in the pass that differs, --notes every note. Exits 1 if it
                          diverges
+  start SESSION --tick N [--out DIR]
+                         where the session's original is at tick N, for the port to play from without
+                         the original: the mapped fields' values, the presentation's own state and the
+                         screen, in a folder (.rrc/start/SESSION-N unless --out)
   progress [--lines N]   how far the port is, as the sessions show it: the program's functions the
                          original ran, those in passes the port matches (as rrc compare last left each
                          session), and those of them the port's code names; the bytes of the data
@@ -228,6 +232,7 @@ pub fn main() -> ExitCode {
         Some("trace") => here().and_then(|repo| trace::show(&repo, rest)),
         Some("frame") => here().and_then(|repo| frames::frame(&repo, rest)),
         Some("compare") => here().and_then(|repo| compare::compare(&repo, rest)),
+        Some("start") => here().and_then(|repo| compare::start(&repo, rest)),
         Some("progress") => here().and_then(|repo| progress::progress(&repo, rest)),
         Some("quirk") => here().and_then(|repo| quirks::quirk(&repo, rest)),
         Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),

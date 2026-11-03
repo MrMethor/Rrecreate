@@ -65,12 +65,51 @@ pub fn program() -> &'static Program {
     }
 }
 
-/// The game's folder: `RRC_GAME`, else the port repository's (`rrc.local.toml`'s `game`), if there is one.
+/// The game's folder a player chose (D119), before `RRC_GAME` and the repository's.
+static CHOSEN: OnceLock<PathBuf> = OnceLock::new();
+
+/// Plays with the game in `dir` from now on (a platform's `--game`), before it reads any file.
+pub fn use_game_dir(dir: PathBuf) {
+    let _ = CHOSEN.set(dir);
+}
+
+/// The game's folder: the one a player chose, else `RRC_GAME`, else the port repository's (`rrc.local.toml`'s
+/// `game`), if there is one.
 pub fn game_dir() -> Option<PathBuf> {
-    std::env::var_os("RRC_GAME").map(PathBuf::from).or_else(|| {
+    CHOSEN.get().cloned().or_else(|| std::env::var_os("RRC_GAME").map(PathBuf::from)).or_else(|| {
         let root = repository(&std::env::current_dir().ok()?)?;
         Some(PathBuf::from(setting(&root.join("rrc.local.toml"), "game")?))
     })
+}
+
+/// Where the port keeps the games it saves (D119): `RRC_SAVES`, else the port repository's `.rrc/saves`, else
+/// `saves` in the current folder. Never the game's folder: the person's copy is only read.
+pub fn saves_dir() -> PathBuf {
+    std::env::var_os("RRC_SAVES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| saves_from(&std::env::current_dir().unwrap_or_default()))
+}
+
+/// The saves folder for a port run in `here`: its repository's `.rrc/saves`, else `saves` there.
+fn saves_from(here: &Path) -> PathBuf {
+    repository(here).map_or_else(|| here.join("saves"), |root| root.join(".rrc").join("saves"))
+}
+
+/// A saved game, by the name the original saves it under (`SAVEGAME.01`): the port's own (`saves_dir`), else
+/// the person's in the game's folder.
+pub fn saved(name: &str) -> Result<Vec<u8>, String> {
+    match file_in(&saves_dir(), name) {
+        Ok(bytes) => Ok(bytes),
+        Err(_) => file(name),
+    }
+}
+
+/// A game the port saves, by the name the original saves it under: into `saves_dir`.
+pub fn save(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let dir = saves_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(name.replace('\\', "/").rsplit('/').next().unwrap_or(name));
+    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// A file of the person's copy of the game (M5), by the name the program opens it with: a DOS path from
@@ -146,6 +185,19 @@ fn default_cache() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_port_s_saves_are_kept_in_its_repository_s_state() {
+        let root = std::env::temp_dir().join(format!("rrc-saves-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("rrc.toml"), "").unwrap();
+        assert_eq!(saves_from(&root.join("src")), root.join(".rrc").join("saves"));
+        let elsewhere = std::env::temp_dir().join(format!("rrc-no-port-{}", std::process::id()));
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        assert_eq!(saves_from(&elsewhere), elsewhere.join("saves"));
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&elsewhere).ok();
+    }
 
     #[test]
     fn an_mz_program_s_image_is_past_its_header() {

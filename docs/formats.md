@@ -74,6 +74,11 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   from (`from`, 0 for the port's start), the ticks compared (`first`, `last`, of `ticks`), the last that matched
   (`matched`), the fields fed and what differed after (`state`, `screen`, `sound` or none).
 - `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).
+- `start/<session>-<tick>/`: where `rrc start` left a session's original for the port to play from (D120):
+  `state.json` (the mapped fields' values, as a transplant's `rrc-state`), `presentation.json` (the
+  presentation's own, `rrc-presentation`) and `screen.frm` (the screen), each when there is one.
+- `saves/`: the games the port saved while played (`rrc_runtime::original::save`, D119), in the original's own
+  format and names.
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
 
 ## Ghidra's export
