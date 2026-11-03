@@ -168,7 +168,10 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["status"]).contains("next      rrc analyze"));
     let recorded = rrc.ok(&["record", "short"]);
     assert!(recorded.contains("ticks"), "{recorded}");
-    assert!(rrc.ok(&["record", "short"]).contains("same      as the trace recorded before"), "deterministic");
+    // Nothing to add: no run (D111); `--run` runs it again, which must give the same trace.
+    let kept = rrc.ok(&["record", "short"]);
+    assert!(kept.contains("kept      the trace recorded before has every item"), "{kept}");
+    assert!(rrc.ok(&["record", "short", "--run"]).contains("same      as the trace recorded before"), "deterministic");
     // Reading more is another trace of the same run, from the memory kept with the last (D92).
     rrc.ok(&["data", "T.COM+00005", "delay", "--size", "2"]);
     let again = rrc.ok(&["record", "short"]);

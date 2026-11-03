@@ -346,7 +346,9 @@ doubleword) as the number the instruction wrote, in hex (`57E9h`: the bytes E9 5
 Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and record again: the trace follows
 every named data item. A recording keeps the data segment at every tick (D92), so recording again after naming
 more of it takes seconds (`from the run recorded before`): only an item read through a pointer, a device, a
-change to the sync points, inputs, the session or Clockwork runs it again (`--run` always does). Recording a session again must give the same run (`same`); after a knowledge change
+change to the sync points, inputs, the session or Clockwork runs it again (`--run` always does). With nothing to
+add (a mapping or a type changed, the items not), it records nothing (`kept`, D111). Recording a session
+again with `--run` must give the same run (`same`); after a knowledge change
 the trace differs and `rrc record` says the run is the same (`same run as before; the trace differs`). A run
 that differs is a Clockwork bug, or the session, the game or Clockwork changed: say so in the notes. Commit the
 session's file with the new hashes.

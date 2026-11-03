@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D111. Recording with nothing to add records nothing; `--run` is the check that a run repeats. Accepted 2026-11-03.
+`rrc record` whose trace would have the same items as the one recorded before says so (`kept`) and stops:
+a change to the mapping, a `[[present]]` entry or an item's type alone leaves the trace's items as they were.
+`rrc record --run` runs the session anyway, which checks the run is the same (`same`). Supersedes D92's
+"recording with nothing added runs it always".
+**Why:** on Arena (M6), mapping data already named, or giving it a type, made `rrc record` run the whole
+session (4.5 minutes each time, several times a day) only to find the same trace: what an agent wanted was a
+trace with the items, which it already had.
+
 ### D110. A presentation starts from the original's own drawing state at a transplant or a resume. Accepted 2026-10-30, with the person.
 A port's presentation keeps state of its own, as the original's drawing code does: what it drew last, an
 off-screen buffer, the frame an animation is at, a cache. The screen doesn't show it, so from a transplant or a
@@ -988,7 +997,8 @@ went wrong. The cursor set by the mouse zones (INT 33h 04h) was also taken for a
 keeps it (D76), and the session's file names it (`[trace] memory`). Recording again when items were only added
 to the state, each in that memory (not read through a pointer, not a device), builds the trace from the last
 one and the kept memory: no emulator (`from      the run recorded before`). `--run` runs the session anyway,
-and recording with nothing added runs it always: that checks the run is the same. A search after a recording
+and recording with nothing added runs it always: that checks the run is the same (superseded by D111: with
+nothing added it records nothing). A search after a recording
 reads its memory. What a run gives Clockwork's probes, kept as it came (contract inference, file tracing), is
 kept by the run alone (the session's run identity, D76), not by rrc's build, the knowledge or the analysis.
 **Why:** on Arena (M4), every item the port needed in a trace meant recording the session again, 4 to 8

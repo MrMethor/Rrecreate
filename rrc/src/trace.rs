@@ -399,6 +399,19 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .map(|h| HookItem { name: h.name.clone(), at: h.at.clone(), registers: h.registers.clone() })
             .collect(),
     };
+    // Nothing to add: the trace recorded before has every item (D111); `--run` runs it again as a check.
+    if !a.has("--run")
+        && let Some(before) = &session.trace
+        && recorded_header(&Cache::open(&repo.local)?, &before.hash).is_some_and(|h| h == header)
+    {
+        say(
+            "kept",
+            "the trace recorded before has every item: nothing recorded (--run runs the session again, which checks its run is the same)",
+        );
+        say("hash", &before.hash);
+        say("run", &before.run);
+        return Ok(ExitCode::SUCCESS);
+    }
     // Only items added since the last recording, all in its kept memory: no run (D92).
     let kept = if a.has("--run") { Err(String::new()) } else { from_kept(repo, &session, &header)? };
     let (trace, snapshots, memory) = match kept {
@@ -630,9 +643,9 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<T
         };
         return Ok(Err(format!("{what} since its last recording")));
     }
-    // Nothing added: recording again checks the run is the same, so it runs.
+    // Nothing added (`record` stops before this unless `--run`, D111).
     if old.header == *header {
-        return Ok(Err("nothing added since its last recording: it checks the run is the same".into()));
+        return Ok(Err("nothing added since its last recording".into()));
     }
     let key = crate::memory::key(repo, session, &header.syncs, "data")?;
     let ticks = old.ticks.len() as u64;
