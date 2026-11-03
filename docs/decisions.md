@@ -710,7 +710,9 @@ status, D99).
 at 68 of the cell session's ticks, and the music's OPL3 writes from Miles' XMIDI driver, at 349. A port that
 makes the first can't be compared while the second differs at every tick, as a state's subsystem not ported
 yet needed feeds (D84); and `play_sound` drops a sound while the driver's sample still plays (its status 2),
-which only the driver knows.
+which only the driver knows. Measured on Arena: its presentation makes `pcm`, and the cell session matches its
+state, screen and digitized sound at all 650 ticks (footsteps, doors, a cell's sound, swings, hits, bites, a
+fall, the ambient sound), the driver's status given by a hook; `opl`, `speaker` and `midi` said not compared.
 
 ### D120. A port plays from where a session's original is: a start folder. Accepted 2026-11-03.
 `rrc start SESSION --tick N [--out DIR]` writes what a transplant at tick N gives a port, into a folder
