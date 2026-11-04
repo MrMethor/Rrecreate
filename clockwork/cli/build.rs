@@ -1,7 +1,9 @@
 //! Clockwork's source hash (D76): what decides how it behaves, so that a run and its snapshots are kept
 //! by it, not by the program's bytes, which any rebuild changes. It covers the sources and manifests of
-//! Clockwork's crates (`cli`, `dos`, `cpu`), the workspace's manifest and lock file (the dependencies'
-//! versions) and the compiler's version; line endings don't count. `clockwork --source` prints it.
+//! Clockwork's crates (`cli`, `dos`, `cpu`), of the workspace's manifest what they take from it (its
+//! `[workspace.package]`: the edition) and of its lock file the packages they depend on (D127: not the
+//! workspace's other crates and theirs, which change nothing here), and the compiler's version; line endings
+//! don't count. `clockwork --source` prints it.
 
 use std::path::{Path, PathBuf};
 
@@ -22,12 +24,15 @@ fn main() {
         println!("cargo:rerun-if-changed={}", dir.join("Cargo.toml").display());
     }
     for file in ["Cargo.toml", "Cargo.lock"] {
-        files.push(workspace.join(file));
         println!("cargo:rerun-if-changed={}", workspace.join(file).display());
     }
     println!("cargo:rerun-if-changed=build.rs");
 
     let mut hasher = Sha256::new();
+    hasher.update(workspace_package(&workspace.join("Cargo.toml")).as_bytes());
+    hasher.update([0]);
+    hasher.update(locked("clockwork", &workspace.join("Cargo.lock")).as_bytes());
+    hasher.update([0]);
     for file in files.iter().filter(|f| f.is_file()) {
         let name = file.strip_prefix(&workspace).unwrap_or(file).to_string_lossy().replace('\\', "/");
         let bytes = std::fs::read(file).expect("a source file reads");
@@ -41,6 +46,44 @@ fn main() {
     hasher.update(&version);
     let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     println!("cargo:rustc-env=CLOCKWORK_SOURCE={hash}");
+}
+
+/// The workspace manifest's `[workspace.package]` (what the crates take from it), as text.
+fn workspace_package(manifest: &Path) -> String {
+    let text = std::fs::read_to_string(manifest).expect("the workspace's manifest reads");
+    let table: toml::Table = text.parse().expect("the workspace's manifest parses");
+    table.get("workspace").and_then(|w| w.get("package")).map_or_else(String::new, |p| p.to_string())
+}
+
+/// The packages of the lock file `root` depends on, itself and its dependencies' through theirs: each as its
+/// name, version, source and checksum, a line each, sorted.
+fn locked(root: &str, lock: &Path) -> String {
+    let text = std::fs::read_to_string(lock).expect("the lock file reads");
+    let table: toml::Table = text.parse().expect("the lock file parses");
+    let packages: Vec<&toml::Table> =
+        table.get("package").and_then(|p| p.as_array()).into_iter().flatten().filter_map(|p| p.as_table()).collect();
+    let field = |p: &toml::Table, key: &str| p.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+    // A dependency is "name", "name version" or "name version (source)".
+    let find = |dependency: &str| -> Option<&toml::Table> {
+        let mut parts = dependency.split(' ');
+        let (name, version) = (parts.next()?, parts.next());
+        packages.iter().copied().find(|p| field(p, "name") == name && version.is_none_or(|v| field(p, "version") == v))
+    };
+    let mut lines = std::collections::BTreeSet::new();
+    let mut pending: Vec<&toml::Table> = find(root).into_iter().collect();
+    while let Some(p) = pending.pop() {
+        let line =
+            format!("{} {} {} {}", field(p, "name"), field(p, "version"), field(p, "source"), field(p, "checksum"));
+        if !lines.insert(line) {
+            continue;
+        }
+        let dependencies = p.get("dependencies").and_then(|d| d.as_array()).into_iter().flatten();
+        pending.extend(dependencies.filter_map(|d| d.as_str()).filter_map(find));
+    }
+    lines.into_iter().collect::<Vec<_>>().join(
+        "
+",
+    )
 }
 
 /// The files under `dir`, in path order.

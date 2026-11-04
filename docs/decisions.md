@@ -686,6 +686,16 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D127. Clockwork's source hash covers its own dependencies, not the whole workspace's. Accepted 2026-11-04.
+The hash runs and snapshots are kept by (D76) covers Clockwork's crates' sources and manifests, the compiler's
+version, of the workspace's manifest only its `[workspace.package]` (the edition the crates take), and of the lock
+file only the packages Clockwork depends on, transitively, with their versions and checksums.
+**Why:** it covered the workspace's whole manifest and lock file, so adding a crate to the workspace (D126's
+`rrc-types`) or a dependency to `rrc` changed it although Clockwork's behaviour didn't: every snapshot and every
+session's start was kept under the old hash, and each question ran its session from power-on again (Arena: 78 s
+for a peek at the cell session's tick 1, and a play-test that sat silent for minutes before its window opened).
+**Supersedes:** D76's "the workspace's manifest and lock file".
+
 ### D126. A port reads and writes the original's memory images: the types shared, the memory it doesn't model carried. Accepted 2026-11-04, with the person.
 A game whose saves are blocks of its memory (Arena's `SAVEGAME`, `SAVEENGN`) is saved and loaded by its port in
 the same files, so saves load both ways. Two pieces make that general:

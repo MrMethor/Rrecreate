@@ -27,6 +27,8 @@ serde_json = "1"
 
 [build-dependencies]
 sha2 = "0.10"
+# The lock file and the workspace's manifest, read for what of them is Clockwork's (build.rs).
+toml = "0.9"
 
 [lints]
 workspace = true

@@ -382,8 +382,8 @@ type = "u8"                     # optional, as for [[map]]
 
 [[carry]]                       # the original's memory the port carries as it was, not modeling it (D126): the
 field = "saved.engine"          # parts of a saved game's blocks it doesn't model; in the transplant's and the
-at = "player_record"            # start's state at the tick, never traced nor compared (at as for [[present]])
-type = "u8[3663]"
+at = "player_record"            # start's state at the tick, never traced nor compared (at as for [[present]]);
+type = "u8[3663]"               # a range of memory: its type says how much, past the datum there if need be
 
 [[ignore]]                      # the original's memory that may differ (padding, caches, driver internals)
 at = "mouse_buffer"             # a data name, or an ID

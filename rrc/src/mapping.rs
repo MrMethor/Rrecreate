@@ -246,9 +246,21 @@ fn given(k: &Knowledge, items: &[Map], section: &str, what: &str) -> Result<Vec<
         if m.at.is_empty() {
             return Err(at("no at: the original's item".into()));
         }
-        mapped.push(direct(k, m).map_err(at)?);
+        // A carried item is a range of memory: it may run past the datum it starts at.
+        let item = if section == "carry" { carried(k, m) } else { direct(k, m) };
+        mapped.push(item.map_err(at)?);
     }
     Ok(mapped)
+}
+
+/// A carried item (`[[carry]]`, D126): memory from an ID or a name, as long as its type, whatever the data there.
+fn carried(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
+    if m.ty.is_empty() {
+        return Err("a carried item needs a type: how much memory, as bytes (u8[N]) or what it holds".into());
+    }
+    let id = item(k, &m.at)?;
+    let size = values::size(&m.ty, &k.types)?;
+    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: None, mask: None, into: None })
 }
 
 impl Mapping {
