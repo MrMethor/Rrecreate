@@ -62,10 +62,14 @@ pub fn run_identity(repo: &Repo, session: &Session) -> Result<String, String> {
         "clockwork": exe, "files": files, "program": original.program, "options": original.options,
         "session": session.options, "inputs": input(&session.inputs)?, "replay": replay,
     });
-    // The session and tick it starts from (D118): that run's.
+    // The session and tick it starts from (D118): that run's, at the tick's cycle where it is kept (D128: a tick's
+    // number moves when sync points are added).
     if let Some(from) = &session.from {
         let base = Session::load(repo, &from.session)?;
-        identity["from"] = json!({"run": run_identity(repo, &base)?, "tick": from.tick});
+        identity["from"] = match from.cycle {
+            Some(cycle) => json!({"run": run_identity(repo, &base)?, "cycle": cycle}),
+            None => json!({"run": run_identity(repo, &base)?, "tick": from.tick}),
+        };
     }
     // The scenario's edits, as the bytes they write (D64); none leaves the identity as before.
     if !session.edits.is_empty() {
@@ -145,30 +149,95 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     Ok((clockwork, loaded))
 }
 
-/// Where a session based on another starts (D118): that session's snapshot at the end of the tick before
-/// its tick, in the cache, and its time from power-on (ms); kept for that session's run and sync points. None
-/// for a session from power-on.
+/// Where a session based on another starts (D118): its base's snapshot at the base's tick, in the cache, and its
+/// time from power-on (ms). None for a session from power-on.
 pub fn based(repo: &Repo, session: &Session) -> Result<Option<(String, u64)>, String> {
+    Ok(start(repo, session)?.map(|s| (s.hash, s.ms)))
+}
+
+/// A based session's start: its base's snapshot where the base tick's pass begins (`hash`: the hit before it), its
+/// time from power-on, the tick as the base's sync points number it now, and the cycle of that hit before it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Start {
+    pub hash: String,
+    pub ms: u64,
+    pub tick: u64,
+    pub cycle: u64,
+}
+
+/// Where a session based on another starts: by the base tick's cycle where the session keeps it (D128), so that
+/// sync points added to the base, which number its ticks otherwise, don't move it; else by the tick's number. Kept
+/// for the base's run and sync points.
+pub fn start(repo: &Repo, session: &Session) -> Result<Option<Start>, String> {
     let Some(from) = &session.from else { return Ok(None) };
     let base = Session::load(repo, &from.session)?;
     let k = crate::knowledge::Knowledge::load(&repo.knowledge())?;
     let syncs = crate::trace::sync_points(&k)?;
-    let key = based_key(repo, &base, &syncs, from.tick)?;
+    let key = based_key(repo, &base, &syncs, from)?;
     let cache = Cache::open(&repo.local)?;
     if let Some(kept) = kept_based(&cache, &key) {
         return Ok(Some(kept));
     }
-    let (mut clockwork, _, taken) = crate::watch::open(repo, &base, &syncs, from.tick)?;
     let length_ms = (base.seconds * 1000.0) as u64;
-    let ms = crate::watch::to_tick(&mut clockwork, from.tick, taken.as_ref(), length_ms)
-        .map_err(|e| format!("{}'s tick {}: {e}", from.session, from.tick))?;
+    let (mut clockwork, tick, cycle, ms) = match from.cycle {
+        Some(cycle) => {
+            // The cycle is the base's hit before its tick (where the tick's pass begins): from the last snapshot at
+            // it or before, hit by hit to it; the tick is the next.
+            let cache_index = cache.recall("snapshots", &key_of(repo, &base, &syncs)?);
+            let index: Index = cache_index.and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
+            let taken = index.snapshots.into_iter().rfind(|t| t.cycle <= cycle && cache.has(&t.hash));
+            let (mut clockwork, mut at) = match &taken {
+                Some(t) => (load(repo, &base, t)?.0, (t.tick, t.cycle, t.ms)),
+                None => (crate::trace::begin(repo, &base, &syncs)?.0, (0, 0, 0)),
+            };
+            while at.1 < cycle {
+                let ran = clockwork.ask("run", json!({"sync": "next", "until_ms": length_ms}))?;
+                if ran.get("sync").is_none() {
+                    return Err(format!("{}'s run ends before its tick at cycle {cycle}", from.session));
+                }
+                at = (at.0 + 1, clockwork::number(&ran, "cycles")?, clockwork::number(&ran, "ms")?);
+            }
+            if at.1 != cycle {
+                return Err(format!(
+                    "{}'s run has no tick at cycle {cycle} (its tick {} was there): its run changed (its input, the \
+                     game or Clockwork), not only its sync points",
+                    from.session, from.tick
+                ));
+            }
+            (clockwork, at.0 + 1, at.1, at.2)
+        }
+        None => {
+            let (mut clockwork, _, taken) = crate::watch::open(repo, &base, &syncs, from.tick)?;
+            let ms = crate::watch::to_tick(&mut clockwork, from.tick, taken.as_ref(), length_ms)
+                .map_err(|e| format!("{}'s tick {}: {e}", from.session, from.tick))?;
+            let cycle = clockwork::number(&clockwork.ask("regs", Value::Null)?, "cycles")?;
+            (clockwork, from.tick, cycle, ms)
+        }
+    };
     let file = repo.state()?.join(format!("snapshot-{}.tmp", std::process::id()));
     clockwork.ask("save", json!({ "file": file }))?;
     let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let _ = std::fs::remove_file(&file);
     let hash = cache.put(&bytes)?;
-    cache.remember("based", &key, &format!("{hash} {ms}"))?;
-    Ok(Some((hash, ms)))
+    cache.remember("based", &key, &format!("{hash} {ms} {tick} {cycle}"))?;
+    Ok(Some(Start { hash, ms, tick, cycle }))
+}
+
+/// A based session's base tick settled by its cycle (D128): the tick's number as the base's sync points number it
+/// now, and the cycle kept where it wasn't. What changed, to say, if anything did.
+pub fn settle(repo: &Repo, session: &mut Session) -> Result<Option<String>, String> {
+    let Some(start) = start(repo, session)? else { return Ok(None) };
+    let from = session.from.as_mut().expect("a based session");
+    let said = match (from.cycle, from.tick == start.tick) {
+        (Some(_), true) => None,
+        (Some(_), false) => Some(format!(
+            "{}'s tick {} is its tick {} now: its sync points number its ticks so (the same moment, its cycle {})",
+            from.session, from.tick, start.tick, start.cycle
+        )),
+        (None, _) => Some(format!("{}'s tick {}: kept by its cycle too, {}", from.session, start.tick, start.cycle)),
+    };
+    (from.tick, from.cycle) = (start.tick, Some(start.cycle));
+    Ok(said)
 }
 
 /// Whether where `session` starts is kept already: [`based`] then needs no run (`rrc play` says when it does).
@@ -176,20 +245,32 @@ pub fn based_kept(repo: &Repo, session: &Session) -> Result<bool, String> {
     let Some(from) = &session.from else { return Ok(true) };
     let base = Session::load(repo, &from.session)?;
     let syncs = crate::trace::sync_points(&crate::knowledge::Knowledge::load(&repo.knowledge())?)?;
-    Ok(kept_based(&Cache::open(&repo.local)?, &based_key(repo, &base, &syncs, from.tick)?).is_some())
+    Ok(kept_based(&Cache::open(&repo.local)?, &based_key(repo, &base, &syncs, from)?).is_some())
 }
 
-/// The key a base's snapshot at `tick` is kept under: its run and sync points, and the tick.
-fn based_key(repo: &Repo, base: &Session, syncs: &[SyncPoint], tick: u64) -> Result<String, String> {
-    Ok(sha256(format!("based 1\n{}\n{tick}", key(repo, base, syncs)?).as_bytes()))
+/// The key a base's snapshot is kept under: its run and sync points, and the cycle of the base tick where it is
+/// kept, else its number.
+fn based_key(repo: &Repo, base: &Session, syncs: &[SyncPoint], from: &crate::session::Base) -> Result<String, String> {
+    let place = match from.cycle {
+        Some(cycle) => format!("based 2\ncycle {cycle}"),
+        None => format!("based 1\n{}", from.tick),
+    };
+    Ok(sha256(format!("{place}\n{}", key(repo, base, syncs)?).as_bytes()))
 }
 
-/// The snapshot and its ms kept under `key`, if its snapshot is in the cache.
-fn kept_based(cache: &Cache, key: &str) -> Option<(String, u64)> {
+/// The start kept under `key`, if its snapshot is in the cache (a kept one without its tick and cycle isn't one).
+fn kept_based(cache: &Cache, key: &str) -> Option<Start> {
     cache.recall("based", key).and_then(|text| {
-        let (hash, ms) = text.split_once(' ')?;
-        Some((hash.to_owned(), ms.trim().parse::<u64>().ok()?)).filter(|(hash, _)| cache.has(hash))
+        let mut parts = text.split_whitespace();
+        let hash = parts.next()?.to_owned();
+        let (ms, tick, cycle) = (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
+        cache.has(&hash).then_some(Start { hash, ms, tick, cycle })
     })
+}
+
+/// The key of a session's snapshots ([`key`]), for the snapshots' index.
+fn key_of(repo: &Repo, session: &Session, syncs: &[SyncPoint]) -> Result<String, String> {
+    key(repo, session, syncs)
 }
 
 /// A snapshot of the session's original at the end of tick `tick`, in the cache (a paired checkpoint's,

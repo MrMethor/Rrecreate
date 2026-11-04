@@ -440,6 +440,9 @@ options = []                    # optional: more `clockwork run` options (rrc se
 session = "walk"                # its input replaces that session's from there; a recorded play that is the
                                 # session's too goes on after its end (a part of rrc play, D124)
 tick = 1200
+cycle = 2419767066              # the cycle of that session's hit before the tick (D128): where it is found again
+                                # when sync points added to that session number its ticks otherwise (rrc sets it,
+                                # and the tick's number again when it moved)
 
 [trace]                         # written by rrc record
 hash = "6e7f…"                  # the trace, in the cache

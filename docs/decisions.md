@@ -686,6 +686,16 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D128. A session based on another keeps its base tick's cycle, and finds the tick by it. Accepted 2026-11-04.
+A session's `[from]` keeps, beside the base's tick, the cycle of the base's hit before it (where that tick's pass
+begins, the snapshot it starts from). Its start is found by the cycle: from the base's last snapshot at it or
+before, hit by hit to it. When sync points added to the base (a menu's wait the base passes through) number its
+ticks otherwise, `rrc record` says the tick's new number and sets it; a base whose hits no longer pass the cycle
+has changed its run, and is said so. The run's identity takes the cycle, not the number.
+**Why:** each screen ported adds sync points (D125's waits), and a base session that passes through one numbers
+its ticks otherwise: on Arena the text editor's key wait (in the character's creation) moved the cell session's
+tick 656 by a few seconds, and the two sessions based on it started elsewhere without a word.
+
 ### D127. Clockwork's source hash covers its own dependencies, not the whole workspace's. Accepted 2026-11-04.
 The hash runs and snapshots are kept by (D76) covers Clockwork's crates' sources and manifests, the compiler's
 version, of the workspace's manifest only its `[workspace.package]` (the edition the crates take), and of the lock

@@ -420,6 +420,11 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &[], &["--run"])?;
     let [name] = a.positionals(1, 1, "record SESSION [--run]")? else { unreachable!() };
     let mut session = Session::load(repo, name)?;
+    // A based session's base tick, by its cycle (D128): its number now.
+    if let Some(said) = crate::snapshots::settle(repo, &mut session)? {
+        say("from", said);
+        session.save(repo, name)?;
+    }
     let k = Knowledge::load(&repo.knowledge())?;
     if k.ticks.syncs.is_empty() {
         return Err("no sync points in knowledge/ticks.toml: find where a tick ends first (docs/formats.md)".into());

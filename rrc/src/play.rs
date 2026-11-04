@@ -116,7 +116,7 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let from = match (a.value("--from"), a.value("--tick")) {
         (Some(session), Some(tick)) => {
             let tick = tick.parse().ok().filter(|&t: &u64| t > 0).ok_or("--tick is a tick number")?;
-            Some(Base { session: session.to_owned(), tick })
+            Some(Base { session: session.to_owned(), tick, cycle: None })
         }
         (None, None) => None,
         _ => return Err("--from SESSION and --tick N go together".into()),
@@ -287,7 +287,7 @@ fn part(
     let n = parts.len() + 1;
     let part = format!("{name}/{n}");
     let base = match parts.last() {
-        Some(p) => Some(Base { session: p.name.clone(), tick: p.ticks }),
+        Some(p) => Some(Base { session: p.name.clone(), tick: p.ticks, cycle: None }),
         None => from.clone(),
     };
     let session = Session {

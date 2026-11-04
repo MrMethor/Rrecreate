@@ -39,11 +39,14 @@ pub struct Session {
     pub edits: Vec<Edit>,
 }
 
-/// Where a session based on another starts: that session's tick.
+/// Where a session based on another starts: that session's tick, and the cycle it is at (D128), by which it is
+/// found again when sync points added to that session number its ticks otherwise.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Base {
     pub session: String,
     pub tick: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle: Option<u64>,
 }
 
 /// Sessions based on others, one on another, at most this deep (a play followed in parts is a part on the one
@@ -250,14 +253,17 @@ fn add_session(repo: &Repo, a: &Args, name: &str) -> Result<ExitCode, String> {
     let from = match (a.value("--from"), a.value("--tick")) {
         (Some(session), Some(tick)) => {
             let tick = tick.parse().ok().filter(|&t: &u64| t > 0).ok_or("--tick is a tick number")?;
-            Some(Base { session: session.to_owned(), tick })
+            Some(Base { session: session.to_owned(), tick, cycle: None })
         }
         (None, None) => None,
         _ => return Err("--from SESSION and --tick N go together".into()),
     };
-    let session = Session { description, inputs, replay, seconds, options, from, ..Session::default() };
-    if let Some(from) = &session.from {
-        let (_, ms) = crate::snapshots::based(repo, &session)?.expect("a session from another's tick");
+    let mut session = Session { description, inputs, replay, seconds, options, from, ..Session::default() };
+    if let Some(start) = crate::snapshots::start(repo, &session)? {
+        let ms = start.ms;
+        let from = session.from.as_mut().expect("a session from another's tick");
+        from.cycle = Some(start.cycle);
+        let from = from.clone();
         if seconds * 1000.0 <= ms as f64 {
             return Err(format!(
                 "{}'s tick {} is at {:.1} s from power-on: --seconds counts from power-on too, so more",

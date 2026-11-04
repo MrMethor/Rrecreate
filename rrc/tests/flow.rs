@@ -998,6 +998,16 @@ fn a_session_starts_from_another_s_tick() {
     assert!(!rrc.ok(&["peek", "later", "--tick", "9", "score"]).contains("score = 77"), "not before its tick");
     let listed = rrc.ok(&["session"]);
     assert!(listed.contains("later: 3 s, 110 ticks, from play's tick 100, 1 edit"), "{listed}");
+    // A sync point added to the base numbers its ticks otherwise (D128): `later` starts where it did, its base tick
+    // found again by its cycle and its number set.
+    let kept = std::fs::read_to_string(rrc.repo.join("sessions/later.toml")).unwrap();
+    assert!(kept.contains("cycle = "), "kept by its cycle too: {kept}");
+    rrc.ok(&["sync", "TOY.EXE+00114", "update"]);
+    rrc.ok(&["record", "play"]);
+    let settled = rrc.ok(&["record", "later"]);
+    assert!(settled.contains("from      play's tick 100 is its tick 198 now"), "{settled}");
+    let at_start = values(rrc.ok(&["peek", "later", "--tick", "1", "player_x", "score", "rng_seed"]));
+    assert_eq!(at_start, values(rrc.ok(&["peek", "play", "--tick", "198", "player_x", "score", "rng_seed"])));
     std::fs::remove_dir_all(&dir).ok();
 }
 
