@@ -126,6 +126,29 @@ pub struct Inputs {
     taken: std::cell::RefCell<BTreeMap<String, usize>>,
 }
 
+/// The gates of a port's gated sync points (D48, D129): each one's sources' values at its last tick. The original's
+/// loop that polls passes its sync point again and again, and Clockwork counts a hit there as a tick only when a
+/// source changed since that point's last tick (the first always): a port whose pass reaches such a hit asks
+/// whether it counted, to end its step there (the next tick is that hit) or go on as the original did.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Gates {
+    last: BTreeMap<String, Vec<Vec<u8>>>,
+}
+
+impl Gates {
+    /// The tick at `sync` (the pass begins there): its sources' values now are its gate's.
+    pub fn ticked(&mut self, sync: &str, sources: &[&str], inputs: &Inputs) {
+        self.last.insert(sync.to_owned(), sources.iter().map(|s| inputs.current(s)).collect());
+    }
+
+    /// Whether a hit at `sync` now counts: its sources' values (with the pass's own writes) differ from its last
+    /// tick's, or it had none.
+    pub fn counts(&self, sync: &str, sources: &[&str], inputs: &Inputs) -> bool {
+        let now: Vec<Vec<u8>> = sources.iter().map(|s| inputs.current(s)).collect();
+        self.last.get(sync) != Some(&now)
+    }
+}
+
 /// A call a part of the program not ported made into ported code in the pass (D98): the registers it
 /// was made with, by name (`ax`, `cl`, `di`, as the hook's `registers` list them).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -242,6 +265,17 @@ impl Inputs {
         let made = self.reads.borrow().get(site).copied().unwrap_or(0);
         let last = self.late.get(site).and_then(|reads| reads.iter().map(|l| l.read).max()).unwrap_or(0);
         made >= last
+    }
+
+    /// An input's bytes now: the tick's, with the pass's own writes to it ([`Inputs::write`]).
+    pub fn current(&self, name: &str) -> Vec<u8> {
+        let mut value = self.bytes(name).to_vec();
+        for (&offset, &byte) in self.written.borrow().get(name).into_iter().flatten() {
+            if let Some(b) = value.get_mut(offset) {
+                *b = byte;
+            }
+        }
+        value
     }
 
     /// An input's bytes (empty if the session has no such input, or it wasn't read yet).
@@ -842,5 +876,20 @@ mod tests {
         assert!(Request::parse(&args("run --inputs i --out o --transplant a --resume b")).is_err());
         let r = Request::parse(&args("run --inputs i --out o --frames f --presentation p")).unwrap();
         assert_eq!(r.presentation.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn a_gate_counts_a_hit_when_a_source_changed_since_its_last_tick() {
+        let inputs = |mouse: &[u8]| Inputs::new([("mouse".to_owned(), mouse.to_vec())].into());
+        let mut gates = Gates::default();
+        let first = inputs(&[0, 1]);
+        assert!(gates.counts("click", &["mouse"], &first), "the first always");
+        gates.ticked("click", &["mouse"], &first);
+        assert!(!gates.counts("click", &["mouse"], &first), "nothing changed");
+        assert!(gates.counts("click", &["mouse"], &inputs(&[1, 1])));
+        // The pass's own write is what the next hit sees.
+        first.write("mouse", 0, &[9]);
+        assert!(gates.counts("click", &["mouse"], &first));
+        assert!(gates.counts("other", &["mouse"], &first), "each sync point its own");
     }
 }
