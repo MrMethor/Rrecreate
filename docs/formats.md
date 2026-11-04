@@ -504,10 +504,12 @@ JSON lines (D72): a header, a line per tick, and an end line.
 - `hooks` (in the header, only if the knowledge has any): the calls a part not ported makes into ported code
   (D98); a tick's `hooks`, `[[index, [value, …]]]`, are those its pass made, in order, each with its
   registers' values as the header's hook lists them (version 9).
-- `late`: `[index, ID, value, read, bytes]` for each read of the tick's pass that saw an input otherwise than
-  the same instruction's read before it there (the first, otherwise than the tick's value): it changed after the
-  sync point, before the program read it (D60). `ID` is the instruction (for a driver, the instruction after its
-  call), `read` which of its reads of the input it was, from 1 (D93), and the value what that read saw: the
+- `late`: `[index, ID, value, read, bytes, round]` for each read of the tick's pass that saw an input otherwise
+  than the same instruction's read before it there (the first, otherwise than the tick's value): it changed after
+  the sync point, before the program read it (D60). `ID` is the instruction (for a driver, the instruction after
+  its call), `round` the round of the pass it was in, the hits of the input's sync points since the tick, none
+  counted (a gated wait going round, D130; left out in the first round, version 11), `read` which of its reads of
+  the input in that round it was, from 1 (D93), and the value what that read saw: the
   tick's value with the bytes it read (D68); a read that saw the tick's value again, after one that didn't, is
   kept too. The program's own writes are followed, and so are its calls that change a driver's state (a mouse
   position set): `bytes`, `[[offset, value]]`, are the bytes the read saw otherwise than the program should have
@@ -562,20 +564,25 @@ to the inputs' last (or `--to`'s), writing its state at each tick before steppin
 inputs and the trace are JSON lines.
 
 - **Inputs** (`--inputs`, written by `rrc`): the header
-  `{"format":"rrc-inputs","version":2,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`,
+  `{"format":"rrc-inputs","version":3,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`
+  (an input read only at some sync points has `"sync":["play"]`),
   then a line per tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
   whose value changed since they were last read (index in the header's list, bytes in hex as the trace has
   them); a value holds until it changes. A tick whose pass read inputs late has `late`,
   `[[index, "GAME.EXE+04BB9", "0300", 1, [[0, 3]]]]`: what each read saw, which of that instruction's reads it
   was (D68, D93), and its bytes that differ from what the program should have read (D97), which the runtime's
-  `Inputs::at_site(ID)` gives the port, a call a read, over what the port wrote (`Inputs::write`). With hooks
+  `Inputs::at_site(ID)` gives the port, a call a read, over what the port wrote (`Inputs::write`); a sixth
+  element, the round of the pass it was in (D130), where it went round a gated wait first. A tick has `spun`,
+  how many times the original went round the wait its pass ends at (the next tick's `skipped`, D130: the
+  runtime's `Tick::spun`). With hooks
   (D98) the header has `"hooks":[{"name":"view_wakes","registers":["ax","cl"]}]` and a tick whose pass made
   calls through them `hooks`, `[[0, [1472, 5]]]` (the hook's index, the registers' values), which
   `Inputs::calls(name)` gives the port. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
   mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
   port sets in its state before writing the tick (D64). A tick has `fed`, of the same form, for fed fields (D84,
   D124: `--feed`, `--lockstep`): their original values where they changed, each held until it changes and set at
-  every tick from its first (version 2; version 1 has no `fed`). The last line is
+  every tick from its first (version 2; version 1 has no `fed`, and versions before 3 no rounds, `spun` or
+  inputs' `sync`). The last line is
   `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each

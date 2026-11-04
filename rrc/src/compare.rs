@@ -889,14 +889,18 @@ fn write_inputs(
         .inputs
         .iter()
         .map(|i| {
-            if i.device.is_empty() {
-                json!({"name": i.name, "size": i.size})
-            } else {
-                json!({"name": i.name, "size": i.size, "device": i.device})
+            let mut item = json!({"name": i.name, "size": i.size});
+            if !i.device.is_empty() {
+                item["device"] = json!(i.device);
             }
+            // The sync points whose hits start its ticks, and its rounds (D130).
+            if !i.sync.is_empty() {
+                item["sync"] = json!(i.sync);
+            }
+            item
         })
         .collect();
-    let mut header = json!({"format": "rrc-inputs", "version": 2, "session": trace.header.session, "inputs": inputs});
+    let mut header = json!({"format": "rrc-inputs", "version": 3, "session": trace.header.session, "inputs": inputs});
     if !trace.header.hooks.is_empty() {
         let hooks: Vec<Value> =
             trace.header.hooks.iter().map(|h| json!({"name": h.name, "registers": h.registers})).collect();
@@ -904,9 +908,13 @@ fn write_inputs(
     }
     let mut text = header.to_string();
     text.push('\n');
-    for t in &trace.ticks {
+    for (n, t) in trace.ticks.iter().enumerate() {
         let read: Vec<Value> = t.inputs.iter().filter_map(|(i, v)| v.as_ref().map(|v| json!([i, v]))).collect();
         let mut line = json!({"tick": t.tick, "sync": t.sync, "inputs": read});
+        // How many times the original went round the wait the pass ends at: the next tick's skipped hits (D130).
+        if let Some(spun) = trace.ticks.get(n + 1).and_then(|next| next.skipped) {
+            line["spun"] = json!(spun);
+        }
         // The hooks' calls in the pass (D98).
         if !t.hooks.is_empty() {
             let calls: Vec<Value> = t.hooks.iter().map(|(i, values)| json!([i, values])).collect();
@@ -917,9 +925,10 @@ fn write_inputs(
             .late
             .iter()
             .filter_map(|l| {
-                l.value.as_ref().map(|v| match &l.bytes {
-                    Some(bytes) => json!([l.input, l.at, v, l.read, bytes]),
-                    None => json!([l.input, l.at, v, l.read]),
+                l.value.as_ref().map(|v| match (&l.bytes, l.round) {
+                    (bytes, round) if round != 0 => json!([l.input, l.at, v, l.read, bytes, round]),
+                    (Some(bytes), _) => json!([l.input, l.at, v, l.read, bytes]),
+                    (None, _) => json!([l.input, l.at, v, l.read]),
                 })
             })
             .collect();

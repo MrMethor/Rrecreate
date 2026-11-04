@@ -12,6 +12,8 @@ use serde_json::{Map, Value, json};
 pub struct InputsFile {
     pub session: String,
     pub ticks: Vec<InputsLine>,
+    /// The inputs whose ticks only some sync points' hits start, with those points (none here: every point's).
+    pub syncs: BTreeMap<String, Vec<String>>,
 }
 
 /// A tick of the inputs file: the inputs whose values changed (a value holds until it changes), the
@@ -28,6 +30,9 @@ pub struct InputsLine {
     pub calls: Vec<(String, crate::Call)>,
     pub set: Vec<(String, Value)>,
     pub fed: Vec<(String, Value)>,
+    /// The hits the next tick's sync point's gate passed over before it (D130): how many times the original went
+    /// round the wait the pass ends at. None where the file doesn't say.
+    pub spun: Option<u64>,
 }
 
 /// A read of the pass that saw an input otherwise than the read before it there (D68, D93): the input,
@@ -41,6 +46,9 @@ pub struct LateRead {
     pub read: u32,
     pub value: Vec<u8>,
     pub bytes: Option<Vec<(usize, u8)>>,
+    /// The round of the pass it was in (D130): the hits of a gated wait the pass went round before it, none
+    /// counted; `read` counts within it.
+    pub round: u32,
 }
 
 impl InputsFile {
@@ -52,8 +60,8 @@ impl InputsFile {
     pub fn parse(text: &str) -> Result<InputsFile, String> {
         let mut lines = text.lines().filter(|l| !l.trim().is_empty());
         let header: Value = serde_json::from_str(lines.next().ok_or("empty")?).map_err(|e| e.to_string())?;
-        // Version 2 adds `fed` (D124).
-        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1 | 2)) {
+        // Version 2 adds `fed` (D124); 3 a late read's round, a tick's `spun` and an input's `sync` (D130).
+        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=3)) {
             return Err(format!("not an inputs file this runtime reads ({} {})", header["format"], header["version"]));
         }
         let names: Vec<String> = header["inputs"]
@@ -72,7 +80,18 @@ impl InputsFile {
                 (h["name"].as_str().unwrap_or_default().to_owned(), registers)
             })
             .collect();
-        let mut file = InputsFile { session: header["session"].as_str().unwrap_or_default().to_owned(), ticks: vec![] };
+        let syncs = header["inputs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|i| {
+                let points: Vec<String> =
+                    i["sync"].as_array()?.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect();
+                Some((i["name"].as_str()?.to_owned(), points))
+            })
+            .collect();
+        let mut file =
+            InputsFile { session: header["session"].as_str().unwrap_or_default().to_owned(), ticks: vec![], syncs };
         for line in lines {
             let v: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
             let Some(tick) = v["tick"].as_u64() else { continue };
@@ -89,7 +108,7 @@ impl InputsFile {
                 let site = read[1].as_str().unwrap_or_default().to_owned();
                 // An instruction's first read where the file doesn't say (before D93).
                 let n = read.get(3).map_or(Some(1), Value::as_u64).ok_or("a late read's number")? as u32;
-                let bytes = match read.get(4) {
+                let bytes = match read.get(4).filter(|list| !list.is_null()) {
                     Some(list) => Some(
                         list.as_array()
                             .into_iter()
@@ -103,7 +122,8 @@ impl InputsFile {
                     None => None,
                 };
                 let value = unhex(read[2].as_str().unwrap_or_default())?;
-                late.push(LateRead { name: name.clone(), site, read: n, value, bytes });
+                let round = read.get(5).map_or(Some(0), Value::as_u64).ok_or("a late read's round")? as u32;
+                late.push(LateRead { name: name.clone(), site, read: n, value, bytes, round });
             }
             let mut calls = Vec::new();
             for call in v["hooks"].as_array().into_iter().flatten() {
@@ -117,7 +137,8 @@ impl InputsFile {
             };
             let (set, fed) = (paths("set"), paths("fed"));
             let sync = v["sync"].as_str().unwrap_or_default().to_owned();
-            file.ticks.push(InputsLine { tick, sync, inputs, late, calls, set, fed });
+            let spun = v["spun"].as_u64();
+            file.ticks.push(InputsLine { tick, sync, inputs, late, calls, set, fed, spun });
         }
         Ok(file)
     }

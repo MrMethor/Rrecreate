@@ -706,7 +706,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 .map(|l| {
                     let bytes: Vec<Value> = l.bytes.iter().map(|(offset, value)| json!([offset, value])).collect();
                     json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at),
-                           "read": l.read, "bytes": bytes})
+                           "read": l.read, "round": l.round, "bytes": bytes})
                 })
                 .collect();
             Ok(json!({"late": findings, "dropped": late.dropped}))

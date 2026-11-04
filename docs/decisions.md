@@ -686,6 +686,24 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D130. A pass that goes round a gated wait: its reads by round, and how many times it went round. Accepted 2026-11-04.
+A hit of a gated sync point that doesn't count (D48) is a round of the pass: the original's loop polls again with
+nothing changed. Three things follow it through, so a port's pass goes round as the original's did.
+- **Reads by round:** Clockwork numbers an instruction's reads afresh after every hit of a source's sync points
+  (it always did, `LateInputs::hit`), so a late read's number is within its round. It now says which round, the
+  hits since the tick (`Late::round`; the hit a run stopped at, reached again as the next run resumes, isn't
+  one). Traces keep it (version 11: a late read's sixth element, left out in the first round), and so does the
+  port's inputs file (version 3), with each input's sync points where only some start its ticks.
+- **The port goes round:** `Gates::hit` asks whether a hit counts, and when it doesn't, the inputs go round
+  (`Inputs::go_round`): `at_site`'s reads after it are the next round's. `Inputs::more_rounds` says whether the
+  original's pass read something in a later round (a key that arrived while it waited): the port polls on.
+- **How many times:** the tick says how many times the original went round the wait its pass ends at
+  (`Tick::spun`: the next tick's `skipped`, the hits its gate passed over; the inputs file's `spun`), for what each
+  poll does (a cursor that blinks every 8th poll). None in a live play.
+**Why:** Arena's text editor polls its key wait hundreds of times between keys (810 on the save screen's first);
+the key the person typed arrives in one of those rounds, and the cursor blinks by the polls' count. A port that
+numbered the reads from the pass's start saw the key at its first poll, and couldn't know where the cursor was.
+
 ### D129. A port knows whether a hit at a gated sync point counted: the runtime's gates. Accepted 2026-11-04.
 The runtime's `Gates` keeps, for each gated sync point (D48) a port's pass begins at, its sources' values at that
 tick (`ticked`); `counts` says whether a hit there now would be a tick, as Clockwork's gate decides: a source

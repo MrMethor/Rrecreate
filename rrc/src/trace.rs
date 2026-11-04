@@ -26,7 +26,7 @@ use crate::session::{Recorded, Session};
 use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 10;
+pub const VERSION: u32 = 11;
 /// The oldest version this rrc reads: version 6 only added items read through pointers (D72).
 const OLDEST: u32 = 5;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
@@ -222,8 +222,9 @@ fn register(regs: &Value, name: &str) -> Option<u32> {
 }
 
 /// A read of a tick's pass that saw an input otherwise than the tick has, or than the same instruction's
-/// read before it in the pass (D93): `[input, ID, value, read, bytes]`. Version 5 and 6 traces have no `read`:
-/// one value an instruction, its first read's; versions before 8 no `bytes`.
+/// read before it in the pass (D93): `[input, ID, value, read, bytes, round]`. Version 5 and 6 traces have no
+/// `read`: one value an instruction, its first read's; versions before 8 no `bytes`; before 11 no `round` (nor
+/// does a read in a pass's first round have one).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "Vec<Value>", into = "Vec<Value>")]
 pub struct LateRead {
@@ -233,11 +234,14 @@ pub struct LateRead {
     pub at: String,
     /// What it read: the tick's value with the bytes that read saw (none: memory not mapped).
     pub value: Option<String>,
-    /// Which of that instruction's reads of the input in the pass it was, from 1.
+    /// Which of that instruction's reads of the input in its round of the pass it was, from 1.
     pub read: u32,
     /// The bytes it saw that differ from what the program should have read there, `[offset, value]`: the
     /// tick's value with the program's own writes since (D97); none in traces before version 8.
     pub bytes: Option<Vec<(u32, u8)>>,
+    /// The round of the pass it was in: the hits of a gated wait the pass went round before it, none counted
+    /// (D130). Its reads are numbered within it.
+    pub round: u32,
 }
 
 impl TryFrom<Vec<Value>> for LateRead {
@@ -249,19 +253,23 @@ impl TryFrom<Vec<Value>> for LateRead {
         let at = v.get(1).and_then(Value::as_str).ok_or_else(wrong)?.to_owned();
         let value = v.get(2).and_then(Value::as_str).map(str::to_owned);
         let read = v.get(3).map_or(Some(1), Value::as_u64).ok_or_else(wrong)? as u32;
-        let bytes = match v.get(4) {
+        let bytes = match v.get(4).filter(|list| !list.is_null()) {
             Some(list) => Some(byte_pairs(list).ok_or_else(wrong)?),
             None => None,
         };
-        Ok(LateRead { input, at, value, read, bytes })
+        let round = v.get(5).map_or(Some(0), Value::as_u64).ok_or_else(wrong)? as u32;
+        Ok(LateRead { input, at, value, read, bytes, round })
     }
 }
 
 impl From<LateRead> for Vec<Value> {
     fn from(l: LateRead) -> Vec<Value> {
         let mut v = vec![json!(l.input), json!(l.at), json!(l.value), json!(l.read)];
-        if let Some(bytes) = l.bytes {
-            v.push(json!(bytes));
+        if l.bytes.is_some() || l.round != 0 {
+            v.push(json!(l.bytes));
+        }
+        if l.round != 0 {
+            v.push(json!(l.round));
         }
         v
     }
@@ -949,7 +957,8 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
                 });
                 let n = late["read"].as_u64().unwrap_or(1) as u32;
                 let bytes = Some(byte_pairs(&late["bytes"]).unwrap_or_default());
-                ticks[i].late.push(LateRead { input, at, value: read, read: n, bytes });
+                let round = late["round"].as_u64().unwrap_or(0) as u32;
+                ticks[i].late.push(LateRead { input, at, value: read, read: n, bytes, round });
             }
         }
     }
@@ -1503,8 +1512,13 @@ mod tests {
             value: Some("0200".into()),
             read: 2,
             bytes: Some(vec![(0, 2)]),
+            round: 0,
         }];
         assert_eq!(Trace::parse(&renamed.to_text()).unwrap(), renamed);
+        // A read in a later round of the pass (D130) keeps it.
+        let mut rounds = renamed.clone();
+        rounds.ticks[1].late[0].round = 3;
+        assert_eq!(Trace::parse(&rounds.to_text()).unwrap(), rounds);
         let late = late_text(&renamed).unwrap();
         let first = "1 tick reads an input after it changed since the sync point: elapsed at GAME.EXE+00123 in 1 (first \
                      tick 2); the trace keeps";

@@ -62,6 +62,8 @@ pub struct Host {
 }
 
 /// What the original's loop does next.
+// Made once a frame and taken at once: boxing its inputs would buy nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Next {
     /// A pass from the sync point named so, with these boundary values.
     Tick(String, Inputs),
@@ -286,7 +288,7 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
                 Next::Tick(sync, inputs) => (sync, inputs),
             };
             number += 1;
-            state.step(&Tick { number, sync: &sync, inputs: &inputs });
+            state.step(&Tick { number, sync: &sync, inputs: &inputs, spun: None });
             state.wrote(&mut devices, &inputs);
             let scene = state.scene();
             if P::DRAWS {

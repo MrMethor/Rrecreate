@@ -71,6 +71,11 @@ pub struct Tick<'a> {
     pub number: u64,
     pub sync: &'a str,
     pub inputs: &'a Inputs,
+    /// How many times the original went round the wait the pass ends at before the next tick (D130): the hits
+    /// that sync point's gate passed over, nothing having changed (D48). A pass that ends at a gated wait polls it
+    /// so many times more, for what a poll does each time (a cursor's blink). None where it isn't known (a live
+    /// play; a session recorded before it).
+    pub spun: Option<u64>,
 }
 
 /// The quirks fixed in this run (D74): none in a comparison, which keeps every one (DESIGN.md §6.5).
@@ -116,8 +121,12 @@ pub struct Inputs {
     /// By the ID of the instruction that read it: the reads that saw an input otherwise than the read
     /// before, in order of their numbers.
     late: BTreeMap<String, Vec<files::LateRead>>,
-    /// The reads made at each site so far this tick ([`Inputs::at_site`]).
-    reads: std::cell::RefCell<BTreeMap<String, u32>>,
+    /// The reads made at each site so far this round of the pass, by input ([`Inputs::at_site`]).
+    reads: std::cell::RefCell<BTreeMap<(String, String), u32>>,
+    /// Each input's round of the pass: the hits of gated waits it went round, none counted (D130).
+    rounds: std::cell::RefCell<BTreeMap<String, u32>>,
+    /// The inputs whose ticks only some sync points' hits start, with those points (else every point's).
+    syncs: BTreeMap<String, Vec<String>>,
     /// The program's own writes to inputs this tick, as the port made them ([`Inputs::write`]).
     written: std::cell::RefCell<BTreeMap<String, BTreeMap<usize, u8>>>,
     /// The calls a part not ported made into ported code in the pass, by hook, in order (D98), and how
@@ -147,6 +156,16 @@ impl Gates {
         let now: Vec<Vec<u8>> = sources.iter().map(|s| inputs.current(s)).collect();
         self.last.get(sync) != Some(&now)
     }
+
+    /// The pass reached `sync`: whether the hit counts (the next tick is there); if not, the pass goes round
+    /// it, and the reads after it are the next round's ([`Inputs::go_round`]).
+    pub fn hit(&self, sync: &str, sources: &[&str], inputs: &Inputs) -> bool {
+        let counts = self.counts(sync, sources, inputs);
+        if !counts {
+            inputs.go_round(sync);
+        }
+        counts
+    }
 }
 
 /// A call a part of the program not ported made into ported code in the pass (D98): the registers it
@@ -173,21 +192,60 @@ impl Inputs {
     /// again after the frame was drawn, a key pressed meanwhile), the value that read saw; else the
     /// tick's. Each call is one read there: the port calls it where it does what that instruction did, as
     /// often as the original read there (twice for a function called twice, each time round a loop that
-    /// polls), and the n-th call gets the original's n-th read (D93). (A live platform reads its clock or
-    /// device again here.)
+    /// polls), and the n-th call gets the original's n-th read (D93), counted within the pass's round (a gated
+    /// wait the pass went round starts another, D130). (A live platform reads its clock or device again here.)
     pub fn at_site(&self, site: &str) -> Inputs {
-        let n = {
+        let mut names: std::collections::BTreeSet<String> = self.values.keys().cloned().collect();
+        names.extend(self.late.get(site).into_iter().flatten().map(|l| l.name.clone()));
+        let mut made = BTreeMap::new();
+        {
             let mut reads = self.reads.borrow_mut();
-            let n = reads.entry(site.to_owned()).or_default();
-            *n += 1;
-            *n
-        };
-        self.at_read(site, n)
+            for name in names {
+                let n = reads.entry((site.to_owned(), name.clone())).or_default();
+                *n += 1;
+                made.insert(name, *n);
+            }
+        }
+        self.at_reads(site, |name| made.get(name).copied().unwrap_or(1))
     }
 
-    /// The inputs as the original's instruction `site` read them at its `n`-th read in the pass (from 1),
-    /// without counting a read ([`Inputs::at_site`]).
+    /// The inputs as the original's instruction `site` read them at its `n`-th read in the pass's round (from
+    /// 1), without counting a read ([`Inputs::at_site`]).
     pub fn at_read(&self, site: &str, n: u32) -> Inputs {
+        self.at_reads(site, |_| n)
+    }
+
+    /// The pass went round a gated wait at `sync`, a hit that didn't count (D130): the reads after it are the
+    /// next round's, numbered afresh, as the original's (each input whose ticks that point's hits start).
+    /// [`Gates::hit`] says so where the port asks whether a hit counts.
+    pub fn go_round(&self, sync: &str) {
+        let mut names: std::collections::BTreeSet<&String> = self.values.keys().collect();
+        names.extend(self.syncs.keys());
+        let mut rounds = self.rounds.borrow_mut();
+        let mut reads = self.reads.borrow_mut();
+        for name in names {
+            if self.syncs.get(name).is_some_and(|points| !points.iter().any(|p| p == sync)) {
+                continue;
+            }
+            *rounds.entry(name.clone()).or_default() += 1;
+            reads.retain(|(_, input), _| input != name);
+        }
+    }
+
+    /// Whether the original's pass went round a gated wait more times than the port's has yet and read
+    /// something there that arrived meanwhile (a late read in a later round, D130): the port goes round on, for
+    /// what arrives.
+    pub fn more_rounds(&self) -> bool {
+        self.late.values().flatten().any(|l| l.round > self.round(&l.name))
+    }
+
+    /// An input's round of the pass (D130).
+    fn round(&self, name: &str) -> u32 {
+        self.rounds.borrow().get(name).copied().unwrap_or(0)
+    }
+
+    /// The inputs as `site` read them, each input at its read `n(name)` of its round.
+    fn at_reads(&self, site: &str, n: impl Fn(&str) -> u32) -> Inputs {
         let mut values = self.values.clone();
         for (name, bytes) in self.written.borrow().iter() {
             let value = values.entry(name.clone()).or_default();
@@ -197,10 +255,12 @@ impl Inputs {
                 }
             }
         }
-        // The last read there that saw a change, of each input: its reads since saw the same.
+        // The last read there in the round that saw a change, of each input: its reads since saw the same.
         let mut last: BTreeMap<&str, &files::LateRead> = BTreeMap::new();
-        for l in self.late.get(site).into_iter().flatten().filter(|l| l.read <= n) {
-            last.insert(&l.name, l);
+        for l in self.late.get(site).into_iter().flatten() {
+            if l.round == self.round(&l.name) && l.read <= n(&l.name) {
+                last.insert(&l.name, l);
+            }
         }
         for (name, l) in last {
             match &l.bytes {
@@ -262,9 +322,13 @@ impl Inputs {
     /// ends it never would (each read after sees the same), while the original's ended: the port went
     /// another way. It stops there and says so, as for a path not ported, instead of polling on.
     pub fn read_out(&self, site: &str) -> bool {
-        let made = self.reads.borrow().get(site).copied().unwrap_or(0);
-        let last = self.late.get(site).and_then(|reads| reads.iter().map(|l| l.read).max()).unwrap_or(0);
-        made >= last
+        let reads = self.reads.borrow();
+        self.late
+            .get(site)
+            .into_iter()
+            .flatten()
+            .filter(|l| l.round == self.round(&l.name))
+            .all(|l| reads.get(&(site.to_owned(), l.name.clone())).copied().unwrap_or(0) >= l.read)
     }
 
     /// An input's bytes now: the tick's, with the pass's own writes to it ([`Inputs::write`]).
@@ -317,9 +381,15 @@ impl Inputs {
         for l in late {
             self.late.entry(l.site.clone()).or_default().push(l.clone());
         }
-        self.late.values_mut().for_each(|reads| reads.sort_by_key(|l| l.read));
+        self.late.values_mut().for_each(|reads| reads.sort_by_key(|l| (l.round, l.read)));
         self.reads.borrow_mut().clear();
+        self.rounds.borrow_mut().clear();
         self.written.borrow_mut().clear();
+    }
+
+    /// The inputs whose ticks only some sync points start (the inputs file's header), for their rounds.
+    pub(crate) fn set_syncs(&mut self, syncs: &BTreeMap<String, Vec<String>>) {
+        self.syncs = syncs.clone();
     }
 
     /// This tick's calls through hooks, replacing the last tick's.
@@ -493,6 +563,7 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
     // The pass the last tick began, which draws the next tick's frame.
     let mut pass: Option<String> = None;
     let mut current = Inputs::default();
+    current.set_syncs(&inputs.syncs);
     // The fed fields' values, each as it last changed (D124).
     let mut feeding: BTreeMap<String, Value> = BTreeMap::new();
     let mut last = 0;
@@ -559,7 +630,7 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         {
             PortState { tick: line.tick, state: value }.write(file)?;
         }
-        state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current });
+        state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun });
         pass = Some(line.sync.clone());
         last = line.tick;
     }
@@ -783,6 +854,7 @@ mod tests {
             read: 1,
             value: vec![6, 0],
             bytes: None,
+            round: 0,
         };
         assert_eq!(file.ticks[2].late[0], first, "a first read");
         let mut inputs = Inputs::default();
@@ -876,6 +948,38 @@ mod tests {
         assert!(Request::parse(&args("run --inputs i --out o --transplant a --resume b")).is_err());
         let r = Request::parse(&args("run --inputs i --out o --frames f --presentation p")).unwrap();
         assert_eq!(r.presentation.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn a_read_after_a_wait_went_round_is_numbered_in_its_round() {
+        // A key wait goes round twice without a tick; the key arrives in the third round, at its first read.
+        let text = INPUTS.replace(
+            r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]]}"#,
+            r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]],"late":[[0,"GAME.EXE+07143","0900",1,[[0,9]],2]]}"#,
+        );
+        let file = InputsFile::parse(&text).unwrap();
+        assert_eq!(file.ticks[2].late[0].round, 2);
+        let mut inputs = Inputs::default();
+        inputs.set("elapsed", vec![3, 0]);
+        inputs.set_late(&file.ticks[2].late);
+        assert!(inputs.more_rounds(), "the key comes in a later round");
+        let mut seen = Vec::new();
+        for round in 0..3 {
+            seen.push(inputs.at_site("GAME.EXE+07143").u16("elapsed"));
+            if round < 2 {
+                inputs.go_round("key");
+            }
+        }
+        assert_eq!(seen, [3, 3, 9], "the tick's value in the first two rounds, the key in the third");
+        assert!(!inputs.more_rounds(), "nothing read in a later round");
+        assert!(Gates::default().hit("key", &["elapsed"], &inputs), "no gate yet: the first hit counts");
+        // A gate that holds: the hit doesn't count, and the pass goes round.
+        let mut gates = Gates::default();
+        inputs.set_late(&file.ticks[2].late);
+        gates.ticked("key", &["elapsed"], &inputs);
+        assert!(!gates.hit("key", &["elapsed"], &inputs));
+        assert!(!gates.hit("key", &["elapsed"], &inputs));
+        assert_eq!(inputs.at_site("GAME.EXE+07143").u16("elapsed"), 9, "round 2's first read");
     }
 
     #[test]

@@ -734,7 +734,8 @@ impl Machine {
             if syncs {
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 if self.syncs.is_point(at) && self.syncs.program(at).is_none_or(|program| self.running_in(program)) {
-                    if let Some(late) = self.probes.late.as_deref_mut() {
+                    // The hit a run stopped at, reached again as the next resumes, isn't another (D130's rounds).
+                    if let Some(late) = self.probes.late.as_deref_mut().filter(|_| !self.syncs.resuming(at)) {
                         late.hit(at, self.probes.calls.as_deref().and_then(|c| c.frame(0)));
                     }
                     let hits = self.syncs.get(at).map_or(0, |p| p.hits);

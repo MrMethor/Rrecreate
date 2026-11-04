@@ -8,6 +8,9 @@
 //! each instruction's reads of a source in the pass, and keeps a read's bytes that differ from the
 //! tick's where they differ from what that instruction's read before saw (D68, D93): so a port can be
 //! given what each read saw, a polling loop's included (a modal wait reading the mouse until a click).
+//! A hit of the source's sync points that doesn't count (a gated wait going round, D48) starts the
+//! numbering again: each finding says in which round of the pass it was, the hits passed since its tick
+//! (D130).
 //!
 //! The wait a sync point ends is left out (D47 puts the sync point where the wait is over): a timer
 //! count it reads until it changes is read with the next tick's value, which the next tick records.
@@ -59,6 +62,9 @@ pub struct Late {
     pub cycle: u64,
     pub at: u32,
     pub read: u32,
+    /// The round of the pass it was in: the hits of the source's sync points since its tick, none counted
+    /// (D130); its reads are numbered within it.
+    pub round: u32,
     /// The bytes it read that differ from what the program should have read (the tick's value, as the
     /// program's own writes changed it): (offset in the source, value). None: it read the tick's value
     /// again, after a read that didn't.
@@ -82,8 +88,10 @@ struct Source {
     /// should read, in order (a device: its whole state). The tick's values, until the program writes.
     spans: Vec<Range<u32>>,
     expected: Vec<u8>,
-    /// The cycle of its last tick; none before the first.
+    /// The cycle of its last tick; none before the first. The hits of its sync points since, none of them
+    /// counted (D130).
     tick: Option<u64>,
+    rounds: u32,
     /// Each instruction's reads of it this tick, waiting for the next hit (are its late reads the
     /// wait's?), and whether this tick's were reported (a hit of another source's sync point ended it).
     readers: Vec<Reader>,
@@ -98,6 +106,8 @@ struct Source {
 #[derive(Debug, Clone)]
 struct Reader {
     at: u32,
+    /// The round of the pass its reads are in (D130).
+    round: u32,
     /// Its reads so far, the step of the last (the bytes of one read come one by one), and what that
     /// read saw that differs from the tick's value.
     reads: u32,
@@ -129,6 +139,7 @@ impl Reader {
                 cycle: self.cycle,
                 at: self.at,
                 read: self.reads,
+                round: self.round,
                 bytes: now.clone(),
             });
             self.seen = now;
@@ -159,6 +170,7 @@ impl LateInputs {
                 spans: Vec::new(),
                 expected: Vec::new(),
                 tick: None,
+                rounds: 0,
                 readers: Vec::new(),
                 found: false,
                 follow: true,
@@ -206,6 +218,8 @@ impl LateInputs {
                     r.kept.into_iter().for_each(|late| self.push(late));
                 }
             }
+            // The reads after it are another round's (a counted hit's tick starts them at 0 again).
+            self.sources[i].rounds += 1;
         }
     }
 
@@ -214,6 +228,7 @@ impl LateInputs {
     pub(crate) fn tick(&mut self, source: usize, cycle: u64, spans: Vec<Range<u32>>, values: Vec<u8>) {
         let s = &mut self.sources[source];
         (s.spans, s.expected, s.tick, s.readers, s.found) = (spans, values, Some(cycle), Vec::new(), false);
+        s.rounds = 0;
         let spans = || self.sources.iter().flat_map(|s| &s.spans);
         self.bounds = spans().map(|s| s.start).min().unwrap_or(0)..spans().map(|s| s.end).max().unwrap_or(0);
     }
@@ -326,6 +341,7 @@ impl Source {
             None => {
                 self.readers.push(Reader {
                     at: read.at,
+                    round: self.rounds,
                     reads: 0,
                     step: 0,
                     cycle: 0,
@@ -422,6 +438,7 @@ mod tests {
             cycle,
             at,
             read,
+            round: 0,
             bytes: bytes.to_vec(),
         };
         assert_eq!(
@@ -458,7 +475,31 @@ mod tests {
         let late = late.finish();
         assert_eq!(
             late.findings,
-            [Late { tick_cycle: 100, source: 0, cycle: 120, at: 7, read: 1, bytes: vec![(0, 0xDE)] }]
+            [Late { tick_cycle: 100, source: 0, cycle: 120, at: 7, read: 1, round: 0, bytes: vec![(0, 0xDE)] }]
+        );
+    }
+
+    #[test]
+    fn reads_after_a_hit_that_did_not_count_are_numbered_in_its_round() {
+        // A gated wait goes round twice without a tick, then a key arrives and the third round reads it.
+        let memory = LateSource::Memory { at: 0x100, len: 1 };
+        let mut late = LateInputs::new(vec![(memory, vec![])]);
+        let read = |cycle, at| Read { cycle, at, call: None };
+        late.tick(0, 100, std::iter::once(0x100..0x101).collect(), vec![0]);
+        for (step, cycle) in [(110, 110), (1000, 1000)] {
+            late.steps = step;
+            late.memory_read(0x100, 0, read(cycle, 7)); // as at the tick: nothing
+            late.steps = step + 500;
+            late.hit(5, None); // round again, not counted
+        }
+        late.steps = 2000;
+        late.memory_read(0x100, 9, read(2000, 7)); // the key: the first read of the third round
+        late.steps = 3000;
+        late.hit(5, None);
+        let late = late.finish();
+        assert_eq!(
+            late.findings,
+            [Late { tick_cycle: 100, source: 0, cycle: 2000, at: 7, read: 1, round: 2, bytes: vec![(0, 9)] }]
         );
     }
 }

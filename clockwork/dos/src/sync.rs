@@ -124,6 +124,12 @@ impl Syncs {
         }
     }
 
+    /// Whether the hit at `at` is the one a run stopped at, reached again as the next run resumes (not a hit
+    /// of its own).
+    pub(crate) fn resuming(&self, at: u32) -> bool {
+        self.resume_at == Some(at)
+    }
+
     pub fn get(&self, at: u32) -> Option<&Point> {
         self.points.get(&at)
     }
