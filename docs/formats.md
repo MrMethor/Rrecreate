@@ -76,9 +76,11 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 - `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).
 - `start/<session>-<tick>/`: where `rrc start` left a session's original for the port to play from (D120):
   `state.json` (the mapped fields' values, as a transplant's `rrc-state`), `presentation.json` (the
-  presentation's own, `rrc-presentation`) and `screen.frm` (the screen), each when there is one.
+  presentation's own, `rrc-presentation`) and `screen.frm` (the screen), each when there is one; and `saves/`,
+  the files the original had changed there, with `deleted` listing those it deleted (D131), where the port
+  played from the folder saves.
 - `saves/`: the games the port saved while played (`rrc_runtime::original::save`, D119), in the original's own
-  format and names.
+  format and names. A comparison's run has its own (`compare/<session>/saves/`, D131).
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
 
 ## Ghidra's export
@@ -558,7 +560,9 @@ and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; 
 shown when it fails. Its environment has the person's copy of the game (D82): `RRC_GAME`, the game's folder,
 and `RRC_PROGRAM`, the program as the analysis unpacked it (an MZ file; its load image is what IDs' offsets
 count in), for the static data the port reads (`rrc_runtime::original`); run without them (its own tests), the
-runtime finds both from the port repository it runs in (D91). The state at tick t is what the original holds at its t-th sync point hit; a step with tick
+runtime finds both from the port repository it runs in (D91). `RRC_SAVES` is the run's saves folder, made
+afresh with the files the original had changed where the port starts (D131), which `rrc_runtime::original`'s
+`saved`, `save` and `delete` use. The state at tick t is what the original holds at its t-th sync point hit; a step with tick
 t's inputs makes tick t+1's. The port runs from the first tick (1, or the transplant's or the resumed state's)
 to the inputs' last (or `--to`'s), writing its state at each tick before stepping. All files are JSON; the
 inputs and the trace are JSON lines.

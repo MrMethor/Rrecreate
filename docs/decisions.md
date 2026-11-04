@@ -686,6 +686,18 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D131. A port saves into a folder of its own run, which holds the original's files where it starts. Accepted 2026-11-04.
+`rrc compare` makes the port a saves folder afresh for each run (`.rrc/compare/<session>/saves`, `RRC_SAVES`):
+the files the original changed by the tick it starts from (Clockwork's `changed_files`, protocol 14: a snapshot
+keeps them), and `deleted`, a line for each it deleted. From a session's start it is empty. `rrc start` writes
+the same into its folder's `saves`, which `PORT play --start DIR` saves into (`use_saves_dir`). The runtime's
+`saved` reads from the saves folder first, then the game's folder unless the game deleted the file; `save`
+writes there; `delete` deletes as the game does, the person's copy only read.
+**Why:** a saved game's files are the game's state too. Arena's slot list reads NAMES.DAT, and saving copies the
+running game's files (`*.64`, which the original writes as it plays, its automap when the game menu opens): a
+port that read its last run's saves compared wrong (the second comparison's slot list read the name the first
+had saved), and from a transplant it needs the files the original had written there to save and load as it does.
+
 ### D130. A pass that goes round a gated wait: its reads by round, and how many times it went round. Accepted 2026-11-04.
 A hit of a gated sync point that doesn't count (D48) is a round of the pass: the original's loop polls again with
 nothing changed. Three things follow it through, so a port's pass goes round as the original's did.

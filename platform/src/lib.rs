@@ -203,7 +203,12 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
     while let Some(arg) = rest.next() {
         match (arg.as_str(), rest.clone().next()) {
             ("--game", Some(dir)) => rrc_runtime::original::use_game_dir(dir.into()),
-            ("--start", Some(dir)) => from = Some(std::path::PathBuf::from(dir)),
+            ("--start", Some(dir)) => {
+                // The game goes on from there: its files the original had changed, and the games saved since (D131).
+                let dir = std::path::PathBuf::from(dir);
+                rrc_runtime::original::use_saves_dir(dir.join("saves"));
+                from = Some(dir);
+            }
             ("--no-sound", _) => {
                 sound = false;
                 continue;

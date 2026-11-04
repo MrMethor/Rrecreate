@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 13;
+pub const PROTOCOL: u64 = 14;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -62,6 +62,7 @@ pub const MACHINE_OPS: &[&str] = &[
     "image",
     "screenshot",
     "screen",
+    "changed_files",
 ];
 
 struct State {
@@ -507,6 +508,13 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "take_frame_images" => Ok(json!({ "images": images(m) })),
         "screen" => Ok(json!({ "picture": hex(&m.screen().1) })),
+        // The files the program created, wrote, renamed or deleted since the drive was loaded, each with its
+        // bytes, or null where it is gone (D131).
+        "changed_files" => {
+            let files: Vec<Value> =
+                m.drive.changed().map(|path| json!({"path": path, "hex": m.drive.file(path).map(hex)})).collect();
+            Ok(json!({ "files": files }))
+        }
         "coverage" => {
             if flag(r, "on")?.unwrap_or(true) {
                 m.start_coverage();

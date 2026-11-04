@@ -82,12 +82,39 @@ pub fn game_dir() -> Option<PathBuf> {
     })
 }
 
-/// Where the port keeps the games it saves (D119): `RRC_SAVES`, else the port repository's `.rrc/saves`, else
+/// The saves folder a player chose (a start folder's, D131), before `RRC_SAVES` and the repository's.
+static SAVES: OnceLock<PathBuf> = OnceLock::new();
+
+/// Keeps the games the port saves in `dir` from now on (a platform's `--start DIR`'s `saves`), before it reads
+/// or saves any.
+pub fn use_saves_dir(dir: PathBuf) {
+    let _ = SAVES.set(dir);
+}
+
+/// Where the port keeps the games it saves (D119): the one chosen, else `RRC_SAVES` (a comparison's: the
+/// original's files as they were where the port starts, D131), else the port repository's `.rrc/saves`, else
 /// `saves` in the current folder. Never the game's folder: the person's copy is only read.
 pub fn saves_dir() -> PathBuf {
-    std::env::var_os("RRC_SAVES")
-        .map(PathBuf::from)
+    SAVES
+        .get()
+        .cloned()
+        .or_else(|| std::env::var_os("RRC_SAVES").map(PathBuf::from))
         .unwrap_or_else(|| saves_from(&std::env::current_dir().unwrap_or_default()))
+}
+
+/// The list, in the saves folder, of the files the game deleted (a line each, as the program names them): the
+/// game's folder's are gone for it (D131).
+pub const DELETED: &str = "deleted";
+
+/// Whether the game deleted `name` (the saves folder's [`DELETED`] list).
+fn deleted(dir: &Path, name: &str) -> bool {
+    std::fs::read_to_string(dir.join(DELETED))
+        .is_ok_and(|list| list.lines().any(|l| l.trim().eq_ignore_ascii_case(base_name(name))))
+}
+
+/// A path's last part, as DOS names a file (`ARENA\\NAMES.DAT`: `NAMES.DAT`).
+fn base_name(name: &str) -> &str {
+    name.rsplit(['\\', '/']).next().unwrap_or(name)
 }
 
 /// The saves folder for a port run in `here`: its repository's `.rrc/saves`, else `saves` there.
@@ -96,20 +123,86 @@ fn saves_from(here: &Path) -> PathBuf {
 }
 
 /// A saved game, by the name the original saves it under (`SAVEGAME.01`): the port's own (`saves_dir`), else
-/// the person's in the game's folder.
+/// the person's in the game's folder, unless the game deleted it.
 pub fn saved(name: &str) -> Result<Vec<u8>, String> {
-    match file_in(&saves_dir(), name) {
+    let dir = saves_dir();
+    match file_in(&dir, name) {
         Ok(bytes) => Ok(bytes),
+        Err(_) if deleted(&dir, name) => Err(format!("{name}: deleted")),
         Err(_) => file(name),
     }
 }
 
-/// A game the port saves, by the name the original saves it under: into `saves_dir`.
+/// A game the port saves, by the name the original saves it under: into `saves_dir` (no longer deleted).
 pub fn save(name: &str, bytes: &[u8]) -> Result<(), String> {
     let dir = saves_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let path = dir.join(name.replace('\\', "/").rsplit('/').next().unwrap_or(name));
-    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+    let path = dir.join(base_name(name));
+    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    forget_deleted(&dir, name)
+}
+
+/// The files a DOS wildcard (`*.64`, `RE*.01`: `*` any characters, `?` one) names in the game's folder as the
+/// game sees it: the saves folder's and the game folder's (not its subfolders), but those the game deleted; by
+/// name, in capitals, sorted.
+pub fn saved_names(pattern: &str) -> Vec<String> {
+    let dir = saves_dir();
+    let mut names = std::collections::BTreeSet::new();
+    for folder in [Some(dir.clone()), game_dir()].into_iter().flatten() {
+        let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_ascii_uppercase();
+            if entry.path().is_file() && name != DELETED.to_ascii_uppercase() && matches(pattern, &name) {
+                names.insert(name);
+            }
+        }
+    }
+    names.into_iter().filter(|n| dir.join(n).is_file() || !deleted(&dir, n)).collect()
+}
+
+/// Whether `name` matches a DOS wildcard, without regard to case.
+fn matches(pattern: &str, name: &str) -> bool {
+    fn go(p: &[u8], n: &[u8]) -> bool {
+        match (p.first(), n.first()) {
+            (None, None) => true,
+            (Some(b'*'), _) => go(&p[1..], n) || (!n.is_empty() && go(p, &n[1..])),
+            (Some(b'?'), Some(_)) => go(&p[1..], &n[1..]),
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b) && go(&p[1..], &n[1..]),
+            _ => false,
+        }
+    }
+    go(pattern.as_bytes(), name.as_bytes())
+}
+
+/// The game deletes a file it saved, as the original does (`SAVEGAME.01`): out of `saves_dir`, and gone from the
+/// game's folder for it (the person's copy itself is only read).
+pub fn delete(name: &str) -> Result<(), String> {
+    let dir = saves_dir();
+    let path = dir.join(base_name(name));
+    if path.is_file() {
+        std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if deleted(&dir, name) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let list = dir.join(DELETED);
+    let mut text = std::fs::read_to_string(&list).unwrap_or_default();
+    text.push_str(&base_name(name).to_ascii_uppercase());
+    text.push('\n');
+    std::fs::write(&list, text).map_err(|e| format!("{}: {e}", list.display()))
+}
+
+/// `name` saved again: off the deleted list.
+fn forget_deleted(dir: &Path, name: &str) -> Result<(), String> {
+    let list = dir.join(DELETED);
+    let Ok(text) = std::fs::read_to_string(&list) else { return Ok(()) };
+    let kept: String =
+        text.lines().filter(|l| !l.trim().eq_ignore_ascii_case(base_name(name))).map(|l| format!("{l}\n")).collect();
+    if kept.len() != text.len() {
+        std::fs::write(&list, kept).map_err(|e| format!("{}: {e}", list.display()))?;
+    }
+    Ok(())
 }
 
 /// A file of the person's copy of the game (M5), by the name the program opens it with: a DOS path from
@@ -228,5 +321,23 @@ mod tests {
         assert_eq!(setting(&root.join("rrc.local.toml"), "game").as_deref(), Some("C:\\Games\\T"));
         assert_eq!(repository(&std::env::temp_dir().join("no-port-here-at-all")), None);
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_wildcard_names_files_as_dos_does() {
+        assert!(matches("*.64", "AUTOMAP.64") && matches("re*.02", "REST.02") && matches("WILD00?.RMD", "wild001.rmd"));
+        assert!(!matches("*.64", "AUTOMAP.640") && !matches("RE*.02", "AREST.02") && !matches("?.64", "AB.64"));
+    }
+
+    #[test]
+    fn a_file_the_game_deleted_is_gone_until_it_saves_it_again() {
+        let dir = std::env::temp_dir().join(format!("rrc-deleted-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(DELETED), "INSTRUCT.01\nREST.01\n").unwrap();
+        assert!(deleted(&dir, "instruct.01") && deleted(&dir, r"ARENA\REST.01"), "by its name, in any case");
+        assert!(!deleted(&dir, "NAMES.DAT"));
+        forget_deleted(&dir, "rest.01").unwrap();
+        assert!(!deleted(&dir, "REST.01") && deleted(&dir, "INSTRUCT.01"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

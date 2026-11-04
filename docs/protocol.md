@@ -135,8 +135,9 @@ that value, which the program's own writes change, and what interrupt handlers r
 of one of its sync points (counted or not) comes in the call all of them were made in (the innermost call or
 interrupt; for a driver, the one its call was made in), at most 40 of the program's instructions after the
 last (interrupt handlers' don't count). An instruction's reads of a source are numbered from the last hit of
-its sync points; a device's state the program changes through its driver (a mouse position set) is what it
-should read next. The answer: `late`, `[{"tick", "source", "cycle", "at", "read", "bytes"}]`, each a read that
+its sync points, counted or not: `round` is how many of those hits came since the tick (D130); a device's state
+the program changes through its driver (a mouse position set) is what it should read next. The answer: `late`,
+`[{"tick", "source", "cycle", "at", "read", "round", "bytes"}]`, each a read that
 saw the source otherwise than the same instruction's read before it (the first, otherwise than the tick's
 value): the tick (the cycle of its hit), the source (its index), when and by which instruction (for a driver,
 the instruction its call returns to), which of that instruction's reads (from 1), and the bytes that differ
@@ -151,6 +152,9 @@ left. `sound` `{"from", "to"}`: the sound events then, by kind (the platform's k
 the screen now as a picture file (PNG for `.png`, the platform's other format otherwise), answering its
 `width`, `height` and the last `frame`'s number. `screen`: what the screen's memory and palette hold now, as
 a frame's picture (`picture`, hex), which a port's frame at a sync point is compared with (D107).
+
+**Files.** `changed_files`: the files the program created, wrote, renamed or deleted since the drive was loaded
+(a snapshot keeps them), `files`, `[{"path", "hex"}]`, each with its bytes, or `null` where it is gone (D131).
 
 ## The `dos-pc` platform
 
@@ -199,6 +203,8 @@ An IBM PC with DOS (Clockwork).
 11. `screen`, and `tick`'s `screen`: the screen at a sync point as a picture (D107).
 12. `input` takes `"replace": true`: the input still to come dropped, but held keys' releases (D118).
 13. `input` takes `"replay"` and `"after"`: a recorded play's input (D124).
+14. `late_inputs_end`'s findings have `round`, the round of the pass a read was in (D130); `changed_files`: the
+    files the program changed since the drive was loaded (D131).
 
 ## Changing the protocol
 

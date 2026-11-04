@@ -68,6 +68,29 @@ pub(crate) fn read_at(
     Ok(read["data"].as_array().into_iter().flatten().map(|hex| hex.as_str().map(str::to_owned)).collect())
 }
 
+/// A file the original changed: its path, and its bytes (none: deleted).
+pub(crate) type ChangedFile = (String, Option<Vec<u8>>);
+
+/// The files the original changed since its drive was loaded, at the end of tick `tick` (its sync point), as
+/// [`read_at`] reaches it (D131): each path with its bytes, none where the program deleted it.
+pub(crate) fn changed_files_at(
+    repo: &Repo,
+    session: &Session,
+    syncs: &[crate::trace::SyncPoint],
+    tick: u64,
+) -> Result<Vec<ChangedFile>, String> {
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let (mut clockwork, _, from) = crate::watch::open(repo, session, syncs, tick + 1)?;
+    crate::watch::to_tick(&mut clockwork, tick + 1, from.as_ref(), length_ms)?;
+    let answer = clockwork.ask("changed_files", json!({}))?;
+    let mut files = Vec::new();
+    for f in answer["files"].as_array().into_iter().flatten() {
+        let path = f["path"].as_str().ok_or("a changed file without a path")?.to_owned();
+        files.push((path, f["hex"].as_str().map(crate::trace::unhex)));
+    }
+    Ok(files)
+}
+
 /// As the item's type reads it, if it is a whole named item with one; else a byte, word or doubleword
 /// as a number (decimal, and hex), else bytes in memory order.
 fn value(k: &Knowledge, id: &ids::Id, size: u32, hex: &str) -> String {

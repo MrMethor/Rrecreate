@@ -110,6 +110,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         write_start(&trace.header.session, &mapped, &original, t, carried, &file("start.json"))?;
         port_args.extend(["--transplant".into(), file("start.json")]);
     }
+    // The games the port saves and reads (D131): the original's files as they were where the port starts.
+    let saves = work.join("saves");
+    write_saves(repo, &session, &k, transplant.or(resume), &saves)?;
     if let Some(t) = resume {
         let kept = session.pairs.iter().find(|p| p.tick == t).ok_or_else(|| {
             let ticks: Vec<String> = session.pairs.iter().map(|p| p.tick.to_string()).collect();
@@ -150,7 +153,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             port_args.extend(["--screen".into(), file("screen.frm")]);
         }
     }
-    run_port(repo, &port_args)?;
+    run_port(repo, &port_args, Some(&saves))?;
 
     // Tick by tick, the port's state against the original's.
     let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
@@ -1158,7 +1161,9 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
             port_args.extend(["--screen".into(), file("screen.frm")]);
         }
     }
-    run_port(repo, &port_args)?;
+    let saves = work.join("saves");
+    write_saves(repo, &session, &k, Some(after), &saves)?;
+    run_port(repo, &port_args, Some(&saves))?;
 
     let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
     let mut lines = port_trace.lines().filter(|l| !l.trim().is_empty());
@@ -1294,10 +1299,56 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         std::fs::write(file("screen.frm"), cache.get(hash)?).map_err(|e| e.to_string())?;
         has.push("the screen".into());
     }
+    let changed = write_saves(repo, &session, &k, Some(tick), &dir.join("saves"))?;
+    if changed > 0 {
+        has.push(format!("{changed} files the original changed"));
+    }
     say("start", format!("{name}'s tick {tick}: {}", has.join(", ")));
     say("folder", crate::path_text(&dir));
     say("next", format!("the port plays from it: PORT play --start {}", crate::path_text(&dir)));
     Ok(ExitCode::SUCCESS)
+}
+
+/// The port's saves folder for a run from `tick` (D131): made afresh, with the files the original changed by
+/// then (its drive's, as the game's folder holds the rest), and `deleted`, the names of those it deleted, a line
+/// each. None from the session's start. The port saves into it and reads saved games from it first
+/// (`rrc_runtime::original::saved`). How many files it holds.
+fn write_saves(
+    repo: &Repo,
+    session: &Session,
+    k: &Knowledge,
+    tick: Option<u64>,
+    dir: &std::path::Path,
+) -> Result<usize, String> {
+    if dir.is_dir() {
+        std::fs::remove_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let Some(tick) = tick else { return Ok(0) };
+    let files = crate::peek::changed_files_at(repo, session, &crate::trace::sync_points(k)?, tick)?;
+    let mut deleted = String::new();
+    let mut written = 0;
+    for (path, bytes) in files {
+        match bytes {
+            Some(bytes) => {
+                let to = dir.join(path.replace('\\', "/"));
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+                }
+                std::fs::write(&to, bytes).map_err(|e| format!("{}: {e}", to.display()))?;
+                written += 1;
+            }
+            None => {
+                deleted.push_str(&path);
+                deleted.push('\n');
+            }
+        }
+    }
+    if !deleted.is_empty() {
+        let list = dir.join(rrc_runtime::original::DELETED);
+        std::fs::write(&list, deleted).map_err(|e| format!("{}: {e}", list.display()))?;
+    }
+    Ok(written)
 }
 
 /// A transplant (`rrc-state`): the mapped fields' values at `tick`, and the memory the port carries there
@@ -1401,7 +1452,7 @@ pub(crate) fn build_port(repo: &Repo) -> Result<(), String> {
 
 /// Builds the port if rrc.toml says how (`[port] build`), then runs it (`[port] command`) in the port
 /// repository.
-fn run_port(repo: &Repo, args: &[String]) -> Result<(), String> {
+fn run_port(repo: &Repo, args: &[String], saves: Option<&std::path::Path>) -> Result<(), String> {
     let port = &repo.settings.port;
     // The person's copy of the game, for what the port loads from it (D82, `rrc_runtime::original`):
     // its folder, and the program as the analysis unpacked it (its static data).
@@ -1411,6 +1462,10 @@ fn run_port(repo: &Repo, args: &[String]) -> Result<(), String> {
     }
     if let Some(index) = crate::analysis::Index::load(repo)? {
         original.push(("RRC_PROGRAM", crate::cache::Cache::open(&repo.local)?.path(&index.program)));
+    }
+    // Where it keeps the games it saves, and reads saved ones first (D131).
+    if let Some(saves) = saves {
+        original.push(("RRC_SAVES", saves.to_path_buf()));
     }
     let run = |what: &str, command: &[String], args: &[String]| -> Result<(), String> {
         let (program, rest) = command.split_first().ok_or(format!("[port] {what} is empty"))?;
