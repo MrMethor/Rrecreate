@@ -38,7 +38,7 @@ pub fn resolve(k: &Knowledge, edits: &[Edit]) -> Result<Vec<Write>, String> {
         };
         let (offset, leaf) =
             crate::values::locate(&ty, path, &k.types).ok_or_else(|| wrong(format!("{ty} has no {path}")))?;
-        let reader = crate::values::Reader::of(k);
+        let reader = crate::values::of(k);
         for (at, bytes) in crate::values::encode(&edit.value, &leaf, &reader).map_err(wrong)? {
             let id = Id::new(id.module(), id.part(), id.offset() + offset + at).map_err(|e| wrong(e.to_string()))?;
             writes.push(Write { tick: edit.tick, id, bytes, what: what.clone() });

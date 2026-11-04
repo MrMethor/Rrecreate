@@ -26,6 +26,10 @@ pub struct Mapping {
     pub maps: Vec<Map>,
     #[serde(default, rename = "present", skip_serializing_if = "Vec::is_empty")]
     pub presents: Vec<Map>,
+    /// The original's memory the port carries as it was, not modeling it yet (D126: the parts of a saved game's
+    /// blocks it doesn't model): given with a transplant or a start, never traced nor compared.
+    #[serde(default, rename = "carry", skip_serializing_if = "Vec::is_empty")]
+    pub carries: Vec<Map>,
     #[serde(default, rename = "ignore", skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<Ignore>,
 }
@@ -216,28 +220,38 @@ impl Mapping {
     /// The presentation's own fields (D110) with their items' IDs, types and sizes: each `at` an item, not
     /// through a pointer or masked.
     pub fn resolve_present(&self, k: &Knowledge) -> Result<Vec<Mapped>, String> {
-        let mut mapped: Vec<Mapped> = Vec::new();
-        for m in &self.presents {
-            let at = |e: String| format!("{MAPPING}: present {}: {e}", m.field);
-            if m.field.is_empty() || m.field.split('.').any(str::is_empty) {
-                return Err(at("a field is a path of names (drawn.level)".into()));
-            }
-            if mapped.iter().any(|other| other.field == m.field) {
-                return Err(at("mapped twice".into()));
-            }
-            if !m.via.is_empty() || m.mask.is_some() {
-                return Err(
-                    at("a presentation's item is at an ID or a name, not via a pointer or masked (yet)".into()),
-                );
-            }
-            if m.at.is_empty() {
-                return Err(at("no at: the original's item".into()));
-            }
-            mapped.push(direct(k, m).map_err(at)?);
-        }
-        Ok(mapped)
+        given(k, &self.presents, "present", "a presentation's item")
     }
 
+    /// The memory the port carries ([`Mapping::carries`], D126), resolved as the presentation's.
+    pub fn resolve_carried(&self, k: &Knowledge) -> Result<Vec<Mapped>, String> {
+        given(k, &self.carries, "carry", "a carried item")
+    }
+}
+
+/// Items given at a start, not compared (`[[present]]`, `[[carry]]`): each at an ID or a name, a field once.
+fn given(k: &Knowledge, items: &[Map], section: &str, what: &str) -> Result<Vec<Mapped>, String> {
+    let mut mapped: Vec<Mapped> = Vec::new();
+    for m in items {
+        let at = |e: String| format!("{MAPPING}: {section} {}: {e}", m.field);
+        if m.field.is_empty() || m.field.split('.').any(str::is_empty) {
+            return Err(at("a field is a path of names (drawn.level)".into()));
+        }
+        if mapped.iter().any(|other| other.field == m.field) {
+            return Err(at("mapped twice".into()));
+        }
+        if !m.via.is_empty() || m.mask.is_some() {
+            return Err(at(format!("{what} is at an ID or a name, not via a pointer or masked (yet)")));
+        }
+        if m.at.is_empty() {
+            return Err(at("no at: the original's item".into()));
+        }
+        mapped.push(direct(k, m).map_err(at)?);
+    }
+    Ok(mapped)
+}
+
+impl Mapping {
     /// The memory declared to differ, as (ID, size).
     pub fn ignored(&self, k: &Knowledge) -> Result<Vec<(Id, u32)>, String> {
         self.ignores

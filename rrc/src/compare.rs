@@ -78,7 +78,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         // A far pointer's target is named where the session put the program (D72).
         let places = Places::new(repo, &session);
         let linear = |linear: u32| places.linear_id(linear).ok();
-        original_values(&trace, &mapped, &Reader::of(&k).with_linear(&linear), name)?
+        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
     };
     let ticks = trace.ticks.len() as u64;
     for t in [transplant, resume, to, pair].into_iter().flatten() {
@@ -106,7 +106,8 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let mut port_args =
         vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
     if let Some(t) = transplant {
-        write_start(&trace.header.session, &mapped, &original, t, &file("start.json"))?;
+        let carried = read_given(repo, &session, &k, &mapping.resolve_carried(&k)?, t)?;
+        write_start(&trace.header.session, &mapped, &original, t, carried, &file("start.json"))?;
         port_args.extend(["--transplant".into(), file("start.json")]);
     }
     if let Some(t) = resume {
@@ -1097,7 +1098,7 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
     let original = {
         let places = Places::new(repo, &session);
         let linear = |linear: u32| places.linear_id(linear).ok();
-        original_values(&trace, &mapped, &Reader::of(&k).with_linear(&linear), name)?
+        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
     };
     let mut census = Census::default();
     let ticks = trace.ticks.len() as u64;
@@ -1114,7 +1115,8 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
         feed_field(&mut feeds, m, values, after);
     }
     write_inputs(&trace, &sets, &feeds, &file("inputs.jsonl"))?;
-    write_start(&trace.header.session, &mapped, &original, after, &file("start.json"))?;
+    let carried = read_given(repo, &session, &k, &mapping.resolve_carried(&k)?, after)?;
+    write_start(&trace.header.session, &mapped, &original, after, carried, &file("start.json"))?;
     let mut port_args = vec![
         "run".to_owned(),
         "--inputs".into(),
@@ -1260,7 +1262,7 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let original = {
         let places = Places::new(repo, &session);
         let linear = |linear: u32| places.linear_id(linear).ok();
-        original_values(&trace, &mapped, &Reader::of(&k).with_linear(&linear), name)?
+        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
     };
     let dir = match a.value("--out") {
         Some(dir) => std::path::PathBuf::from(dir),
@@ -1268,8 +1270,13 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     };
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let file = |f: &str| dir.join(f).to_string_lossy().into_owned();
-    write_start(&trace.header.session, &mapped, &original, tick, &file("state.json"))?;
+    let carried = mapping.resolve_carried(&k)?;
+    let values = read_given(repo, &session, &k, &carried, tick)?;
+    write_start(&trace.header.session, &mapped, &original, tick, values, &file("state.json"))?;
     let mut has = vec![format!("{} fields mapped", mapped.len())];
+    if !carried.is_empty() {
+        has.push(format!("{} carried as they were", carried.len()));
+    }
     if !presented.is_empty() {
         write_presentation(repo, &session, &k, &presented, (&trace.header.session, tick), &file("presentation.json"))?;
         has.push(format!("the presentation's own {}", presented.len()));
@@ -1284,15 +1291,50 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn write_start(session: &str, mapped: &[Mapped], original: &[Vec<Value>], tick: u64, path: &str) -> Result<(), String> {
-    let state: serde_json::Map<String, Value> =
+/// A transplant (`rrc-state`): the mapped fields' values at `tick`, and the memory the port carries there
+/// (`carried`, D126).
+fn write_start(
+    session: &str,
+    mapped: &[Mapped],
+    original: &[Vec<Value>],
+    tick: u64,
+    carried: serde_json::Map<String, Value>,
+    path: &str,
+) -> Result<(), String> {
+    let mut state: serde_json::Map<String, Value> =
         mapped.iter().zip(original).map(|(m, values)| (m.field.clone(), values[(tick - 1) as usize].clone())).collect();
+    state.extend(carried);
     let file = json!({"format": "rrc-state", "version": 1, "session": session, "tick": tick, "state": state});
     std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))
 }
 
-/// The presentation's own state (`rrc-presentation`, D110): its fields' items read at `tick`'s sync point
-/// from the session's snapshots (as `rrc peek` reads), as their types read them.
+/// Items given at a start (`[[present]]`, `[[carry]]`): read at `tick`'s sync point from the session's snapshots
+/// (as `rrc peek` reads), as their types read them; none read when there are none.
+fn read_given(
+    repo: &Repo,
+    session: &Session,
+    k: &Knowledge,
+    items: &[Mapped],
+    tick: u64,
+) -> Result<serde_json::Map<String, Value>, String> {
+    let mut state = serde_json::Map::new();
+    if items.is_empty() {
+        return Ok(state);
+    }
+    let places = Places::new(repo, session);
+    let ranges =
+        items.iter().map(|m| Ok((places.address(&m.id.to_string())?, m.size))).collect::<Result<Vec<_>, String>>()?;
+    let read = crate::peek::read_at(repo, session, &crate::trace::sync_points(k)?, tick, &ranges)?;
+    let r = crate::values::of(k);
+    for (m, hex) in items.iter().zip(read) {
+        let hex = hex.ok_or_else(|| format!("{} ({}) isn't in memory at tick {tick}", m.field, m.id))?;
+        let value = decode(&unhex(&hex)?, &m.ty, &r).map_err(|e| format!("{}: {e}", m.field))?;
+        state.insert(m.field.clone(), value);
+    }
+    Ok(state)
+}
+
+/// The presentation's own state (`rrc-presentation`, D110): its fields' items at `tick` ([`read_given`]).
 fn write_presentation(
     repo: &Repo,
     session: &Session,
@@ -1301,20 +1343,7 @@ fn write_presentation(
     (name, tick): (&str, u64),
     path: &str,
 ) -> Result<(), String> {
-    let places = Places::new(repo, session);
-    let ranges = presented
-        .iter()
-        .map(|m| Ok((places.address(&m.id.to_string())?, m.size)))
-        .collect::<Result<Vec<_>, String>>()?;
-    let read = crate::peek::read_at(repo, session, &crate::trace::sync_points(k)?, tick, &ranges)?;
-    let r = Reader::of(k);
-    let mut state = serde_json::Map::new();
-    for (m, hex) in presented.iter().zip(read) {
-        let hex =
-            hex.ok_or_else(|| format!("the presentation's {} ({}) isn't in memory at tick {tick}", m.field, m.id))?;
-        let value = decode(&unhex(&hex)?, &m.ty, &r).map_err(|e| format!("{}: {e}", m.field))?;
-        state.insert(m.field.clone(), value);
-    }
+    let state = read_given(repo, session, k, presented, tick)?;
     let file = json!({"format": "rrc-presentation", "version": 1, "session": name, "tick": tick, "state": state});
     std::fs::write(
         path,

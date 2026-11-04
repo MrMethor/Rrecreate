@@ -686,6 +686,20 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D126. A port reads and writes the original's memory images: the types shared, the memory it doesn't model carried. Accepted 2026-11-04, with the person.
+A game whose saves are blocks of its memory (Arena's `SAVEGAME`, `SAVEENGN`) is saved and loaded by its port in
+the same files, so saves load both ways. Two pieces make that general:
+- **The types shared:** the knowledge's types (`types.toml`) and the decoder of memory into their values and back
+  move into the crate `rrc-types`, which `rrc` and the runtime both use (`rrc_runtime::types`): a port decodes a
+  saved block's records as `rrc` decodes the original's memory, and encodes its own values back the same way.
+- **Carried memory:** `mapping.toml`'s `[[carry]]` names memory the port keeps as it was without modeling it (the
+  parts of a saved block its state doesn't hold): read at the tick and put into the transplant's and the start's
+  state like a mapped field, never traced nor compared. The port overlays what it models on it when it saves, so
+  the bytes it doesn't model leave a saved game as they came.
+**Why:** the person chose saves the original loads and the port loads both ways. Arena's saved blocks are mostly
+state the port models (46 mapped fields fall in them), but its records' types declare 77% of a creature's bytes
+and 36% of an item's: writing a save from the modeled fields alone would lose the rest.
+
 ### D124. The person plays the original; rrc follows the play in parts and compares the port in lockstep. Accepted 2026-11-03, with the person.
 `rrc play NAME [--from SESSION --tick N]` opens Clockwork's window on the original, from a session's tick (its
 snapshot, the input it still had to come dropped but held keys' releases, as D118) or power-on, and records the

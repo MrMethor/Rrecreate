@@ -1196,6 +1196,7 @@ dependencies = [
  "flate2",
  "ids",
  "rrc-runtime",
+ "rrc-types",
  "serde",
  "serde_json",
  "sha2",
@@ -1218,9 +1219,19 @@ name = "rrc-runtime"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "rrc-types",
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "rrc-types"
+version = "0.1.0"
+dependencies = [
+ "ids",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

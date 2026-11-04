@@ -12,6 +12,8 @@ name = "rrc_runtime"
 
 # Never Clockwork's crates: a port talks to the toolkit through files (DESIGN.md §3, D12, D38).
 [dependencies]
+# The knowledge's types, for the original's memory images a port reads and writes (its saves, D126).
+rrc-types = { path = "../types" }
 serde.workspace = true
 serde_json = "1"
 toml = "0.9"

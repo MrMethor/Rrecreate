@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::knowledge::Knowledge;
-use crate::values::{Reader, at_leaf, decode, size};
+use crate::values::{at_leaf, decode, size};
 
 pub const FORMATS: &str = "formats.toml";
 
@@ -443,7 +443,7 @@ impl Formats {
         if let Some(ty) = &format.header {
             let n = size(ty, &k.types)? as usize;
             let head = body.get(..n).ok_or_else(|| format!("{path}: shorter than its header ({ty}, {n} bytes)"))?;
-            opened.header = Some(decode(head, ty, &Reader::of(k))?);
+            opened.header = Some(decode(head, ty, &crate::values::of(k))?);
             body.drain(..n);
         }
         let number = |n: &Option<Number>| resolve(n.as_ref(), opened.header.as_ref());
@@ -507,7 +507,7 @@ impl Formats {
             Some(ty) => {
                 let n = size(ty, &k.types)? as usize;
                 let head = bytes.get(..n).ok_or_else(|| at("shorter than its header"))?;
-                Some(decode(head, ty, &Reader::of(k))?)
+                Some(decode(head, ty, &crate::values::of(k))?)
             }
             None => None,
         };
@@ -534,7 +534,7 @@ impl Formats {
                     let b = bytes
                         .get(start + i * n..start + (i + 1) * n)
                         .ok_or_else(|| at("its directory runs past its end"))?;
-                    let e = decode(b, ty, &Reader::of(k))?;
+                    let e = decode(b, ty, &crate::values::of(k))?;
                     let field = |name: &str| e.get(name).and_then(Value::as_u64).map(|v| v as usize);
                     let name = e.get("name").map(name_text).ok_or_else(|| at("its entry has no name"))?;
                     let size = field("size").ok_or_else(|| at("its entry has no size"))?;
@@ -568,7 +568,7 @@ impl Formats {
                             let b = bytes
                                 .get(i..i + head)
                                 .ok_or_else(|| at(&format!("member {n}'s entry runs past its end")))?;
-                            Some(decode(b, ty, &Reader::of(k))?)
+                            Some(decode(b, ty, &crate::values::of(k))?)
                         }
                         None => None,
                     };

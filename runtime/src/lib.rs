@@ -39,6 +39,9 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 pub use files::{InputsFile, PortState, StartState};
+/// The knowledge's types and the original's memory read and written as their values: what a port reads and
+/// writes the original's memory images with (its saved games, D126).
+pub use rrc_types as types;
 /// The JSON values its traits take (`Simulation::transplant`, `Presentation::given`), for a port to read them.
 pub use serde_json;
 

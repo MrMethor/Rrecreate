@@ -704,6 +704,15 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     let state = std::fs::read_to_string(folder.join("state.json")).unwrap();
     assert!(state.contains(r#""format":"rrc-state""#) && state.contains(r#""tick":200"#), "{state}");
     assert!(folder.join("presentation.json").is_file() && folder.join("screen.frm").is_file());
+    // Memory the port carries as it was (D126): in the start's state, read at the tick, never compared.
+    let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
+    let carry = "\n[[carry]]\nfield = \"carried.counts\"\nat = \"pass_count\"\ntype = \"u8[2]\"\n";
+    std::fs::write(rrc.repo.join("mapping.toml"), format!("{mapping}{carry}")).unwrap();
+    let start = rrc.ok(&["start", "play", "--tick", "200"]);
+    assert!(start.contains("16 fields mapped, 1 carried as they were, the presentation's own 4"), "{start}");
+    let state = std::fs::read_to_string(folder.join("state.json")).unwrap();
+    assert!(state.contains(r#""carried.counts":["#), "{state}");
+    std::fs::write(rrc.repo.join("mapping.toml"), mapping).unwrap();
 
     // The archive by its format (D103): its members; the title as PNG with its palette; a level decoded as
     // the original loaded it, found in its memory at the tick after the read.

@@ -1,0 +1,19 @@
+[package]
+name = "rrc-types"
+description = "The knowledge's types (types.toml) and the original's memory read and written as their values: rrc's and a port's (D126)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "rrc_types"
+
+[dependencies]
+ids = { path = "../ids" }
+serde.workspace = true
+serde_json = "1"
+
+[lints]
+workspace = true
