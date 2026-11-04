@@ -250,6 +250,11 @@ went another way; it stops there as at a path not ported, instead of polling for
 program writes an input itself (it empties its keyboard buffer before a message box waits for a key), the
 port makes the same write, `tick.inputs.write("key_queue", 106, &[0, 0])`, and the reads after it see it with
 what arrived since (D97): a read is the tick's value, the port's writes, and the bytes that read saw otherwise.
+The program's calls that change its mouse driver are such writes too, which `rrc_runtime::mouse` makes as the
+driver does (D133): a position set or a range (INT 33h 04h, 07h, 08h: `MouseRanges`, which the port keeps in its
+state for the ranges the device doesn't report), and the reads that clear what they read (0Bh, 05h, 06h:
+`read_motion`, `read_presses`, `read_releases`). A live port's `Live::wrote` passes its ranges and the pass's
+writes to the platform's driver (`MouseDriver::wrote`).
 To move one:
 
 - move the sync point to the read: onto the instruction that reads the input (the load from the key array,

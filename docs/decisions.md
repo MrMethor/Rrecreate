@@ -686,6 +686,24 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D133. A program's own calls to its mouse driver are the runtime's. Accepted 2026-11-05.
+`rrc_runtime::mouse` makes the INT 33h calls that change the driver, where the port's code makes the original's:
+04h (`MouseRanges::set_position`) keeps the position in the ranges; 07h and 08h (`set_x_range`, `set_y_range`)
+take a range's ends either way round and move a position outside it to its nearer end; 0Bh (`read_motion`), 05h
+and 06h (`read_presses`, `read_releases`) answer as read at a site and clear what they read. Each change goes into
+the `mouse` input as the program's own write (D97), so the reads after it see it, as D93 has Clockwork compare
+them. `MouseRanges` is what the driver keeps that the device (D49) doesn't report: the ranges and the granularity
+its video mode reports positions with (mode 13h: 0 to 639 across, 0 to 199 down, x even), which a port keeps in
+its state, unmapped (after a transplant the mode's, until the program sets its own). The live platform's
+`MouseDriver` keeps the ranges too: the host's mouse kept in them, a position the program set held until the host's
+mouse moves, positions reported at the granularity, and `MouseDriver::wrote` takes the port's ranges and the
+pass's writes (from `Live::wrote`).
+**Why:** Arena's choice box (`+053AE`) keeps the mouse to its options' boxes: the driver's ranges and, with the
+mouse outside them, its position at their middle, which the driver clamps (to x 162, y 114 in the session
+`rest`). The read after it saw the driver's change, not a late read (D93), so the port had to make the change,
+and to know how to it copied Clockwork's driver into the port; any port of a game that moves or limits the mouse
+would have done the same. Played live, the platform's driver had no ranges, so the box couldn't keep the mouse.
+
 ### D132. A gate compares the inputs as the pass last read them; a port's null matches memory the original freed. Accepted 2026-11-04.
 `Inputs::current`, what `Gates::hit` compares, is an input as the pass last read it where that read saw it
 changed (a late read), with the pass's writes since; else the tick's value with its writes. And a mapped field

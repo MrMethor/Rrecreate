@@ -36,6 +36,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use minifb::{MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
+use rrc_runtime::mouse::{MOUSE, MouseRanges};
 use rrc_runtime::present::{Frame, Presentation, Shows, Sounds};
 use rrc_runtime::{Inputs, Simulation, Started, Tick};
 
@@ -111,7 +112,8 @@ impl KeyStates {
 
 /// The mouse as an INT 33h driver reports it, the boundary value Clockwork's `mouse` device is (D49: 46 bytes of
 /// words): the buttons, the position in the driver's coordinates, the motion in mickeys, and each button's
-/// presses and releases (left, right, middle: how many, and where the last was).
+/// presses and releases (left, right, middle: how many, and where the last was); and what it keeps besides, the
+/// ranges a position is kept in and its video mode's granularity, which the program's own calls set (D133).
 #[derive(Debug, Clone, Default)]
 pub struct MouseDriver {
     pub buttons: u16,
@@ -120,18 +122,27 @@ pub struct MouseDriver {
     pub mickeys: (i32, i32),
     pub presses: [(u16, i32, i32); 3],
     pub releases: [(u16, i32, i32); 3],
+    pub ranges: MouseRanges,
+    /// The host's mouse at its last move, in the driver's coordinates.
+    host: Option<(i32, i32)>,
 }
 
 impl MouseDriver {
-    /// The host's mouse taken in: its position in the driver's coordinates (a screen pixel is `scale` of them:
-    /// (2, 1) in mode 13h's 640 × 200), its motion as mickeys (the driver's default ratio: 8 a pixel's 8 across, 16
-    /// down), its buttons' presses and releases.
+    /// The host's mouse taken in: where it moved, its position in the driver's coordinates (a screen pixel is
+    /// `scale` of them: (2, 1) in mode 13h's 640 × 200) kept in the ranges, its motion as mickeys (the driver's
+    /// default ratio: 8 a pixel's 8 across, 16 down); its buttons' presses and releases. A position the program set
+    /// holds until the host's mouse moves.
     pub fn take(&mut self, host: &Host, (sx, sy): (i32, i32)) {
         if let Some((x, y)) = host.mouse {
             let (x, y) = (x * sx, y * sy);
-            self.mickeys.0 += x - self.x;
-            self.mickeys.1 += 2 * (y - self.y);
-            (self.x, self.y) = (x, y);
+            if self.host != Some((x, y)) {
+                let (was_x, was_y) = self.host.unwrap_or((self.x, self.y));
+                self.mickeys.0 += x - was_x;
+                self.mickeys.1 += 2 * (y - was_y);
+                self.host = Some((x, y));
+                let r = &self.ranges;
+                (self.x, self.y) = (x.clamp(r.x.0, r.x.1), y.clamp(r.y.0, r.y.1));
+            }
         }
         let buttons = u16::from(host.buttons & 7);
         for b in 0..3 {
@@ -149,17 +160,44 @@ impl MouseDriver {
     }
 
     /// What it reports, as Clockwork's `mouse` device has it: the buttons, x, y (function 03h), the motion
-    /// (0Bh), then the presses (05h) and the releases (06h), each a count and the last one's x and y.
+    /// (0Bh), then the presses (05h) and the releases (06h), each a count and the last one's x and y; positions at
+    /// the granularity.
     pub fn state(&self) -> [u8; 46] {
-        let mut words = vec![self.buttons, self.x as u16, self.y as u16, self.mickeys.0 as u16, self.mickeys.1 as u16];
+        let (gx, gy) = self.ranges.granularity;
+        let mut words = vec![self.buttons, self.x as u16 & gx, self.y as u16 & gy];
+        words.extend([self.mickeys.0 as u16, self.mickeys.1 as u16]);
         for &(count, x, y) in self.presses.iter().chain(&self.releases) {
-            words.extend([count, x as u16, y as u16]);
+            words.extend([count, x as u16 & gx, y as u16 & gy]);
         }
         let mut bytes = [0; 46];
         for (chunk, word) in bytes.chunks_exact_mut(2).zip(words) {
             chunk.copy_from_slice(&word.to_le_bytes());
         }
         bytes
+    }
+
+    /// What the pass did to the driver itself (D133, `rrc_runtime::mouse`): the ranges the port keeps (`ranges`), and
+    /// its writes to the `mouse` input (a position set, a motion or a count read and cleared) taken into the
+    /// driver's state; a [`Live::wrote`] calls it.
+    pub fn wrote(&mut self, ranges: &MouseRanges, inputs: &Inputs) {
+        self.ranges = ranges.clone();
+        let written = inputs.written(MOUSE);
+        if written.is_empty() {
+            return;
+        }
+        let mut bytes = self.state();
+        for (at, byte) in written {
+            if let Some(b) = bytes.get_mut(at) {
+                *b = byte;
+            }
+        }
+        let word = |i: usize| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
+        let signed = |i: usize| i32::from(word(i) as i16);
+        (self.x, self.y, self.mickeys) = (signed(1), signed(2), (signed(3), signed(4)));
+        for b in 0..3 {
+            self.presses[b] = (word(5 + 3 * b), signed(6 + 3 * b), signed(7 + 3 * b));
+            self.releases[b] = (word(14 + 3 * b), signed(15 + 3 * b), signed(16 + 3 * b));
+        }
     }
 
     /// Read by a pass: its motion and its counts start again, as functions 0Bh, 05h and 06h clear them.
@@ -365,5 +403,25 @@ mod tests {
         assert_eq!((word(5), word(6), word(7)), (1, 30, 23), "the left button's press");
         mouse.read();
         assert_eq!((mouse.mickeys, mouse.presses[0].0), ((0, 0), 0));
+    }
+
+    #[test]
+    fn the_program_s_calls_change_the_live_driver() {
+        let mut mouse = MouseDriver::default();
+        mouse.take(&Host { mouse: Some((165, 30)), ..Host::default() }, (2, 1));
+        // The pass kept the mouse to a box (07h, 08h) and set it at the box's middle (04h).
+        let state = mouse.state();
+        let inputs = inputs(&[(MOUSE, &state)]);
+        let mut ranges = MouseRanges::MODE_13H;
+        ranges.set_x_range(&inputs, 162, 471);
+        ranges.set_y_range(&inputs, 91, 137);
+        ranges.set_position(&inputs, 158, 114);
+        mouse.wrote(&ranges, &inputs);
+        assert_eq!((mouse.x, mouse.y), (162, 114), "the driver's position as the pass left it");
+        // The host's mouse still: the position holds; moved, it is the host's, kept in the ranges.
+        mouse.take(&Host { mouse: Some((165, 30)), ..Host::default() }, (2, 1));
+        assert_eq!((mouse.x, mouse.y), (162, 114));
+        mouse.take(&Host { mouse: Some((300, 150)), ..Host::default() }, (2, 1));
+        assert_eq!((mouse.x, mouse.y), (471, 137));
     }
 }

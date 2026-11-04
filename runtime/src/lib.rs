@@ -27,6 +27,7 @@
 pub mod audio;
 pub mod codecs;
 mod files;
+pub mod mouse;
 pub mod original;
 pub mod present;
 

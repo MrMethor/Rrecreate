@@ -216,7 +216,9 @@ backend never reads the simulation's state directly and a modern one can ignore 
 A step takes the state and the tick's inputs. Inputs are **boundary values read from the original's memory at
 each sync point**: the key-state array its logic reads, the elapsed time; and what a program reads from a
 device's driver or port without storing it, as the device holds it then: the mouse driver's state, the
-joystick's (D49). The port therefore never models a keyboard controller or a timer chip to be comparable.
+joystick's (D49). The port therefore never models a keyboard controller or a timer chip to be comparable. What the
+program does to an input itself is its own write, which the port makes too (D97): a keyboard buffer emptied, and
+its calls that change its mouse driver, which the runtime makes as the driver does (`rrc_runtime::mouse`, D133).
 
 - **Faithful mode** feeds the elapsed time the original measured, tick by tick, so state matches the original
   at every tick.
