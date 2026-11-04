@@ -4,7 +4,9 @@
 //! instructions later, a clock read again after the frame was drawn) is read by the pass but recorded
 //! with the next tick, so a port fed the tick's values would do something else. This finds those reads:
 //! at each counted sync point hit it keeps its sources' bytes, and compares each read the program makes
-//! of them until the next one (a device's: each call of its driver, each read of its port). It numbers
+//! of them until the next one (a device's: each call of its driver, each read of its port); a source's first
+//! tick begins where the check starts, so a start-up's reads before the first hit are compared with what it
+//! held at power-on (D134), a tick the recording calls power-on. It numbers
 //! each instruction's reads of a source in the pass, and keeps a read's bytes that differ from the
 //! tick's where they differ from what that instruction's read before saw (D68, D93): so a port can be
 //! given what each read saw, a polling loop's included (a modal wait reading the mouse until a click).
@@ -187,6 +189,11 @@ impl LateInputs {
             s.follow = false;
             s.read_at = read_at;
         }
+    }
+
+    /// Every source: its index and what it reads.
+    pub(crate) fn sources(&self) -> impl Iterator<Item = (usize, &LateSource)> {
+        self.sources.iter().enumerate().map(|(i, s)| (i, &s.what))
     }
 
     /// The sources a hit of the sync point at `at` starts a tick for: their indexes and what they read.

@@ -26,7 +26,7 @@ use crate::session::{Recorded, Session};
 use crate::values::{PointerKind, Target};
 
 pub const FORMAT: &str = "rrc-trace";
-pub const VERSION: u32 = 11;
+pub const VERSION: u32 = 12;
 /// The oldest version this rrc reads: version 6 only added items read through pointers (D72).
 const OLDEST: u32 = 5;
 /// The first version whose run hash is the one [`Trace::run_hash`] computes.
@@ -197,6 +197,10 @@ pub struct Header {
     /// Calls into ported code from a part not ported (D98): `{"name", "at", "registers"}`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<HookItem>,
+    /// The start-up's pass, from power-on to the first tick (D134): tick 0, its sync point `power-on`, every input
+    /// as it was at power-on and the reads that saw one otherwise. None in traces before version 12.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_on: Option<Box<Tick>>,
 }
 
 /// A hook a trace follows (D98): its name, its entry's ID and the registers it takes.
@@ -458,6 +462,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .map(|h| HookItem { name: h.name.clone(), at: h.at.clone(), registers: h.registers.clone() })
             .collect(),
+        power_on: None,
     };
     // The run asked for: the last recording's only if its input, options and length are the same (D123).
     let identity = crate::cache::sha256(
@@ -468,7 +473,8 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if !a.has("--run")
         && same_run
         && let Some(before) = &session.trace
-        && recorded_header(&Cache::open(&repo.local)?, &before.hash).is_some_and(|h| h == header)
+        && recorded_header(&Cache::open(&repo.local)?, &before.hash)
+            .is_some_and(|h| Header { power_on: None, ..h } == header)
     {
         say(
             "kept",
@@ -698,8 +704,8 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<T
     let cache = Cache::open(&repo.local)?;
     let old = cache.get(&before.hash).ok().and_then(|text| Trace::parse(&String::from_utf8_lossy(&text)).ok());
     let Some(old) = old else { return Ok(Err("its last trace isn't in the cache".into())) };
-    // The same run: all but the state alike.
-    let run = |h: &Header| Header { state: Vec::new(), ..h.clone() };
+    // The same run: all but the state (and the run's own power-on pass) alike.
+    let run = |h: &Header| Header { state: Vec::new(), power_on: None, ..h.clone() };
     if old.header.version != VERSION {
         return Ok(Err(format!("its last trace is of version {}", old.header.version)));
     }
@@ -720,7 +726,7 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<T
         return Ok(Err(format!("{what} since its last recording")));
     }
     // Nothing added (`record` stops before this unless `--run`, D111).
-    if old.header == *header {
+    if run(&old.header) == run(header) && old.header.state == header.state {
         return Ok(Err("nothing added since its last recording".into()));
     }
     let key = crate::memory::key(repo, session, &header.syncs, "data")?;
@@ -785,7 +791,7 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<T
         new_ticks.push(Tick { state, ..tick.clone() });
         previous = values;
     }
-    Ok(Ok(Trace { header: header.clone(), ticks: new_ticks, end: old.end }))
+    Ok(Ok(Trace { header: Header { power_on: old.header.power_on, ..header.clone() }, ticks: new_ticks, end: old.end }))
 }
 
 /// The ranges kept with a trace (D92), as `rrc search` reads them: an LE program's data objects, or the
@@ -831,6 +837,13 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
             sources.push(source);
         }
         clockwork.ask("late_inputs", json!({ "sources": sources }))?;
+    }
+    // The inputs at power-on, where the start-up's pass begins (D134).
+    let mut power_on = Vec::new();
+    if !header.inputs.is_empty() {
+        let request: Vec<Value> = header.inputs.iter().map(|item| item.request(&places)).collect::<Result<_, _>>()?;
+        let read = clockwork.ask("read", json!({ "ranges": request }))?;
+        power_on = read["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
     }
     // Calls into ported code from a part not ported (D98).
     if !header.hooks.is_empty() {
@@ -926,11 +939,25 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
         saver.tick(&mut clockwork, ticks.len() as u64, cycle, clockwork::number(&ran, "ms")?)?;
         last_cycle = cycle;
     };
+    // The start-up's pass (D134): tick 0, every input as it was at power-on.
+    let mut start_up = Tick {
+        tick: 0,
+        sync: "power-on".into(),
+        cycle: start,
+        skipped: None,
+        inputs: power_on.into_iter().enumerate().collect(),
+        state: Vec::new(),
+        late: Vec::new(),
+        hooks: Vec::new(),
+        frames: Vec::new(),
+        sound: serde_json::Map::new(),
+        screen: None,
+    };
     if !header.inputs.is_empty() {
         let found = clockwork.ask("late_inputs_end", Value::Null)?;
         places.objects()?;
         // Each late read as the input's value at its tick with the bytes the read saw (D68), numbered among
-        // its instruction's reads in the pass (D93).
+        // its instruction's reads in the pass (D93); the start-up's (its tick at power-on) power-on's.
         let values: Vec<Vec<Option<String>>> =
             (0..header.inputs.len()).map(|i| carried(&ticks, i, |t| &t.inputs)).collect();
         for late in found["late"].as_array().into_iter().flatten() {
@@ -940,26 +967,31 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
                 continue;
             };
             let at = places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
-            if let Ok(i) = ticks.binary_search_by_key(&cycle, |t: &Tick| t.cycle) {
-                let input = input as usize;
-                let read = values.get(input).and_then(|v| v[i].as_deref()).map(|hex| {
-                    let mut bytes: Vec<u8> = (0..hex.len() / 2)
-                        .filter_map(|k| u8::from_str_radix(&hex[2 * k..2 * k + 2], 16).ok())
-                        .collect();
-                    for pair in late["bytes"].as_array().into_iter().flatten() {
-                        if let (Some(offset), Some(value)) = (pair[0].as_u64(), pair[1].as_u64())
-                            && let Some(byte) = bytes.get_mut(offset as usize)
-                        {
-                            *byte = value as u8;
-                        }
+            let input = input as usize;
+            let (tick, value) = if cycle == start {
+                let value = start_up.inputs.get(input).and_then(|(_, v)| v.clone());
+                (&mut start_up, value)
+            } else if let Ok(i) = ticks.binary_search_by_key(&cycle, |t: &Tick| t.cycle) {
+                (&mut ticks[i], values.get(input).and_then(|v| v[i].clone()))
+            } else {
+                continue;
+            };
+            let read = value.map(|hex| {
+                let mut bytes: Vec<u8> =
+                    (0..hex.len() / 2).filter_map(|k| u8::from_str_radix(&hex[2 * k..2 * k + 2], 16).ok()).collect();
+                for pair in late["bytes"].as_array().into_iter().flatten() {
+                    if let (Some(offset), Some(value)) = (pair[0].as_u64(), pair[1].as_u64())
+                        && let Some(byte) = bytes.get_mut(offset as usize)
+                    {
+                        *byte = value as u8;
                     }
-                    crate::edits::hex(&bytes)
-                });
-                let n = late["read"].as_u64().unwrap_or(1) as u32;
-                let bytes = Some(byte_pairs(&late["bytes"]).unwrap_or_default());
-                let round = late["round"].as_u64().unwrap_or(0) as u32;
-                ticks[i].late.push(LateRead { input, at, value: read, read: n, bytes, round });
-            }
+                }
+                crate::edits::hex(&bytes)
+            });
+            let n = late["read"].as_u64().unwrap_or(1) as u32;
+            let bytes = Some(byte_pairs(&late["bytes"]).unwrap_or_default());
+            let round = late["round"].as_u64().unwrap_or(0) as u32;
+            tick.late.push(LateRead { input, at, value: read, read: n, bytes, round });
         }
     }
     // Each hook's call in the pass of the tick before it: its registers.
@@ -995,6 +1027,7 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
     } else {
         None
     };
+    let header = Header { power_on: Some(Box::new(start_up)), ..header };
     Ok((Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } }, saver.finish()?, kept))
 }
 
@@ -1461,6 +1494,7 @@ mod tests {
             state: vec![item("x", "GAME.EXE+20002"), item("y", "GAME.EXE+20004")],
             edits: vec![json!({"tick": 2, "at": "GAME.EXE+20002", "hex": "0100", "edit": "x = 1"})],
             hooks: vec![],
+            power_on: None,
         };
         let tick = |n: u64, inputs: Vec<(usize, Option<String>)>, state: Vec<(usize, Option<String>)>| Tick {
             tick: n,

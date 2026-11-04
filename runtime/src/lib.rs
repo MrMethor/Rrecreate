@@ -54,6 +54,13 @@ pub trait Simulation: Serialize + DeserializeOwned {
     /// point (its start-up already run).
     fn start() -> Self;
 
+    /// From power-on, after [`Simulation::start`]: what the start-up made of what it read before the first
+    /// sync point (D134), a clock it seeded a generator from. `tick` is tick 0, its sync point `power-on`; its
+    /// inputs are as they were at power-on, and `at_site` gives what each read saw. Nothing by default.
+    fn power_on(&mut self, tick: &Tick) {
+        let _ = tick;
+    }
+
     /// One pass of the loop whose sync point began the tick, with the tick's inputs: the state at
     /// this tick becomes the state at the next.
     fn step(&mut self, tick: &Tick);
@@ -599,6 +606,10 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         }
         current.set_late(&line.late);
         current.set_calls(&line.calls);
+        // The start-up's pass, from power-on to the first tick (D134): the port's `power_on` takes what it read.
+        if line.tick == 0 && first == 1 && request.transplant.is_none() && request.resume.is_none() {
+            state.power_on(&Tick { number: 0, sync: &line.sync, inputs: &current, spun: line.spun });
+        }
         if line.tick < first {
             continue;
         }
@@ -739,6 +750,65 @@ mod tests {
         let again: Vec<Value> = again.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(again[1]["tick"], 2);
         assert_eq!(again[2]["state"], lines[3]["state"], "tick 3 as before (its first line has every field)");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A start-up that seeds from a clock it reads before the first sync point (D134).
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Seeded {
+        seed: u16,
+        steps: u16,
+    }
+
+    impl Simulation for Seeded {
+        fn start() -> Self {
+            Seeded { seed: 0, steps: 0 }
+        }
+        fn power_on(&mut self, tick: &Tick) {
+            assert_eq!((tick.number, tick.sync), (0, "power-on"));
+            self.seed = tick.inputs.at_site("GAME.EXE+00100").u16("clock") | 1;
+        }
+        fn step(&mut self, _: &Tick) {
+            self.steps += 1;
+        }
+    }
+
+    #[test]
+    fn from_power_on_the_start_up_s_pass_is_the_port_s_power_on() {
+        // The clock 0 at power-on; the start-up read it at 40h, the first tick's value 500h.
+        let inputs = r#"{"format":"rrc-inputs","version":4,"session":"boot","inputs":[{"name":"clock","size":2}]}
+{"tick":0,"sync":"power-on","inputs":[[0,"0000"]],"late":[[0,"GAME.EXE+00100","4000",1,[[0,64]]]]}
+{"tick":1,"sync":"menu","inputs":[[0,"0005"]]}
+{"tick":2,"sync":"menu","inputs":[]}
+{"end":"the session's end","ticks":2}
+"#;
+        let d = dir("power-on");
+        std::fs::write(d.join("inputs.jsonl"), inputs).unwrap();
+        let path = |f: &str| d.join(f).to_string_lossy().into_owned();
+        let request = Request { inputs: path("inputs.jsonl"), out: path("port.jsonl"), ..Request::default() };
+        run::<Seeded>(&request).unwrap();
+        let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
+        let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(
+            lines[1],
+            serde_json::json!({"tick": 1, "state": {"seed": 0x41, "steps": 0}}),
+            "seeded, not stepped"
+        );
+        assert_eq!(lines[2]["state"]["steps"], 1);
+
+        // From a transplant there is no start-up to run.
+        let start = r#"{"format":"rrc-state","version":1,"session":"boot","tick":2,"state":{"seed":7}}"#;
+        std::fs::write(d.join("start.json"), start).unwrap();
+        let request = Request {
+            inputs: path("inputs.jsonl"),
+            out: path("transplanted.jsonl"),
+            transplant: Some(path("start.json")),
+            ..Request::default()
+        };
+        run::<Seeded>(&request).unwrap();
+        let trace = std::fs::read_to_string(d.join("transplanted.jsonl")).unwrap();
+        let first: Value = serde_json::from_str(trace.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(first["state"]["seed"], 7);
         std::fs::remove_dir_all(&d).ok();
     }
 

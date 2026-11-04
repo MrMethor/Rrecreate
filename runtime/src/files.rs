@@ -60,8 +60,9 @@ impl InputsFile {
     pub fn parse(text: &str) -> Result<InputsFile, String> {
         let mut lines = text.lines().filter(|l| !l.trim().is_empty());
         let header: Value = serde_json::from_str(lines.next().ok_or("empty")?).map_err(|e| e.to_string())?;
-        // Version 2 adds `fed` (D124); 3 a late read's round, a tick's `spun` and an input's `sync` (D130).
-        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=3)) {
+        // Version 2 adds `fed` (D124); 3 a late read's round, a tick's `spun` and an input's `sync` (D130); 4 the
+        // start-up's pass, tick 0 (D134).
+        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=4)) {
             return Err(format!("not an inputs file this runtime reads ({} {})", header["format"], header["version"]));
         }
         let names: Vec<String> = header["inputs"]

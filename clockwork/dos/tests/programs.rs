@@ -3957,6 +3957,58 @@ fn input_that_changes_between_a_sync_point_and_the_read_is_late() {
 }
 
 #[test]
+fn a_start_up_s_read_before_the_first_sync_point_is_the_power_on_tick_s() {
+    // The timer's handler (INT 1Ch) counts while the start-up waits (HLT); it reads the count (`early`) and works,
+    // then its passes wait (`pass`, the sync point) and read it again until it reaches 5.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["early", "pass", "counter"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        load_dx(a, "handler")?;
+        a.mov(ax, 0x251C)?;
+        a.int(0x21)?;
+        a.hlt()?;
+        a.here("early")?;
+        let counter = word_at(a, "counter");
+        a.mov(bx, counter)?;
+        // Work, so the read isn't the wait's (the next hit just after it).
+        a.mov(cx, 100)?;
+        a.here("work")?;
+        let work = a.l("work");
+        a.loop_(work)?;
+        a.here("pass")?;
+        a.hlt()?;
+        let counter = word_at(a, "counter");
+        a.mov(ax, counter)?;
+        a.cmp(ax, 5)?;
+        let pass = a.l("pass");
+        a.jb(pass)?;
+        exit(a, 0)?;
+        a.here("handler")?;
+        let counter = word_at(a, "counter");
+        a.inc(counter)?;
+        a.iret()?;
+        a.here("counter")?;
+        a.dw(&[0])
+    });
+    let o = offsets.into_inner();
+    let mut m = boot(&[("T.COM", &program)], "T.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    let start = m.cpu.cycles;
+    let counter = dos::late::LateSource::Memory { at: base + o["counter"], len: 2 };
+    m.start_late_inputs(dos::late::LateInputs::new(vec![(counter, vec![])]));
+    m.syncs.add(base + o["pass"], true);
+    assert_eq!(m.run(SECOND * 3), Stop::Exited(0));
+    let late = m.take_late_inputs().unwrap();
+    let early: Vec<_> = late.findings.iter().filter(|l| l.at == base + o["early"]).collect();
+    assert_eq!(early.len(), 1, "the start-up's read saw the count changed since the check began");
+    assert_eq!((early[0].tick_cycle, early[0].read, early[0].round), (start, 1, 0), "the power-on tick's");
+    let ticks = m.syncs.get(base + o["pass"]).unwrap().cycles.clone().unwrap();
+    assert!(late.findings.iter().filter(|l| l.at != base + o["early"]).all(|l| ticks.contains(&l.tick_cycle)));
+}
+
+#[test]
 fn a_device_read_through_its_driver_is_checked_too() {
     // Forever: a delay (where the mouse moves), then INT 33h function 03h at `read`, then some work.
     let offsets = std::cell::RefCell::new(BTreeMap::new());

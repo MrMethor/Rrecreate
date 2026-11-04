@@ -128,7 +128,8 @@ ends (`findings`). `uninit` `{"more": [{"at", "len"}]}` ... `uninit_end`: reads 
 (`reads`). `late_inputs` `{"sources": [{"at", "len"} or {"device"}, with "sync": [addr]; a part's output also
 "follow_writes": false and "read_at": [addr], D96]}` ...
 `late_inputs_end`: input read after it changed since a tick began (D60). A source's tick begins at each
-counted hit of its sync points (`sync`; left out, any sync point's), where its value is kept; until the next,
+counted hit of its sync points (`sync`; left out, any sync point's), and its first where `late_inputs` is asked
+(at power-on, the start-up's: D134), where its value is kept; until the next,
 each read the program makes of it (a device: each call of its driver, read of its port) is compared with
 that value, which the program's own writes change, and what interrupt handlers read and write is left out
 (the emulator tracks calls for it). The late reads of a source are the wait's, and left out, when the next hit
@@ -205,6 +206,8 @@ An IBM PC with DOS (Clockwork).
 13. `input` takes `"replay"` and `"after"`: a recorded play's input (D124).
 14. `late_inputs_end`'s findings have `round`, the round of the pass a read was in (D130); `changed_files`: the
     files the program changed since the drive was loaded (D131).
+15. `late_inputs` begins each source's first tick where it is asked (D134): a start-up's reads before the first
+    sync point's hit are compared with what the source held then, and found with that `tick`.
 
 ## Changing the protocol
 

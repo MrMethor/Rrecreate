@@ -219,6 +219,8 @@ device's driver or port without storing it, as the device holds it then: the mou
 joystick's (D49). The port therefore never models a keyboard controller or a timer chip to be comparable. What the
 program does to an input itself is its own write, which the port makes too (D97): a keyboard buffer emptied, and
 its calls that change its mouse driver, which the runtime makes as the driver does (`rrc_runtime::mouse`, D133).
+What a start-up reads before its first sync point (a clock it seeds a generator from) is the start-up's pass,
+tick 0 from power-on, which the port's `power_on` takes (D134).
 
 - **Faithful mode** feeds the elapsed time the original measured, tick by tick, so state matches the original
   at every tick.

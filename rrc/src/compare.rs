@@ -905,7 +905,7 @@ fn write_inputs(
             item
         })
         .collect();
-    let mut header = json!({"format": "rrc-inputs", "version": 3, "session": trace.header.session, "inputs": inputs});
+    let mut header = json!({"format": "rrc-inputs", "version": 4, "session": trace.header.session, "inputs": inputs});
     if !trace.header.hooks.is_empty() {
         let hooks: Vec<Value> =
             trace.header.hooks.iter().map(|h| json!({"name": h.name, "registers": h.registers})).collect();
@@ -913,11 +913,14 @@ fn write_inputs(
     }
     let mut text = header.to_string();
     text.push('\n');
-    for (n, t) in trace.ticks.iter().enumerate() {
+    // The start-up's pass, from power-on (D134): tick 0, before the first.
+    let start_up = trace.header.power_on.as_deref().into_iter();
+    for (n, t) in start_up.chain(trace.ticks.iter()).enumerate() {
+        let n = if trace.header.power_on.is_some() { n.wrapping_sub(1) } else { n };
         let read: Vec<Value> = t.inputs.iter().filter_map(|(i, v)| v.as_ref().map(|v| json!([i, v]))).collect();
         let mut line = json!({"tick": t.tick, "sync": t.sync, "inputs": read});
         // How many times the original went round the wait the pass ends at: the next tick's skipped hits (D130).
-        if let Some(spun) = trace.ticks.get(n + 1).and_then(|next| next.skipped) {
+        if let Some(spun) = trace.ticks.get(n.wrapping_add(1)).and_then(|next| next.skipped) {
             line["spun"] = json!(spun);
         }
         // The hooks' calls in the pass (D98).

@@ -60,6 +60,9 @@ pub struct Host {
     pub buttons: u8,
     /// Whether the digitized sound last started still plays: what a sound driver's status answers (D121).
     pub pcm_playing: bool,
+    /// The host's time of day when play began, in milliseconds since midnight (UTC): what a PC's clock would
+    /// have read at power-on (D134).
+    pub day_ms: u64,
 }
 
 /// What the original's loop does next.
@@ -87,6 +90,13 @@ pub trait Live: Simulation + Shows {
     /// the handlers' state as the original's handlers would find it. Nothing by default.
     fn wrote(&self, devices: &mut Self::Devices, inputs: &Inputs) {
         let _ = (devices, inputs);
+    }
+
+    /// Played from power-on: the inputs the start-up reads before the first sync point (D134), from the host's
+    /// devices (a clock it seeds a generator from: `Host::day_ms`), for `Simulation::power_on`. None by default.
+    fn power_on(&self, devices: &mut Self::Devices, host: &Host) -> Inputs {
+        let _ = (devices, host);
+        Inputs::default()
     }
 }
 
@@ -289,6 +299,16 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
         presentation.given(own)?;
     }
     let given = screen.is_some();
+    let mut devices = S::Devices::default();
+    let day_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| (d.as_millis() % 86_400_000) as u64);
+    // From power-on, the start-up's pass (D134): what it reads from the host's devices.
+    if !given {
+        let host = Host { day_ms, ..Host::default() };
+        let inputs = state.power_on(&mut devices, &host);
+        Simulation::power_on(&mut state, &Tick { number: 0, sync: "power-on", inputs: &inputs, spun: None });
+    }
     let mut frame = screen.unwrap_or_else(|| Frame::new(WIDTH, HEIGHT));
     presentation.start(&state.scene(), &mut frame, given);
     let audio = if P::SOUNDS && sound {
@@ -313,7 +333,6 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
     let mut window = Window::new(title, WIDTH, HEIGHT, options).map_err(|e| format!("a window: {e}"))?;
     window.set_target_fps(70);
     let started = Instant::now();
-    let mut devices = S::Devices::default();
     let mut number = 0;
     let mut pixels = vec![0u32; WIDTH * HEIGHT];
     'play: while window.is_open() {
@@ -323,6 +342,7 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
             mouse: mouse(&window, &frame),
             buttons: buttons(&window),
             pcm_playing: audio.as_ref().is_some_and(audio::Audio::pcm_playing),
+            day_ms,
         };
         for _ in 0..CATCH_UP {
             let (sync, inputs) = match state.next(&mut devices, &host) {

@@ -503,6 +503,9 @@ JSON lines (D72): a header, a line per tick, and an end line.
   where memory isn't mapped. Empty lists are left out.
 - `edits` (in the header, only if the session has any): the scenario's writes, each at an ID with its bytes
   and the edit as the session has it (D64). A tick's state has its edits written.
+- `power_on` (in the header, version 12): the start-up's pass, from power-on to the first tick (D134), as a tick
+  line: tick 0, its sync point `power-on`, every input as it was at power-on and the reads before the first tick
+  that saw one otherwise (`late`, as a tick's).
 - `hooks` (in the header, only if the knowledge has any): the calls a part not ported makes into ported code
   (D98); a tick's `hooks`, `[[index, [value, …]]]`, are those its pass made, in order, each with its
   registers' values as the header's hook lists them (version 9).
@@ -568,9 +571,12 @@ to the inputs' last (or `--to`'s), writing its state at each tick before steppin
 inputs and the trace are JSON lines.
 
 - **Inputs** (`--inputs`, written by `rrc`): the header
-  `{"format":"rrc-inputs","version":3,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`
+  `{"format":"rrc-inputs","version":4,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`
   (an input read only at some sync points has `"sync":["play"]`),
-  then a line per tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
+  then, from a trace that has it (version 4), the start-up's pass, `{"tick":0,"sync":"power-on","inputs":[…],
+  "late":[…]}`: every input at power-on and the reads before the first tick that saw one otherwise, which the
+  runtime gives `Simulation::power_on` after `start` when the port runs from power-on (D134); then a line per
+  tick, `{"tick":1,"sync":"play","inputs":[[0,"0100"],[1,"0000…"]]}`: the inputs the tick reads
   whose value changed since they were last read (index in the header's list, bytes in hex as the trace has
   them); a value holds until it changes. A tick whose pass read inputs late has `late`,
   `[[index, "GAME.EXE+04BB9", "0300", 1, [[0, 3]]]]`: what each read saw, which of that instruction's reads it

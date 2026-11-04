@@ -745,7 +745,7 @@ impl Machine {
                     if hit != hits {
                         self.edit();
                         if self.probes.late.is_some() {
-                            self.late_tick(at);
+                            self.late_tick(Some(at));
                         }
                     }
                     if stop {
@@ -1257,10 +1257,13 @@ impl Machine {
     }
 
     /// Starts looking for input that changes within a tick (see [`crate::late`]); what was on is
-    /// replaced. It turns call tracking on if nothing did.
+    /// replaced. It turns call tracking on if nothing did. Each source's first tick begins now (D134): the
+    /// reads before its sync points' first counted hit (a start-up's, from power-on) are compared with what it
+    /// holds here.
     pub fn start_late_inputs(&mut self, late: crate::late::LateInputs) {
         self.probes.late = Some(Box::new(late));
         self.calls_for(crate::probe::CALLS_FOR_LATE);
+        self.late_tick(None);
     }
 
     /// Keeps each run of the entries at `at` (linear) with the registers (D98), outside interrupt
@@ -1280,10 +1283,14 @@ impl Machine {
         self.probes.late.take().map(|l| l.finish())
     }
 
-    /// A counted hit of the sync point at `at`: the late-input sources it ticks keep what they hold.
-    fn late_tick(&mut self, at: u32) {
+    /// A counted hit of the sync point at `at` (none: the check's start): the late-input sources it ticks keep
+    /// what they hold.
+    fn late_tick(&mut self, at: Option<u32>) {
         let Some(mut late) = self.probes.late.take() else { return };
-        let ticking: Vec<(usize, crate::late::LateSource)> = late.ticking(at).map(|(i, s)| (i, s.clone())).collect();
+        let ticking: Vec<(usize, crate::late::LateSource)> = match at {
+            Some(at) => late.ticking(at).map(|(i, s)| (i, s.clone())).collect(),
+            None => late.sources().map(|(i, s)| (i, s.clone())).collect(),
+        };
         for (i, source) in ticking {
             let (spans, values) = match source {
                 crate::late::LateSource::Memory { at, len } => {

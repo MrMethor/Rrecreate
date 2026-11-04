@@ -686,6 +686,19 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D134. The start-up's pass, from power-on to the first tick, is given to the port. Accepted 2026-11-05.
+Clockwork's late-input check (D60) begins each source's first tick where it is asked, so recording from power-on
+keeps the start-up's reads before the first sync point's hit, compared with what the inputs held at power-on
+(protocol revision 15). The trace's header has them as the start-up's pass, `power_on`: tick 0, its sync point
+`power-on`, every input at power-on and those reads (version 12); the inputs file, a tick-0 line before the first
+(version 4). A port run from power-on gets it after `start`, in `Simulation::power_on` (nothing by default), its
+reads through `at_site` as a pass's; from a transplant or a resume there is none. Played live from power-on, the
+platform asks the port's `Live::power_on` for those inputs from the host (`Host::day_ms`, the time of day).
+**Why:** Arena's start-up seeds its random generator from the BIOS clock (0:046C, `random_reseed` +06FC2, OR 1)
+before the main menu's first sync point, and character creation's rolls draw from it. `start` has no inputs and
+the trace had nothing before tick 1, so a port from power-on couldn't match the seed; giving it the seed's value
+instead would have hidden that it is an input, and how a live port gets one.
+
 ### D133. A program's own calls to its mouse driver are the runtime's. Accepted 2026-11-05.
 `rrc_runtime::mouse` makes the INT 33h calls that change the driver, where the port's code makes the original's:
 04h (`MouseRanges::set_position`) keeps the position in the ranges; 07h and 08h (`set_x_range`, `set_y_range`)

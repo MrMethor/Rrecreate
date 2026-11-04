@@ -398,7 +398,10 @@ under `rrc compare` and in the port's own `cargo test` alike (D91). So are the g
 `rrc_runtime::original::file("DATA\\LEVEL1.MAP")` reads one by the name the program opens it with, and
 `rrc_runtime::codecs` decodes the common compressions (PCX's run-length code, LZSS with lzss.c's parameters or
 others); a game's own is the port's code (D101). A port from power-on loads in `start` what the original loads
-before its first sync point hit: `examples/vault` is one.
+before its first sync point hit: `examples/vault` is one. What the start-up makes of input it reads before then
+(a generator seeded from the BIOS clock) is the port's `Simulation::power_on` (D134): declare the input where
+the start-up reads it (`rrc input`, its `read_at`), record, and `power_on` gets the start-up's pass, tick 0,
+whose `tick.inputs.at_site(ID)` is what that read saw; a live port's `Live::power_on` gives it from the host.
 
 The original's pointers, heap and flag bytes map too (D72): declare a pointer type in `types.toml` with `into`
 the array it points into, and the port's field is an index (or none); map a heap block `via` the pointer that
