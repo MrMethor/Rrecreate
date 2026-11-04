@@ -686,6 +686,17 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D132. A gate compares the inputs as the pass last read them; a port's null matches memory the original freed. Accepted 2026-11-04.
+`Inputs::current`, what `Gates::hit` compares, is an input as the pass last read it where that read saw it
+changed (a late read), with the pass's writes since; else the tick's value with its writes. And a mapped field
+the port has as null matches the original's null (its pointer null: memory it freed), as well as the original's
+value at the first tick (D102).
+**Why:** Clockwork's gate compares the sources' state at the hit. Arena's screens of buttons wait for a release
+with no sync point of their own (`+17761`): the release arrives within the pass, a late read sees it, and the
+next poll's hit counts because of it; a port comparing the tick's value saw nothing changed and went round
+again with the button still down. The character sheet frees the level's map and floor while it shows; the port
+holds none then, which compared as a difference.
+
 ### D131. A port saves into a folder of its own run, which holds the original's files where it starts. Accepted 2026-11-04.
 `rrc compare` makes the port a saves folder afresh for each run (`.rrc/compare/<session>/saves`, `RRC_SAVES`):
 the files the original changed by the tick it starts from (Clockwork's `changed_files`, protocol 14: a snapshot

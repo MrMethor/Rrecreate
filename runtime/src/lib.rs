@@ -129,6 +129,9 @@ pub struct Inputs {
     syncs: BTreeMap<String, Vec<String>>,
     /// The program's own writes to inputs this tick, as the port made them ([`Inputs::write`]).
     written: std::cell::RefCell<BTreeMap<String, BTreeMap<usize, u8>>>,
+    /// Each input as the pass last read it where that read saw it changed (a late read), with the writes since:
+    /// what it holds now as far as the pass knows ([`Inputs::current`], D132).
+    seen: std::cell::RefCell<BTreeMap<String, Vec<u8>>>,
     /// The calls a part not ported made into ported code in the pass, by hook, in order (D98), and how
     /// many of each the port took ([`Inputs::next_call`]).
     calls: BTreeMap<String, Vec<Call>>,
@@ -262,6 +265,7 @@ impl Inputs {
                 last.insert(&l.name, l);
             }
         }
+        let changed: Vec<String> = last.keys().map(|n| (*n).to_owned()).collect();
         for (name, l) in last {
             match &l.bytes {
                 // What the program should have read there (the tick's value and its writes), with what
@@ -277,6 +281,12 @@ impl Inputs {
                 None => {
                     values.insert(name.to_owned(), l.value.clone());
                 }
+            }
+        }
+        let mut seen = self.seen.borrow_mut();
+        for name in changed {
+            if let Some(value) = values.get(&name) {
+                seen.insert(name, value.clone());
             }
         }
         Inputs { values, ..Inputs::default() }
@@ -309,6 +319,13 @@ impl Inputs {
         for (i, &byte) in bytes.iter().enumerate() {
             input.insert(offset + i, byte);
         }
+        if let Some(seen) = self.seen.borrow_mut().get_mut(name) {
+            for (i, &byte) in bytes.iter().enumerate() {
+                if let Some(b) = seen.get_mut(offset + i) {
+                    *b = byte;
+                }
+            }
+        }
     }
 
     /// The program's own writes to input `name` this tick ([`Inputs::write`]), by offset: what a live platform's
@@ -331,8 +348,12 @@ impl Inputs {
             .all(|l| reads.get(&(site.to_owned(), l.name.clone())).copied().unwrap_or(0) >= l.read)
     }
 
-    /// An input's bytes now: the tick's, with the pass's own writes to it ([`Inputs::write`]).
+    /// An input's bytes now, as far as the pass knows: as it last read it changed (a late read, D132), else the
+    /// tick's; with the pass's own writes to it since ([`Inputs::write`]). What a gate compares ([`Gates::hit`]).
     pub fn current(&self, name: &str) -> Vec<u8> {
+        if let Some(seen) = self.seen.borrow().get(name) {
+            return seen.clone();
+        }
         let mut value = self.bytes(name).to_vec();
         for (&offset, &byte) in self.written.borrow().get(name).into_iter().flatten() {
             if let Some(b) = value.get_mut(offset) {
@@ -385,6 +406,7 @@ impl Inputs {
         self.reads.borrow_mut().clear();
         self.rounds.borrow_mut().clear();
         self.written.borrow_mut().clear();
+        self.seen.borrow_mut().clear();
     }
 
     /// The inputs whose ticks only some sync points start (the inputs file's header), for their rounds.
@@ -972,6 +994,9 @@ mod tests {
         }
         assert_eq!(seen, [3, 3, 9], "the tick's value in the first two rounds, the key in the third");
         assert!(!inputs.more_rounds(), "nothing read in a later round");
+        assert_eq!(inputs.current("elapsed"), [9, 0], "now: as the pass last read it (D132)");
+        inputs.write("elapsed", 0, &[4]);
+        assert_eq!(inputs.current("elapsed"), [4, 0], "with the pass's writes since");
         assert!(Gates::default().hit("key", &["elapsed"], &inputs), "no gate yet: the first hit counts");
         // A gate that holds: the hit doesn't count, and the pass goes round.
         let mut gates = Gates::default();

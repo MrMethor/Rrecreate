@@ -213,6 +213,8 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         for (m, values) in mapped.iter().zip(&original) {
             let theirs = &values[(t - 1) as usize];
             match at_path(&state, &m.field) {
+                // None in both: memory the original freed (a pointer null), the port's field none.
+                Some(Value::Null) if theirs.is_null() => {}
                 Some(Value::Null) => {
                     if unset_matches(&m.field, &values[(start - 1) as usize], theirs, &mut found) {
                         unset.entry(m.field.as_str()).or_insert((t, t)).1 = t;
