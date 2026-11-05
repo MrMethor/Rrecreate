@@ -193,14 +193,18 @@ impl Gates {
     /// can't go on there (polled twice, nothing more to read): its port no longer follows the original, and ends
     /// the pass for the comparison to show where, rather than going round for ever. At the next tick's,
     /// when the gate counts the hit (`hit`), or when the original went round no more ([`Tick::spun`]) and read
-    /// nothing in a later round ([`Inputs::more_rounds`]): Clockwork's gate sees a device's change after the pass's
+    /// nothing of its sources in a later round ([`Inputs::more_rounds_of`]): Clockwork's gate sees a device's change
+    /// after the pass's
     /// last read (a button let go while the pass waited), which the port's, comparing the inputs as the pass last
     /// read them (D132), can't. Not knowing the next tick (a live play), by the gate, or once the pass has polled
     /// the wait twice with nothing more to read: a poll with nothing changed does what the one before it did.
     pub fn arrives(&self, sync: &str, sources: &[&str], tick: &Tick, polled: u64, went_round: u64) -> bool {
-        let more = tick.inputs.more_rounds() || tick.spun.is_some_and(|spun| went_round < spun);
+        let rounds = tick.inputs.more_rounds_of(sources);
+        let more = rounds || tick.spun.is_some_and(|spun| went_round < spun);
         match tick.next {
+            // `spun` counts the rounds at the next tick's wait, not this one's.
             Some(next) if next != sync => {
+                let more = rounds;
                 tick.inputs.go_round(sync);
                 !more && polled >= 2
             }
@@ -279,6 +283,12 @@ impl Inputs {
     /// what arrives.
     pub fn more_rounds(&self) -> bool {
         self.late.values().flatten().any(|l| l.round > self.round(&l.name))
+    }
+
+    /// [`Inputs::more_rounds`] for these inputs alone (a gated wait's sources, D139): another input's later rounds
+    /// (a clock read in a loop the pass gets to after the wait) aren't this wait's.
+    pub fn more_rounds_of(&self, names: &[&str]) -> bool {
+        self.late.values().flatten().any(|l| names.contains(&l.name.as_str()) && l.round > self.round(&l.name))
     }
 
     /// An input's round of the pass (D130).
@@ -1124,6 +1134,7 @@ mod tests {
         inputs.set("elapsed", vec![3, 0]);
         inputs.set_late(&file.ticks[2].late);
         assert!(inputs.more_rounds(), "the key comes in a later round");
+        assert!(inputs.more_rounds_of(&["elapsed"]) && !inputs.more_rounds_of(&["mouse"]), "its own input's rounds");
         let mut seen = Vec::new();
         for round in 0..3 {
             seen.push(inputs.at_site("GAME.EXE+07143").u16("elapsed"));
@@ -1175,6 +1186,10 @@ mod tests {
         gates.ticked("release", &["mouse"], &inputs);
         assert!(!gates.arrives("release", &["mouse"], &tick(Some(0), Some("click")), 1, 0), "the tick is at click");
         assert!(gates.arrives("release", &["mouse"], &tick(Some(0), Some("click")), 2, 1), "stuck: the pass ends");
+        assert!(
+            gates.arrives("release", &["mouse"], &tick(Some(9999), Some("click")), 2, 1),
+            "click's rounds, not its"
+        );
         assert!(!gates.arrives("click", &["mouse"], &tick(None, None), 1, 0), "a live play: not after one poll");
         assert!(gates.arrives("click", &["mouse"], &tick(None, None), 2, 1), "nor before two");
     }
