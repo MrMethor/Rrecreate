@@ -122,7 +122,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          the item's size)
   pass SESSION --tick N [--depth N] [--in ID|NAME] [--functions] [--interrupts] [--lines N]
                          what tick N's pass runs, in order: the calls from tick N-1's sync point to
-                         tick N's as a tree of named functions, --depth levels (2), a call repeated
+                         tick N's (tick 1's from power-on, the start-up's) as a tree of named
+                         functions, --depth levels (2), a call repeated
                          in a row once with a count; --in: under each call of that function;
                          --functions: every function called there, at any depth, how many times
   inputs SESSION [--tick N] [--ticks N | --from-ms MS [--to-ms MS]] [--at ID|SEG:OFF --len N]

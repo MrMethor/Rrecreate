@@ -205,6 +205,11 @@ fn a_session_is_traced_tick_by_tick() {
     let watched = rrc.ok(&["watch", "short", "count", "--tick", "2", "--ticks", "1"]);
     assert!(watched.contains("watch     count (T.COM+0000F, 2 bytes), tick 2"), "{watched}");
     assert!(watched.contains("write count = 2 (was 1) by T.COM+00000"), "as its type reads: {watched}");
+    // A pass's calls (D83); tick 1's is the start-up's, from power-on (D134).
+    let first = rrc.ok(&["pass", "short", "--tick", "1"]);
+    assert!(first.contains("pass      tick 1, from power-on: "), "{first}");
+    let second = rrc.ok(&["pass", "short", "--tick", "2"]);
+    assert!(second.contains("pass      tick 2, in ") && second.contains("step"), "{second}");
     // From the snapshot record kept, the same answer.
     let later = rrc.ok(&["watch", "short", "count", "--tick", "30", "--ticks", "1"]);
     assert!(later.contains("start     from the snapshot at tick 2"), "{later}");

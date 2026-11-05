@@ -71,7 +71,8 @@ the original judges the port, not the code it was read from.
 | What does a pass run, in what order? | `rrc pass SESSION --tick N`, `--in FUNCTION` | the loop's `--c` | `rrc watch` of a value it changes |
 
 A pass's order matters as much as its code: `rrc pass SESSION --tick N` shows the calls one pass makes, in
-order, by name (`--in FUNCTION` for one function's), which is the outline of the port's step (D83). A call
+order, by name (`--in FUNCTION` for one function's), which is the outline of the port's step (D83); tick 1's,
+from power-on, is the start-up's, the outline of `power_on` (D134). A call
 made again in a row shows once with its count (`×8`), and a loop's calls made again round after round show
 once, then `the 4 calls above ×10800`. `--in FUNCTION --functions` lists every function that runs beneath one,
 at any depth, with how many times: what porting a part takes (a renderer's fifty functions), to read and port
@@ -402,6 +403,8 @@ before its first sync point hit: `examples/vault` is one. What the start-up make
 (a generator seeded from the BIOS clock) is the port's `Simulation::power_on` (D134): declare the input where
 the start-up reads it (`rrc input`, its `read_at`), record, and `power_on` gets the start-up's pass, tick 0,
 whose `tick.inputs.at_site(ID)` is what that read saw; a live port's `Live::power_on` gives it from the host.
+The program's command line is such an input: DOS's command tail in the program's PSP (its offset 80h: a length,
+then the text), where the C start-up reads it; the session's options give it (`clockwork run --args`).
 A port whose `Simulation::INITIAL_DATA` is true starts from the program's own initial data instead (D135): each
 mapped field at a fixed place in the program's image as the image holds it, set over `start`'s state, so `start`
 and `power_on` make only what the start-up's code does.

@@ -652,6 +652,13 @@ impl Analysis {
         self.blocks.iter().find(|&&(start, size)| (start..start + size).contains(&at)).map(|&(start, _)| start >> 4)
     }
 
+    /// The segment code at image offset `at` is disassembled in: its block's; else (code loaded at run time, a
+    /// driver's) one with `at` in its middle (IP 8000h, or as near as the image's start allows), so a near jump
+    /// or call reaches 32K either way, as a signed displacement, without wrapping at a segment's end.
+    pub fn listing_segment(&self, at: u32) -> u32 {
+        self.segment_of(at).unwrap_or(at.saturating_sub(0x8000) >> 4)
+    }
+
     /// Ghidra's disassembly with each line's `SSSS:OOOO` as an ID.
     pub fn with_ids(&self, asm: &str, module: &str) -> String {
         let mut out = String::with_capacity(asm.len());
@@ -775,6 +782,11 @@ mod tests {
         assert_eq!(a.calls, [(id("GAME.EXE+00010"), id("GAME.EXE+00018"), id("GAME.EXE+00040"))]);
         assert_eq!(a.refs, [(id("GAME.EXE+00014"), id("GAME.EXE+10010"), "write".into())]);
         assert_eq!((a.segment_of(0x10020), a.segment_of(0x00F0), a.segment_of(0x10040)), (Some(0x1000), Some(0), None));
+        // Outside the blocks, in a segment's middle: a call back from 628E8h to 623C9h stays below it.
+        assert_eq!(
+            (a.listing_segment(0x10020), a.listing_segment(0x628B1), a.listing_segment(0x100)),
+            (0x1000, 0x5A8B, 0)
+        );
         assert_eq!(a.code[&id("GAME.EXE+00040")].0, "1000:0040  RETF\n");
         assert_eq!(a.id_of("GAME.EXE", "2000:0010"), Some(id("GAME.EXE+10010")));
         assert_eq!(a.id_of("GAME.EXE", "0FFF:0000"), Some(id("MEM+0FFF0")), "before the image: the PC's memory");

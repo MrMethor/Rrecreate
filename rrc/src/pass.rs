@@ -1,5 +1,5 @@
 //! `rrc pass SESSION --tick N` (D83): what one pass of the game's loop runs, in order: the calls made
-//! between tick N-1's sync point and tick N's, as a tree, each function by its name. A port's step is
+//! between tick N-1's sync point and tick N's (tick 1's: from power-on, the start-up's, D134), as a tree, each function by its name. A port's step is
 //! that pass, so the tree is its outline; `--in FUNCTION` shows what a function the pass calls runs, and
 //! `--functions` every function that runs there, at any depth, with how many times: what porting it takes.
 //! Clockwork's call tracker logs the calls (protocol revision 7); hardware interrupts' handlers run
@@ -48,11 +48,20 @@ pub(crate) fn pass(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         a.value(flag).map_or(Ok(default), str::parse).map_err(|_| format!("{flag} is a number"))
     };
     let tick = number("--tick", 0)? as u64;
-    if tick < 2 {
-        return Err(format!("--tick is 2 or more: tick 1's pass begins before the first sync point ({USAGE})"));
+    if tick < 1 {
+        return Err(format!("--tick is 1 or more ({USAGE})"));
     }
     let (depth, lines) = (number("--depth", DEPTH)?, number("--lines", LINES)?);
     let session = Session::load(repo, name)?;
+    // Tick 1's pass is the start-up's, from power-on (D134); a session based on another's tick begins there.
+    if tick == 1
+        && let Some(from) = &session.from
+    {
+        return Err(format!(
+            "{name} starts at {}'s tick {}: its tick 1's pass is that one (rrc pass {} --tick {})",
+            from.session, from.tick, from.session, from.tick
+        ));
+    }
     let k = Knowledge::load(&repo.knowledge())?;
     let syncs = sync_points(&k)?;
     if syncs.is_empty() {
@@ -88,13 +97,17 @@ pub(crate) fn pass(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if !a.has("--interrupts") {
         drop_interrupts(&mut calls);
     }
-    let running = log["start"][0].as_str().map_or_else(|| "?".to_owned(), |f| names.function(f));
+    let running = match log["start"][0].as_str() {
+        Some(f) => format!("in {}", names.function(f)),
+        None if tick == 1 => "from power-on".to_owned(),
+        None => "in ?".to_owned(),
+    };
     let total: usize = calls.iter().map(Call::count).sum();
     let dropped = log["dropped"].as_u64().unwrap_or(0);
     say(
         "pass",
         format!(
-            "tick {tick}, in {running}: {total} calls{}{}",
+            "tick {tick}, {running}: {total} calls{}{}",
             if interrupts > 0 && !a.has("--interrupts") {
                 format!(" ({interrupts} in interrupt handlers left out: --interrupts)")
             } else {

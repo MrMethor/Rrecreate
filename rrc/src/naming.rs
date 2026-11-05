@@ -407,7 +407,7 @@ fn clockwork_listing(
         let linear = layout.linear(id).ok_or_else(|| format!("{id} isn't in the program's objects"))?;
         vec!["--entry".to_owned(), format!("{linear:X}")]
     } else {
-        let segment = analysis.segment_of(id.offset()).unwrap_or(id.offset() >> 4);
+        let segment = analysis.listing_segment(id.offset());
         vec!["--entry".to_owned(), format!("{:X}", id.offset()), "--segment".to_owned(), format!("{segment:X}")]
     };
     let output = std::process::Command::new(crate::clockwork::find(&repo.local)?)
