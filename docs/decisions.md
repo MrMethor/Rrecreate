@@ -686,6 +686,13 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D142. A port that draws its own pointer hides the host's over its window. Accepted 2026-11-05.
+`Live::OWN_POINTER` (false by default) says the program draws its own mouse pointer; the platform then hides the
+host's cursor over the played window (minifb's `set_cursor_visibility`), so the game's pointer is the only one, as
+on the PC. A program that shows the mouse driver's cursor (INT 33h's), or none, keeps the host's.
+**Why:** Arena draws its pointer into its own screen; played live, Windows' cursor was drawn over it, two pointers
+a little apart; the person asked for the Windows cursor not to show while the window has the mouse.
+
 ### D141. A port plays from power-on from a start folder of tick 0. Accepted 2026-11-05.
 `rrc start SESSION --tick 0` writes power-on's start folder: `state.json`, the program's own initial data (D135, D137:
 the mapped and carried items at fixed places in its load image; empty without the analysis's program),

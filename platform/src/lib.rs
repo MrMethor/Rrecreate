@@ -83,6 +83,10 @@ pub trait Live: Simulation + Shows {
     /// What the original's input handling keeps: its keyboard handler's key states, its timer's count.
     type Devices: Default;
 
+    /// Whether the program draws its own mouse pointer (D142): the host's is then hidden over the window, as a PC's
+    /// screen showed only the game's. False by default (a program that shows the mouse driver's, or none).
+    const OWN_POINTER: bool = false;
+
     /// What the original's loop does next, given the host's devices as its handlers would have taken them.
     fn next(&self, devices: &mut Self::Devices, host: &Host) -> Next;
 
@@ -339,6 +343,10 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
         WindowOptions { resize: true, scale: Scale::X2, scale_mode: ScaleMode::Stretch, ..WindowOptions::default() };
     let mut window = Window::new(title, WIDTH, HEIGHT, options).map_err(|e| format!("a window: {e}"))?;
     window.set_target_fps(70);
+    // The program's own pointer is the only one (D142).
+    if S::OWN_POINTER {
+        window.set_cursor_visibility(false);
+    }
     let started = Instant::now();
     let mut number = 0;
     let mut pixels = vec![0u32; WIDTH * HEIGHT];
