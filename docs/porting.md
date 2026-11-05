@@ -574,7 +574,8 @@ and `PORT play --start .rrc/start/SESSION-N` plays from them without the origina
 matches from power-on plays the whole game from tick 0's folder (D141): `rrc start SESSION --tick 0` writes the
 program's initial data and the inputs the session's start-up had (its command line), and the port's
 `Live::power_on` gives the start-up those with what the host has instead (its clock). A program that draws its own
-mouse pointer sets `Live::OWN_POINTER`, and the host's cursor is hidden over the window (D142). Its `Live::wrote`
+mouse pointer sets `Live::OWN_POINTER`, and the host's cursor is hidden over the window (D142); `Live::pointer` says
+where its driver's pointer is, and the host's cursor is kept there, so the program's ranges hold as on a PC (D145). Its `Live::wrote`
 takes what a pass wrote into its own inputs (a keyboard queue the program empties) into the handlers' state. A game the port
 saves goes through `rrc_runtime::original::save` and `saved` (the port's saves, `.rrc/saves` of its repository
 or `RRC_SAVES`; the person's in the game's folder are read, never written). `examples/vault` and

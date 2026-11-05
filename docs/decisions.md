@@ -715,7 +715,18 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
-### D144. A live mouse moves by the host's motion, and no press is lost between frames. Accepted 2026-11-05.
+### D145. A live mouse's host cursor is kept where the program's pointer is. Accepted 2026-11-05.
+The platform's mouse driver takes the host's position, kept in the ranges the program set (as before D144); a port
+says where its driver's pointer is (`Live::pointer`, in the screen's pixels), and while the window has the keys and
+the host's cursor is inside it, the platform puts the host's cursor there each frame (Windows: `SetCursorPos`):
+at a range's edge it is held there and comes back at once, and a position the program set holds, as on a PC.
+Elsewhere the host's cursor is left alone. On Windows the window's procedure counts the buttons' presses as they
+come, and a press let go before the next frame is down in that frame (D144's).
+**Why:** D144 moved the driver's position by the host's motion, so a range or a position the program set parted it
+from the hidden host's cursor; a move that took the host's out of the window then stopped the pointer short (a test
+clicking the attributes' arrows found it at the screen's edge). Kept together, the two never part.
+
+### D144. A live mouse moves by the host's motion, and no press is lost between frames. Accepted 2026-11-05. Superseded by D145.
 The platform's mouse driver moves its position by the host's motion, kept in the ranges the program set, and up to as
 far again toward the host's own position where that is the way it moves: at a range's edge it stops and comes back
 at once, as a PC's mouse moved a driver's, and it meets the host's position again as the mouse moves on (a position

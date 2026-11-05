@@ -65,17 +65,9 @@ pub struct Host {
     pub day_ms: u64,
 }
 
-/// A driver's coordinate moved by the host's motion `d`, and up to as far again toward the host's own (`at`) when that
-/// is the way it moves: never against the motion, so it stops at a range's edge and comes back from it at once, as a
-/// PC's mouse did, and meets the host's again as the mouse moves on.
-fn follow(position: i32, d: i32, at: i32) -> i32 {
-    let moved = position + d;
-    let gap = at - moved;
-    if d != 0 && gap.signum() == d.signum() { moved + gap.signum() * gap.abs().min(d.abs()) } else { moved }
-}
-
 /// The window's mouse buttons pressed as its messages come (Windows: the window's procedure, subclassed), so a
-/// press let go before the next frame is still one (D144); elsewhere none but what the frames see.
+/// press let go before the next frame is still one (D145); and the host's cursor put where the program's pointer is
+/// (D145). Elsewhere neither: what the frames see, the host's cursor where it is.
 #[cfg(windows)]
 mod presses {
     use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
@@ -117,6 +109,18 @@ mod presses {
     pub fn counts() -> [u32; 3] {
         [0, 1, 2].map(|b| PRESSES[b].load(Ordering::Relaxed))
     }
+
+    /// The host's cursor put at (x, y) of the window's inside.
+    pub fn put_cursor(window: &minifb::Window, (x, y): (i32, i32)) {
+        let handle = window.get_window_handle() as HWND;
+        let mut at = winapi::shared::windef::POINT { x, y };
+        // SAFETY: the handle is minifb's live window; `at` is a local point.
+        unsafe {
+            if winuser::ClientToScreen(handle, &mut at) != 0 {
+                winuser::SetCursorPos(at.x, at.y);
+            }
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -126,6 +130,8 @@ mod presses {
     pub fn counts() -> [u32; 3] {
         [0; 3]
     }
+
+    pub fn put_cursor(_: &minifb::Window, _: (i32, i32)) {}
 }
 
 /// What the original's loop does next.
@@ -152,6 +158,14 @@ pub trait Live: Simulation + Shows {
 
     /// What the original's loop does next, given the host's devices as its handlers would have taken them.
     fn next(&self, devices: &mut Self::Devices, host: &Host) -> Next;
+
+    /// Where the program's mouse pointer is, in the screen's pixels (its driver's position, its ranges kept): the
+    /// platform keeps the host's cursor there (D145), so a range or a position the program set holds as on a PC.
+    /// None by default (the host's cursor left alone).
+    fn pointer(&self, devices: &Self::Devices) -> Option<(i32, i32)> {
+        let _ = devices;
+        None
+    }
 
     /// What the pass wrote into its inputs itself (a keyboard queue it emptied: `Inputs::written`), taken into
     /// the handlers' state as the original's handlers would find it. Nothing by default.
@@ -207,25 +221,20 @@ pub struct MouseDriver {
 }
 
 impl MouseDriver {
-    /// The host's mouse taken in: its motion (a screen pixel is `scale` of the driver's: (2, 1) in mode 13h's
-    /// 640 × 200) moves the position as a PC's mouse moved a driver's (D144), kept in the ranges, and as far again
-    /// toward the host's own where that is the way it moves (`follow`), so the two meet again after a range or the
-    /// program held it; the motion as mickeys (the driver's default ratio: 8 a pixel's 8 across, 16 down); its
-    /// buttons' presses and releases.
+    /// The host's mouse taken in: where it moved, its position in the driver's coordinates (a screen pixel is
+    /// `scale` of them: (2, 1) in mode 13h's 640 × 200) kept in the ranges, its motion as mickeys (the driver's
+    /// default ratio: 8 a pixel's 8 across, 16 down); its buttons' presses and releases. A position the program set
+    /// holds until the host's mouse moves; where the platform can, it puts the host's there (D145).
     pub fn take(&mut self, host: &Host, (sx, sy): (i32, i32)) {
         if let Some((x, y)) = host.mouse {
             let (x, y) = (x * sx, y * sy);
             if self.host != Some((x, y)) {
-                let (dx, dy) = match self.host {
-                    Some((was_x, was_y)) => (x - was_x, y - was_y),
-                    None => (x - self.x, y - self.y),
-                };
-                self.mickeys.0 += dx;
-                self.mickeys.1 += 2 * dy;
+                let (was_x, was_y) = self.host.unwrap_or((self.x, self.y));
+                self.mickeys.0 += x - was_x;
+                self.mickeys.1 += 2 * (y - was_y);
                 self.host = Some((x, y));
                 let r = &self.ranges;
-                self.x = follow(self.x, dx, x).clamp(r.x.0, r.x.1);
-                self.y = follow(self.y, dy, y).clamp(r.y.0, r.y.1);
+                (self.x, self.y) = (x.clamp(r.x.0, r.x.1), y.clamp(r.y.0, r.y.1));
             }
         }
         let buttons = u16::from(host.buttons & 7);
@@ -450,6 +459,13 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
             // The bytes went to this tick's handlers.
             host.scancodes.clear();
         }
+        // The host's cursor where the program's pointer is, inside the window while it has the keys (D145).
+        if let (Some(at), Some(pointer)) = (host.mouse, state.pointer(&devices))
+            && at != pointer
+            && window.is_active()
+        {
+            presses::put_cursor(&window, in_window(&window, &frame, pointer));
+        }
         rgb(&frame, &mut pixels);
         window.update_with_buffer(&pixels, frame.width, frame.height).map_err(|e| format!("the window: {e}"))?;
     }
@@ -467,6 +483,13 @@ fn rgb(frame: &Frame, out: &mut Vec<u32>) {
 }
 
 /// The mouse in the frame's coordinates, the window stretched over it.
+/// A screen pixel's middle in the window, stretched over the frame: where `mouse` finds that pixel again.
+fn in_window(window: &Window, frame: &Frame, (x, y): (i32, i32)) -> (i32, i32) {
+    let (width, height) = window.get_size();
+    let at = |v: i32, of: usize, to: usize| (2 * v + 1) * to as i32 / (2 * of.max(1) as i32);
+    (at(x, frame.width, width), at(y, frame.height, height))
+}
+
 fn mouse(window: &Window, frame: &Frame) -> Option<(i32, i32)> {
     let (x, y) = window.get_unscaled_mouse_pos(MouseMode::Discard)?;
     let (width, height) = window.get_size();
@@ -537,17 +560,5 @@ mod tests {
         assert_eq!((mouse.x, mouse.y), (162, 114));
         mouse.take(&Host { mouse: Some((300, 150)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (471, 137));
-        // Held at the range's edge with the host's beyond it, the way back moves it at once (D144).
-        mouse.take(&Host { mouse: Some((295, 140)), ..Host::default() }, (2, 1));
-        assert_eq!((mouse.x, mouse.y), (461, 127));
-        // Free, it moves with the host's and meets it where that is the way it goes.
-        let mut free = MouseDriver { ranges: MouseRanges::MODE_13H, x: 100, ..MouseDriver::default() };
-        free.take(&Host { mouse: Some((100, 0)), ..Host::default() }, (2, 1));
-        assert_eq!(free.x, 200, "a first move meets the host's");
-        free.x = 150;
-        free.take(&Host { mouse: Some((110, 0)), ..Host::default() }, (2, 1));
-        assert_eq!(free.x, 190, "moved 20, and 20 more toward the host's 220");
-        free.take(&Host { mouse: Some((105, 0)), ..Host::default() }, (2, 1));
-        assert_eq!(free.x, 180, "away from it, the motion alone");
     }
 }
