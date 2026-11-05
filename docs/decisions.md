@@ -686,6 +686,18 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D135. From power-on a port may start from the program's own initial data. Accepted 2026-11-05.
+`rrc compare` from power-on writes the initial data (`--initial`, a start state of tick 0): each mapped field at a
+fixed place in the load image of the program the analysis has (an MZ program's; its module's IDs, not in an object,
+not through a pointer or an index) as the image holds it. A port whose `Simulation::INITIAL_DATA` is true gets it
+set over `start`'s state, as a transplant's, then `power_on` (D134): its `start` and `power_on` make only what the
+start-up's code does. False by default: a port whose `start` builds its state itself (`examples/vault` loads its
+files there) is as before.
+**Why:** Arena from power-on differed at tick 1 in a dozen fields the program's image initializes (speeds, the
+mouse's bounds, the hit effects' free flags, the music's track), each set by hand in `start` from the image; every
+port from power-on would do the same, and miss what the comparison shows a few at a time. rrc knows the mapping and
+has the unpacked program, so it gives them as the loader leaves them.
+
 ### D134. The start-up's pass, from power-on to the first tick, is given to the port. Accepted 2026-11-05.
 Clockwork's late-input check (D60) begins each source's first tick where it is asked, so recording from power-on
 keeps the start-up's reads before the first sync point's hit, compared with what the inputs held at power-on

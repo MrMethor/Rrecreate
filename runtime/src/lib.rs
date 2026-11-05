@@ -54,6 +54,12 @@ pub trait Simulation: Serialize + DeserializeOwned {
     /// point (its start-up already run).
     fn start() -> Self;
 
+    /// Whether, from power-on, the state starts from the program's own initial data (D135): each mapped field at a
+    /// fixed place in the program's load image, as the image holds it, set over [`Simulation::start`]'s state (as a
+    /// transplant's are), so `start` and `power_on` make only what the start-up's code does. A port whose `start`
+    /// loads all of it itself leaves this false.
+    const INITIAL_DATA: bool = false;
+
     /// From power-on, after [`Simulation::start`]: what the start-up made of what it read before the first
     /// sync point (D134), a clock it seeded a generator from. `tick` is tick 0, its sync point `power-on`; its
     /// inputs are as they were at power-on, and `at_site` gives what each read saw. Nothing by default.
@@ -459,6 +465,9 @@ pub struct Request {
     pub screen: Option<String>,
     /// The presentation's own state at the first tick, the original's (`rrc-presentation`, D110).
     pub presentation: Option<String>,
+    /// From power-on, the program's own initial data (`rrc-state`, tick 0, D135), for a port whose
+    /// [`Simulation::INITIAL_DATA`] takes it.
+    pub initial: Option<String>,
 }
 
 impl Request {
@@ -488,6 +497,7 @@ impl Request {
                 "--frames" => request.frames = Some(value()?),
                 "--screen" => request.screen = Some(value()?),
                 "--presentation" => request.presentation = Some(value()?),
+                "--initial" => request.initial = Some(value()?),
                 _ => return Err(format!("unknown option {flag}\n{usage}")),
             }
         }
@@ -572,7 +582,14 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             let saved = PortState::read(file)?;
             (serde_json::from_value(saved.state).map_err(|e| format!("{file}: {e}"))?, saved.tick)
         }
-        _ => (S::start(), 1),
+        _ => {
+            // The program's own initial data under the start's state, for a port that takes it (D135).
+            let state = match request.initial.as_deref().filter(|_| S::INITIAL_DATA) {
+                Some(file) => S::transplant(StartState::read(file)?.overlay(serialize(&S::start())?)?)?,
+                None => S::start(),
+            };
+            (state, 1)
+        }
     };
     let sounding = drawer.sounds() && request.frames.is_some();
     let devices = sounding.then(|| drawer.sound_devices());
@@ -761,6 +778,8 @@ mod tests {
     }
 
     impl Simulation for Seeded {
+        const INITIAL_DATA: bool = true;
+
         fn start() -> Self {
             Seeded { seed: 0, steps: 0 }
         }
@@ -785,16 +804,38 @@ mod tests {
         let d = dir("power-on");
         std::fs::write(d.join("inputs.jsonl"), inputs).unwrap();
         let path = |f: &str| d.join(f).to_string_lossy().into_owned();
-        let request = Request { inputs: path("inputs.jsonl"), out: path("port.jsonl"), ..Request::default() };
+        // The program's own initial data (D135): its steps 3, its seed 2, which the start-up's seeding replaces.
+        let initial = r#"{"format":"rrc-state","version":1,"session":"boot","tick":0,"state":{"seed":2,"steps":3}}"#;
+        std::fs::write(d.join("initial.json"), initial).unwrap();
+        let request = Request {
+            inputs: path("inputs.jsonl"),
+            out: path("port.jsonl"),
+            initial: Some(path("initial.json")),
+            ..Request::default()
+        };
         run::<Seeded>(&request).unwrap();
         let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
         let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(
             lines[1],
-            serde_json::json!({"tick": 1, "state": {"seed": 0x41, "steps": 0}}),
-            "seeded, not stepped"
+            serde_json::json!({"tick": 1, "state": {"seed": 0x41, "steps": 3}}),
+            "the image's steps, seeded, not stepped"
         );
-        assert_eq!(lines[2]["state"]["steps"], 1);
+        assert_eq!(lines[2]["state"]["steps"], 4);
+        // A port whose start makes its state itself doesn't take the initial data.
+        std::fs::write(d.join("walk.jsonl"), INPUTS).unwrap();
+        let initial = r#"{"format":"rrc-state","version":1,"session":"walk","tick":0,"state":{"count":9}}"#;
+        std::fs::write(d.join("counted.json"), initial).unwrap();
+        let request = Request {
+            inputs: path("walk.jsonl"),
+            out: path("walk-port.jsonl"),
+            initial: Some(path("counted.json")),
+            ..Request::default()
+        };
+        run::<Counter>(&request).unwrap();
+        let trace = std::fs::read_to_string(d.join("walk-port.jsonl")).unwrap();
+        let first: Value = serde_json::from_str(trace.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(first["state"]["count"], 0);
 
         // From a transplant there is no start-up to run.
         let start = r#"{"format":"rrc-state","version":1,"session":"boot","tick":2,"state":{"seed":7}}"#;

@@ -555,8 +555,8 @@ Pixels go row by row from the top left; text modes are drawn with their font, as
 `rrc compare` runs the port (`[port] command`) in the port repository with
 
 ```
-run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK --save FILE] [--to TICK]
-    [--frames DIR [--screen FILE] [--presentation FILE]]
+run --inputs FILE --out FILE [--transplant FILE | --resume FILE | --initial FILE] [--save-at TICK --save FILE]
+    [--to TICK] [--frames DIR [--screen FILE] [--presentation FILE]]
 ```
 
 and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is
@@ -598,6 +598,10 @@ inputs and the trace are JSON lines.
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each
   mapped field's value at the tick by its path. The runtime sets each over the port's start state's
   serialization and deserializes that (`Simulation::transplant` may build the state otherwise).
+- **Initial data** (`--initial`, written by `rrc` from power-on, D135): a start state of tick 0, each mapped field at
+  a fixed place in the program's load image (an MZ program's, as the analysis has it: its module's IDs, not in an
+  object, not through a pointer) as the image holds it. The runtime sets it over `start`'s for a port whose
+  `Simulation::INITIAL_DATA` is true, before `power_on`.
 - **Port state** (`--save` writes it at `--save-at`'s tick, `--resume` reads it):
   `{"format":"rrc-port-state","version":1,"tick":900,"state":{…}}`, the port's whole state as it serializes it,
   at the tick (before its step).

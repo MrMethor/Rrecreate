@@ -110,6 +110,13 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         write_start(&trace.header.session, &mapped, &original, t, carried, &file("start.json"))?;
         port_args.extend(["--transplant".into(), file("start.json")]);
     }
+    // From power-on, the program's own initial data (D135).
+    if transplant.is_none()
+        && resume.is_none()
+        && write_initial(repo, &trace.header.session, &mapped, &k, &file("initial.json"))?
+    {
+        port_args.extend(["--initial".into(), file("initial.json")]);
+    }
     // The games the port saves and reads (D131): the original's files as they were where the port starts.
     let saves = work.join("saves");
     write_saves(repo, &session, &k, transplant.or(resume), &saves)?;
@@ -1373,6 +1380,40 @@ fn write_start(
     std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))
 }
 
+/// The program's own initial data (`rrc-state`, tick 0, D135): each mapped field at a fixed place in the load image
+/// of the program the analysis has (its module's IDs, not in an object, not through a pointer, not an index), as
+/// the image holds it. False where there is no such program (no analysis, or not an MZ program).
+fn write_initial(repo: &Repo, session: &str, mapped: &[Mapped], k: &Knowledge, path: &str) -> Result<bool, String> {
+    let Some(index) = crate::analysis::Index::load(repo)? else { return Ok(false) };
+    let program = Cache::open(&repo.local)?.get(&index.program)?;
+    let Some(image) = mz_image(&program) else { return Ok(false) };
+    let module = repo.module();
+    let r = crate::values::of(k);
+    let mut state = serde_json::Map::new();
+    for m in mapped.iter().filter(|m| m.via.is_none() && m.into.is_none()) {
+        if m.id.module() != module || m.id.part().is_some() {
+            continue;
+        }
+        let at = m.id.offset() as usize;
+        let Some(bytes) = image.get(at..at + m.size as usize) else { continue };
+        state.insert(m.field.clone(), decoded(m, bytes, &r).map_err(|e| format!("{}: {e}", m.field))?);
+    }
+    let file = json!({"format": "rrc-state", "version": 1, "session": session, "tick": 0, "state": state});
+    std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))?;
+    Ok(true)
+}
+
+/// An MZ program's load image: the file past its header, as long as the header says; none if it isn't one.
+fn mz_image(bytes: &[u8]) -> Option<&[u8]> {
+    let word = |at: usize| bytes.get(at..at + 2).map(|w| usize::from(u16::from_le_bytes([w[0], w[1]])));
+    if !(bytes.starts_with(b"MZ") || bytes.starts_with(b"ZM")) {
+        return None;
+    }
+    let (last, pages, header) = (word(2)?, word(4)?, word(8)? * 16);
+    let size = if last == 0 { pages * 512 } else { pages.saturating_sub(1) * 512 + last };
+    bytes.get(header..size.min(bytes.len()))
+}
+
 /// Items given at a start (`[[present]]`, `[[carry]]`): read at `tick`'s sync point from the session's snapshots
 /// (as `rrc peek` reads), as their types read them; none read when there are none.
 fn read_given(
@@ -1780,6 +1821,20 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use crate::knowledge::{Field, Struct};
+
+    #[test]
+    fn an_mz_program_s_load_image_is_past_its_header() {
+        // A header of 2 paragraphs (32 bytes), 600 bytes in all: the last page's 88 of 2.
+        let mut program = vec![0u8; 700];
+        program[..2].copy_from_slice(b"MZ");
+        program[2..4].copy_from_slice(&88u16.to_le_bytes());
+        program[4..6].copy_from_slice(&2u16.to_le_bytes());
+        program[8..10].copy_from_slice(&2u16.to_le_bytes());
+        program[32] = 0xAB;
+        let image = mz_image(&program).unwrap();
+        assert_eq!((image.len(), image[0]), (600 - 32, 0xAB), "the overlay after the image left out");
+        assert_eq!(mz_image(b"not a program"), None);
+    }
 
     #[test]
     fn a_tick_s_sound_is_compared_without_its_times() {
