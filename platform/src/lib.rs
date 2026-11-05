@@ -65,6 +65,69 @@ pub struct Host {
     pub day_ms: u64,
 }
 
+/// A driver's coordinate moved by the host's motion `d`, and up to as far again toward the host's own (`at`) when that
+/// is the way it moves: never against the motion, so it stops at a range's edge and comes back from it at once, as a
+/// PC's mouse did, and meets the host's again as the mouse moves on.
+fn follow(position: i32, d: i32, at: i32) -> i32 {
+    let moved = position + d;
+    let gap = at - moved;
+    if d != 0 && gap.signum() == d.signum() { moved + gap.signum() * gap.abs().min(d.abs()) } else { moved }
+}
+
+/// The window's mouse buttons pressed as its messages come (Windows: the window's procedure, subclassed), so a
+/// press let go before the next frame is still one (D144); elsewhere none but what the frames see.
+#[cfg(windows)]
+mod presses {
+    use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+    use winapi::shared::minwindef::{LPARAM, LRESULT, UINT, WPARAM};
+    use winapi::shared::windef::HWND;
+    use winapi::um::winuser;
+
+    static PRESSES: [AtomicU32; 3] = [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
+    static ORIGINAL: AtomicIsize = AtomicIsize::new(0);
+
+    unsafe extern "system" fn procedure(window: HWND, message: UINT, w: WPARAM, l: LPARAM) -> LRESULT {
+        let button = match message {
+            winuser::WM_LBUTTONDOWN | winuser::WM_LBUTTONDBLCLK => Some(0),
+            winuser::WM_RBUTTONDOWN | winuser::WM_RBUTTONDBLCLK => Some(1),
+            winuser::WM_MBUTTONDOWN | winuser::WM_MBUTTONDBLCLK => Some(2),
+            _ => None,
+        };
+        if let Some(b) = button {
+            PRESSES[b].fetch_add(1, Ordering::Relaxed);
+        }
+        // SAFETY: ORIGINAL is the window's own procedure, which `watch` replaced and this one hands each message to.
+        unsafe {
+            let original: winuser::WNDPROC = std::mem::transmute(ORIGINAL.load(Ordering::Relaxed));
+            winuser::CallWindowProcW(original, window, message, w, l)
+        }
+    }
+
+    /// The window's messages watched for presses.
+    pub fn watch(window: &minifb::Window) {
+        let handle = window.get_window_handle() as HWND;
+        // SAFETY: the handle is minifb's live window; the replaced procedure is kept and called for every message.
+        unsafe {
+            let was = winuser::SetWindowLongPtrW(handle, winuser::GWLP_WNDPROC, procedure as *const () as isize);
+            ORIGINAL.store(was, Ordering::Relaxed);
+        }
+    }
+
+    /// The presses so far, left, right, middle.
+    pub fn counts() -> [u32; 3] {
+        [0, 1, 2].map(|b| PRESSES[b].load(Ordering::Relaxed))
+    }
+}
+
+#[cfg(not(windows))]
+mod presses {
+    pub fn watch(_: &minifb::Window) {}
+
+    pub fn counts() -> [u32; 3] {
+        [0; 3]
+    }
+}
+
 /// What the original's loop does next.
 // Made once a frame and taken at once: boxing its inputs would buy nothing.
 #[allow(clippy::large_enum_variant)]
@@ -144,20 +207,25 @@ pub struct MouseDriver {
 }
 
 impl MouseDriver {
-    /// The host's mouse taken in: where it moved, its position in the driver's coordinates (a screen pixel is
-    /// `scale` of them: (2, 1) in mode 13h's 640 × 200) kept in the ranges, its motion as mickeys (the driver's
-    /// default ratio: 8 a pixel's 8 across, 16 down); its buttons' presses and releases. A position the program set
-    /// holds until the host's mouse moves.
+    /// The host's mouse taken in: its motion (a screen pixel is `scale` of the driver's: (2, 1) in mode 13h's
+    /// 640 × 200) moves the position as a PC's mouse moved a driver's (D144), kept in the ranges, and as far again
+    /// toward the host's own where that is the way it moves (`follow`), so the two meet again after a range or the
+    /// program held it; the motion as mickeys (the driver's default ratio: 8 a pixel's 8 across, 16 down); its
+    /// buttons' presses and releases.
     pub fn take(&mut self, host: &Host, (sx, sy): (i32, i32)) {
         if let Some((x, y)) = host.mouse {
             let (x, y) = (x * sx, y * sy);
             if self.host != Some((x, y)) {
-                let (was_x, was_y) = self.host.unwrap_or((self.x, self.y));
-                self.mickeys.0 += x - was_x;
-                self.mickeys.1 += 2 * (y - was_y);
+                let (dx, dy) = match self.host {
+                    Some((was_x, was_y)) => (x - was_x, y - was_y),
+                    None => (x - self.x, y - self.y),
+                };
+                self.mickeys.0 += dx;
+                self.mickeys.1 += 2 * dy;
                 self.host = Some((x, y));
                 let r = &self.ranges;
-                (self.x, self.y) = (x.clamp(r.x.0, r.x.1), y.clamp(r.y.0, r.y.1));
+                self.x = follow(self.x, dx, x).clamp(r.x.0, r.x.1);
+                self.y = follow(self.y, dy, y).clamp(r.y.0, r.y.1);
             }
         }
         let buttons = u16::from(host.buttons & 7);
@@ -347,6 +415,8 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
     if S::OWN_POINTER {
         window.set_cursor_visibility(false);
     }
+    presses::watch(&window);
+    let mut pressed = presses::counts();
     let started = Instant::now();
     let mut number = 0;
     let mut pixels = vec![0u32; WIDTH * HEIGHT];
@@ -355,7 +425,7 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
             ms: started.elapsed().as_millis() as u64,
             scancodes: keys::scancodes(&window),
             mouse: mouse(&window, &frame),
-            buttons: buttons(&window),
+            buttons: buttons(&window, &mut pressed),
             pcm_playing: audio.as_ref().is_some_and(audio::Audio::pcm_playing),
             day_ms,
         };
@@ -404,9 +474,18 @@ fn mouse(window: &Window, frame: &Frame) -> Option<(i32, i32)> {
     Some((scale(x, width, frame.width), scale(y, height, frame.height)))
 }
 
-fn buttons(window: &Window) -> u8 {
+/// The buttons down, and those pressed since the last frame though let go (`pressed`: the presses counted so far).
+fn buttons(window: &Window, pressed: &mut [u32; 3]) -> u8 {
     let down = |button| u8::from(window.get_mouse_down(button));
-    down(MouseButton::Left) | down(MouseButton::Right) << 1 | down(MouseButton::Middle) << 2
+    let mut held = down(MouseButton::Left) | down(MouseButton::Right) << 1 | down(MouseButton::Middle) << 2;
+    let now = presses::counts();
+    for b in 0..3 {
+        if now[b] != pressed[b] {
+            held |= 1 << b;
+        }
+    }
+    *pressed = now;
+    held
 }
 
 #[cfg(test)]
@@ -458,5 +537,17 @@ mod tests {
         assert_eq!((mouse.x, mouse.y), (162, 114));
         mouse.take(&Host { mouse: Some((300, 150)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (471, 137));
+        // Held at the range's edge with the host's beyond it, the way back moves it at once (D144).
+        mouse.take(&Host { mouse: Some((295, 140)), ..Host::default() }, (2, 1));
+        assert_eq!((mouse.x, mouse.y), (461, 127));
+        // Free, it moves with the host's and meets it where that is the way it goes.
+        let mut free = MouseDriver { ranges: MouseRanges::MODE_13H, x: 100, ..MouseDriver::default() };
+        free.take(&Host { mouse: Some((100, 0)), ..Host::default() }, (2, 1));
+        assert_eq!(free.x, 200, "a first move meets the host's");
+        free.x = 150;
+        free.take(&Host { mouse: Some((110, 0)), ..Host::default() }, (2, 1));
+        assert_eq!(free.x, 190, "moved 20, and 20 more toward the host's 220");
+        free.take(&Host { mouse: Some((105, 0)), ..Host::default() }, (2, 1));
+        assert_eq!(free.x, 180, "away from it, the motion alone");
     }
 }

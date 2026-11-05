@@ -18,6 +18,10 @@ tinyaudio = "2"
 # Nuked OPL3 in Rust (LGPL-2.1-or-later), as Clockwork renders the original's OPL with.
 nuked-opl3 = "0.1"
 
+# The window's messages, for the mouse's presses between frames (D144).
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winuser", "windef", "minwindef"] }
+
 [dev-dependencies]
 serde.workspace = true
 

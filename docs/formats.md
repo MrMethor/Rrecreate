@@ -628,7 +628,7 @@ inputs and the trace are JSON lines.
   "state":{"drawn.blink":7}}`, each item's value at the tick (read from the session's snapshots, as `rrc peek`
   reads) by its field's path. The runtime puts them at their paths in an object and gives it to the
   presentation (`Presentation::given`) before its start.
-- **The next tick** (D139): the runtime gives a tick the next line's sync point (`Tick::next`), where its pass ends.
+- **The next tick** (D143): the runtime gives a tick the next line's sync point (`Tick::next`), where its pass ends.
 - **Sound** (D108): a port that sounds says so in its trace's header, with the devices it makes (D121:
   `"sound":["pcm"]`; `true`, every device), and a tick's line has
   the sound the pass before it made (the start-up's at the first tick from power-on), by device, only devices

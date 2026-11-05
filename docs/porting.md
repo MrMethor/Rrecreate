@@ -408,7 +408,7 @@ in `power_on`, which runs from power-on alone. What the start-up makes of input 
 (a generator seeded from the BIOS clock) is the port's `Simulation::power_on` (D134): declare the input where
 the start-up reads it (`rrc input`, its `read_at`), record, and `power_on` gets the start-up's pass, tick 0,
 whose `tick.inputs.at_site(ID)` is what that read saw; a live port's `Live::power_on` gives it from the host.
-A pass that arrives at a gated wait asks `Gates::arrives` (D139) whether the tick is there: not where the next
+A pass that arrives at a gated wait asks `Gates::arrives` (D143) whether the tick is there: not where the next
 tick is at another sync point (`Tick::next`); at the next tick's, the gate, or the original having gone round no
 more (`Tick::spun`).
 The program's command line is such an input: DOS's command tail in the program's PSP (its offset 80h: a length,

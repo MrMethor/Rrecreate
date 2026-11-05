@@ -715,7 +715,33 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
-### D139. A pass's tick is at the next tick's wait. Accepted 2026-11-05.
+### D144. A live mouse moves by the host's motion, and no press is lost between frames. Accepted 2026-11-05.
+The platform's mouse driver moves its position by the host's motion, kept in the ranges the program set, and up to as
+far again toward the host's own position where that is the way it moves: at a range's edge it stops and comes back
+at once, as a PC's mouse moved a driver's, and it meets the host's position again as the mouse moves on (a position
+the program set, a range left). On Windows the window's procedure counts the buttons' presses as they come, and a
+press let go before the next frame is down in that frame.
+**Why:** the driver took the host's absolute position kept in the ranges: with Arena's choice box keeping the mouse
+to its options, the pointer stayed at the edge nearest the hidden host's cursor and jumped as it moved, where a DOS
+mouse stops and turns back at once (the person: it "kind of staggers"). minifb keeps a button's state alone, and a
+click shorter than a frame (a touchpad's tap) was missed: the main menu took about nine clicks in ten.
+
+### D143. A pass's tick is at the next tick's wait; played live, after one poll. Accepted 2026-11-05.
+The tick a port steps is given the sync point the next tick is at (`Tick::next`: the inputs file's next line; none
+in a live play). `Gates::arrives` decides, for a pass that arrives at a gated wait, whether the tick is there: at
+another sync point than the next tick's, not (a hit the original's gate passed over: the pass goes round), unless
+the pass can't go on there (polled twice, nothing more to read: the port no longer follows the original, and the
+pass ends for the comparison to show it rather than going round for ever); at the next tick's, when the gate counts
+the hit (`Gates::hit`) or the original went round no more (`Tick::spun`, D130: the pass has gone round as many
+times) and read nothing of the gate's sources in a later round (`Inputs::more_rounds_of`). Not knowing the next tick
+(a live play, a session's last tick): by the gate, or once the pass has polled the wait.
+**Why:** D139 polled a live wait twice, a poll with nothing changed taken to do what the one before it did. A
+handler that waits out time between polls doesn't: Arena's attributes' arrows add a point after 20 retraces, and the
+original's button was let go by its next poll, while a live tick's inputs are the host's as the tick began, the
+button still down; a click gave two points a tick, four over its two. Played live, a tick is one poll, and the
+port's waits for time are the platform's to wait out between ticks.
+
+### D139. A pass's tick is at the next tick's wait. Accepted 2026-11-05. Superseded by D143.
 The tick a port steps is given the sync point the next tick is at (`Tick::next`: the inputs file's next line; none
 in a live play). `Gates::arrives` decides, for a pass that arrives at a gated wait, whether the tick is there: at
 another sync point than the next tick's, not (a hit the original's gate passed over: the pass goes round), unless
