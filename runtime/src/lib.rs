@@ -189,7 +189,9 @@ impl Gates {
 
     /// The pass arrived at the gated wait `sync`, having polled there `polled` times and gone round it `went_round`
     /// times (hits that didn't count): whether the tick is there (D139). Where the next tick is at another sync
-    /// point ([`Tick::next`]), not: a hit the original's gate passed over (the pass goes round). At the next tick's,
+    /// point ([`Tick::next`]), not: a hit the original's gate passed over (the pass goes round); unless the pass
+    /// can't go on there (polled twice, nothing more to read): its port no longer follows the original, and ends
+    /// the pass for the comparison to show where, rather than going round for ever. At the next tick's,
     /// when the gate counts the hit (`hit`), or when the original went round no more ([`Tick::spun`]) and read
     /// nothing in a later round ([`Inputs::more_rounds`]): Clockwork's gate sees a device's change after the pass's
     /// last read (a button let go while the pass waited), which the port's, comparing the inputs as the pass last
@@ -200,7 +202,7 @@ impl Gates {
         match tick.next {
             Some(next) if next != sync => {
                 tick.inputs.go_round(sync);
-                false
+                !more && polled >= 2
             }
             Some(_) if tick.spun.is_some() => self.hit(sync, sources, tick.inputs) || !more,
             _ => self.hit(sync, sources, tick.inputs) || (!more && polled >= 2),
@@ -1172,6 +1174,7 @@ mod tests {
         // The pass ends elsewhere: a release wait on the way isn't the tick, whatever it went round.
         gates.ticked("release", &["mouse"], &inputs);
         assert!(!gates.arrives("release", &["mouse"], &tick(Some(0), Some("click")), 1, 0), "the tick is at click");
+        assert!(gates.arrives("release", &["mouse"], &tick(Some(0), Some("click")), 2, 1), "stuck: the pass ends");
         assert!(!gates.arrives("click", &["mouse"], &tick(None, None), 1, 0), "a live play: not after one poll");
         assert!(gates.arrives("click", &["mouse"], &tick(None, None), 2, 1), "nor before two");
     }

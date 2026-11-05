@@ -689,8 +689,9 @@ D2's framing of decompiled code as a hint only (it stays a reading, never a tran
 ### D139. A pass's tick is at the next tick's wait. Accepted 2026-11-05.
 The tick a port steps is given the sync point the next tick is at (`Tick::next`: the inputs file's next line; none
 in a live play). `Gates::arrives` decides, for a pass that arrives at a gated wait, whether the tick is there: at
-another sync point than the next tick's, not (a hit the original's gate passed over: the pass goes round); at the
-next tick's, when the gate counts the hit (`Gates::hit`) or the original went round no more (`Tick::spun`, D130: the
+another sync point than the next tick's, not (a hit the original's gate passed over: the pass goes round), unless
+the pass can't go on there (polled twice, nothing more to read: the port no longer follows the original, and the
+pass ends for the comparison to show it rather than going round for ever); at the next tick's, when the gate counts the hit (`Gates::hit`) or the original went round no more (`Tick::spun`, D130: the
 pass has gone round as many times) and read nothing in a later round (`Inputs::more_rounds`). Not knowing the next
 tick, by the gate, or once the pass has polled the wait twice with nothing more to read.
 **Why:** the port's gate compares the inputs as the pass last read them (D132), so a device's change after the
