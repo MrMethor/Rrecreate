@@ -143,7 +143,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          a recorded trace: a summary, one tick, or one item over the ticks, values
                          read as data.tsv's types (an array as its elements that aren't zero);
                          --path: where the trace file is (the path alone), to read it whole
-  compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] [--notes]
+  compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] [--fields]
+          [--notes]
                          run the port ([port] command in rrc.toml) with the session's inputs and compare
                          its state with the original's trace at every tick, field by field as
                          mapping.toml maps them: the first tick that differs, the fields and values, and
@@ -152,9 +153,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          --pair keeps one at the end of tick N (the port's state and Clockwork's
                          snapshot) if the port matched to there; --feed gives the port the original's
                          values of those fields (or groups) before every step, for a subsystem not
-                         ported yet, and says what each feed changed; what the port noted
-                         (rrc_runtime::note) in the pass that differs, --notes every note. Exits 1 if it
-                         diverges
+                         ported yet, and says what each feed changed; --fields: the mapped fields alone,
+                         not the screen nor the sound (a stretch the port doesn't draw yet); what the
+                         port noted (rrc_runtime::note) in the pass that differs, --notes every note.
+                         Exits 1 if it diverges
   compare SESSION --lockstep
                          the port in lockstep with the original (D124): from a transplant at tick 1, given
                          the original's mapped state before every pass, every difference counted and none

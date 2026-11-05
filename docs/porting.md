@@ -70,6 +70,9 @@ the original judges the port, not the code it was read from.
 | What is this memory at tick N? | `rrc peek SESSION --tick N ID...` (no naming or recording needed) | `rrc show ID`: who writes it | `rrc watch` across ticks |
 | What does a pass run, in what order? | `rrc pass SESSION --tick N`, `--in FUNCTION` | the loop's `--c` | `rrc watch` of a value it changes |
 
+A stretch whose screens aren't drawn yet (the logic first) is compared field by field alone:
+`rrc compare SESSION --fields` (D136) stops at the first field that differs and at no screen or sound.
+
 A pass's order matters as much as its code: `rrc pass SESSION --tick N` shows the calls one pass makes, in
 order, by name (`--in FUNCTION` for one function's), which is the outline of the port's step (D83); tick 1's,
 from power-on, is the start-up's, the outline of `power_on` (D134). A call

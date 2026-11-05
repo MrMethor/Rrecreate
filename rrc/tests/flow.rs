@@ -687,6 +687,10 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(drawn.contains("pixel   (64, 4): original 40, port 41"), "{drawn}");
     assert!(drawn.contains("write MEM+A0540 = 28h (was 20h) by VAULT.EXE+00581 in draw_cell < draw < main"), "{drawn}");
     assert!(drawn.contains("port      draw_cell (VAULT.EXE+004DD) is src/main.rs:"), "{drawn}");
+    // The fields alone (D136): the logic matches past the screen it draws otherwise.
+    let fields = rrc.ok(&["compare", "play", "--fields"]);
+    assert!(fields.contains("match     every mapped field at all 400 ticks"), "{fields}");
+    assert!(fields.contains("screen    not compared, nor the sound (--fields)"), "{fields}");
     rrc.env.pop();
     // From a transplant mid-play (D110): the presentation is given what the original's draw keeps, the count
     // its player's colour blinks by among it. Without it the screen can't show that count, and the colour

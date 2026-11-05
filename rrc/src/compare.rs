@@ -33,9 +33,15 @@ use rrc_runtime::present::Frame;
 const SHOWN: usize = 8;
 
 pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--transplant", "--resume", "--to", "--pair", "--feed"], &["--notes", "--lockstep"])?;
+    let a = Args::parse(
+        args,
+        &["--transplant", "--resume", "--to", "--pair", "--feed"],
+        &["--notes", "--lockstep", "--fields"],
+    )?;
     let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] \
-                 [--notes] | compare SESSION --lockstep";
+                 [--fields] [--notes] | compare SESSION --lockstep";
+    // The mapped fields alone (D136): a stretch whose screens or sound the port doesn't make yet.
+    let fields_only = a.has("--fields");
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     if a.has("--lockstep") {
         let census = lockstep(repo, name)?;
@@ -148,7 +154,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         port_args.extend(["--to".into(), t.to_string()]);
     }
     // The original's screen at each tick (D107): the port is asked for its frames when the trace has it.
-    let screens = screens(&trace);
+    let screens = if fields_only { vec![None; trace.ticks.len()] } else { screens(&trace) };
     if screens.iter().any(Option::is_some) {
         let frames = work.join("frames");
         if frames.is_dir() {
@@ -184,7 +190,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         Value::Array(devices) => devices.iter().filter_map(Value::as_str).collect(),
         _ => Vec::new(),
     };
-    let sounding = !made.is_empty();
+    let sounding = !fields_only && !made.is_empty();
     let mut heard: Option<(u64, SoundDiff)> = None;
     // The fields the port left unset (null), by the ticks they were (D102).
     let mut unset: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
@@ -311,6 +317,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         None => {
             say("match", format!("every mapped field at all {} ticks", last - first + 1));
             match seen.compared {
+                _ if fields_only => say("screen", "not compared, nor the sound (--fields)"),
                 0 if screens.iter().any(Option::is_some) => say("screen", "not compared: the port draws no frames"),
                 0 => {}
                 _ => say(

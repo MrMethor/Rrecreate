@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D136. A comparison may be of the mapped fields alone. Accepted 2026-11-05.
+`rrc compare SESSION --fields` compares every tick's mapped fields and stops at the first that differs, as
+without it, but neither the screen nor the sound: the port isn't asked for its frames, and the outcome says they
+weren't compared. The lockstep census (D124) already counts the fields apart from the frames and the sound.
+**Why:** a port is made logic first and its screens later (the menus of Arena's power-on stretch: their pictures
+not drawn yet). From power-on a comparison stopped at the first screen the port doesn't draw, so nothing past it
+was checked, though its fields matched; the census can't stand in, since it starts from a transplant and gives the
+original's state before every pass.
+
 ### D135. From power-on a port may start from the program's own initial data. Accepted 2026-11-05.
 `rrc compare` from power-on writes the initial data (`--initial`, a start state of tick 0): each mapped field at a
 fixed place in the load image of the program the analysis has (an MZ program's; its module's IDs, not in an object,
