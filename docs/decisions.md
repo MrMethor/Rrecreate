@@ -686,6 +686,19 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D141. A port plays from power-on from a start folder of tick 0. Accepted 2026-11-05.
+`rrc start SESSION --tick 0` writes power-on's start folder: `state.json`, the program's own initial data (D135, D137:
+the mapped and carried items at fixed places in its load image; empty without the analysis's program),
+`power-on.json` (`rrc-power-on`), the inputs the session's start-up had at power-on (its command line, its clock),
+and an empty `saves/`; no screen and no presentation's state. `PORT play --start DIR` starts the port from it as a
+comparison from power-on does: `start`'s state with the initial data for a port that takes it (`INITIAL_DATA`; else
+`start`'s alone), then `power_on` with the inputs the port's `Live::power_on` makes of the session's and the host's
+(`recorded`: by default the session's as they are; a port gives what the host has instead, a clock).
+**Why:** a port that matches from power-on (Arena: the main menu, the character's creation, the new game's start)
+couldn't be played from there: its `start` is the default state the initial data goes over (D135), which only rrc
+can read from the program, and its start-up reads the session's command line (the sound driver's options), which
+the host doesn't have. A start folder already carries what the port can't make itself (D120); power-on's is one more.
+
 ### D140. A divergence names each field that differs. Accepted 2026-11-05.
 Where `rrc compare` finds the port's state differing, it says how many mapped fields differ and a line for each,
 up to 16 (then how many more): the field's first value that differs (its path, the original's, the port's) and, when

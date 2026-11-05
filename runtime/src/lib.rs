@@ -578,13 +578,28 @@ pub struct Started<S> {
     pub state: S,
     pub presentation: Option<Value>,
     pub screen: Option<present::Frame>,
+    /// From power-on (a folder of tick 0, D141): the inputs the session's start-up had (a command line), which a
+    /// live platform gives the port's start-up with what its host's devices have instead (a clock).
+    pub power_on: Option<Inputs>,
 }
 
 /// The start folder `dir` (`rrc start`): the state the original's mapped values give (`state.json`, a
-/// transplant), the presentation's own (`presentation.json`) and the screen (`screen.frm`) if it has them.
+/// transplant), the presentation's own (`presentation.json`) and the screen (`screen.frm`) if it has them. Of
+/// tick 0, power-on (D141): `start`'s state, with the program's own initial data for a port that takes it
+/// ([`Simulation::INITIAL_DATA`]), and the start-up's inputs (`power-on.json`).
 pub fn started<S: Simulation>(dir: &std::path::Path) -> Result<Started<S>, String> {
     let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
     let start = files::StartState::read(&path("state.json"))?;
+    if start.tick == 0 {
+        let state = if S::INITIAL_DATA { S::transplant(start.overlay(serialize(&S::start())?)?)? } else { S::start() };
+        let power_on = if dir.join("power-on.json").is_file() {
+            Some(files::PowerOnInputs::read(&path("power-on.json"))?)
+        } else {
+            None
+        };
+        // Nothing drawn yet: the start-up draws the first screen.
+        return Ok(Started { state, presentation: None, screen: None, power_on });
+    }
     let state = S::transplant(start.overlay(serialize(&S::start())?)?)?;
     let presentation = if dir.join("presentation.json").is_file() {
         Some(files::PresentationState::read(&path("presentation.json"))?)
@@ -595,7 +610,7 @@ pub fn started<S: Simulation>(dir: &std::path::Path) -> Result<Started<S>, Strin
         Ok(bytes) => Some(present::Frame::decode(&bytes)?),
         Err(_) => None,
     };
-    Ok(Started { state, presentation, screen })
+    Ok(Started { state, presentation, screen, power_on: None })
 }
 
 /// Runs the port as `request` says: from its start state (or a transplant, or a saved state) through
@@ -927,6 +942,24 @@ mod tests {
         let full = started::<Counter>(&d).unwrap();
         assert_eq!(full.presentation, Some(serde_json::json!({"shade": 7})));
         assert_eq!(full.screen, Some(screen));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_start_folder_of_power_on_gives_the_initial_data_and_the_start_up_s_inputs() {
+        // D141: tick 0's state is the program's initial data, for a port that takes it (D135); `start`'s alone for
+        // one that doesn't. The start-up's inputs are the session's.
+        let d = dir("started-power-on");
+        let initial =
+            r#"{"format":"rrc-state","version":1,"session":"boot","tick":0,"state":{"seed":2,"steps":3,"count":9}}"#;
+        std::fs::write(d.join("state.json"), initial).unwrap();
+        let inputs = r#"{"format":"rrc-power-on","version":1,"session":"boot","inputs":{"clock":"0040"}}"#;
+        std::fs::write(d.join("power-on.json"), inputs).unwrap();
+        let seeded = started::<Seeded>(&d).unwrap();
+        assert_eq!((seeded.state.seed, seeded.state.steps), (2, 3));
+        assert_eq!(seeded.power_on.unwrap().u16("clock"), 0x4000);
+        let counter = started::<Counter>(&d).unwrap();
+        assert_eq!(counter.state.count, 0, "Counter's own start: it doesn't take the initial data");
         std::fs::remove_dir_all(&d).ok();
     }
 

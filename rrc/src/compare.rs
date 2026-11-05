@@ -1306,11 +1306,12 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
 /// A transplant (`rrc-state`): the mapped fields' values at `tick`.
 /// `rrc start SESSION --tick N [--out DIR]` (D120): where the session's original is at tick N, for the port to
 /// start from without the original running: the mapped fields' values (`state.json`, a transplant's), the
-/// presentation's own state (`presentation.json`, D110) and the screen (`screen.frm`), in a folder.
+/// presentation's own state (`presentation.json`, D110) and the screen (`screen.frm`), in a folder. Tick 0 is
+/// power-on (D141): the program's own initial data and the start-up's inputs (`start_power_on`).
 pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &["--tick", "--out"], &[])?;
     let [name] = a.positionals(1, 1, "start SESSION --tick N [--out DIR]")? else { unreachable!() };
-    let tick: u64 = a.required("--tick")?.parse().ok().filter(|&t| t > 0).ok_or("--tick is a tick number")?;
+    let tick: u64 = a.required("--tick")?.parse().ok().ok_or("--tick is a tick number")?;
     let session = Session::load(repo, name)?;
     let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
     let k = Knowledge::load(&repo.knowledge())?;
@@ -1321,11 +1322,6 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if tick > trace.ticks.len() as u64 {
         return Err(format!("{name} has {} ticks, not {tick}", trace.ticks.len()));
     }
-    let original = {
-        let places = Places::new(repo, &session);
-        let linear = |linear: u32| places.linear_id(linear).ok();
-        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
-    };
     let dir = match a.value("--out") {
         Some(dir) => std::path::PathBuf::from(dir),
         None => repo.state()?.join("start").join(format!("{name}-{tick}")),
@@ -1333,6 +1329,16 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let file = |f: &str| dir.join(f).to_string_lossy().into_owned();
     let carried = mapping.resolve_carried(&k)?;
+    if tick == 0 {
+        let mut initial = mapped;
+        initial.extend(carried);
+        return start_power_on(repo, (name, &session, &trace), &k, &initial, &dir);
+    }
+    let original = {
+        let places = Places::new(repo, &session);
+        let linear = |linear: u32| places.linear_id(linear).ok();
+        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
+    };
     let values = read_given(repo, &session, &k, &carried, tick)?;
     write_start(&trace.header.session, &mapped, &original, tick, values, &file("state.json"))?;
     let mut has = vec![format!("{} fields mapped", mapped.len())];
@@ -1354,6 +1360,46 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     say("start", format!("{name}'s tick {tick}: {}", has.join(", ")));
     say("folder", crate::path_text(&dir));
     say("next", format!("the port plays from it: PORT play --start {}", crate::path_text(&dir)));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `rrc start SESSION --tick 0` (D141): power-on, for the port to play from as a comparison runs it from there:
+/// the program's own initial data (`state.json`, D135: the mapped and carried items at fixed places in its load
+/// image; none without the analysis's program), the inputs the session's start-up had at power-on
+/// (`power-on.json`, `rrc-power-on`: its command line, its clock, which a live platform may give from the host
+/// instead), and an empty saves folder.
+fn start_power_on(
+    repo: &Repo,
+    (session_name, session, trace): (&str, &Session, &Trace),
+    k: &Knowledge,
+    initial: &[Mapped],
+    dir: &std::path::Path,
+) -> Result<ExitCode, String> {
+    let name = &trace.header.session;
+    let start_up = trace.header.power_on.as_deref().ok_or_else(|| {
+        format!("{session_name} was recorded without its start-up's inputs (D134): rrc record {session_name} again")
+    })?;
+    let file = |f: &str| dir.join(f).to_string_lossy().into_owned();
+    let mut has = Vec::new();
+    if write_initial(repo, name, initial, k, &file("state.json"))? {
+        has.push("the program's initial data".to_owned());
+    } else {
+        let empty = json!({"format": "rrc-state", "version": 1, "session": name, "tick": 0, "state": {}});
+        std::fs::write(file("state.json"), format!("{empty}\n")).map_err(|e| e.to_string())?;
+    }
+    let inputs: serde_json::Map<String, Value> = start_up
+        .inputs
+        .iter()
+        .filter_map(|(i, v)| Some((trace.header.inputs.get(*i)?.name.clone(), json!(v.as_ref()?))))
+        .collect();
+    let names: Vec<&str> = inputs.keys().map(String::as_str).collect();
+    has.push(format!("the start-up's inputs ({})", names.join(", ")));
+    let power_on = json!({"format": "rrc-power-on", "version": 1, "session": name, "inputs": inputs});
+    std::fs::write(file("power-on.json"), format!("{power_on}\n")).map_err(|e| e.to_string())?;
+    write_saves(repo, session, k, None, &dir.join("saves"))?;
+    say("start", format!("{session_name}'s power-on: {}", has.join(", ")));
+    say("folder", crate::path_text(dir));
+    say("next", format!("the port plays from it: PORT play --start {}", crate::path_text(dir)));
     Ok(ExitCode::SUCCESS)
 }
 

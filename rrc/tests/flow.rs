@@ -716,6 +716,15 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     let state = std::fs::read_to_string(folder.join("state.json")).unwrap();
     assert!(state.contains(r#""format":"rrc-state""#) && state.contains(r#""tick":200"#), "{state}");
     assert!(folder.join("presentation.json").is_file() && folder.join("screen.frm").is_file());
+    // From power-on (D141): what the start-up began with, for the port to play the whole game from.
+    let power_on = rrc.ok(&["start", "play", "--tick", "0"]);
+    assert!(power_on.contains("start     play's power-on: "), "{power_on}");
+    let at_power_on = rrc.repo.join(".rrc/start/play-0");
+    let state = std::fs::read_to_string(at_power_on.join("state.json")).unwrap();
+    assert!(state.contains(r#""format":"rrc-state""#) && state.contains(r#""tick":0"#), "{state}");
+    let inputs = std::fs::read_to_string(at_power_on.join("power-on.json")).unwrap();
+    assert!(inputs.contains(r#""format":"rrc-power-on""#), "{inputs}");
+    assert!(!at_power_on.join("screen.frm").exists() && at_power_on.join("saves").is_dir());
     // Memory the port carries as it was (D126): in the start's state, read at the tick, never compared.
     let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
     let carry = "\n[[carry]]\nfield = \"carried.counts\"\nat = \"pass_count\"\ntype = \"u8[2]\"\n";

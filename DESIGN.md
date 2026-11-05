@@ -188,7 +188,8 @@ the session.
   tinyaudio, as `clockwork play` has them, and Nuked OPL3; D119). It owns the main loop and calls the
   simulation and the presentation, so a web or mobile platform layer can be added without changing either. A
   live port's input handling (`Live`) makes the boundary values from the devices as the original's handlers
-  did.
+  did. A port plays from a start folder `rrc start` wrote: where a session's original was at a tick (D120), or
+  power-on, with the program's initial data and the inputs the session's start-up had (D141).
 
 A tick is one step of the original's main loop. Work the original did in interrupt handlers (music
 sequencing, timer counts) is a subsystem of the simulation with its own rate; its effects are part of the

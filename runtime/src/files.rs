@@ -193,6 +193,27 @@ impl PresentationState {
     }
 }
 
+/// The inputs a session's start-up had at power-on (`rrc-power-on`, D141): each input's bytes by its name (a
+/// command line, a clock), from a start folder of tick 0.
+pub struct PowerOnInputs;
+
+impl PowerOnInputs {
+    pub fn read(path: &str) -> Result<crate::Inputs, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+        let v: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+        if v["format"] != "rrc-power-on" || v["version"] != 1 {
+            return Err(format!("{path}: not a start-up's inputs this runtime reads"));
+        }
+        let mut values = BTreeMap::new();
+        for (name, hex) in v["inputs"].as_object().cloned().unwrap_or_default() {
+            let hex = hex.as_str().ok_or_else(|| format!("{path}: {name} isn't hex"))?;
+            let bytes = unhex(hex).map_err(|e| format!("{path}: {name}: {e}"))?;
+            values.insert(name, bytes);
+        }
+        Ok(crate::Inputs::new(values))
+    }
+}
+
 /// A step of a path: a field, or an element.
 enum Step<'a> {
     Field(&'a str),

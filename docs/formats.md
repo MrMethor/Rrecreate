@@ -79,6 +79,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   presentation's own, `rrc-presentation`) and `screen.frm` (the screen), each when there is one; and `saves/`,
   the files the original had changed there, with `deleted` listing those it deleted (D131), where the port
   played from the folder saves.
+  `start/<session>-0/` is power-on's (D141): `state.json` the program's own initial data (D135), `power-on.json`
+  the inputs the session's start-up had (`{"format": "rrc-power-on", "version": 1, "session", "inputs": {name:
+  hex}}`), and an empty `saves/`.
 - `saves/`: the games the port saved while played (`rrc_runtime::original::save`, D119), in the original's own
   format and names. A comparison's run has its own (`compare/<session>/saves/`, D131).
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.

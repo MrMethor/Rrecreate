@@ -92,11 +92,13 @@ pub trait Live: Simulation + Shows {
         let _ = (devices, inputs);
     }
 
-    /// Played from power-on: the inputs the start-up reads before the first sync point (D134), from the host's
-    /// devices (a clock it seeds a generator from: `Host::day_ms`), for `Simulation::power_on`. None by default.
-    fn power_on(&self, devices: &mut Self::Devices, host: &Host) -> Inputs {
+    /// Played from power-on: the inputs the start-up reads before the first sync point (D134), for
+    /// `Simulation::power_on`: the session's (`recorded`, from a start folder of tick 0, D141: a command line),
+    /// with what the host's devices give instead (a clock it seeds a generator from: `Host::day_ms`). The
+    /// session's by default.
+    fn power_on(&self, devices: &mut Self::Devices, host: &Host, recorded: &Inputs) -> Inputs {
         let _ = (devices, host);
-        Inputs::default()
+        recorded.clone()
     }
 }
 
@@ -230,8 +232,9 @@ pub fn inputs(values: &[(&str, &[u8])]) -> Inputs {
 }
 
 /// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound]`): the game's folder chosen,
-/// the port's start (`start`, from power-on, or the folder `rrc start` wrote, D120: none for a port that doesn't
-/// start from power-on yet), then [`play`]; none when the
+/// the port's start (`start`, from power-on, or the folder `rrc start` wrote, D120, of tick 0 from power-on
+/// with the program's initial data, D141: none for a port that starts from a folder alone), then [`play`]; none
+/// when the
 /// command line asks for something else (a comparison's run, which the runtime's `main` takes):
 ///
 /// ```ignore
@@ -271,10 +274,11 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
             Err(e) => return Some(fail(&format!("{}: {e}", dir.display()))),
         },
         None => match start {
-            Some(start) => Started { state: start(), presentation: None, screen: None },
+            Some(start) => Started { state: start(), presentation: None, screen: None, power_on: None },
             None => {
                 return Some(fail(
-                    "this port plays from where a session is: rrc start SESSION --tick N, then --start DIR",
+                    "this port plays from where a session is: rrc start SESSION --tick N (0: power-on), then \
+                     --start DIR",
                 ));
             }
         },
@@ -293,7 +297,7 @@ fn fail(message: &str) -> std::process::ExitCode {
 /// Plays from `started` (the port's start, or where `rrc start` left the original) with its presentation `P` in
 /// a window titled `title`, with its sound if `sound`, until the window is closed or the original's loop ends.
 pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound: bool) -> Result<(), String> {
-    let Started { mut state, presentation: own, screen } = started;
+    let Started { mut state, presentation: own, screen, power_on } = started;
     let mut presentation = P::default();
     if let Some(own) = own {
         presentation.given(own)?;
@@ -306,7 +310,7 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
     // From power-on, the start-up's pass (D134): what it reads from the host's devices.
     if !given {
         let host = Host { day_ms, ..Host::default() };
-        let inputs = state.power_on(&mut devices, &host);
+        let inputs = state.power_on(&mut devices, &host, &power_on.unwrap_or_default());
         Simulation::power_on(
             &mut state,
             &Tick { number: 0, sync: "power-on", inputs: &inputs, spun: None, next: None },

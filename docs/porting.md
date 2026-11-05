@@ -570,7 +570,10 @@ so `PORT play [--game DIR] [--start DIR] [--no-sound]` plays and anything else r
 port that doesn't reach a stretch from power-on yet (the menus and the character's creation before a dungeon)
 plays from where a session's original is (D120): `rrc start SESSION --tick N` writes the mapped fields' values,
 the presentation's own state and the screen there into `.rrc/start/SESSION-N`, made once from the person's copy,
-and `PORT play --start .rrc/start/SESSION-N` plays from them without the original running. Its `Live::wrote`
+and `PORT play --start .rrc/start/SESSION-N` plays from them without the original running. A port that
+matches from power-on plays the whole game from tick 0's folder (D141): `rrc start SESSION --tick 0` writes the
+program's initial data and the inputs the session's start-up had (its command line), and the port's
+`Live::power_on` gives the start-up those with what the host has instead (its clock). Its `Live::wrote`
 takes what a pass wrote into its own inputs (a keyboard queue the program empties) into the handlers' state. A game the port
 saves goes through `rrc_runtime::original::save` and `saved` (the port's saves, `.rrc/saves` of its repository
 or `RRC_SAVES`; the person's in the game's folder are read, never written). `examples/vault` and
