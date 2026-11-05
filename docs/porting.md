@@ -411,8 +411,8 @@ whose `tick.inputs.at_site(ID)` is what that read saw; a live port's `Live::powe
 The program's command line is such an input: DOS's command tail in the program's PSP (its offset 80h: a length,
 then the text), where the C start-up reads it; the session's options give it (`clockwork run --args`).
 A port whose `Simulation::INITIAL_DATA` is true starts from the program's own initial data instead (D135): each
-mapped field at a fixed place in the program's image as the image holds it, set over `start`'s state, so `start`
-and `power_on` make only what the start-up's code does.
+mapped field at a fixed place in the program's image as the image holds it, and the carried memory there (D137),
+set over `start`'s state, so `start` and `power_on` make only what the start-up's code does.
 
 The original's pointers, heap and flag bytes map too (D72): declare a pointer type in `types.toml` with `into`
 the array it points into, and the port's field is an index (or none); map a heap block `via` the pointer that

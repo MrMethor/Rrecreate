@@ -598,9 +598,9 @@ inputs and the trace are JSON lines.
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each
   mapped field's value at the tick by its path. The runtime sets each over the port's start state's
   serialization and deserializes that (`Simulation::transplant` may build the state otherwise).
-- **Initial data** (`--initial`, written by `rrc` from power-on, D135): a start state of tick 0, each mapped field at
-  a fixed place in the program's load image (an MZ program's, as the analysis has it: its module's IDs, not in an
-  object, not through a pointer) as the image holds it. The runtime sets it over `start`'s for a port whose
+- **Initial data** (`--initial`, written by `rrc` from power-on, D135): a start state of tick 0, each mapped field
+  and each carried item (D137) at a fixed place in the program's load image (an MZ program's, as the analysis has
+  it: its module's IDs, not in an object, not through a pointer, wholly in the image) as the image holds it. The runtime sets it over `start`'s for a port whose
   `Simulation::INITIAL_DATA` is true, before `power_on`.
 - **Port state** (`--save` writes it at `--save-at`'s tick, `--resume` reads it):
   `{"format":"rrc-port-state","version":1,"tick":900,"state":{…}}`, the port's whole state as it serializes it,

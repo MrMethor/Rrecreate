@@ -116,10 +116,12 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         write_start(&trace.header.session, &mapped, &original, t, carried, &file("start.json"))?;
         port_args.extend(["--transplant".into(), file("start.json")]);
     }
-    // From power-on, the program's own initial data (D135).
+    // From power-on, the program's own initial data (D135): the mapped fields', and the carried memory's (D137).
+    let mut initial = mapped.clone();
+    initial.extend(mapping.resolve_carried(&k)?);
     if transplant.is_none()
         && resume.is_none()
-        && write_initial(repo, &trace.header.session, &mapped, &k, &file("initial.json"))?
+        && write_initial(repo, &trace.header.session, &initial, &k, &file("initial.json"))?
     {
         port_args.extend(["--initial".into(), file("initial.json")]);
     }
@@ -1387,27 +1389,37 @@ fn write_start(
     std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))
 }
 
-/// The program's own initial data (`rrc-state`, tick 0, D135): each mapped field at a fixed place in the load image
-/// of the program the analysis has (its module's IDs, not in an object, not through a pointer, not an index), as
-/// the image holds it. False where there is no such program (no analysis, or not an MZ program).
-fn write_initial(repo: &Repo, session: &str, mapped: &[Mapped], k: &Knowledge, path: &str) -> Result<bool, String> {
+/// The program's own initial data (`rrc-state`, tick 0, D135): each mapped field, and each carried item (D137), at
+/// a fixed place in the load image of the program the analysis has, as the image holds it (`initial_state`).
+/// False where there is no such program (no analysis, or not an MZ program).
+fn write_initial(repo: &Repo, session: &str, items: &[Mapped], k: &Knowledge, path: &str) -> Result<bool, String> {
     let Some(index) = crate::analysis::Index::load(repo)? else { return Ok(false) };
     let program = Cache::open(&repo.local)?.get(&index.program)?;
     let Some(image) = mz_image(&program) else { return Ok(false) };
-    let module = repo.module();
-    let r = crate::values::of(k);
+    let state = initial_state(image, &repo.module(), items, &crate::values::of(k))?;
+    let file = json!({"format": "rrc-state", "version": 1, "session": session, "tick": 0, "state": state});
+    std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))?;
+    Ok(true)
+}
+
+/// The items at fixed places in `image` (`module`'s IDs, not in an object, not through a pointer, not an index,
+/// wholly in the image) as it holds them, by their fields.
+fn initial_state(
+    image: &[u8],
+    module: &str,
+    items: &[Mapped],
+    r: &Reader,
+) -> Result<serde_json::Map<String, Value>, String> {
     let mut state = serde_json::Map::new();
-    for m in mapped.iter().filter(|m| m.via.is_none() && m.into.is_none()) {
+    for m in items.iter().filter(|m| m.via.is_none() && m.into.is_none()) {
         if m.id.module() != module || m.id.part().is_some() {
             continue;
         }
         let at = m.id.offset() as usize;
         let Some(bytes) = image.get(at..at + m.size as usize) else { continue };
-        state.insert(m.field.clone(), decoded(m, bytes, &r).map_err(|e| format!("{}: {e}", m.field))?);
+        state.insert(m.field.clone(), decoded(m, bytes, r).map_err(|e| format!("{}: {e}", m.field))?);
     }
-    let file = json!({"format": "rrc-state", "version": 1, "session": session, "tick": 0, "state": state});
-    std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))?;
-    Ok(true)
+    Ok(state)
 }
 
 /// An MZ program's load image: the file past its header, as long as the header says; none if it isn't one.
@@ -1841,6 +1853,33 @@ mod tests {
         let image = mz_image(&program).unwrap();
         assert_eq!((image.len(), image[0]), (600 - 32, 0xAB), "the overlay after the image left out");
         assert_eq!(mz_image(b"not a program"), None);
+    }
+
+    #[test]
+    fn the_initial_data_is_the_image_s_mapped_and_carried_items() {
+        let item = |field: &str, id: &str, ty: &str, size| Mapped {
+            field: field.into(),
+            id: id.parse().unwrap(),
+            ty: ty.into(),
+            size,
+            via: None,
+            mask: None,
+            into: None,
+        };
+        let image: Vec<u8> = (0..16).collect();
+        let items = [
+            item("score", "GAME.EXE+00004", "u16", 2),
+            // Carried memory (D137): as the image holds it too.
+            item("saved.block", "GAME.EXE+00008", "u8[3]", 3),
+            // Past the image's end, and another module's: not the image's.
+            item("heap", "GAME.EXE+0000F", "u8[4]", 4),
+            item("other", "OTHER.EXE+00000", "u8", 1),
+        ];
+        let k = Knowledge::default();
+        let state = initial_state(&image, "GAME.EXE", &items, &crate::values::of(&k)).unwrap();
+        assert_eq!(state["score"], json!(0x0504));
+        assert_eq!(state["saved.block"], json!([8, 9, 10]));
+        assert!(!state.contains_key("heap") && !state.contains_key("other"));
     }
 
     #[test]

@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D137. From power-on the carried memory starts as the image holds it. Accepted 2026-11-05.
+The initial data (D135) has the carried items (`[[carry]]`, D126) too, each at a fixed place in the load image as
+the image holds it; what lies past the image (the heap, the EMS frame) isn't given. As D126 says of a transplant's,
+they are never traced nor compared: the port's start-up and passes must make the program's writes to them that
+matter, which the mapped fields read back show.
+**Why:** a port carries what of the original's memory it doesn't model (a saved game's blocks) and reads bytes of
+it back (Arena's creation keeps the gender and the home in the player's block, the record's +7 and +8). From
+power-on it started empty, so those reads were 0 and a new game's save would lack the block.
+
 ### D136. A comparison may be of the mapped fields alone. Accepted 2026-11-05.
 `rrc compare SESSION --fields` compares every tick's mapped fields and stops at the first that differs, as
 without it, but neither the screen nor the sound: the port isn't asked for its frames, and the outcome says they
