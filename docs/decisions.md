@@ -686,18 +686,24 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
-### D138. A pass's tick is at a wait where the original went round no more. Accepted 2026-11-05.
-`Gates::arrives` decides, for a pass that arrives at a gated wait, whether the tick is there: when the gate counts
-the hit (`Gates::hit`), or else, once the pass has polled the wait, when the original went round no more
-(`Tick::spun`, D130: the pass has gone round as many times) and read nothing in a later round
-(`Inputs::more_rounds`). A wait just entered is polled first: the original may leave it at its first read and never
-hit its sync point (a release wait entered with the button already let go). Without `spun` (a live play), once the
-pass has polled the wait twice.
+### D139. A pass's tick is at the next tick's wait. Accepted 2026-11-05.
+The tick a port steps is given the sync point the next tick is at (`Tick::next`: the inputs file's next line; none
+in a live play). `Gates::arrives` decides, for a pass that arrives at a gated wait, whether the tick is there: at
+another sync point than the next tick's, not (a hit the original's gate passed over: the pass goes round); at the
+next tick's, when the gate counts the hit (`Gates::hit`) or the original went round no more (`Tick::spun`, D130: the
+pass has gone round as many times) and read nothing in a later round (`Inputs::more_rounds`). Not knowing the next
+tick, by the gate, or once the pass has polled the wait twice with nothing more to read.
 **Why:** the port's gate compares the inputs as the pass last read them (D132), so a device's change after the
 pass's last read (a mouse button let go while the pass waited 20 retraces) is one only Clockwork's gate sees: it
 counted the next hit, the port's gate didn't, and the port polled again and ran the button's handler a second time
-(Arena's attributes' arrows). Each of the port's six waits had the rule its own way, needing two polls even with
-`spun` known.
+(Arena's attributes' arrows). `spun` alone (D138) couldn't settle it: it counts the rounds at the wait the pass ends
+at, and a pass that goes by another wait first (Arena's save screen: the button's release, then the slot list's
+click) stopped there. The next tick's sync point says which wait that is.
+
+### D138. A pass's tick is at a wait where the original went round no more. Accepted 2026-11-05. Superseded by D139.
+`Gates::arrives` counted a hit by the gate, or, once the pass had polled the wait, where the original went round no
+more (`Tick::spun`) with nothing read in a later round.
+**Why:** a device's change after the pass's last read counts in Clockwork's gate only (D139 says more).
 
 ### D137. From power-on the carried memory starts as the image holds it. Accepted 2026-11-05.
 The initial data (D135) has the carried items (`[[carry]]`, D126) too, each at a fixed place in the load image as

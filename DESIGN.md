@@ -274,7 +274,7 @@ the port branches on `rrc_runtime::keeps(NAME)` (D74).
   where the loop's wait is over and the pass hasn't read its inputs yet (D47); a session's timeline is its
   sequence of sync hits. A loop that polls as fast as the CPU runs, with no wait, has a gated sync point: a
   hit is a tick only when what the loop reads changed since its last tick (D48); a port's pass arriving there
-  asks the gate, or how many times the original went round (D130, D138). Input that changes between
+  asks the gate, the next tick's sync point and how many times the original went round (D130, D139). Input that changes between
   a sync point and the pass's read of it is flagged when recording (D60). Hits count only while the
   game's program runs, or a program it started (D57): a launcher may run other programs, whose code can sit
   at the same addresses, before the game.

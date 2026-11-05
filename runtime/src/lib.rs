@@ -90,6 +90,9 @@ pub struct Tick<'a> {
     /// so many times more, for what a poll does each time (a cursor's blink). None where it isn't known (a live
     /// play; a session recorded before it).
     pub spun: Option<u64>,
+    /// The sync point the next tick is at: where the pass ends (D139). None where it isn't known (a live play, the
+    /// last tick).
+    pub next: Option<&'a str>,
 }
 
 /// The quirks fixed in this run (D74): none in a comparison, which keeps every one (DESIGN.md §6.5).
@@ -185,17 +188,23 @@ impl Gates {
     }
 
     /// The pass arrived at the gated wait `sync`, having polled there `polled` times and gone round it `went_round`
-    /// times (hits that didn't count): whether the tick is there (D138). It is when the gate counts the hit
-    /// (`hit`); else, once the pass has polled the wait, when the original went round no more ([`Tick::spun`]) and
-    /// read nothing in a later round ([`Inputs::more_rounds`]), it is there all the same: Clockwork's gate sees a
-    /// device's change after the pass's last read (a button let go while the pass waited), which the port's,
-    /// comparing the inputs as the pass last read them (D132), can't. A wait just entered is polled first: the
-    /// original may leave it at its first read, never hitting its sync point. Without `spun` (a live play), once the
-    /// pass has polled it twice: a poll with nothing changed does what the one before it did.
+    /// times (hits that didn't count): whether the tick is there (D139). Where the next tick is at another sync
+    /// point ([`Tick::next`]), not: a hit the original's gate passed over (the pass goes round). At the next tick's,
+    /// when the gate counts the hit (`hit`), or when the original went round no more ([`Tick::spun`]) and read
+    /// nothing in a later round ([`Inputs::more_rounds`]): Clockwork's gate sees a device's change after the pass's
+    /// last read (a button let go while the pass waited), which the port's, comparing the inputs as the pass last
+    /// read them (D132), can't. Not knowing the next tick (a live play), by the gate, or once the pass has polled
+    /// the wait twice with nothing more to read: a poll with nothing changed does what the one before it did.
     pub fn arrives(&self, sync: &str, sources: &[&str], tick: &Tick, polled: u64, went_round: u64) -> bool {
         let more = tick.inputs.more_rounds() || tick.spun.is_some_and(|spun| went_round < spun);
-        let polls = if tick.spun.is_some() { 1 } else { 2 };
-        self.hit(sync, sources, tick.inputs) || (!more && polled >= polls)
+        match tick.next {
+            Some(next) if next != sync => {
+                tick.inputs.go_round(sync);
+                false
+            }
+            Some(_) if tick.spun.is_some() => self.hit(sync, sources, tick.inputs) || !more,
+            _ => self.hit(sync, sources, tick.inputs) || (!more && polled >= 2),
+        }
     }
 }
 
@@ -628,7 +637,9 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
     // The fed fields' values, each as it last changed (D124).
     let mut feeding: BTreeMap<String, Value> = BTreeMap::new();
     let mut last = 0;
-    for line in &inputs.ticks {
+    for (i, line) in inputs.ticks.iter().enumerate() {
+        // Where the pass ends: the next tick's sync point (D139).
+        let next = inputs.ticks.get(i + 1).map(|l| l.sync.as_str());
         for (name, bytes) in &line.inputs {
             current.set(name, bytes.clone());
         }
@@ -639,7 +650,7 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         current.set_calls(&line.calls);
         // The start-up's pass, from power-on to the first tick (D134): the port's `power_on` takes what it read.
         if line.tick == 0 && first == 1 && request.transplant.is_none() && request.resume.is_none() {
-            state.power_on(&Tick { number: 0, sync: &line.sync, inputs: &current, spun: line.spun });
+            state.power_on(&Tick { number: 0, sync: &line.sync, inputs: &current, spun: line.spun, next });
         }
         if line.tick < first {
             continue;
@@ -695,7 +706,7 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         {
             PortState { tick: line.tick, state: value }.write(file)?;
         }
-        state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun });
+        state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun, next });
         pass = Some(line.sync.clone());
         last = line.tick;
     }
@@ -1153,13 +1164,15 @@ mod tests {
         let inputs = Inputs::new([("mouse".to_owned(), vec![1, 0])].into());
         let mut gates = Gates::default();
         gates.ticked("click", &["mouse"], &inputs);
-        let tick = |spun| Tick { number: 2, sync: "click", inputs: &inputs, spun };
+        let tick = |spun, next| Tick { number: 2, sync: "click", inputs: &inputs, spun, next };
         // The button let go after the pass's last read: the port's gate sees nothing, the original counted it.
-        assert!(gates.arrives("click", &["mouse"], &tick(Some(0)), 1, 0), "it went round no more");
-        assert!(!gates.arrives("click", &["mouse"], &tick(Some(0)), 0, 0), "a wait just entered: polled first");
-        assert!(!gates.arrives("click", &["mouse"], &tick(Some(2)), 1, 0), "it went round twice more");
-        assert!(gates.arrives("click", &["mouse"], &tick(Some(2)), 3, 2));
-        assert!(!gates.arrives("click", &["mouse"], &tick(None), 1, 0), "a live play: not after one poll");
-        assert!(gates.arrives("click", &["mouse"], &tick(None), 2, 1), "nor before two");
+        assert!(gates.arrives("click", &["mouse"], &tick(Some(0), Some("click")), 1, 0), "it went round no more");
+        assert!(!gates.arrives("click", &["mouse"], &tick(Some(2), Some("click")), 1, 0), "it went round twice more");
+        assert!(gates.arrives("click", &["mouse"], &tick(Some(2), Some("click")), 3, 2));
+        // The pass ends elsewhere: a release wait on the way isn't the tick, whatever it went round.
+        gates.ticked("release", &["mouse"], &inputs);
+        assert!(!gates.arrives("release", &["mouse"], &tick(Some(0), Some("click")), 1, 0), "the tick is at click");
+        assert!(!gates.arrives("click", &["mouse"], &tick(None, None), 1, 0), "a live play: not after one poll");
+        assert!(gates.arrives("click", &["mouse"], &tick(None, None), 2, 1), "nor before two");
     }
 }

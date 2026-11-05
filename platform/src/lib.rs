@@ -307,7 +307,10 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
     if !given {
         let host = Host { day_ms, ..Host::default() };
         let inputs = state.power_on(&mut devices, &host);
-        Simulation::power_on(&mut state, &Tick { number: 0, sync: "power-on", inputs: &inputs, spun: None });
+        Simulation::power_on(
+            &mut state,
+            &Tick { number: 0, sync: "power-on", inputs: &inputs, spun: None, next: None },
+        );
     }
     let mut frame = screen.unwrap_or_else(|| Frame::new(WIDTH, HEIGHT));
     presentation.start(&state.scene(), &mut frame, given);
@@ -351,7 +354,7 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
                 Next::Tick(sync, inputs) => (sync, inputs),
             };
             number += 1;
-            state.step(&Tick { number, sync: &sync, inputs: &inputs, spun: None });
+            state.step(&Tick { number, sync: &sync, inputs: &inputs, spun: None, next: None });
             state.wrote(&mut devices, &inputs);
             let scene = state.scene();
             if P::DRAWS {
