@@ -686,6 +686,15 @@ cell's key). The person: "It's a toolkit, all the tools are meant to be used as 
 **Supersedes:** D66's "from its own analysis and runs only" (Recreate and tesa-decomp stay out: D66, D69);
 D2's framing of decompiled code as a hint only (it stays a reading, never a translation).
 
+### D140. A divergence names each field that differs. Accepted 2026-11-05.
+Where `rrc compare` finds the port's state differing, it says how many mapped fields differ and a line for each,
+up to 16 (then how many more): the field's first value that differs (its path, the original's, the port's) and, when
+more of its values do, how many (`the first of 48 in map`).
+**Why:** it listed the first 8 values that differed, wherever they were: one array differing in many elements (a
+level's map) filled the list, and the fields after it in the mapping (the flags, the light, the flats' records) were
+hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
+shows the whole divergence at once and keeps the output short.
+
 ### D139. A pass's tick is at the next tick's wait. Accepted 2026-11-05.
 The tick a port steps is given the sync point the next tick is at (`Tick::next`: the inputs file's next line; none
 in a live play). `Gates::arrives` decides, for a pass that arrives at a gated wait, whether the tick is there: at

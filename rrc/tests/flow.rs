@@ -856,7 +856,8 @@ fn a_port_matches_the_original_tick_by_tick() {
     let (diverged, ok) = rrc.run(&["compare", "play"]);
     assert!(!ok, "a divergence fails: {diverged}");
     assert!(diverged.contains("diverges  at tick 194 (play): 1 field differ"), "{diverged}");
-    assert!(diverged.contains("enemies[1].hits: original 1, port 0"), "{diverged}");
+    // A field a line, with how many of its values differ when more than one does (D140).
+    assert!(diverged.contains("  field   enemies[1].hits: original 1, port 0\n"), "one of its values: {diverged}");
     assert!(diverged.contains("write enemies[1].hits = 1 (was 0) by TOY.EXE+002FF in update < main"), "{diverged}");
     // The port's code for the function that wrote it (D73).
     assert!(diverged.contains("port      update (TOY.EXE+00114) is src/main.rs:"), "{diverged}");

@@ -431,7 +431,8 @@ rrc compare first-level --pair 900
 rrc compare first-level --resume 900
 ```
 
-`rrc compare` says `match`, or where the port first differs: the tick, each field with both values, and who wrote
+`rrc compare` says `match`, or where the port first differs: the tick, each field that differs with its first value
+that does (both values) and how many of its values do (D140), and who wrote
 the original's value between the previous tick's sync point and this one's (the instruction and its call chain:
 read that code; a value copied there, by `MOVS` say, is followed to where its source was written, D85); `port` names the port's code for the function that wrote it (D73), found by the ID each port
 function names in a comment (`/// update (GAME.EXE+00114): one pass`, DESIGN.md §6.6). Fix the port and compare

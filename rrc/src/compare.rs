@@ -29,8 +29,29 @@ use crate::trace::Trace;
 use crate::values::{Reader, Target, at_path, decode, differences};
 use rrc_runtime::present::Frame;
 
-/// Fields shown of a divergence.
-const SHOWN: usize = 8;
+/// Fields shown of a divergence (D140).
+const SHOWN: usize = 16;
+
+/// A mapped field that differs at a tick (D140): its first leaf that does (the path, the original's value, the
+/// port's) and how many of its leaves differ.
+struct Differs {
+    field: String,
+    path: String,
+    theirs: Value,
+    ours: Value,
+    leaves: usize,
+}
+
+impl Differs {
+    /// The field `field`'s first difference of `original` and `port`, if they differ.
+    fn of(field: &str, original: &Value, port: &Value) -> Option<Differs> {
+        let mut first = Vec::new();
+        differences(field, original, port, 1, &mut first);
+        let (path, theirs, ours) = first.pop()?;
+        let leaves = crate::values::count_differences(original, port);
+        Some(Differs { field: field.to_owned(), path, theirs, ours, leaves })
+    }
+}
 
 pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(
@@ -235,8 +256,14 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                         unset.entry(m.field.as_str()).or_insert((t, t)).1 = t;
                     }
                 }
-                Some(ours) => differences(&m.field, theirs, &m.masked(ours), SHOWN, &mut found),
-                None => found.push((m.field.clone(), theirs.clone(), Value::Null)),
+                Some(ours) => found.extend(Differs::of(&m.field, theirs, &m.masked(ours))),
+                None => found.push(Differs {
+                    field: m.field.clone(),
+                    path: m.field.clone(),
+                    theirs: theirs.clone(),
+                    ours: Value::Null,
+                    leaves: 1,
+                }),
             }
         }
         if !found.is_empty() {
@@ -719,12 +746,12 @@ fn side_by_side(diff: &ScreenDiff) -> crate::frames::Picture {
 /// A field the port left unset (null) is what the original's memory held before the program set it: it
 /// matches while the original's value is `leftovers`, its value at the first tick (D102). Where that
 /// changed, the port has nothing.
-fn unset_matches(path: &str, leftovers: &Value, theirs: &Value, found: &mut Vec<(String, Value, Value)>) -> bool {
-    let mut changed = Vec::new();
-    differences(path, leftovers, theirs, SHOWN.saturating_sub(found.len()).max(1), &mut changed);
-    let matches = changed.is_empty();
-    found.extend(changed.into_iter().map(|(path, _, theirs)| (path, theirs, Value::Null)));
-    matches
+fn unset_matches(path: &str, leftovers: &Value, theirs: &Value, found: &mut Vec<Differs>) -> bool {
+    let Some(changed) = Differs::of(path, leftovers, theirs) else {
+        return true;
+    };
+    found.push(Differs { theirs: changed.ours, ours: Value::Null, ..changed });
+    false
 }
 
 /// Each mapped field's value at each tick of the original's trace.
@@ -1570,16 +1597,21 @@ fn report(
     t: u64,
     first: u64,
     transplanted: bool,
-    found: &[(String, Value, Value)],
+    found: &[Differs],
 ) -> Result<(), String> {
     let tick = &trace.ticks[(t - 1) as usize];
     say(
         "diverges",
         format!("at tick {t} ({}): {} field{} differ", tick.sync, found.len(), if found.len() == 1 { "" } else { "s" }),
     );
-    for (path, theirs, ours) in found {
-        let ours = if ours.is_null() { "missing".to_owned() } else { ours.to_string() };
-        say("  field", format!("{path}: original {theirs}, port {ours}"));
+    // Each field that differs, its first value that does, and how many do (D140).
+    for d in found.iter().take(SHOWN) {
+        let ours = if d.ours.is_null() { "missing".to_owned() } else { d.ours.to_string() };
+        let of = if d.leaves > 1 { format!(" (the first of {} in {})", d.leaves, d.field) } else { String::new() };
+        say("  field", format!("{}: original {}, port {ours}{of}", d.path, d.theirs));
+    }
+    if found.len() > SHOWN {
+        say("  more", format!("{} more fields differ", found.len() - SHOWN));
     }
     // A divergence after a scenario's edit is suspected of the edit first (D59): the state it made may
     // be one play can't reach.
@@ -1612,7 +1644,7 @@ fn report(
     }
     // Who wrote the first differing value: in the pass from tick t-1's sync point to tick t's, which a
     // watch numbers t.
-    let (path, _, _) = &found[0];
+    let path = &found[0].path;
     let Some((m, offset, size)) = mapped.iter().find_map(|m| locate(m, path, &k.types).map(|(o, s)| (m, o, s))) else {
         return Ok(());
     };
@@ -1842,6 +1874,14 @@ mod tests {
     use crate::knowledge::{Field, Struct};
 
     #[test]
+    fn a_field_that_differs_is_its_first_value_and_how_many() {
+        let original = json!([1, 2, 3, 4]);
+        let d = Differs::of("map", &original, &json!([1, 0, 3, 0])).expect("they differ");
+        assert_eq!((d.path.as_str(), &d.theirs, &d.ours, d.leaves), ("map[1]", &json!(2), &json!(0), 2));
+        assert!(Differs::of("map", &original, &original).is_none());
+    }
+
+    #[test]
     fn an_mz_program_s_load_image_is_past_its_header() {
         // A header of 2 paragraphs (32 bytes), 600 bytes in all: the last page's 88 of 2.
         let mut program = vec![0u8; 700];
@@ -1943,7 +1983,8 @@ mod tests {
         assert!(unset_matches("map", &json!([16, 0, 16]), &json!([16, 0, 16]), &mut found));
         assert!(found.is_empty());
         assert!(!unset_matches("map", &json!([16, 0, 16]), &json!([16, 1, 16]), &mut found));
-        assert_eq!(found, [("map[1]".to_owned(), json!(1), Value::Null)], "where it changed, the port has none");
+        let d = &found[0];
+        assert_eq!((d.path.as_str(), &d.theirs, &d.ours), ("map[1]", &json!(1), &Value::Null), "the port has none");
     }
 
     #[test]

@@ -540,6 +540,19 @@ pub fn differences(path: &str, original: &Value, port: &Value, max: usize, out: 
     }
 }
 
+/// How many places `original` and `port` differ in, as `differences` finds them, all of them.
+pub fn count_differences(original: &Value, port: &Value) -> usize {
+    match (original, port) {
+        (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
+            a.iter().zip(b).map(|(x, y)| count_differences(x, y)).sum()
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.iter().map(|(key, x)| count_differences(x, b.get(key).unwrap_or(&Value::Null))).sum()
+        }
+        _ => usize::from(original != port),
+    }
+}
+
 /// The value at a path into a decoded value (`[3].x`, `.y`, empty: itself).
 pub fn at_leaf<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     let (mut value, mut rest) = (value, path);
@@ -713,6 +726,8 @@ mod tests {
         let mut out = Vec::new();
         differences("enemies", &original, &port, 10, &mut out);
         assert_eq!(out, [("enemies[1].y".to_owned(), json!(4), json!(5))]);
+        assert_eq!(count_differences(&original, &port), 1);
+        assert_eq!(count_differences(&json!([1, 2, 3]), &json!([0, 2, 0])), 2);
         assert_eq!(at_leaf(&original, "[1].y"), Some(&json!(4)));
         assert_eq!((at_leaf(&original, ""), at_leaf(&original, "[2]")), (Some(&original), None));
         let state = json!({"player": {"x": 7}});
