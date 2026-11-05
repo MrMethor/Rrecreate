@@ -24,7 +24,7 @@ use crate::session::Session;
 use crate::snapshots::{self, Taken};
 use crate::trace::{SyncPoint, begin, sync_points};
 
-/// Calls shown of a chain, innermost first.
+/// Calls shown of a chain, innermost first, unless `--chain N` says.
 const CHAIN_SHOWN: usize = 3;
 /// Lines of accesses shown.
 const ACCESSES_SHOWN: usize = 40;
@@ -123,7 +123,7 @@ pub(crate) struct Writer {
 pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     let a = Args::parse(
         args,
-        &["--len", "--tick", "--ticks", "--limit", "--lines", "--before"],
+        &["--len", "--tick", "--ticks", "--limit", "--lines", "--before", "--chain"],
         &["--reads", "--cycles", "--quiet"],
     )?;
     let say = |label: &str, text: &dyn std::fmt::Display| {
@@ -133,7 +133,9 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     };
     let before: u64 = a.value("--before").map_or(Ok(u64::MAX), str::parse).map_err(|_| "--before is a cycle")?;
     let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles] [--limit N] \
-                 [--lines N]";
+                 [--lines N] [--chain N]";
+    let chain_shown: usize =
+        a.value("--chain").map_or(Ok(CHAIN_SHOWN), str::parse).map_err(|_| "--chain is a count of calls")?;
     let limit: u64 = a.value("--limit").map_or(Ok(10_000), str::parse).map_err(|_| "--limit is a count")?;
     let lines_shown: usize =
         a.value("--lines").map_or(Ok(ACCESSES_SHOWN), str::parse).map_err(|_| "--lines is a count")?;
@@ -186,7 +188,7 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
             Some(i) => (first + i as u64).to_string(),
             None => "-".to_owned(),
         };
-        let mut text = access.describe(&names);
+        let mut text = access.describe(&names, chain_shown);
         if a.has("--cycles") {
             text = format!("{text}, cycle {}", access.cycle);
         }
@@ -291,7 +293,9 @@ struct Access {
 }
 
 impl Access {
-    fn describe(&self, names: &Names) -> String {
+    /// The access as a line: what, the value (and the one before a write), by what, in the calls of its chain
+    /// (`chain_shown` of them, innermost first), and what a write copied.
+    fn describe(&self, names: &Names, chain_shown: usize) -> String {
         let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
         // As the named data's type reads it, where it is one of its elements; else a byte, word or
         // doubleword as the number the instruction wrote (little-endian: bytes E9 57 are 57E9h), and
@@ -315,13 +319,13 @@ impl Access {
         let frames = self.chain.as_array().cloned().unwrap_or_default();
         let mut chain: Vec<String> = frames
             .iter()
-            .take(CHAIN_SHOWN)
+            .take(chain_shown)
             .map(|f| {
                 let entry = names.function(f["entry"].as_str().unwrap_or("?"));
                 if f["interrupt"].as_bool().unwrap_or(false) { format!("interrupt {entry}") } else { entry }
             })
             .collect();
-        if frames.len() > CHAIN_SHOWN {
+        if frames.len() > chain_shown {
             chain.push("…".into());
         }
         let mut chain = if chain.is_empty() { String::new() } else { format!(" in {}", chain.join(" < ")) };

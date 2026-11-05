@@ -687,6 +687,9 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(drawn.contains("pixel   (64, 4): original 40, port 41"), "{drawn}");
     assert!(drawn.contains("write MEM+A0540 = 28h (was 20h) by VAULT.EXE+00581 in draw_cell < draw < main"), "{drawn}");
     assert!(drawn.contains("port      draw_cell (VAULT.EXE+004DD) is src/main.rs:"), "{drawn}");
+    // A write's chain, as many calls of it as asked.
+    let one = rrc.ok(&["watch", "play", "MEM+A0540", "--len", "1", "--tick", "102", "--ticks", "1", "--chain", "1"]);
+    assert!(one.contains("by VAULT.EXE+00581 in draw_cell < …"), "{one}");
     // The fields alone (D136): the logic matches past the screen it draws otherwise.
     let fields = rrc.ok(&["compare", "play", "--fields"]);
     assert!(fields.contains("match     every mapped field at all 400 ticks"), "{fields}");
