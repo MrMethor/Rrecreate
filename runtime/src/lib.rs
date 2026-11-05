@@ -183,6 +183,20 @@ impl Gates {
         }
         counts
     }
+
+    /// The pass arrived at the gated wait `sync`, having polled there `polled` times and gone round it `went_round`
+    /// times (hits that didn't count): whether the tick is there (D138). It is when the gate counts the hit
+    /// (`hit`); else, once the pass has polled the wait, when the original went round no more ([`Tick::spun`]) and
+    /// read nothing in a later round ([`Inputs::more_rounds`]), it is there all the same: Clockwork's gate sees a
+    /// device's change after the pass's last read (a button let go while the pass waited), which the port's,
+    /// comparing the inputs as the pass last read them (D132), can't. A wait just entered is polled first: the
+    /// original may leave it at its first read, never hitting its sync point. Without `spun` (a live play), once the
+    /// pass has polled it twice: a poll with nothing changed does what the one before it did.
+    pub fn arrives(&self, sync: &str, sources: &[&str], tick: &Tick, polled: u64, went_round: u64) -> bool {
+        let more = tick.inputs.more_rounds() || tick.spun.is_some_and(|spun| went_round < spun);
+        let polls = if tick.spun.is_some() { 1 } else { 2 };
+        self.hit(sync, sources, tick.inputs) || (!more && polled >= polls)
+    }
 }
 
 /// A call a part of the program not ported made into ported code in the pass (D98): the registers it
@@ -1132,5 +1146,20 @@ mod tests {
         first.write("mouse", 0, &[9]);
         assert!(gates.counts("click", &["mouse"], &first));
         assert!(gates.counts("other", &["mouse"], &first), "each sync point its own");
+    }
+
+    #[test]
+    fn a_wait_s_tick_is_where_the_original_went_round_no_more() {
+        let inputs = Inputs::new([("mouse".to_owned(), vec![1, 0])].into());
+        let mut gates = Gates::default();
+        gates.ticked("click", &["mouse"], &inputs);
+        let tick = |spun| Tick { number: 2, sync: "click", inputs: &inputs, spun };
+        // The button let go after the pass's last read: the port's gate sees nothing, the original counted it.
+        assert!(gates.arrives("click", &["mouse"], &tick(Some(0)), 1, 0), "it went round no more");
+        assert!(!gates.arrives("click", &["mouse"], &tick(Some(0)), 0, 0), "a wait just entered: polled first");
+        assert!(!gates.arrives("click", &["mouse"], &tick(Some(2)), 1, 0), "it went round twice more");
+        assert!(gates.arrives("click", &["mouse"], &tick(Some(2)), 3, 2));
+        assert!(!gates.arrives("click", &["mouse"], &tick(None), 1, 0), "a live play: not after one poll");
+        assert!(gates.arrives("click", &["mouse"], &tick(None), 2, 1), "nor before two");
     }
 }
