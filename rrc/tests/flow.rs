@@ -946,6 +946,9 @@ tick = 150"
     assert!(watched.contains("write score = 5000 (was 99) by the session's edit"), "{watched}");
     let compared = rrc.ok(&["compare", "play"]);
     assert!(compared.contains("match     every mapped field at all 209 ticks"), "{compared}");
+    // In lockstep, what the edits wrote at their tick isn't a difference of that pass (D146).
+    let stepped = rrc.ok(&["compare", "play", "--lockstep"]);
+    assert!(!stepped.contains("differs   score") && !stepped.contains("differs   enemies"), "{stepped}");
 
     // A field the port's state hasn't: missing at the first tick.
     let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();

@@ -1260,9 +1260,11 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
                 count(&mut census.unset, path, t, String::new());
                 continue;
             }
+            // What a scenario's edit wrote at this tick isn't the pass's doing (D146).
+            let edited = sets.get(&t);
             let mut differ = Vec::new();
-            differences(&m.field, theirs, &m.masked(own), 1, &mut differ);
-            if let Some((at, o, p)) = differ.first() {
+            differences(&m.field, theirs, &m.masked(own), 1 + edited.map_or(0, |s| s.len()), &mut differ);
+            if let Some((at, o, p)) = differ.iter().find(|(at, ..)| !edited.is_some_and(|s| s.contains_key(at))) {
                 count(&mut census.fields, path, t, format!("{at}: original {o}, port {p}"));
             }
         }
