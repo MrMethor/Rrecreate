@@ -118,7 +118,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let file = |f: &str| work.join(f).to_string_lossy().into_owned();
     let after = transplant.or(resume).unwrap_or(0);
-    let sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
+    let sets = edit_sets(repo, name.as_str(), &trace, &mapped, &original, &k.types, after)?;
     let mut feeds = BTreeMap::new();
     let fed = match a.value("--feed") {
         Some(fields) => feed(&mut feeds, &mapped, &original, fields, after)?,
@@ -834,9 +834,11 @@ fn decoded(m: &Mapped, bytes: &[u8], r: &Reader) -> Result<Value, String> {
 }
 
 /// The fields the port gets set by the scenario's edits after tick `after` (D64), by tick: the mapped
-/// leaves each edit wrote, with the original's values at its tick. An edit of memory nothing maps is
-/// said: the port can't get it.
+/// leaves each edit wrote, with the original's values at its tick; an item through a pointer is where the pointer
+/// points at that tick (D147). An edit of memory nothing maps is said: the port can't get it.
 fn edit_sets(
+    repo: &Repo,
+    name: &str,
     trace: &Trace,
     mapped: &[Mapped],
     original: &[Vec<Value>],
@@ -856,21 +858,22 @@ fn edit_sets(
         let (start, end) = (id.offset(), id.offset() + hex.len() as u32 / 2);
         let mut covered = 0;
         for (m, values) in mapped.iter().zip(original) {
-            // An edit is at an ID: an item through a pointer is the pointer's target, elsewhere.
-            if m.via.is_some() || (m.id.module(), m.id.part()) != (id.module(), id.part()) {
+            // A list's nodes and a chain's last pointer aren't followed here: a pointer's own target is.
+            if m.via.as_ref().is_some_and(|via| !via.then.is_empty() || via.next.is_some()) {
                 continue;
             }
-            let (mut offset, to) = (start.max(m.id.offset()), end.min(m.id.offset() + m.size));
-            while offset < to {
-                let Some((path, leaf, inner)) = crate::values::place(&m.ty, offset - m.id.offset(), types) else {
-                    break;
-                };
-                let width = crate::values::size(&leaf, types)? - inner;
-                let value = crate::values::at_leaf(&values[(tick - 1) as usize], &path).cloned().unwrap_or_default();
-                sets.entry(tick).or_default().insert(format!("{}{path}", m.field), value);
-                covered += width.min(to - offset);
-                offset += width;
+            let Some(base) = located(repo, name, trace, m, 0, tick)? else {
+                continue;
+            };
+            if (base.module(), base.part()) != (id.module(), id.part()) {
+                continue;
             }
+            let value = &values[(tick - 1) as usize];
+            let set = sets.entry(tick).or_default();
+            covered += edited_leaves(m, base.offset(), (start, end), value, types, set)?;
+        }
+        if sets.get(&tick).is_some_and(serde_json::Map::is_empty) {
+            sets.remove(&tick);
         }
         if covered < end - start {
             say(
@@ -883,6 +886,30 @@ fn edit_sets(
         }
     }
     Ok(sets)
+}
+
+/// The leaves of `m`, at `base` in memory now, that an edit of the bytes `start..end` wrote, each with its value in
+/// `value` (the field's at the edit's tick), into `set`. How many of the edit's bytes they cover.
+fn edited_leaves(
+    m: &Mapped,
+    base: u32,
+    (start, end): (u32, u32),
+    value: &Value,
+    types: &Types,
+    set: &mut serde_json::Map<String, Value>,
+) -> Result<u32, String> {
+    let (mut offset, to) = (start.max(base), end.min(base + m.size));
+    let mut covered = 0;
+    while offset < to {
+        let Some((path, leaf, inner)) = crate::values::place(&m.ty, offset - base, types) else {
+            break;
+        };
+        let width = crate::values::size(&leaf, types)? - inner;
+        set.insert(format!("{}{path}", m.field), crate::values::at_leaf(value, &path).cloned().unwrap_or_default());
+        covered += width.min(to - offset);
+        offset += width;
+    }
+    Ok(covered)
 }
 
 /// Feeds the port the original's values of `fields` (mapped fields, or the groups they are in: `random`
@@ -1169,7 +1196,7 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let file = |f: &str| work.join(f).to_string_lossy().into_owned();
     let after = 1;
-    let sets = edit_sets(&trace, &mapped, &original, &k.types, after)?;
+    let sets = edit_sets(repo, name, &trace, &mapped, &original, &k.types, after)?;
     let mut feeds = BTreeMap::new();
     for (m, values) in mapped.iter().zip(&original) {
         feed_field(&mut feeds, m, values, after);
@@ -1968,6 +1995,30 @@ mod tests {
         assert_eq!(state["score"], json!(0x0504));
         assert_eq!(state["saved.block"], json!([8, 9, 10]));
         assert!(!state.contains_key("heap") && !state.contains_key("other"));
+    }
+
+    #[test]
+    fn an_edit_sets_the_leaves_it_wrote_wherever_the_item_is_now() {
+        let m = Mapped {
+            field: "table".into(),
+            id: "GAME.EXE+00010".parse().unwrap(),
+            ty: "u16[4]".into(),
+            size: 8,
+            via: None,
+            mask: None,
+            into: None,
+        };
+        let types = Types::default();
+        let value = json!([10, 11, 12, 13]);
+        let mut set = serde_json::Map::new();
+        // The item is at 1000h now, whatever its own ID: the edit's bytes 1002h to 1006h are its second and third.
+        let covered = edited_leaves(&m, 0x1000, (0x1002, 0x1006), &value, &types, &mut set).unwrap();
+        assert_eq!(covered, 4);
+        assert_eq!(Value::Object(set), json!({"table[1]": 11, "table[2]": 12}));
+        // An edit past it writes none of it.
+        let mut set = serde_json::Map::new();
+        assert_eq!(edited_leaves(&m, 0x1000, (0x1008, 0x100A), &value, &types, &mut set).unwrap(), 0);
+        assert!(set.is_empty());
     }
 
     #[test]

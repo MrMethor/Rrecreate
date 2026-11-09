@@ -715,6 +715,13 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D147. A scenario's edit reaches the port through a mapped pointer. Accepted 2026-11-09.
+`rrc compare` gives the port an edit (D64) of memory that a mapped item reaches through a pointer, where that pointer
+points at the edit's tick; a list's nodes and a chain's last pointer are still said and not given.
+**Why:** an edit is at an ID, and only items at an ID were looked at, so the port never got an edit of what's on the heap:
+Arena's creature records, a scenario's harder bite, diverged at the edit's own tick. The port is told each leaf, as for any
+item; a pointer's target is the only thing that changes, and `located` already finds it for `rrc watch`.
+
 ### D146. A lockstep comparison doesn't count what a scenario's edit wrote at its tick. Accepted 2026-11-08.
 `rrc compare --lockstep` leaves out of a pass's differences the leaves a scenario's edit (D64) set at that tick.
 **Why:** an edit is made at the tick's sync point, so the original's state there has it and the pass that led up to
