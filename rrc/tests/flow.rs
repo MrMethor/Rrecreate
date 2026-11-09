@@ -1074,6 +1074,8 @@ fn a_session_starts_from_another_s_tick() {
     rrc.ok(&["record", "later"]);
     assert!(rrc.ok(&["peek", "later", "--tick", "10", "score"]).contains("value     score = 77"));
     assert!(!rrc.ok(&["peek", "later", "--tick", "9", "score"]).contains("score = 77"), "not before its tick");
+    // A question about the whole run is about that run, the edit in it (D152): else it's refused, its end not the recording's.
+    rrc.ok(&["suspects", "later", "--lines", "0"]);
     let listed = rrc.ok(&["session"]);
     assert!(listed.contains("later: 3 s, 110 ticks, from play's tick 100, 1 edit"), "{listed}");
     // A sync point added to the base numbers its ticks otherwise (D128): `later` starts where it did, its base tick

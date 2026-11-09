@@ -597,7 +597,8 @@ rrc quirk enemy_overrun --at GAME.EXE+002FF --what "the sixth enemy reads the wo
 rrc quirk
 ```
 
-`rrc suspects` lists the session's candidates: instructions that reach past named data's ends (`past`; a
+`rrc suspects` runs the session as its recording did, its edits at their ticks, and refuses if it ends otherwise (D152). It
+lists the session's candidates: instructions that reach past named data's ends (`past`; a
 `sweep` is a clear or a copy over many, not an index) and that read memory nothing wrote (`uninit`). Read each
 one's code; a divergence where the port did what the code clearly means and the original didn't is another
 source. Register the bug, and branch on it where the port does that code: `if rrc_runtime::keeps("enemy_overrun")

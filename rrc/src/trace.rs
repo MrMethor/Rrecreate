@@ -677,6 +677,32 @@ pub(crate) fn begin(
     Ok((clockwork, loaded, names))
 }
 
+/// The session's run as its recording ran it, for a question about the whole of it (D152): with the sync points set, so
+/// that its edits are written at their ticks (D64).
+pub(crate) fn begin_run(repo: &Repo, session: &Session) -> Result<(Clockwork, Value), String> {
+    let k = Knowledge::load(&repo.knowledge())?;
+    let (clockwork, loaded, _) = begin(repo, session, &sync_points(&k)?)?;
+    Ok((clockwork, loaded))
+}
+
+/// Runs what [`begin_run`] began to the session's end, what `run` answered. Refused if the session is recorded and its state
+/// there isn't the recording's: what a question found wouldn't be about the run the session has.
+pub(crate) fn run_to_end(repo: &Repo, session: &Session, clockwork: &mut Clockwork) -> Result<Value, String> {
+    let ran = clockwork.ask("run", json!({ "until_ms": (session.seconds * 1000.0) as u64 }))?;
+    if let Some(recorded) = &session.trace {
+        let cache = Cache::open(&repo.local)?;
+        let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
+        let now = clockwork.ask("hash", Value::Null)?;
+        if now["state_hash"].as_str() != Some(trace.end.state_hash.as_str()) {
+            return Err(format!(
+                "this run ended in state {}, its recording in {}: not the run the session has (rrc record it?)",
+                now["state_hash"], trace.end.state_hash
+            ));
+        }
+    }
+    Ok(ran)
+}
+
 /// The knowledge's sync points as a trace names them, their gates' names resolved.
 pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
     k.ticks

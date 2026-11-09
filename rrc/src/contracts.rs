@@ -11,7 +11,6 @@
 use serde_json::{Value, json};
 
 use crate::cache::Cache;
-use crate::clockwork::Clockwork;
 use crate::repo::Repo;
 use crate::session::Session;
 
@@ -96,9 +95,9 @@ pub(crate) fn signatures(repo: &Repo, session: &Session) -> Result<Vec<Signature
         Some(kept) => kept,
         None => {
             crate::say("contracts", "the session's run with contract inference, once (minutes)");
-            let (mut clockwork, _) = Clockwork::session(repo, session)?;
+            let (mut clockwork, _) = crate::trace::begin_run(repo, session)?;
             clockwork.ask("contracts", json!({}))?;
-            clockwork.ask("run", json!({ "ms": crate::snapshots::to_run(repo, session)? }))?;
+            crate::trace::run_to_end(repo, session, &mut clockwork)?;
             let found = clockwork.ask("contracts_end", Value::Null)?;
             // Only what a signature needs: the memory each function touched isn't.
             let functions: Vec<Value> = found["functions"]

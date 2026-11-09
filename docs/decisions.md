@@ -715,6 +715,15 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D152. A question about a whole run is about the recorded run. Accepted 2026-11-09.
+`rrc suspects`, `rrc files` and `rrc contracts` start as a recording does (`trace::begin_run`: the sync points set, so the
+edits are written at their ticks) and run to the session's end by the same clock (`until_ms`), and the run is refused if its
+state hash there isn't the recording's (`trace::run_to_end`).
+**Why:** they started with no sync points, and Clockwork writes a scenario's edits as ticks are counted, so on every scenario the
+edits never happened: a caster with no spell points cast nothing, and `rrc suspects` looked through a run nobody recorded. It
+showed only because `rrc unrun` (D151) said no session ever launched a missile, when the comparisons had just matched
+one. Nothing checked that an analysis's run was the session's; the state hash at the end says so at no cost.
+
 ### D151. What the port's code names and no session runs is listed. Accepted 2026-11-09.
 `rrc suspects` keeps what each session's run executed, by the run; `rrc unrun` takes the places in the original's code that the
 port's code names (its IDs, `sources`) and lists those no session executed, by function, the whole list in `.rrc/unrun.tsv`
@@ -732,8 +741,7 @@ finds when it starts, and `uninit_unwritten` writes it. It's kept in the cache b
 **Why:** tracking began at the snapshot, so everything the program had written before it counted as never written: 457
 instructions of a 2-second session "read memory nothing wrote", and the real ones among them couldn't be told apart. D148 has
 every finding judged, and judging those would have meant nothing. Running each session from power-on instead would run
-its bases again each time; the map is cheap to keep. An edit a session makes at its start isn't counted as written, as
-it wasn't from power-on.
+its bases again each time; the map is cheap to keep.
 
 ### D149. A quirk's switch is one a player and a test can flip. Accepted 2026-11-09, with the person.
 `PORT play --fix NAME` (repeatable) fixes a quirk for that game, its name checked against `Live::QUIRKS`, the port's
@@ -756,7 +764,7 @@ softened it to "named in comments and notes" through its summaries. Some 25 of t
 one registered, so nothing could show a bug fixed by accident, on a path no session reaches. Reminding doesn't hold; a
 refusal does. A word search over-reports, and the answer to that is to name the quirk by the word. `rrc suspects` had also
 never run on a session from another's tick: it ran the session's whole length again from there, as `rrc files` and the
-contracts did (`snapshots::to_run`). With it, `rrc check`'s overlap rule takes a named part wholly inside a bigger item (a
+contracts did (now D152). With it, `rrc check`'s overlap rule takes a named part wholly inside a bigger item (a
 table's entry, a record's field) as fine and only half of one as a problem: naming an entry of a table isn't an error.
 
 ### D147. A scenario's edit reaches the port through a mapped pointer. Accepted 2026-11-09.

@@ -161,7 +161,7 @@ pub fn unwritten(repo: &Repo, session: &Session) -> Result<Option<std::path::Pat
         return Ok(Some(cache.path(&hash)));
     }
     let inherited = unwritten(repo, &base)?;
-    let (mut clockwork, _) = Clockwork::session(repo, &base)?;
+    let (mut clockwork, _) = crate::trace::begin_run(repo, &base)?;
     clockwork.ask("uninit", track_from(inherited.as_deref()))?;
     let now = clockwork::number(&clockwork.ask("regs", Value::Null)?, "cycles")?;
     if start.cycle > now {
@@ -182,13 +182,6 @@ pub fn track_from(unwritten: Option<&std::path::Path>) -> Value {
         Some(file) => json!({ "unwritten": file }),
         None => json!({}),
     }
-}
-
-/// How long a whole run of the session is from where it starts: its length less the time from power-on it starts at
-/// (D118, D148). A `run` is for that long, not until that time.
-pub fn to_run(repo: &Repo, session: &Session) -> Result<u64, String> {
-    let start = based(repo, session)?.map_or(0, |(_, ms)| ms);
-    Ok(((session.seconds * 1000.0) as u64).saturating_sub(start))
 }
 
 /// Where a session based on another starts (D118): its base's snapshot at the base's tick, in the cache, and its

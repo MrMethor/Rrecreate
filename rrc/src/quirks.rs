@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 
 use crate::analysis::Analysis;
 use crate::args::Args;
-use crate::clockwork::Clockwork;
 use crate::knowledge::{Knowledge, is_name, parse_id};
 use crate::places::Places;
 use crate::repo::{Repo, read_toml, write_toml};
@@ -314,11 +313,11 @@ pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
     }
     // From another session's tick, what was written before it isn't a read of nothing (D150).
     let unwritten = crate::snapshots::unwritten(repo, &session)?;
-    let (mut clockwork, _) = Clockwork::session(repo, &session)?;
+    let (mut clockwork, _) = crate::trace::begin_run(repo, &session)?;
     clockwork.ask("bounds", json!({ "objects": objects }))?;
     clockwork.ask("uninit", crate::snapshots::track_from(unwritten.as_deref()))?;
     clockwork.ask("coverage", json!({}))?;
-    clockwork.ask("run", json!({ "ms": crate::snapshots::to_run(repo, &session)? }))?;
+    crate::trace::run_to_end(repo, &session, &mut clockwork)?;
     let bounds = clockwork.ask("bounds_end", Value::Null)?;
     let uninit = clockwork.ask("uninit_end", Value::Null)?;
     let covered = clockwork.ask("coverage_end", Value::Null)?;
