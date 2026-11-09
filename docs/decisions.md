@@ -715,6 +715,20 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D148. The rule that every bug is registered is checked, not remembered. Accepted 2026-11-09, with the person.
+`rrc check` fails, and `rrc status` names the first, while a comment in the port's code says `bug` or `quirk` with no
+registered quirk named within two lines (unless it says `not the original's`); it branches on a `keeps` not registered; has a registered quirk nothing branches on; has a session
+whose run `rrc suspects` hasn't looked through; or has a suspect not judged. `rrc suspects` keeps what it finds in
+`suspects.toml`, each until `--judge` says it's a quirk or why it isn't a bug. `rrc hooks` (and `rrc init`) writes a commit
+hook that runs `rrc check`. `rrc rules` prints the playbook's rules and the port's `RULES.md` as they're written, for a
+session's start and after a summary. `docs/porting.md`'s rules say both this and that nothing departs silently.
+**Why:** the rule (D18, D74) was in the playbook, far from the rules an agent rereads, and Arena's agent's own handoff
+softened it to "named in comments and notes" through its summaries. Some 25 of the original's bugs ended up as comments with
+one registered, so nothing could show a bug fixed by accident, on a path no session reaches. Reminding doesn't hold; a
+refusal does. A word search over-reports, and the answer to that is to name the quirk by the word. `rrc suspects` had also
+never run on a session from another's tick: it ran the session's whole length again from there, as `rrc files` and the
+contracts did (`snapshots::to_run`).
+
 ### D147. A scenario's edit reaches the port through a mapped pointer. Accepted 2026-11-09.
 `rrc compare` gives the port an edit (D64) of memory that a mapped item reaches through a pointer, where that pointer
 points at the edit's tick; a list's nodes and a chain's last pointer are still said and not given.

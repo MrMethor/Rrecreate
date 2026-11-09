@@ -5,7 +5,7 @@
 //! progress` counts the functions it names. An offset alone (`+0A2F0`, not part of an ID) names the
 //! program's own.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Folders of a port repository that hold no code.
@@ -31,6 +31,69 @@ pub fn naming(root: &Path, what: &str, short: Option<&str>, max: usize) -> Vec<(
         true
     });
     found
+}
+
+/// The quirks the port's code branches on: every `keeps("name")`, each with where it first does.
+pub fn kept(root: &Path) -> BTreeMap<String, (String, usize)> {
+    let mut found = BTreeMap::new();
+    each_file(root, root, &mut |relative, text| {
+        for (i, line) in text.lines().enumerate() {
+            for name in kept_in(line) {
+                found.entry(name.to_owned()).or_insert_with(|| (relative.to_owned(), i + 1));
+            }
+        }
+        true
+    });
+    found
+}
+
+/// The names in `line`'s `keeps("name")`s.
+fn kept_in(line: &str) -> impl Iterator<Item = &str> {
+    line.match_indices("keeps(\"").filter_map(|(at, call)| {
+        let rest = &line[at + call.len()..];
+        rest.find('"').map(|end| &rest[..end])
+    })
+}
+
+/// Where the port's code calls something a bug or a quirk of the original without naming a quirk of `names` on that
+/// line or the two either side (D148): (path, line number, the line).
+pub fn unmarked(root: &Path, names: &[String]) -> Vec<(String, usize, String)> {
+    let mut found = Vec::new();
+    each_file(root, root, &mut |relative, text| {
+        let lines: Vec<&str> = text.lines().collect();
+        for at in unmarked_lines(&lines, names) {
+            found.push((relative.to_owned(), at + 1, lines[at].trim().to_owned()));
+        }
+        true
+    });
+    found
+}
+
+/// A line's comment, if it has one: what's after its `//`, `/*` or `#`, or all of it when it goes on a block's ` * `.
+fn comment(line: &str) -> Option<&str> {
+    let at = ["//", "/*", "#"].iter().filter_map(|mark| line.find(mark)).min();
+    match at {
+        Some(at) => Some(&line[at..]),
+        None => line.trim_start().starts_with('*').then_some(line),
+    }
+}
+
+/// The lines whose comment says `quirk` or `bug` as a word, and doesn't say it's `not the original's` (a port's own), with
+/// none of `names` near.
+fn unmarked_lines(lines: &[&str], names: &[String]) -> Vec<usize> {
+    let says = |line: &str| {
+        comment(line).is_some_and(|text| {
+            !text.contains("not the original's")
+                && text
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .any(|word| matches!(word.to_ascii_lowercase().as_str(), "quirk" | "quirks" | "bug" | "bugs"))
+        })
+    };
+    let named = |at: usize| {
+        let near = &lines[at.saturating_sub(2)..(at + 3).min(lines.len())];
+        near.iter().any(|line| names.iter().any(|name| self::names(line, name)))
+    };
+    (0..lines.len()).filter(|&at| says(lines[at]) && !named(at)).collect()
 }
 
 /// The IDs the port's files name, as IDs are written (`GAME.EXE+0A2F0`, `GAME.EXE#2+00010`), with `module`'s
@@ -118,6 +181,38 @@ fn names(line: &str, what: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bug_said_in_the_code_names_its_quirk() {
+        let names = ["overrun".to_owned()];
+        let lines = [
+            "// a bug: reads past the table",
+            "let a = 1;",
+            "// debug output, and a bugle",
+            "",
+            "// a quirk: quirk overrun",
+            "let b = 2;",
+            "",
+            "",
+            "",
+            "// Quirk, this one too.",
+            "",
+            "",
+            "",
+            "fn bug(which: &str) -> bool {",
+            "let a = 1; // a bug of the test's, not the original's",
+            "unported(\"a bug\");",
+        ];
+        assert_eq!(unmarked_lines(&lines, &names), [0, 9], "a comment's word, and only the original's");
+        let near = ["// a bug", "x", "if rrc_runtime::keeps(\"overrun\") {"];
+        assert_eq!(unmarked_lines(&near, &names), [] as [usize; 0], "two lines off is near");
+    }
+
+    #[test]
+    fn the_quirks_kept_are_found_by_their_calls() {
+        let line = r#"if rrc_runtime::keeps("one") && keeps("two") { keeps(x) }"#;
+        assert_eq!(kept_in(line).collect::<Vec<_>>(), ["one", "two"]);
+    }
 
     #[test]
     fn the_port_s_code_is_found_by_the_original_s_ids() {

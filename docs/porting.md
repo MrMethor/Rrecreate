@@ -57,6 +57,12 @@ the original judges the port, not the code it was read from.
    few tries of one approach haven't answered, change the source, not the number of tries.
 6. **The original is the specification.** Code, sources and files explain it; where they disagree with how
    the original runs, the run wins, and a disagreement worth keeping is a note or a quirk.
+7. **Every bug of the original is registered as it's found** (`rrc quirk`, "Quirks" below), and the port branches on
+   `rrc_runtime::keeps`. A comment or a note saying so doesn't count: `rrc check` refuses it. Look for them too: `rrc
+   suspects` on every session, and each finding judged.
+8. **Nothing departs from the original silently.** Where the port would do other than the original does (a guard
+   against its divide by zero, a reading of what the code means, a value it can't model), it's made faithful,
+   registered as a quirk, or an `unported` note where it happens.
 
 **Where to start, by question:**
 
@@ -598,6 +604,15 @@ source. Register the bug, and branch on it where the port does that code: `if rr
 { the original's way } else { the fix }`. `rrc quirk` lists each quirk with the port's code that names it.
 Comparisons keep every quirk. A quirk that depends on the original's memory layout (a read past a table
 returns its neighbour) reproduces that neighbour's data deliberately.
+
+A comparison only shows what a session reaches and what's mapped, so a bug fixed by accident elsewhere shows
+nowhere: this is why they're registered as they're found. `rrc check` refuses (and `rrc status` names, D148) a comment
+in the port's code that says `bug` or `quirk` with no registered quirk named within two lines (a bug of the port's own
+says `not the original's`), a `keeps` not registered, a
+quirk nothing branches on, a session's run that `rrc suspects` hasn't looked through, and a suspect not judged (`rrc
+suspects --judge ID --quirk NAME`, or `--not-a-bug WHY`, kept in `suspects.toml`). `rrc hooks` writes a commit hook that
+refuses a commit while `rrc check` fails (`rrc init` does too); don't skip it. `rrc rules` prints the rules as they're
+written, with the port's own from `RULES.md`, for the start of a session and after a summary.
 
 ## Naming
 

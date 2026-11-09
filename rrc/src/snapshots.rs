@@ -149,6 +149,13 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     Ok((clockwork, loaded))
 }
 
+/// How long a whole run of the session is from where it starts: its length less the time from power-on it starts at
+/// (D118, D148). A `run` is for that long, not until that time.
+pub fn to_run(repo: &Repo, session: &Session) -> Result<u64, String> {
+    let start = based(repo, session)?.map_or(0, |(_, ms)| ms);
+    Ok(((session.seconds * 1000.0) as u64).saturating_sub(start))
+}
+
 /// Where a session based on another starts (D118): its base's snapshot at the base's tick, in the cache, and its
 /// time from power-on (ms). None for a session from power-on.
 pub fn based(repo: &Repo, session: &Session) -> Result<Option<(String, u64)>, String> {

@@ -10,7 +10,7 @@
 //! Each function names the original's it reimplements by its ID (DESIGN.md §6.6), which `rrc compare`
 //! finds when that one wrote a value the port has otherwise.
 //!
-//! `TOY_BUG=1` leaves a bug in: a bounce doesn't count; `TOY_BUG=trail`, another: the trail keeps y.
+//! `TOY_BUG=1` leaves a bug in (not the original's): a bounce doesn't count; `TOY_BUG=trail`, another: the trail keeps y.
 //! `rrc`'s tests use them to see a divergence found, and who wrote the original's value.
 
 use rrc_runtime::{Simulation, Tick};
@@ -192,7 +192,7 @@ impl Simulation for Toy {
     }
 }
 
-/// Whether `TOY_BUG` asks for this bug.
+/// Whether `TOY_BUG` asks for this bug (not the original's).
 fn bug(which: &str) -> bool {
     std::env::var("TOY_BUG").is_ok_and(|b| b == which)
 }

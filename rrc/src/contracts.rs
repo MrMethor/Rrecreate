@@ -98,7 +98,7 @@ pub(crate) fn signatures(repo: &Repo, session: &Session) -> Result<Vec<Signature
             crate::say("contracts", "the session's run with contract inference, once (minutes)");
             let (mut clockwork, _) = Clockwork::session(repo, session)?;
             clockwork.ask("contracts", json!({}))?;
-            clockwork.ask("run", json!({ "ms": (session.seconds * 1000.0) as u64 }))?;
+            clockwork.ask("run", json!({ "ms": crate::snapshots::to_run(repo, session)? }))?;
             let found = clockwork.ask("contracts_end", Value::Null)?;
             // Only what a signature needs: the memory each function touched isn't.
             let functions: Vec<Value> = found["functions"]

@@ -222,7 +222,7 @@ pub(crate) fn traced(repo: &Repo, session: &Session) -> Result<(Vec<Access>, f64
     // Calls tracked from power-on, so each access has its whole chain.
     clockwork.ask("calls", json!({"on": true}))?;
     clockwork.ask("files", json!({}))?;
-    let ran = clockwork.ask("run", json!({ "ms": (session.seconds * 1000.0) as u64 }))?;
+    let ran = clockwork.ask("run", json!({ "ms": crate::snapshots::to_run(repo, session)? }))?;
     let found = clockwork.ask("files_end", Value::Null)?;
     let accesses: Vec<Access> = serde_json::from_value(found["accesses"].clone()).map_err(|e| e.to_string())?;
     let (cycles, ms) = (clockwork::number(&ran, "cycles")?, clockwork::number(&ran, "ms")?);

@@ -12,7 +12,7 @@
 //! palette, the level's map and the player) and `Screen`, which draws it as `show_title` and the play loop's
 //! `draw` draw it, its own record of what it drew as theirs is (`drawn_level`, `drawn_x`, `drawn_y`) and its
 //! count of passes the player's colour blinks by (`blink`): from a transplant, the original's (D110,
-//! `mapping.toml`'s `[[present]]`). `VAULT_BUG=colour` leaves a bug in: walls are drawn in colour 41.
+//! `mapping.toml`'s `[[present]]`). `VAULT_BUG=colour` leaves a bug in (not the original's): walls are drawn in colour 41.
 //!
 //! `vault-port play` plays it in a window (D119): `Devices` are the original's INT 08h and INT 09h handlers,
 //! given the host's clock and keyboard.

@@ -61,6 +61,7 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         say("quirks", quirks.quirks.len());
     }
     problems.extend(quirks.problems(&repo.module()));
+    problems.extend(crate::quirks::open(repo)?);
     for problem in &problems {
         say("problem", problem);
     }

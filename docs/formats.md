@@ -416,6 +416,24 @@ pointer as `*POINTER`, with the pointer). `rrc check` checks the mapping.
 frame): neither traced nor compared, but read at a transplant's or a resume's tick and given to the
 presentation (`--presentation`, below).
 
+## `suspects.toml`: what `rrc suspects` found
+
+Written by `rrc suspects`, read by `rrc check` and `rrc status` (D148):
+
+```toml
+[[ran]]                         # a session's run that was looked through; a new run is looked through again
+session = "first-level"
+run = "fe870e9e..."             # the trace's run hash
+
+[[suspect]]
+at = "GAME.EXE+002FF"           # the instruction
+kind = "past"                   # past: past named data's end; uninit: reads memory nothing wrote
+what = "table (GAME.EXE+1E0A4, 16 bytes): offsets 16 17"
+sessions = ["first-level"]      # the sessions that find it
+verdict = "quirk enemy_overrun" # or "not a bug: why"; none: not judged yet (a quirk registered at it counts)
+provenance = "agent:..."
+```
+
 ## `quirks.toml`: the quirk register
 
 ```toml

@@ -62,7 +62,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          library functions the signature packs know get their names; functions the
                          knowledge names that Ghidra didn't find are added, and with --session,
                          those the session's run called (reached through vectors and pointers)
-  check                  the knowledge files: IDs, names, sizes, ticks, types (and against the image)
+  check                  the knowledge files: IDs, names, sizes, ticks, types (and against the image); and that
+                         every bug of the original is registered and branched on, and every suspect judged (D148)
+  hooks                  the commit hook that refuses a commit while rrc check fails
+  rules                  the playbook's rules and the port's own (RULES.md), as they're written
   name ID NAME           name a function (--evidence TEXT, --confidence 0-1, --by WHO: who decided,
                          else RRC_BY, else agent)
   data ID NAME [--size N] [--type T]
@@ -204,7 +207,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          with the port's code that names it; or one added, changed or removed
   suspects SESSION [--lines N]
                          quirk candidates in the session's run: the original's instructions that
-                         reach past named data's ends, and that read memory nothing wrote
+                         reach past named data's ends, and that read memory nothing wrote; kept in
+                         suspects.toml until judged
+  suspects --judge ID (--quirk NAME | --not-a-bug WHY) [--by WHO]
+                         what a suspect turned out to be
   sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]
                          a library signature pack (sigs/README.md) from this analysis and the linker
                          map of the same build: the library functions the map names, by their
@@ -236,6 +242,8 @@ pub fn main() -> ExitCode {
         Some("game") => here().and_then(|mut repo| setup::game(&mut repo, rest)),
         Some("analyze") => here().and_then(|repo| analysis::analyze(&repo, rest)),
         Some("check") => here().and_then(|repo| naming::check(&repo)),
+        Some("hooks") => here().and_then(|repo| setup::hooks(&repo)),
+        Some("rules") => Ok(setup::rules(here().ok().as_ref())),
         Some("name") => here().and_then(|repo| naming::name(&repo, rest)),
         Some("data") => here().and_then(|repo| naming::data(&repo, rest)),
         Some("forget") => here().and_then(|repo| naming::forget(&repo, rest)),

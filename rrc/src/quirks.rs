@@ -22,6 +22,7 @@ use crate::session::Session;
 use crate::trace::Trace;
 
 pub const QUIRKS: &str = "quirks.toml";
+pub const SUSPECTS: &str = "suspects.toml";
 /// Suspects shown of each kind.
 const SHOWN: usize = 20;
 /// An instruction that reaches past this many named data is a sweep (a clear or a copy running over
@@ -83,6 +84,139 @@ impl Quirks {
         }
         problems
     }
+}
+
+/// What `rrc suspects` found (D148): each instruction, until it's judged a quirk or not a bug, and which runs of which
+/// sessions have been looked through.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Suspects {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ran: Vec<Ran>,
+    #[serde(default, rename = "suspect", skip_serializing_if = "Vec::is_empty")]
+    pub suspects: Vec<Suspect>,
+}
+
+/// A session's run that `rrc suspects` looked through.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Ran {
+    pub session: String,
+    pub run: String,
+}
+
+/// An instruction `rrc suspects` found.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Suspect {
+    /// The instruction: an ID.
+    pub at: String,
+    /// `past` named data's end, or `uninit`: reads memory nothing wrote.
+    pub kind: String,
+    /// What it did, as first found.
+    pub what: String,
+    /// The sessions that find it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<String>,
+    /// `quirk NAME`, or `not a bug: why`. Empty: not judged yet.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub verdict: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provenance: String,
+}
+
+impl Suspects {
+    pub fn load(repo: &Repo) -> Result<Suspects, String> {
+        let path = repo.root.join(SUSPECTS);
+        if path.is_file() { read_toml(&path) } else { Ok(Suspects::default()) }
+    }
+
+    fn save(&self, repo: &Repo) -> Result<(), String> {
+        write_toml(&repo.root.join(SUSPECTS), self)
+    }
+
+    /// `name`'s findings of this run in place of its last: an instruction found again keeps its verdict; one no
+    /// session finds any more goes, unless it was judged.
+    fn found(&mut self, name: &str, run: &str, found: Vec<Suspect>) {
+        for suspect in &mut self.suspects {
+            suspect.sessions.retain(|s| s != name);
+        }
+        for new in found {
+            match self.suspects.iter_mut().find(|s| s.at == new.at && s.kind == new.kind) {
+                Some(old) => old.sessions.push(name.to_owned()),
+                None => self.suspects.push(Suspect { sessions: vec![name.to_owned()], ..new }),
+            }
+        }
+        self.suspects.retain(|s| !s.sessions.is_empty() || !s.verdict.is_empty());
+        self.suspects.sort_by(|a, b| (&a.at, &a.kind).cmp(&(&b.at, &b.kind)));
+        self.ran.retain(|r| r.session != name);
+        self.ran.push(Ran { session: name.to_owned(), run: run.to_owned() });
+        self.ran.sort_by(|a, b| a.session.cmp(&b.session));
+    }
+}
+
+/// What the rule that every bug of the original is registered and branched on (D18, D74, D148) still asks of the port:
+/// `rrc check` refuses these and `rrc status` names the first.
+pub(crate) fn open(repo: &Repo) -> Result<Vec<String>, String> {
+    let register = Quirks::load(repo)?;
+    let names: Vec<String> = register.quirks.iter().map(|q| q.name.clone()).collect();
+    let mut open = Vec::new();
+    let kept = crate::sources::kept(&repo.root);
+    for (name, (file, line)) in &kept {
+        if !names.contains(name) {
+            open.push(format!("{file}:{line}: keeps({name:?}) isn't registered: rrc quirk {name} --at ID --what TEXT"));
+        }
+    }
+    for name in &names {
+        if !kept.contains_key(name) {
+            open.push(format!("quirk {name}: no code branches on it: rrc_runtime::keeps({name:?})"));
+        }
+    }
+    for (file, line, text) in crate::sources::unmarked(&repo.root, &names) {
+        open.push(format!("{file}:{line}: says a bug or quirk without naming a registered one: {text}"));
+    }
+    let suspects = Suspects::load(repo)?;
+    for name in crate::session::names(repo)? {
+        let Some(recorded) = Session::load(repo, &name)?.trace else { continue };
+        if !suspects.ran.iter().any(|r| r.session == name && r.run == recorded.run) {
+            open.push(format!("session {name}: its run hasn't been looked through: rrc suspects {name}"));
+        }
+    }
+    for s in &suspects.suspects {
+        if s.verdict.is_empty() && !register.quirks.iter().any(|q| q.at == s.at) {
+            open.push(format!(
+                "suspect {} ({}): {}: judge it: rrc suspects --judge {} (--quirk NAME | --not-a-bug WHY)",
+                s.at, s.kind, s.what, s.at
+            ));
+        }
+    }
+    Ok(open)
+}
+
+/// `rrc suspects --judge ID`: what an instruction `rrc suspects` found turned out to be.
+fn judge(repo: &Repo, a: &Args, at: &str) -> Result<ExitCode, String> {
+    let id = parse_id(at)?.to_string();
+    let verdict = match (a.value("--quirk"), a.value("--not-a-bug")) {
+        (Some(name), None) => {
+            if !Quirks::load(repo)?.quirks.iter().any(|q| q.name == name) {
+                return Err(format!("no quirk {name}: rrc quirk {name} --at ID --what TEXT"));
+            }
+            format!("quirk {name}")
+        }
+        (None, Some(why)) if !why.trim().is_empty() => format!("not a bug: {why}"),
+        _ => return Err("--judge ID --quirk NAME, or --judge ID --not-a-bug WHY".into()),
+    };
+    let mut suspects = Suspects::load(repo)?;
+    let provenance =
+        a.value("--by").map(str::to_owned).or_else(|| std::env::var("RRC_BY").ok()).unwrap_or_else(|| "agent".into());
+    let mut judged = 0;
+    for s in suspects.suspects.iter_mut().filter(|s| s.at == id) {
+        (s.verdict, s.provenance) = (verdict.clone(), provenance.clone());
+        judged += 1;
+    }
+    if judged == 0 {
+        return Err(format!("no suspect at {id}"));
+    }
+    suspects.save(repo)?;
+    say("judged", format!("{id}: {verdict}"));
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `rrc quirk`: the register, or a quirk added, changed or removed.
@@ -153,9 +287,13 @@ fn say_sites(repo: &Repo, name: &str) {
 }
 
 /// `rrc suspects SESSION`: quirk candidates in the session's run (DESIGN.md §6.5): the original's
-/// instructions that reach past named data's ends, and its reads of memory nothing wrote.
+/// instructions that reach past named data's ends, and its reads of memory nothing wrote. They're kept
+/// (`suspects.toml`, D148) until judged; `--judge ID` judges one.
 pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--lines"], &[])?;
+    let a = Args::parse(args, &["--lines", "--judge", "--quirk", "--not-a-bug", "--by"], &[])?;
+    if let Some(at) = a.value("--judge") {
+        return judge(repo, &a, at);
+    }
     let [name] = a.positionals(1, 1, "suspects SESSION [--lines N]")? else { unreachable!() };
     let shown: usize = a.value("--lines").map_or(Ok(SHOWN), str::parse).map_err(|_| "--lines is a count")?;
     let session = Session::load(repo, name)?;
@@ -177,7 +315,7 @@ pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
     let (mut clockwork, _) = Clockwork::session(repo, &session)?;
     clockwork.ask("bounds", json!({ "objects": objects }))?;
     clockwork.ask("uninit", json!({}))?;
-    clockwork.ask("run", json!({ "ms": (session.seconds * 1000.0) as u64 }))?;
+    clockwork.ask("run", json!({ "ms": crate::snapshots::to_run(repo, &session)? }))?;
     let bounds = clockwork.ask("bounds_end", Value::Null)?;
     let uninit = clockwork.ask("uninit_end", Value::Null)?;
 
@@ -212,6 +350,31 @@ pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
             if dropped > 0 { format!(" ({dropped} reads past the limit)") } else { String::new() }
         ),
     );
+    let mut kept = Vec::new();
+    for f in &findings {
+        let Some(&(id, size, data_name)) = f["object"].as_u64().and_then(|i| data.get(i as usize)) else { continue };
+        let Some(by) = f["instruction"].as_str().and_then(|by| places.id(by)) else { continue };
+        let offsets: Vec<String> = f["offsets"].as_array().into_iter().flatten().map(Value::to_string).collect();
+        kept.push(Suspect {
+            at: by.to_string(),
+            kind: "past".into(),
+            what: format!("{data_name} ({id}, {}): offsets {}", count(size as usize, "byte"), offsets.join(" ")),
+            ..Suspect::default()
+        });
+    }
+    for (by, unread) in &reads {
+        let Some(by) = places.id(by) else { continue };
+        kept.push(Suspect {
+            at: by.to_string(),
+            kind: "uninit".into(),
+            what: format!("{} from {}", count(unread.bytes as usize, "byte"), unread.at),
+            ..Suspect::default()
+        });
+    }
+    let mut register_of_suspects = Suspects::load(repo)?;
+    let run = session.trace.as_ref().map(|t| t.run.clone()).unwrap_or_default();
+    register_of_suspects.found(name, &run, kept);
+    register_of_suspects.save(repo)?;
     for f in findings.iter().take(shown) {
         let Some(&(id, size, data_name)) = f["object"].as_u64().and_then(|i| data.get(i as usize)) else { continue };
         let by = f["instruction"].as_str().unwrap_or("?");
@@ -268,6 +431,7 @@ pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
     }
     if !findings.is_empty() || !reads.is_empty() {
         say("next", "read each one's code: a bug the port has to keep is a quirk (rrc quirk NAME --at ID --what TEXT)");
+        say("kept", format!("in {SUSPECTS}, until judged: rrc suspects --judge ID (--quirk NAME | --not-a-bug WHY)"));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -332,6 +496,25 @@ impl When {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_s_findings_replace_its_last_and_a_verdict_stays() {
+        let found = |at: &str| Suspect { at: at.into(), kind: "past".into(), what: "x".into(), ..Suspect::default() };
+        let mut s = Suspects::default();
+        s.found("one", "r1", vec![found("GAME.EXE+00100"), found("GAME.EXE+00200")]);
+        s.found("two", "r2", vec![found("GAME.EXE+00100")]);
+        assert_eq!(s.suspects[0].sessions, ["one", "two"]);
+        s.suspects[1].verdict = "not a bug: its table is longer".into();
+        s.found("one", "r3", vec![]);
+        assert_eq!(s.suspects[0].sessions, ["two"], "another session still finds it");
+        assert_eq!((s.suspects.len(), s.suspects[1].sessions.len()), (2, 0), "judged, it stays");
+        s.found("two", "r2", vec![]);
+        assert_eq!(s.suspects.len(), 1, "not judged and found by none, it goes");
+        assert_eq!(
+            s.ran,
+            [Ran { session: "one".into(), run: "r3".into() }, Ran { session: "two".into(), run: "r2".into() }]
+        );
+    }
 
     #[test]
     fn the_register_is_checked() {

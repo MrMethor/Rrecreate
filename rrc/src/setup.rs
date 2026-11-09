@@ -53,7 +53,10 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
     // A port is a repository of its own (DESIGN.md §3).
     if !dir.join(".git").exists() {
         match std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status() {
-            Ok(status) if status.success() => say("git", "a new repository: commit rrc.toml, knowledge/ and sessions/"),
+            Ok(status) if status.success() => {
+                say("git", "a new repository: commit rrc.toml, knowledge/ and sessions/");
+                install_hook(&dir)?;
+            }
             _ => say("git", "not found: make the port a git repository yourself (git init)"),
         }
     }
@@ -116,9 +119,81 @@ pub(crate) fn doctor(repo: &Repo) -> Result<ExitCode, String> {
     check("clockwork", clockwork, true);
     check("game", which_version(repo).map(|(dir, version)| format!("{}: {version}", dir.display())), true);
     check("cache", Cache::open(&repo.local).map(|c| c.dir().display().to_string()), true);
+    let hook =
+        hook_path(&repo.root).filter(|path| std::fs::read_to_string(path).is_ok_and(|text| text.contains(HOOK_MARK)));
+    say("hook", hook.map_or("no commit hook (rrc hooks writes it)".to_owned(), |p| p.display().to_string()));
     check("ghidra", tools::ghidra(&repo.local).map(|d| d.display().to_string()), false);
     check("java", tools::java(&repo.local).map(|d| d.display().to_string()), false);
     Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(1) })
+}
+
+/// What marks a commit hook as this tool's.
+const HOOK_MARK: &str = "Written by rrc (D148)";
+
+/// Where the repository's pre-commit hook goes, as git says.
+fn hook_path(root: &Path) -> Option<PathBuf> {
+    let out = std::process::Command::new("git").arg("-C").arg(root).args(["rev-parse", "--git-path", "hooks"]).output();
+    let out = out.ok().filter(|o| o.status.success())?;
+    let hooks = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    Some(if hooks.is_absolute() { hooks } else { root.join(hooks) }.join("pre-commit"))
+}
+
+/// Writes the commit hook that refuses a commit while `rrc check` fails (D148), unless someone else's is there.
+fn install_hook(root: &Path) -> Result<(), String> {
+    let Some(path) = hook_path(root) else {
+        say("hook", "not a git repository: no commit hook");
+        return Ok(());
+    };
+    if std::fs::read_to_string(&path).is_ok_and(|text| !text.contains(HOOK_MARK)) {
+        say("hook", format!("{} is someone else's: add rrc check to it", path.display()));
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let text = format!(
+        "#!/bin/sh\n# {HOOK_MARK}: a commit is refused while rrc check fails.\nexec \"{}\" check\n",
+        exe.display().to_string().replace('\\', "/")
+    );
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    say("hook", path.display());
+    Ok(())
+}
+
+/// `rrc hooks`: the commit hook written (again, as this rrc).
+pub(crate) fn hooks(repo: &Repo) -> Result<ExitCode, String> {
+    install_hook(&repo.root)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The playbook, as this rrc was built with it (`docs/porting.md`).
+const PLAYBOOK: &str = include_str!("../../docs/porting.md");
+/// A port's own rules, from the person who runs it.
+const PORT_RULES: &str = "RULES.md";
+
+/// From the line starting `from` up to the line starting `to`.
+fn between<'a>(text: &'a str, from: &str, to: &str) -> &'a str {
+    let Some(start) = text.find(from) else { return "" };
+    let rest = &text[start..];
+    rest[from.len()..].find(to).map_or(rest, |end| rest[..from.len() + end].trim_end())
+}
+
+/// `rrc rules`: the rules as they're written, for an agent to read at the start of a session and after its context is
+/// summarised (D148), so a summary can't soften them: the playbook's and the port's own.
+pub(crate) fn rules(repo: Option<&Repo>) -> ExitCode {
+    println!("{}\n", between(PLAYBOOK, "**Rules:**", "**Where to start"));
+    println!("{}", between(PLAYBOOK, "## Quirks", "\n## "));
+    if let Some(text) = repo.and_then(|repo| std::fs::read_to_string(repo.root.join(PORT_RULES)).ok()) {
+        println!("\n{}", text.trim_end());
+    }
+    ExitCode::SUCCESS
 }
 
 /// The game's folder and which version it is (an error if none the port knows).
@@ -144,6 +219,11 @@ pub(crate) fn status(repo: &Repo) -> Result<ExitCode, String> {
         Ok(_) => next_after_setup(repo)?,
     };
     say("next", next);
+    // What the rule still asks (D148), beside whatever is next.
+    let open = crate::quirks::open(repo)?;
+    if let Some(first) = open.first() {
+        say("open", format!("{} rrc check refuses; the first: {first}", open.len()));
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -260,6 +340,15 @@ fn next_after_setup(repo: &Repo) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_rules_are_the_playbook_s_own_words() {
+        let rules = super::between(super::PLAYBOOK, "**Rules:**", "**Where to start");
+        assert!(rules.starts_with("**Rules:**") && rules.contains("Plan before running"), "{rules}");
+        assert!(rules.contains("registered as it's found") && !rules.contains("Where to start"), "{rules}");
+        let quirks = super::between(super::PLAYBOOK, "## Quirks", "\n## ");
+        assert!(quirks.contains("rrc_runtime::keeps") && !quirks.contains("## Naming"), "{quirks}");
+    }
+
     #[test]
     fn wildcards_match_names() {
         let m = |p: &str, t: &str| super::matches(p.as_bytes(), t.as_bytes());

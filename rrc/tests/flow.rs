@@ -331,13 +331,38 @@ fn quirk_candidates_are_found_and_registered() {
     assert!(rrc.ok(&["suspects", "s"]).contains("by T.COM+00005 (quirk overrun)"));
     std::fs::create_dir_all(rrc.repo.join("src")).unwrap();
     std::fs::write(rrc.repo.join("src/sim.rs"), "if rrc_runtime::keeps(\"overrun\") {}\n").unwrap();
+    rrc.ok(&["suspects", "--judge", "T.COM+0000C", "--not-a-bug", "the test's own byte, read once"]);
     let listed = rrc.ok(&["quirk"]);
     assert!(listed.contains("quirk     overrun at T.COM+00005: writes a byte past table"), "{listed}");
     assert!(listed.contains("  port    src/sim.rs:1"), "{listed}");
     assert!(rrc.ok(&["check"]).contains("quirks    1"));
     let (refused, ok) = rrc.run(&["quirk", "other", "--at", "nowhere", "--what", "x"]);
     assert!(!ok && refused.contains("quirk other: at:"), "{refused}");
+    // The rule (D148): every bug registered and branched on, every suspect judged, or check refuses.
+    std::fs::write(rrc.repo.join("src/more.rs"), "// a bug: it reads on past the end\n").unwrap();
+    let (refused, ok) = rrc.run(&["check"]);
+    assert!(!ok && refused.contains("src/more.rs:1: says a bug or quirk"), "{refused}");
+    assert!(rrc.ok(&["status"]).contains("src/more.rs:1"), "status names it");
+    std::fs::write(rrc.repo.join("src/more.rs"), "// a bug: quirk overrun\n").unwrap();
+    rrc.ok(&["check"]);
+    std::fs::write(rrc.repo.join("src/more.rs"), "if rrc_runtime::keeps(\"unheard\") {}\n").unwrap();
+    let (refused, ok) = rrc.run(&["check"]);
+    assert!(!ok && refused.contains("keeps(\"unheard\") isn't registered"), "{refused}");
+    std::fs::remove_file(rrc.repo.join("src/more.rs")).unwrap();
     assert!(rrc.ok(&["quirk", "overrun", "--remove"]).contains("removed   overrun"));
+    let (refused, ok) = rrc.run(&["check"]);
+    assert!(!ok && refused.contains("keeps(\"overrun\") isn't registered"), "{refused}");
+    assert!(refused.contains("judge it: rrc suspects --judge T.COM+00005"), "no quirk there now: {refused}");
+    std::fs::remove_file(rrc.repo.join("src/sim.rs")).unwrap();
+    let (refused, ok) = rrc.run(&["suspects", "--judge", "T.COM+00005", "--quirk", "nothing"]);
+    assert!(!ok && refused.contains("no quirk nothing"), "{refused}");
+    assert!(rrc.ok(&["suspects", "--judge", "T.COM+00005", "--not-a-bug", "the table is longer"]).contains("judged"));
+    rrc.ok(&["check"]);
+    // The rules as written; and the commit hook.
+    let rules = rrc.ok(&["rules"]);
+    assert!(rules.contains("Plan before running") && rules.contains("## Quirks"), "{rules}");
+    std::fs::write(rrc.repo.join("RULES.md"), "Never cross the streams.\n").unwrap();
+    assert!(rrc.ok(&["rules"]).contains("Never cross the streams."));
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -628,7 +653,8 @@ fn a_launcher_s_program_is_the_module() {
     assert_eq!(lines, ["1         1", "2         2", "3         3"], "T.COM's count, where the launcher put it");
     let watched = rrc.ok(&["watch", "t", "count", "--tick", "2", "--ticks", "1"]);
     assert!(watched.contains("write count = 2 (was 1) by T.COM+00000"), "as its type reads: {watched}");
-    let check = rrc.ok(&["check"]);
+    // Its sessions aren't looked through for suspects here (D148): check says so, and the image is what's asked.
+    let (check, _) = rrc.run(&["check"]);
     assert!(check.contains("image     ") && !check.contains("unknown"), "{check}");
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -737,7 +763,7 @@ fn a_port_from_power_on_loads_the_game_s_files() {
 
     // The archive by its format (D103): its members; the title as PNG with its palette; a level decoded as
     // the original loaded it, found in its memory at the tick after the read.
-    assert!(rrc.ok(&["check"]).contains("formats   4"));
+    assert!(rrc.run(&["check"]).0.contains("formats   4"));
     let listed = rrc.ok(&["asset", "VAULT.DAT"]);
     assert!(listed.contains("member    LEVEL2: +10FA, 144 bytes, lzss, 1024 decoded, level (map)"), "{listed}");
     let title = rrc.ok(&["asset", "VAULT.DAT/TITLE", "--out", dir.join("title.png").to_str().unwrap()]);
