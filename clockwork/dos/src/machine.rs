@@ -1358,6 +1358,18 @@ impl Machine {
         self.probes.uninit = Some(Box::default());
     }
 
+    /// Starts tracking uninitialized reads where only `unwritten` (physical ranges) counts as never written: a run
+    /// resumed from a snapshot, given what nothing had written by then (D150).
+    pub fn resume_uninit(&mut self, unwritten: &[std::ops::Range<u32>]) {
+        self.mem.track_writes(unwritten);
+        self.probes.uninit = Some(Box::default());
+    }
+
+    /// What nothing has written since tracking began (physical ranges).
+    pub fn unwritten(&self) -> Vec<std::ops::Range<u32>> {
+        self.mem.unwritten()
+    }
+
     pub fn take_uninit(&mut self) -> Option<crate::uninit::Uninit> {
         self.mem.untrack_writes();
         self.probes.uninit.take().map(|u| *u)

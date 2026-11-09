@@ -149,6 +149,41 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     Ok((clockwork, loaded))
 }
 
+/// What nothing had written where a based session starts (D150), as a file for Clockwork's `uninit`: what its base's run
+/// hadn't by then, going back to power-on through its own base. Kept for the base's run and the cycle. None for a session
+/// from power-on: Clockwork counts what a program finds when it starts.
+pub fn unwritten(repo: &Repo, session: &Session) -> Result<Option<std::path::PathBuf>, String> {
+    let (Some(start), Some(from)) = (start(repo, session)?, &session.from) else { return Ok(None) };
+    let base = Session::load(repo, &from.session)?;
+    let cache = Cache::open(&repo.local)?;
+    let key = sha256(format!("{}\n{}", run_identity(repo, &base)?, start.cycle).as_bytes());
+    if let Some(hash) = cache.recall("unwritten", &key).filter(|hash| cache.has(hash)) {
+        return Ok(Some(cache.path(&hash)));
+    }
+    let inherited = unwritten(repo, &base)?;
+    let (mut clockwork, _) = Clockwork::session(repo, &base)?;
+    clockwork.ask("uninit", track_from(inherited.as_deref()))?;
+    let now = clockwork::number(&clockwork.ask("regs", Value::Null)?, "cycles")?;
+    if start.cycle > now {
+        clockwork.ask("run", json!({ "cycles": start.cycle - now }))?;
+    }
+    let file = repo.state()?.join(format!("unwritten-{}.tmp", std::process::id()));
+    clockwork.ask("uninit_unwritten", json!({ "file": file }))?;
+    let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let _ = std::fs::remove_file(&file);
+    let hash = cache.put(&bytes)?;
+    cache.remember("unwritten", &key, &hash)?;
+    Ok(Some(cache.path(&hash)))
+}
+
+/// `uninit`'s request for a run that starts where `unwritten` was kept, or from power-on.
+pub fn track_from(unwritten: Option<&std::path::Path>) -> Value {
+    match unwritten {
+        Some(file) => json!({ "unwritten": file }),
+        None => json!({}),
+    }
+}
+
 /// How long a whole run of the session is from where it starts: its length less the time from power-on it starts at
 /// (D118, D148). A `run` is for that long, not until that time.
 pub fn to_run(repo: &Repo, session: &Session) -> Result<u64, String> {

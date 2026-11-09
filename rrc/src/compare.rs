@@ -904,6 +904,12 @@ fn edit_sets(
     Ok(sets)
 }
 
+/// Whether an edit's `set` wrote the leaf at `at`: it, or an item holding it (an edit over bytes no field names sets the
+/// whole item).
+fn edit_wrote(set: &serde_json::Map<String, Value>, at: &str) -> bool {
+    set.keys().any(|key| at.strip_prefix(key.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '['])))
+}
+
 /// The leaves of `m`, at `base` in memory now, that an edit of the bytes `start..end` wrote, each with its value in
 /// `value` (the field's at the edit's tick), into `set`. How many of the edit's bytes they cover.
 fn edited_leaves(
@@ -1306,8 +1312,8 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
             // What a scenario's edit wrote at this tick isn't the pass's doing (D146).
             let edited = sets.get(&t);
             let mut differ = Vec::new();
-            differences(&m.field, theirs, &m.masked(own), 1 + edited.map_or(0, |s| s.len()), &mut differ);
-            if let Some((at, o, p)) = differ.iter().find(|(at, ..)| !edited.is_some_and(|s| s.contains_key(at))) {
+            differences(&m.field, theirs, &m.masked(own), edited.map_or(1, |_| usize::MAX), &mut differ);
+            if let Some((at, o, p)) = differ.iter().find(|(at, ..)| !edited.is_some_and(|s| edit_wrote(s, at))) {
                 count(&mut census.fields, path, t, format!("{at}: original {o}, port {p}"));
             }
         }
@@ -2011,6 +2017,15 @@ mod tests {
         assert_eq!(state["score"], json!(0x0504));
         assert_eq!(state["saved.block"], json!([8, 9, 10]));
         assert!(!state.contains_key("heap") && !state.contains_key("other"));
+    }
+
+    #[test]
+    fn what_an_edit_wrote_is_a_leaf_or_an_item_holding_it() {
+        let mut set = serde_json::Map::new();
+        set.insert("items[2].kind".to_owned(), json!(1));
+        set.insert("items[3]".to_owned(), json!({}));
+        assert!(edit_wrote(&set, "items[2].kind") && edit_wrote(&set, "items[3].flags") && edit_wrote(&set, "items[3]"));
+        assert!(!edit_wrote(&set, "items[2].flags") && !edit_wrote(&set, "items[31].flags"));
     }
 
     #[test]

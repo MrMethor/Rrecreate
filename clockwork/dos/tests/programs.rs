@@ -4455,6 +4455,39 @@ fn bounds_checks_report_an_index_past_a_table() {
 }
 
 #[test]
+fn what_nothing_wrote_goes_on_past_a_snapshot() {
+    // A first run writes `set` and leaves `unset` alone. What it leaves unwritten goes to a second, as to a run from a
+    // snapshot of it: a read of `set` there is no read of nothing.
+    const UNSET: u16 = 0x4000;
+    const SET: u16 = 0x4002;
+    let first = com(|a| {
+        a.mov(word_ptr(u32::from(SET)), 7)?;
+        exit(a, 0)
+    });
+    let mut m = boot(&[("U.COM", &first)], "U.COM");
+    let base = u32::from(m.dos.psp) << 4;
+    m.start_uninit(&[]);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let left = m.unwritten();
+    assert!(left.iter().any(|r| r.contains(&(base + u32::from(UNSET)))));
+    assert!(!left.iter().any(|r| r.contains(&(base + u32::from(SET)))));
+    m.take_uninit();
+    assert!(m.unwritten().is_empty(), "tracking ended");
+
+    let second = com(|a| {
+        a.mov(ax, word_ptr(u32::from(SET)))?;
+        a.mov(ax, word_ptr(u32::from(UNSET)))?;
+        exit(a, 0)
+    });
+    let mut m = boot(&[("U.COM", &second)], "U.COM");
+    assert_eq!(u32::from(m.dos.psp) << 4, base);
+    m.resume_uninit(&left);
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let read: Vec<u32> = m.take_uninit().unwrap().reads.iter().map(|r| r.address - base).collect();
+    assert_eq!(read, [u32::from(UNSET), u32::from(UNSET) + 1]);
+}
+
+#[test]
 fn uninitialized_reads_are_the_bytes_nothing_wrote() {
     // Past the end of the program file: `unset` is read without being written, `set` is written
     // first, and `buffer` is filled by DOS (AH=47h, the current directory) before it is read.

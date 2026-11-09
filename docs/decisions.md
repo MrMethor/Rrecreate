@@ -715,6 +715,26 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D151. What the port's code names and no session runs is listed. Accepted 2026-11-09.
+`rrc suspects` keeps what each session's run executed, by the run; `rrc unrun` takes the places in the original's code that the
+port's code names (its IDs, `sources`) and lists those no session executed, by function, the whole list in `.rrc/unrun.tsv`
+with the port's lines. It's a list to read against the original's code or to make sessions from; `rrc check` doesn't refuse it,
+since some paths can't be reached by a scripted session.
+**Why:** a comparison shows only what a session reaches, and a bug fixed by accident on another path shows nowhere (D148).
+Measuring the port's own code would need coverage tools the toolchain hasn't got, and would say which of the port's lines ran
+but not whether the original's ran too; the emulator already knows what ran, and the port's code already names the original's
+places it follows.
+
+### D150. What nothing wrote goes on past a snapshot. Accepted 2026-11-09.
+`rrc suspects` on a session from another's tick tracks unwritten memory from what its base's run hadn't written by that tick,
+going back to power-on through the base's own base: Clockwork's `uninit` takes it (`unwritten`) in place of what a program
+finds when it starts, and `uninit_unwritten` writes it. It's kept in the cache by the base's run and the cycle.
+**Why:** tracking began at the snapshot, so everything the program had written before it counted as never written: 457
+instructions of a 2-second session "read memory nothing wrote", and the real ones among them couldn't be told apart. D148 has
+every finding judged, and judging those would have meant nothing. Running each session from power-on instead would run
+its bases again each time; the map is cheap to keep. An edit a session makes at its start isn't counted as written, as
+it wasn't from power-on.
+
 ### D149. A quirk's switch is one a player and a test can flip. Accepted 2026-11-09, with the person.
 `PORT play --fix NAME` (repeatable) fixes a quirk for that game, its name checked against `Live::QUIRKS`, the port's
 `quirks.toml`. `PORT run --fix NAME`, and `rrc compare SESSION --fix NAME` over it, run a comparison with it fixed: the

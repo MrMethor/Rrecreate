@@ -35,6 +35,7 @@ mod sources;
 mod ticks;
 pub mod tools;
 pub mod trace;
+mod unrun;
 pub mod values;
 mod watch;
 
@@ -211,6 +212,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          suspects.toml until judged
   suspects --judge ID (--quirk NAME | --not-a-bug WHY) [--by WHO]
                          what a suspect turned out to be
+  unrun [--lines N]      the places in the original's code that the port's code names and no session's
+                         run executed (as rrc suspects saw them), by function; the list in a file
   sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]
                          a library signature pack (sigs/README.md) from this analysis and the linker
                          map of the same build: the library functions the map names, by their
@@ -265,6 +268,7 @@ pub fn main() -> ExitCode {
         Some("progress") => here().and_then(|repo| progress::progress(&repo, rest)),
         Some("quirk") => here().and_then(|repo| quirks::quirk(&repo, rest)),
         Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),
+        Some("unrun") => here().and_then(|repo| unrun::unrun(&repo, rest)),
         Some("search") => here().and_then(|repo| search::search(&repo, rest)),
         Some("files") => here().and_then(|repo| files::files(&repo, rest)),
         Some("asset") => here().and_then(|repo| asset::asset(&repo, rest)),

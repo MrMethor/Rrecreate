@@ -312,12 +312,16 @@ pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
     for (id, size, _) in &data {
         objects.push(json!({"at": places.address(&id.to_string())?, "size": size}));
     }
+    // From another session's tick, what was written before it isn't a read of nothing (D150).
+    let unwritten = crate::snapshots::unwritten(repo, &session)?;
     let (mut clockwork, _) = Clockwork::session(repo, &session)?;
     clockwork.ask("bounds", json!({ "objects": objects }))?;
-    clockwork.ask("uninit", json!({}))?;
+    clockwork.ask("uninit", crate::snapshots::track_from(unwritten.as_deref()))?;
+    clockwork.ask("coverage", json!({}))?;
     clockwork.ask("run", json!({ "ms": crate::snapshots::to_run(repo, &session)? }))?;
     let bounds = clockwork.ask("bounds_end", Value::Null)?;
     let uninit = clockwork.ask("uninit_end", Value::Null)?;
+    let covered = clockwork.ask("coverage_end", Value::Null)?;
 
     let when = When::new(repo, &session);
     let analysis = Analysis::load(repo)?;
@@ -375,6 +379,7 @@ pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
     let run = session.trace.as_ref().map(|t| t.run.clone()).unwrap_or_default();
     register_of_suspects.found(name, &run, kept);
     register_of_suspects.save(repo)?;
+    crate::unrun::keep(repo, &session, &places, &covered)?;
     for f in findings.iter().take(shown) {
         let Some(&(id, size, data_name)) = f["object"].as_u64().and_then(|i| data.get(i as usize)) else { continue };
         let by = f["instruction"].as_str().unwrap_or("?");

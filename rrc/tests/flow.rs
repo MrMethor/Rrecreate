@@ -130,7 +130,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 15, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 16, dos-pc ("), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--evidence", "step adds 1", "--confidence", "0.5"]);
@@ -323,6 +323,15 @@ fn quirk_candidates_are_found_and_registered() {
         "{found}"
     );
     assert!(found.contains("uninit    1 byte by T.COM+0000C: T.COM+00300 first (it held 00)"), "{found}");
+    // What the port's code names and no session ran (D151): +00005 ran, +00012 is the exit and ran, +00014 didn't.
+    std::fs::create_dir_all(rrc.repo.join("src")).unwrap();
+    std::fs::write(rrc.repo.join("src/named.rs"), "// T.COM+00005, +00012 and T.COM+00014\n").unwrap();
+    let unrun = rrc.ok(&["unrun"]);
+    assert!(unrun.contains("sessions  1 looked through"), "{unrun}");
+    assert!(unrun.contains("unrun     1 of 3 places"), "{unrun}");
+    let list = std::fs::read_to_string(rrc.repo.join(".rrc/unrun.tsv")).unwrap();
+    assert!(list.starts_with("T.COM+00014\t\tsrc/named.rs:1"), "{list}");
+    std::fs::remove_file(rrc.repo.join("src/named.rs")).unwrap();
 
     // Registered, then named in the port's code.
     let added = rrc.ok(&["quirk", "overrun", "--at", "T.COM+00005", "--what", "writes a byte past table"]);
@@ -1046,6 +1055,15 @@ fn a_session_starts_from_another_s_tick() {
     assert_eq!(x("still", "50"), x("play", "149"));
     assert_eq!(x("still", "100"), x("still", "50"), "still");
     assert_ne!(x("still", "100"), x("play", "199"), "play went right");
+    // What the run before it wrote isn't a read of nothing in it (D150): it finds none that play, from power-on, doesn't.
+    let unwritten_reads = |session: &str| {
+        let found = rrc.ok(&["suspects", session, "--lines", "0"]);
+        let (before, _) = found.split_once(" reading memory nothing wrote").expect("suspects' line");
+        let count = before.rsplit(", ").next().unwrap().split(' ').next().unwrap();
+        count.parse::<usize>().unwrap_or_else(|_| panic!("{found}"))
+    };
+    let (play_reads, still_reads) = (unwritten_reads("play"), unwritten_reads("still"));
+    assert!(still_reads <= play_reads, "still {still_reads}, play {play_reads}");
     // The port compares from a transplant at its first tick, not from the port's start.
     let (unstarted, ok) = rrc.run(&["compare", "later"]);
     assert!(!ok && unstarted.contains("starts at play's tick 100: compare it from a transplant"), "{unstarted}");

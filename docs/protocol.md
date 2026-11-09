@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **11** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **16** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -124,8 +124,10 @@ outside interrupt handlers, `{"entries": [{"cycle", "at", "regs": {"eax", ..., "
 "flags"}}], "dropped"}`, in order (D98; past a million, counted in `dropped`).
 
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
-ends (`findings`). `uninit` `{"more": [{"at", "len"}]}` ... `uninit_end`: reads of memory nothing wrote
-(`reads`). `late_inputs` `{"sources": [{"at", "len"} or {"device"}, with "sync": [addr]; a part's output also
+ends (`findings`). `uninit` `{"more": [{"at", "len"}], "unwritten": FILE}` ... `uninit_end`: reads of memory nothing wrote
+(`reads`); `uninit_unwritten` `{"file"}` writes what nothing has written since it began, as a JSON list of physical
+`[start, length]`, and a run from a snapshot of that run gives that file as `unwritten`, which takes the place of what
+a program finds when it starts (D150). `late_inputs` `{"sources": [{"at", "len"} or {"device"}, with "sync": [addr]; a part's output also
 "follow_writes": false and "read_at": [addr], D96]}` ...
 `late_inputs_end`: input read after it changed since a tick began (D60). A source's tick begins at each
 counted hit of its sync points (`sync`; left out, any sync point's), and its first where `late_inputs` is asked
@@ -208,6 +210,8 @@ An IBM PC with DOS (Clockwork).
     files the program changed since the drive was loaded (D131).
 15. `late_inputs` begins each source's first tick where it is asked (D134): a start-up's reads before the first
     sync point's hit are compared with what the source held then, and found with that `tick`.
+16. `uninit` takes `unwritten`, and `uninit_unwritten` writes it (D150): tracking goes on past a snapshot, whose memory was
+    otherwise all "nothing wrote".
 
 ## Changing the protocol
 

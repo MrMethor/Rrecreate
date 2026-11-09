@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 15;
+pub const PROTOCOL: u64 = 16;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -54,6 +54,7 @@ pub const MACHINE_OPS: &[&str] = &[
     "bounds",
     "bounds_end",
     "uninit",
+    "uninit_unwritten",
     "uninit_end",
     "late_inputs",
     "late_inputs_end",
@@ -634,8 +635,25 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             for (at, len) in more_ranges {
                 more.extend(physical_spans(m, addr(m, &at)?, len)?);
             }
-            m.start_uninit(&more);
+            // From a snapshot: what nothing had written by then, from `uninit_unwritten` on the run it came from (D150).
+            match r.get("unwritten").and_then(Value::as_str) {
+                Some(file) => {
+                    let text = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+                    let pairs: Vec<(u32, u32)> = serde_json::from_str(&text).map_err(|e| format!("{file}: {e}"))?;
+                    more.extend(pairs.into_iter().map(|(at, len)| at..at.saturating_add(len)));
+                    m.resume_uninit(&more);
+                }
+                None => m.start_uninit(&more),
+            }
             Ok(json!({}))
+        }
+        "uninit_unwritten" => {
+            let file = r.get("file").and_then(Value::as_str).ok_or("missing \"file\"")?;
+            let ranges = m.unwritten();
+            let pairs: Vec<(u32, u32)> = ranges.iter().map(|r| (r.start, r.end - r.start)).collect();
+            let text = serde_json::to_string(&pairs).map_err(|e| e.to_string())?;
+            std::fs::write(file, text).map_err(|e| format!("{file}: {e}"))?;
+            Ok(json!({"ranges": pairs.len()}))
         }
         "uninit_end" => {
             let uninit = m.take_uninit().ok_or("no uninitialized-read tracking on")?;

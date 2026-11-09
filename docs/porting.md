@@ -614,6 +614,10 @@ suspects --judge ID --quirk NAME`, or `--not-a-bug WHY`, kept in `suspects.toml`
 refuses a commit while `rrc check` fails (`rrc init` does too); don't skip it. `rrc rules` prints the rules as they're
 written, with the port's own from `RULES.md`, for the start of a session and after a summary.
 
+`rrc unrun` (D151) lists the places in the original's code that the port's code names and no session's run executed, as
+`rrc suspects` saw them: a comparison says nothing of them, so each wants a reading against the original's code, or a
+session that reaches it.
+
 A quirk's switch is a player's and a test's (D149): `PORT play --fix NAME` fixes it for that game, its name checked against
 the port's `quirks.toml` (`Live::QUIRKS`, its `include_str!`); `rrc compare SESSION --fix NAME` runs the port with
 it fixed, so a difference shows what the fix changes and proves the branch is reached. Try each on a session that reaches

@@ -119,6 +119,29 @@ impl Memory {
         self.written = Some(Box::new(written));
     }
 
+    /// The physical ranges nothing has written since tracking began, in order; none when nothing is tracked.
+    pub fn unwritten(&self) -> Vec<std::ops::Range<u32>> {
+        let Some(written) = self.written.as_deref() else { return Vec::new() };
+        let mut ranges: Vec<std::ops::Range<u32>> = Vec::new();
+        for (i, &word) in written.0.iter().enumerate() {
+            if word == u64::MAX {
+                continue;
+            }
+            let base = i as u32 * 64;
+            for bit in 0..64 {
+                if word >> bit & 1 != 0 {
+                    continue;
+                }
+                let addr = base + bit;
+                match ranges.last_mut() {
+                    Some(last) if last.end == addr => last.end = addr + 1,
+                    _ => ranges.push(addr..addr + 1),
+                }
+            }
+        }
+        ranges
+    }
+
     /// Stops tracking writes.
     pub fn untrack_writes(&mut self) {
         self.written = None;
