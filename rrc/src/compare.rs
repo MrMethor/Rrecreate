@@ -56,14 +56,24 @@ impl Differs {
 pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(
         args,
-        &["--transplant", "--resume", "--to", "--pair", "--feed"],
+        &["--transplant", "--resume", "--to", "--pair", "--feed", "--fix"],
         &["--notes", "--lockstep", "--fields"],
     )?;
     let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] \
-                 [--fields] [--notes] | compare SESSION --lockstep";
+                 [--fields] [--notes] [--fix QUIRK] | compare SESSION --lockstep";
     // The mapped fields alone (D136): a stretch whose screens or sound the port doesn't make yet.
     let fields_only = a.has("--fields");
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
+    // A quirk's switch tried (D149): the run with its fix, so a difference is what the fix changes.
+    let fixed = a.value("--fix");
+    if let Some(quirk) = fixed {
+        if a.has("--lockstep") {
+            return Err("--fix tries a quirk's switch on one run, not --lockstep".into());
+        }
+        if !crate::quirks::Quirks::load(repo)?.quirks.iter().any(|q| q.name == quirk) {
+            return Err(format!("no quirk {quirk}: rrc quirk lists them"));
+        }
+    }
     if a.has("--lockstep") {
         let census = lockstep(repo, name)?;
         let file = repo.state()?.join("compare").join(name.as_str()).join("census.json");
@@ -188,6 +198,10 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             std::fs::write(file("screen.frm"), cache.get(hash)?).map_err(|e| e.to_string())?;
             port_args.extend(["--screen".into(), file("screen.frm")]);
         }
+    }
+    if let Some(quirk) = fixed {
+        say("fixed", format!("{quirk}: a difference here is what its fix changes, not kept for rrc progress"));
+        port_args.extend(["--fix".into(), quirk.to_owned()]);
     }
     run_port(repo, &port_args, Some(&saves))?;
 
@@ -325,7 +339,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         fed: fed.clone(),
         differs: differs.map(str::to_owned),
     };
-    outcome.save(&work)?;
+    if fixed.is_none() {
+        outcome.save(&work)?;
+    }
     let code = match diverged {
         None if heard.is_some() => {
             let (t, diff) = heard.as_ref().expect("a sound that differs");

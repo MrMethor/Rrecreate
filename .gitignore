@@ -2,3 +2,4 @@ target/
 /reference/
 /.cache/
 testbins/obj/
+/.claude/settings.local.json

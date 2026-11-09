@@ -694,6 +694,15 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(recorded.contains("trace     400 ticks"), "{recorded}");
     let compared = rrc.ok(&["compare", "play"]);
     assert!(compared.contains("match     every mapped field at all 400 ticks"), "{compared}");
+    // A quirk's switch reaches the port's run (D149): only a registered one, and it isn't kept as the port's progress.
+    let (refused, ok) = rrc.run(&["compare", "play", "--fix", "nothing"]);
+    assert!(!ok && refused.contains("no quirk nothing"), "{refused}");
+    let (refused, ok) = rrc.run(&["compare", "play", "--lockstep", "--fix", "nothing"]);
+    assert!(!ok && refused.contains("not --lockstep"), "{refused}");
+    rrc.ok(&["quirk", "tried", "--at", "VAULT.EXE+00000", "--what", "for the test", "--fix", "none"]);
+    let tried = rrc.ok(&["compare", "play", "--fix", "tried"]);
+    assert!(tried.contains("fixed     tried:"), "{tried}");
+    rrc.ok(&["quirk", "tried", "--remove"]);
     // Until the first level, the map's buffer holds the far heap's links, which the port leaves unset
     // (D102): who wrote them is the C library's allocator.
     assert!(

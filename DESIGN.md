@@ -250,7 +250,8 @@ Saves and replays record the toggles in force.
 
 An original bug that the faithful mode keeps is a **quirk**: an entry in the port's `quirks.toml` (an ID, what
 happens, the evidence, the original's code and the port's site) and an explicit branch in the code, kept by
-default, with a behaviour toggle that fixes it. Comparisons always keep every quirk. Sources: differences
+default, with a behaviour toggle that fixes it (`PORT play --fix NAME`, `rrc compare --fix NAME` tries one, D149).
+Comparisons always keep every quirk. Sources: differences
 where the port did what the code clearly means and the original didn't; Clockwork's bounds checks and
 uninitialized reads; known bug lists. A quirk whose effect depends on the original's memory layout (a read past
 a table returns its neighbour) reproduces that neighbour's data deliberately. `rrc suspects` lists a session's

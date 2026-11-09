@@ -572,7 +572,7 @@ fn main() -> ExitCode {
 }
 ```
 
-so `PORT play [--game DIR] [--start DIR] [--no-sound]` plays and anything else runs a comparison as before. A
+so `PORT play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]...` plays and anything else runs a comparison as before. A
 port that doesn't reach a stretch from power-on yet (the menus and the character's creation before a dungeon)
 plays from where a session's original is (D120): `rrc start SESSION --tick N` writes the mapped fields' values,
 the presentation's own state and the screen there into `.rrc/start/SESSION-N`, made once from the person's copy,
@@ -613,6 +613,11 @@ quirk nothing branches on, a session's run that `rrc suspects` hasn't looked thr
 suspects --judge ID --quirk NAME`, or `--not-a-bug WHY`, kept in `suspects.toml`). `rrc hooks` writes a commit hook that
 refuses a commit while `rrc check` fails (`rrc init` does too); don't skip it. `rrc rules` prints the rules as they're
 written, with the port's own from `RULES.md`, for the start of a session and after a summary.
+
+A quirk's switch is a player's and a test's (D149): `PORT play --fix NAME` fixes it for that game, its name checked against
+the port's `quirks.toml` (`Live::QUIRKS`, its `include_str!`); `rrc compare SESSION --fix NAME` runs the port with
+it fixed, so a difference shows what the fix changes and proves the branch is reached. Try each on a session that reaches
+it, since nothing else runs a fix's code; it says nothing of the port's progress, and isn't kept for `rrc progress`.
 
 ## Naming
 

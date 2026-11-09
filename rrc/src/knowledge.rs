@@ -370,17 +370,25 @@ impl Knowledge {
         }
         let mut previous: Option<(&Id, u32)> = None;
         for (id, datum) in &self.data {
+            let last = id.offset() + datum.size.unwrap_or(1);
+            let mut inside = false;
             if let Some((other, end)) = previous
                 && other.module() == id.module()
                 && other.part() == id.part()
                 && id.offset() < end
             {
-                problems.push(format!("{id} ({}) overlaps {other}", datum.decision.name));
+                // A named part of a bigger item (a table's entry, a field of a record) is fine; only half of one isn't.
+                inside = last <= end;
+                if !inside {
+                    problems.push(format!("{id} ({}) overlaps {other}", datum.decision.name));
+                }
             }
             if datum.size == Some(0) {
                 problems.push(format!("{id}: size 0"));
             }
-            previous = Some((id, id.offset() + datum.size.unwrap_or(1)));
+            if !inside {
+                previous = Some((id, last));
+            }
         }
         for s in &self.ticks.syncs {
             if let Err(e) = parse_id(&s.at) {
@@ -597,7 +605,10 @@ mod tests {
         let mut k = Knowledge::default();
         k.functions.insert(id("GAME.EXE+00100"), decision("twice"));
         k.data.insert(id("GAME.EXE+00200"), Datum { decision: decision("twice"), size: Some(4), ty: String::new() });
-        k.data.insert(id("GAME.EXE+00202"), Datum { decision: decision("inside"), size: Some(2), ty: String::new() });
+        k.data.insert(
+            id("GAME.EXE+00202"),
+            Datum { decision: decision("half_inside"), size: Some(4), ty: String::new() },
+        );
         k.data.insert(id("OTHER.EXE+00000"), Datum { decision: decision("bad name"), size: None, ty: String::new() });
         k.ticks.syncs.push(Sync {
             name: "menu".into(),
@@ -611,6 +622,15 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("no device \"gamepad\"")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("twice names both")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("overlaps GAME.EXE+00200")), "{problems:?}");
+        // A named part of a bigger item is fine.
+        let mut nested = Knowledge::default();
+        nested
+            .data
+            .insert(id("GAME.EXE+00200"), Datum { decision: decision("whole"), size: Some(4), ty: String::new() });
+        nested
+            .data
+            .insert(id("GAME.EXE+00202"), Datum { decision: decision("part"), size: Some(2), ty: String::new() });
+        assert!(!nested.problems("GAME.EXE", None, None).iter().any(|p| p.contains("overlaps")));
         assert!(problems.iter().any(|p| p.contains("isn't a name")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("not in GAME.EXE")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("GAME.EXE+00202: past the image's end")), "{problems:?}");

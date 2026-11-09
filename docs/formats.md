@@ -577,7 +577,7 @@ Pixels go row by row from the top left; text modes are drawn with their font, as
 
 ```
 run --inputs FILE --out FILE [--transplant FILE | --resume FILE | --initial FILE] [--save-at TICK --save FILE]
-    [--to TICK] [--frames DIR [--screen FILE] [--presentation FILE]]
+    [--to TICK] [--frames DIR [--screen FILE] [--presentation FILE]] [--fix QUIRK]...
 ```
 
 and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is

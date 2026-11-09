@@ -156,6 +156,10 @@ pub trait Live: Simulation + Shows {
     /// screen showed only the game's. False by default (a program that shows the mouse driver's, or none).
     const OWN_POINTER: bool = false;
 
+    /// The port's `quirks.toml` (`include_str!`), for `play --fix`'s names (D149): a misspelt one would do nothing and
+    /// say nothing. Empty by default: a port with no quirks registered, which takes none.
+    const QUIRKS: &'static str = "";
+
     /// What the original's loop does next, given the host's devices as its handlers would have taken them.
     fn next(&self, devices: &mut Self::Devices, host: &Host) -> Next;
 
@@ -312,7 +316,7 @@ pub fn inputs(values: &[(&str, &[u8])]) -> Inputs {
     Inputs::new(values.iter().map(|(name, bytes)| ((*name).to_owned(), bytes.to_vec())).collect::<BTreeMap<_, _>>())
 }
 
-/// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound]`): the game's folder chosen,
+/// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]...`): the game's folder chosen,
 /// the port's start (`start`, from power-on, or the folder `rrc start` wrote, D120, of tick 0 from power-on
 /// with the program's initial data, D141: none for a port that starts from a folder alone), then [`play`]; none
 /// when the
@@ -345,7 +349,16 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
                 sound = false;
                 continue;
             }
-            (other, _) => return Some(fail(&format!("{other}: play [--game DIR] [--start DIR] [--no-sound]"))),
+            ("--fix", Some(quirk)) => {
+                // A quirk fixed for this game (D149, DESIGN.md §6.4).
+                if !is_registered(S::QUIRKS, quirk) {
+                    return Some(fail(&format!("{quirk}: no such quirk (rrc quirk lists them)")));
+                }
+                rrc_runtime::fix(quirk);
+            }
+            (other, _) => {
+                return Some(fail(&format!("{other}: play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]...")));
+            }
         }
         rest.next();
     }
@@ -368,6 +381,11 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => fail(&e),
     })
+}
+
+/// Whether `quirks.toml`'s text registers `quirk`.
+fn is_registered(quirks: &str, quirk: &str) -> bool {
+    quirks.lines().any(|line| line.trim() == format!("name = \"{quirk}\""))
 }
 
 fn fail(message: &str) -> std::process::ExitCode {
@@ -514,6 +532,15 @@ fn buttons(window: &Window, pressed: &mut [u32; 3]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fix_names_a_registered_quirk() {
+        let quirks = "[[quirk]]\nname = \"an_overrun\"\nat = \"X.EXE+00000\"\nwhat = \"name = other\"\n";
+        assert!(is_registered(quirks, "an_overrun"));
+        assert!(
+            !is_registered(quirks, "an_over") && !is_registered(quirks, "other") && !is_registered("", "an_overrun")
+        );
+    }
 
     #[test]
     fn a_key_state_array_keeps_what_the_handler_would() {

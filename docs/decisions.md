@@ -715,6 +715,15 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D149. A quirk's switch is one a player and a test can flip. Accepted 2026-11-09, with the person.
+`PORT play --fix NAME` (repeatable) fixes a quirk for that game, its name checked against `Live::QUIRKS`, the port's
+`quirks.toml`. `PORT run --fix NAME`, and `rrc compare SESSION --fix NAME` over it, run a comparison with it fixed: the
+output says so, and the outcome isn't kept for `rrc progress`. Every other comparison keeps them all, as before.
+**Why:** the person asked for a switch for each of the original's bugs, and `rrc_runtime::fix` had no caller: a switch nothing
+can flip isn't one, and a fix's code runs in no comparison, so it could be wrong or never reached and nothing would show.
+A try on a session that reaches the quirk shows both. A misspelt name would do nothing and say nothing, so it's refused.
+Saves don't record the fixes in force yet (DESIGN.md §6.4), and there's no menu: those are M7's.
+
 ### D148. The rule that every bug is registered is checked, not remembered. Accepted 2026-11-09, with the person.
 `rrc check` fails, and `rrc status` names the first, while a comment in the port's code says `bug` or `quirk` with no
 registered quirk named within two lines (unless it says `not the original's`); it branches on a `keeps` not registered; has a registered quirk nothing branches on; has a session
@@ -727,7 +736,8 @@ softened it to "named in comments and notes" through its summaries. Some 25 of t
 one registered, so nothing could show a bug fixed by accident, on a path no session reaches. Reminding doesn't hold; a
 refusal does. A word search over-reports, and the answer to that is to name the quirk by the word. `rrc suspects` had also
 never run on a session from another's tick: it ran the session's whole length again from there, as `rrc files` and the
-contracts did (`snapshots::to_run`).
+contracts did (`snapshots::to_run`). With it, `rrc check`'s overlap rule takes a named part wholly inside a bigger item (a
+table's entry, a record's field) as fine and only half of one as a problem: naming an entry of a table isn't an error.
 
 ### D147. A scenario's edit reaches the port through a mapped pointer. Accepted 2026-11-09.
 `rrc compare` gives the port an edit (D64) of memory that a mapped item reaches through a pointer, where that pointer

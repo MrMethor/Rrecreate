@@ -504,15 +504,17 @@ pub struct Request {
     /// From power-on, the program's own initial data (`rrc-state`, tick 0, D135), for a port whose
     /// [`Simulation::INITIAL_DATA`] takes it.
     pub initial: Option<String>,
+    /// The quirks this run fixes (D149): what `rrc compare --fix` tries; a comparison keeps them all.
+    pub fixes: Vec<String>,
 }
 
 impl Request {
     /// `run --inputs FILE --out FILE [--transplant FILE | --resume FILE] [--save-at TICK --save FILE]
-    /// [--to TICK] [--frames DIR [--screen FILE] [--presentation FILE]]`
+    /// [--to TICK] [--frames DIR [--screen FILE] [--presentation FILE]] [--fix QUIRK]...`
     pub fn parse(args: &[String]) -> Result<Request, String> {
         let usage = "usage: PORT run --inputs FILE --out FILE [--transplant FILE | --resume FILE] \
                      [--save-at TICK --save FILE] [--to TICK] [--frames DIR [--screen FILE] \
-                     [--presentation FILE]]";
+                     [--presentation FILE]] [--fix QUIRK]...";
         let mut args = args.iter();
         if args.next().map(String::as_str) != Some("run") {
             return Err(usage.into());
@@ -534,6 +536,7 @@ impl Request {
                 "--screen" => request.screen = Some(value()?),
                 "--presentation" => request.presentation = Some(value()?),
                 "--initial" => request.initial = Some(value()?),
+                "--fix" => request.fixes.push(value()?),
                 _ => return Err(format!("unknown option {flag}\n{usage}")),
             }
         }
@@ -623,6 +626,9 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
 /// The same, with the frames `drawer` draws written when the request asks for them (D107): each one
 /// that changed, into `frames` as `<tick>.frm`, named on its tick's line.
 fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<S>) -> Result<(), String> {
+    for quirk in &request.fixes {
+        fix(quirk);
+    }
     let inputs = InputsFile::read(&request.inputs)?;
     let (mut state, first) = match (&request.transplant, &request.resume) {
         (Some(file), _) => {
@@ -1146,6 +1152,9 @@ mod tests {
     #[test]
     fn the_command_line() {
         let args = |s: &str| s.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        let r = Request::parse(&args("run --inputs i --out o --fix a --fix b")).unwrap();
+        assert_eq!(r.fixes, ["a", "b"]);
+        assert!(Request::parse(&args("run --inputs i --out o --fix")).is_err());
         let r = Request::parse(&args("run --inputs i --out o --save-at 5 --save s --to 9")).unwrap();
         assert_eq!((r.save, r.to), (Some((5, "s".into())), Some(9)));
         assert!(Request::parse(&args("run --inputs i")).is_err());
