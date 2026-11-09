@@ -907,7 +907,8 @@ fn edit_sets(
 /// Whether an edit's `set` wrote the leaf at `at`: it, or an item holding it (an edit over bytes no field names sets the
 /// whole item).
 fn edit_wrote(set: &serde_json::Map<String, Value>, at: &str) -> bool {
-    set.keys().any(|key| at.strip_prefix(key.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '['])))
+    set.keys()
+        .any(|key| at.strip_prefix(key.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '['])))
 }
 
 /// The leaves of `m`, at `base` in memory now, that an edit of the bytes `start..end` wrote, each with its value in
@@ -2024,7 +2025,9 @@ mod tests {
         let mut set = serde_json::Map::new();
         set.insert("items[2].kind".to_owned(), json!(1));
         set.insert("items[3]".to_owned(), json!({}));
-        assert!(edit_wrote(&set, "items[2].kind") && edit_wrote(&set, "items[3].flags") && edit_wrote(&set, "items[3]"));
+        assert!(
+            edit_wrote(&set, "items[2].kind") && edit_wrote(&set, "items[3].flags") && edit_wrote(&set, "items[3]")
+        );
         assert!(!edit_wrote(&set, "items[2].flags") && !edit_wrote(&set, "items[31].flags"));
     }
 
