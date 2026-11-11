@@ -184,6 +184,7 @@ what the person asked for. The ones that shape the project:
 | [`design.md`](design.md) | The design as decided, by section, and the plan (§12) | The agent: the sections its work touches. The person: for depth on a system |
 | [`decisions.md`](decisions.md) | Every decision, its reason and status | Before changing anything a decision covers; to learn why |
 | [`porting.md`](porting.md) | The playbook: how an agent ports a game with `rrc`, its rules first | An agent porting a game; an agent changing a step of the workflow |
+| [`plans/porting-workflow.md`](plans/porting-workflow.md) | A proposal under review: the standard porting workflow, its stages, gates and rules, and the toolkit changes that enforce it | The person, to decide; then the agent who builds it |
 | [`formats.md`](formats.md) | The files `rrc` and a port read and write | An agent changing or reading them |
 | [`protocol.md`](protocol.md) | How tools drive an emulator | An agent changing Clockwork's control or `rrc`'s use of it |
 | [`../clockwork/README.md`](../clockwork/README.md) | Clockwork's manual: running, driving and investigating a program, validating the CPU | An agent working on or with the emulator |
