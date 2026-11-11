@@ -43,11 +43,15 @@ pub struct Port {
     /// What builds it first, if anything (`cargo build --release`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub build: Vec<String>,
+    /// The sessions the port is to reproduce (D156), by name, `*` and `?` as wildcards: what the person said to
+    /// port. The workflow's gates are measured over them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<String>,
 }
 
 impl Default for Port {
     fn default() -> Self {
-        Port { imports: true, command: Vec::new(), build: Vec::new() }
+        Port { imports: true, command: Vec::new(), build: Vec::new(), scope: Vec::new() }
     }
 }
 

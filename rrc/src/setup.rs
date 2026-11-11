@@ -69,7 +69,7 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
 }
 
 /// Whether `text` matches `pattern`, where `*` is any run of characters and `?` any one.
-fn matches(pattern: &[u8], text: &[u8]) -> bool {
+pub(crate) fn matches(pattern: &[u8], text: &[u8]) -> bool {
     match (pattern.first(), text.first()) {
         (None, None) => true,
         (Some(b'*'), _) => matches(&pattern[1..], text) || (!text.is_empty() && matches(pattern, &text[1..])),
@@ -230,6 +230,10 @@ pub(crate) fn status(repo: &Repo) -> Result<ExitCode, String> {
     let open = crate::quirks::open(repo)?;
     if let Some(first) = open.first() {
         say("open", format!("{} rrc check refuses; the first: {first}", open.len()));
+    }
+    // What the survey still asks of the outside sources (D156).
+    for line in crate::prior::open(repo)? {
+        say("sources", line);
     }
     Ok(ExitCode::SUCCESS)
 }

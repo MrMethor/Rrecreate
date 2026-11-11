@@ -54,6 +54,14 @@ build = []                      # optional: what builds it first
 `command` is a command line run in the port repository: `rrc compare` adds `run` and its options (below, "The
 port's files"). `build`, if given, runs before it.
 
+```toml
+[port]
+scope = ["cell", "dungeon*"]    # the sessions the port is to reproduce (D156): names, * and ? as wildcards
+```
+
+`scope` is what the person said to port, as sessions (`rrc scope` sets and lists it). The workflow's gates are
+measured over them; while none is set, over every session.
+
 ## `rrc.local.toml`: this machine (not committed)
 
 ```toml
@@ -458,6 +466,38 @@ evidence = "rrc suspects play: past enemies by GAME.EXE+002FF, offset 60"
 ```
 
 `rrc quirk` writes it, sorted by name. Names are names, each once; `at` is an ID of the game's program.
+
+## `sources.toml`: the outside sources
+
+What others wrote about the game and the program's parts (D156), kept by `rrc sources`:
+
+```toml
+[[sweep]]                       # a search made
+date = "2026-11-11"
+searched = ["the game's name and file formats", "its sound driver's name"]
+none = ["extender", "tools"]    # kinds looked for and not found
+provenance = "agent"
+
+[[source]]
+name = "the-wiki"               # as evidence names it: prior-art:the-wiki
+kind = "wiki"
+at = "https://example.org/wiki" # an address, a book, a file the person has
+covers = ["spells", "items"]    # subsystems, formats, words to find it by
+trust = "names and tables, not timings"
+provenance = "agent"
+
+[[source]]
+name = "an-old-port"
+kind = "reimplementation"
+excluded = "the person: its code stays out"   # listed so it isn't found again
+provenance = "human"
+```
+
+The kinds: `wiki`, `formats`, `reimplementation`, `tools`, `patches`, `walkthrough`, `bugs` for the game;
+`library` (the compiler's), `extender`, `sound` (the driver), `compression` for the program's parts; `other`. A
+source has a place (`at`) or is `excluded`. `rrc sources WORD` lists the kept sources whose `covers`, name, kind or
+note has the word (or is in it), whatever the case. The sweep is done when each kind but `other` has a source or is
+in a sweep's `none`; `rrc status` says which aren't. A port with `imports = false` is asked for none (D46).
 
 ## `sessions/<name>.toml`: a session
 

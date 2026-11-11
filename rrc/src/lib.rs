@@ -24,6 +24,7 @@ mod pass;
 mod peek;
 pub mod places;
 mod play;
+mod prior;
 mod progress;
 pub mod quirks;
 pub mod repo;
@@ -110,6 +111,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          array, {\"field\": value, ...} for some of a structure's fields; or an
                          enumeration's value name) at AT, named data or an ID with a path into it as its
                          type reads (enemies[2].alive); every run of the session makes it
+  scope [SESSION...] [--clear]
+                         the sessions the port is to reproduce, as the person said (rrc.toml, [port] scope),
+                         or those set (names, * and ? as wildcards): what the workflow's gates are measured
+                         over; every session while none is set
   record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound;
                          keeps snapshots for rrc watch and rrc inputs to start from
@@ -218,6 +223,18 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          what a suspect turned out to be
   unrun [--lines N]      the places in the original's code that the port's code names and no session's
                          run executed (as rrc suspects saw them), by function; the list in a file
+  sources [WORD...]      the outside sources (sources.toml): what others wrote about the game and the program's
+                         parts, what each covers and how far it is trusted, those kept out; or those that
+                         cover a word (a subsystem, a format)
+  sources add NAME --kind KIND --at WHERE [--covers A,B] [--trust TEXT] [--note TEXT]
+                         a source found (evidence names it prior-art:NAME); KIND: wiki, formats,
+                         reimplementation, tools, patches, walkthrough, bugs, library, extender, sound,
+                         compression, other
+  sources exclude NAME --why TEXT [--kind KIND]
+                         a source the person keeps out, listed so it isn't found again
+  sources sweep --searched \"A; B\" [--none KIND,...] [--date YYYY-MM-DD]
+                         a search made: what was searched for, and the kinds looked for and not found
+  sources remove NAME    take a source out of the list
   sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]
                          a library signature pack (sigs/README.md) from this analysis and the linker
                          map of the same build: the library functions the map names, by their
@@ -226,7 +243,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          analyze adds those Ghidra didn't find: for a port made to build a pack
 
 Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/, mapping.toml,
-quirks.toml (docs/formats.md).
+quirks.toml, sources.toml, RULES.md (docs/formats.md).
 Environment: RRC_CLOCKWORK (the clockwork program), RRC_CACHE (the cache folder), GHIDRA_INSTALL_DIR and
 JAVA_HOME (for analysis).";
 
@@ -279,6 +296,8 @@ pub fn main() -> ExitCode {
         Some("pass") => here().and_then(|repo| pass::pass(&repo, rest)),
         Some("peek") => here().and_then(|repo| peek::peek(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
+        Some("sources") => here().and_then(|repo| prior::sources(&repo, rest)),
+        Some("scope") => here().and_then(|mut repo| session::scope(&mut repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
     result.unwrap_or_else(|message| {

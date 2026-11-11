@@ -271,10 +271,30 @@ file to the function that reads it, and a save routine's writes to which memory 
 
 ### Outside sources
 
-Look for prior art (D32, D77): source releases, reimplementations, format documentation, wikis,
-walkthroughs, bug lists. It is expected, and not relied upon: evidence, named with its source, that the
-original confirms. Projects the person excluded stay out (for Arena, Recreate and tesa-decomp: D66, D69). For a
-test bench whose source is released, used to grade the toolkit, the source stays out of reach (D46, below).
+What others wrote is looked for before anything is worked out (D32, D77), and kept in the port's books
+(`sources.toml`, D156), so that a source is met again at the item it covers:
+
+```bash
+rrc sources add the-wiki --kind wiki --at https://example.org/wiki --covers spells,items --trust "names, not timings"
+rrc sources exclude an-old-port --why "the person: its code stays out"
+rrc sources sweep --searched "the game's name and file formats; its sound driver's name" --none extender,tools
+rrc sources spells
+```
+
+Sweep for each kind. For the game: its wikis, documentation of its file formats, reimplementations and source
+ports (of this game or others on its engine), modding tools, patch notes, walkthroughs and maps (they script
+sessions), bug lists and speedrunners' glitch lists (each entry a candidate quirk and a session to write). For the
+program's parts, as the analysis identified them (the library names `rrc analyze` gave, the strings in the image):
+the compiler's runtime library, the DOS extender, the sound driver, the compression. These are often documented or
+published, and what is published isn't reverse engineered. `rrc sources sweep` records what was searched for and
+the kinds looked for and not found; `rrc status` names the kinds neither found nor looked for. `rrc sources WORD`
+and `rrc show NAME` say which sources cover a thing: look there before working it out.
+
+A source is expected, and not relied upon: evidence, named with its source (`prior-art:<name>`), that the original
+confirms or overrules. Reading a page is free; a download is asked of the person, once, as one list. Projects the
+person excluded stay out, listed with `rrc sources exclude` so that they aren't found again (for Arena, Recreate
+and tesa-decomp: D66, D69). For a test bench whose source is released, used to grade the toolkit, the source stays
+out of reach (D46, below): a port with `imports = false` is asked for no sweep.
 
 ### A first session
 
@@ -473,7 +493,8 @@ once (`kept`).
 
 ## Stage 2: Sessions
 
-The scope is what the port is to reproduce, written down as sessions. The person plays the scope once, for minutes:
+The scope is what the port is to reproduce, written down as sessions (`rrc scope SESSION...`, with `*` and `?`;
+`rrc.toml`'s `[port] scope`, D156): the gates are measured over them. The person plays the scope once, for minutes:
 scripts reach only what an agent can plan (D124). The agent adds a scripted session for each thing play missed,
 from another session's tick, and a scenario's edits for a state play rarely reaches.
 

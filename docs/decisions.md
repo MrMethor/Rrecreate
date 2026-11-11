@@ -735,6 +735,26 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D156. The scope and the outside sources are in the port's books. Accepted 2026-11-11.
+`rrc.toml`'s `[port] scope` lists the sessions the port is to reproduce (names, `*` and `?` as wildcards), set with
+`rrc scope` from what the person said; while none is set, every session counts. `sources.toml` lists the outside
+sources: each one's name (as evidence names it, `prior-art:<name>`), kind, place, what it covers and how far it is
+trusted; those the person keeps out, with why; and the sweeps made, each with its date, what was searched for and
+the kinds looked for and not found. The kinds are fixed: for the game, wikis, format documentation,
+reimplementations, tools, patch notes, walkthroughs and bug lists; for the program's parts, the compiler's library,
+the extender, the sound driver and the compression. `rrc sources WORD` and `rrc show NAME` say which sources cover
+a thing; `rrc status` says while no sweep is recorded or a kind was neither found nor looked for; `rrc check`
+checks the file. A port that takes no imports (D46) is asked for no sweep.
+**Why:** changes C and K of the workflow's plan (D154). The gates need something to be measured over, and what to
+port is the person's call, so it is a setting they give. Outside sources were a rule (D77: expected, not relied
+upon) with nothing in the toolkit behind it: nothing listed them and nothing brought one up at the moment it would
+help, and the person's complaint was agents that work a thing out without looking at what is already written. A
+list by what each source covers puts the source at the item; a recorded sweep over fixed kinds makes "I looked"
+something a tool can check, and its kinds include the program's parts (a published sound driver or library needs
+no reverse engineering), which a search for the game's name never finds. Sources kept out are listed so that the
+next agent doesn't find them again.
+**Extends:** D32, D77.
+
 ### D155. A port's entry point is made by `rrc init`. Accepted 2026-11-11.
 `rrc init` writes, and `rrc hooks` adds to a port that lacks them: `RULES.md`, the person's rules for the port, as
 five questions (the stretch to port, the sources kept out, where to commit and as whom, what needs asking first,

@@ -176,6 +176,61 @@ pub fn names(repo: &Repo) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// The port's scope (D156): the sessions it is to reproduce, as `rrc.toml`'s `[port] scope` names them (names, with
+/// `*` and `?` as wildcards), sorted; every session while no scope is set. With them, the patterns that name none.
+pub fn in_scope(repo: &Repo) -> Result<(Vec<String>, Vec<String>), String> {
+    let all = names(repo)?;
+    let scope = &repo.settings.port.scope;
+    if scope.is_empty() {
+        return Ok((all, Vec::new()));
+    }
+    let names = |pattern: &String, name: &String| crate::setup::matches(pattern.as_bytes(), name.as_bytes());
+    let unmatched = scope.iter().filter(|pattern| !all.iter().any(|name| names(pattern, name))).cloned().collect();
+    let inside = all.into_iter().filter(|name| scope.iter().any(|pattern| names(pattern, name))).collect();
+    Ok((inside, unmatched))
+}
+
+/// `rrc scope`: the port's scope, or it set to the sessions named.
+pub(crate) fn scope(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String> {
+    let a = Args::parse(args, &[], &["--clear"])?;
+    if a.has("--clear") {
+        a.positionals(0, 0, "scope [SESSION...] [--clear]")?;
+        repo.settings.port.scope.clear();
+        repo.save_settings()?;
+    } else if !a.positional.is_empty() {
+        repo.settings.port.scope = a.positional.clone();
+        repo.save_settings()?;
+    }
+    let all = names(repo)?;
+    let (inside, unmatched) = in_scope(repo)?;
+    let shown = |names: &[String]| {
+        let more = if names.len() > 8 { format!(", {} more", names.len() - 8) } else { String::new() };
+        format!("{}{more}", names.iter().take(8).cloned().collect::<Vec<_>>().join(", "))
+    };
+    if repo.settings.port.scope.is_empty() {
+        say(
+            "scope",
+            format!(
+                "not set: every session counts ({}); the person says what the port is to reproduce: rrc scope SESSION...",
+                all.len()
+            ),
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    say("scope", format!("{}: {} of {} sessions", repo.settings.port.scope.join(", "), inside.len(), all.len()));
+    if !inside.is_empty() {
+        say("sessions", shown(&inside));
+    }
+    let outside: Vec<String> = all.iter().filter(|name| !inside.contains(name)).cloned().collect();
+    if !outside.is_empty() {
+        say("outside", format!("{} sessions: {}", outside.len(), shown(&outside)));
+    }
+    for pattern in unmatched {
+        say("unmatched", format!("{pattern}: no session of that name yet (rrc session add, or rrc play)"));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 pub(crate) fn session(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let valued =
         ["--inputs", "--replay", "--seconds", "--description", "--clockwork", "--type", "--note", "--from", "--tick"];

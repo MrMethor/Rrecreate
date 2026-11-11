@@ -61,6 +61,13 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         say("quirks", quirks.quirks.len());
     }
     problems.extend(quirks.problems(&repo.module()));
+    let sources = crate::prior::Sources::load(repo)?;
+    if !sources.sources.is_empty() || !sources.sweeps.is_empty() {
+        let kept = sources.sources.iter().filter(|s| s.excluded.is_empty()).count();
+        let out = sources.sources.len() - kept;
+        say("sources", format!("{kept} outside sources, {out} kept out, {} sweeps", sources.sweeps.len()));
+    }
+    problems.extend(sources.problems());
     problems.extend(crate::quirks::open(repo)?);
     for problem in &problems {
         say("problem", problem);
@@ -86,7 +93,7 @@ fn image_size(repo: &Repo) -> Result<u32, String> {
 }
 
 /// Who decides: `--by`, else `RRC_BY`, else `agent`.
-fn provenance(a: &Args) -> String {
+pub(crate) fn provenance(a: &Args) -> String {
     a.value("--by").map(str::to_owned).or_else(|| std::env::var("RRC_BY").ok()).unwrap_or_else(|| "agent".into())
 }
 
@@ -228,6 +235,15 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     if let Some(offset) = analysis.as_ref().and_then(|a| a.ds_offset(&id)).filter(|_| !k.functions.contains_key(&id)) {
         say("address", format!("DS:{offset:04X}, in the data segment"));
+    }
+    // The outside sources that cover it (D156), met where the question is: by its name and the words in it.
+    let named = k.functions.get(&id).map(|d| &d.name).or_else(|| k.data.get(&id).map(|d| &d.decision.name));
+    if let Some(name) = named {
+        let parts = name.split('_').filter(|part| part.len() >= 4).map(str::to_owned);
+        let words: Vec<String> = std::iter::once(name.clone()).chain(parts).collect();
+        if let Some(sources) = crate::prior::about(repo, &words) {
+            say("sources", sources);
+        }
     }
     let text = id.to_string();
     for s in k.ticks.syncs.iter().filter(|s| s.at == text) {

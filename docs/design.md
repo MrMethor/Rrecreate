@@ -335,6 +335,7 @@ knowledge/
   types.toml        structures and enumerations
   ticks.toml        sync points (where a tick ends) and boundary values (what a tick reads)
 sessions/           a TOML file per session (its inputs, its length, its recorded trace's hash)
+sources.toml        the outside sources: what each covers, those kept out, the sweeps made (D156)
 RULES.md            the person's rules for this port, asked for once (D155)
 AGENTS.md           what an agent runs before anything else: rrc rules, rrc status
 notes/              what was learned and why, one file a subject; never the state of the work
@@ -354,7 +355,8 @@ next step), `game` (the game's folder and its version), `analyze`, `check`, `nam
 `show`, `session`, `record`, `calls` (how often a session calls each function: loops and their ticks), `inputs`
 (what the program reads that interrupt handlers or services write: boundary value candidates), `watch` (who
 writes or reads a value, with the call chain), `search` (memory by how it behaves over ticks), `files` (which file bytes went where), `ports`,
-`frame`, `trace`, `compare`, `quirk`, `suspects` (quirk candidates) and `sigs`.
+`frame`, `trace`, `compare`, `quirk`, `suspects` (quirk candidates), `sigs`, `scope` (the sessions the port is to
+reproduce) and `sources` (the outside sources, by what they cover).
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees

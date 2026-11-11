@@ -23,7 +23,7 @@ const RULES_TEXT: &str = "\
 Ask the person each question below once, and write the answer in its place (docs/porting.md, stage 0). `rrc rules`
 prints this file with the playbook's rules; `rrc status` and `rrc doctor` count the questions left.
 
-- **Scope.** ASK: which stretch of the game is this port to reproduce?
+- **Scope.** ASK: which stretch of the game is this port to reproduce? (Its sessions, once there: `rrc scope`.)
 - **Sources kept out.** ASK: which outside sources stay out of this port (a source release, another project)?
 - **Commits.** ASK: where does this port commit and push, and as whom?
 - **Asking first.** ASK: what needs asking first? (Unless said otherwise: downloading, publishing, deleting.)

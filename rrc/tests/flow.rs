@@ -144,6 +144,29 @@ fn a_session_is_traced_tick_by_tick() {
     rrc.ok(&["data", "T.COM+0000F", "count", "--type", "u16"]);
     let shown = rrc.ok(&["show", "count"]);
     assert!(shown.contains("step adds 1") && shown.contains("0.5"), "{shown}");
+    // The outside sources are in the port's books (D156): found by what they cover, met at the thing they cover, and
+    // a sweep's gate is each kind found or looked for.
+    assert!(rrc.ok(&["sources"]).contains("swept     never: search for each kind"));
+    assert!(rrc.ok(&["status"]).contains("sources   the outside sources aren't swept"));
+    let wiki =
+        ["sources", "add", "the-wiki", "--kind", "wiki", "--at", "https://example.org/t", "--covers", "count,steps"];
+    let added = rrc.ok(&wiki);
+    assert!(added.contains("source    the-wiki (wiki): covers count, steps; at https://example.org/t"), "{added}");
+    rrc.ok(&["sources", "exclude", "its-source", "--why", "the person: it grades the toolkit"]);
+    assert!(rrc.ok(&["sources", "Count"]).contains("source    the-wiki (wiki)"));
+    assert!(rrc.ok(&["sources", "enemies"]).contains("none      no source listed covers enemies"));
+    assert!(rrc.ok(&["show", "count"]).contains("sources   the-wiki (wiki): rrc sources count"));
+    let (refused, ok) = rrc.run(&["sources", "sweep"]);
+    assert!(!ok && refused.contains("--searched says what was searched for"), "{refused}");
+    let sweep =
+        ["sources", "sweep", "--searched", "t.com; its formats", "--none", "formats,tools", "--date", "2026-11-11"];
+    let swept = rrc.ok(&sweep);
+    assert!(swept.contains("swept     2026-11-11: 2 searches"), "{swept}");
+    assert!(swept.contains("missing   neither found nor looked for: reimplementation, patches, "), "{swept}");
+    assert!(rrc.ok(&["status"]).contains("sources   sources neither found nor looked for: reimplementation, "));
+    let listed = rrc.ok(&["sources"]);
+    assert!(listed.contains("excluded  its-source: the person: it grades the toolkit"), "{listed}");
+    assert!(rrc.ok(&["check"]).contains("sources   1 outside sources, 1 kept out, 1 sweeps"));
     let (taken, ok) = rrc.run(&["data", "T.COM+00011", "count", "--size", "2"]);
     assert!(!ok && taken.contains("count names T.COM+0000F already"), "{taken}");
     // A name taken back, by its name or ID.
@@ -165,6 +188,13 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["show", "count"]).contains("count (agent, 0.5)"));
 
     rrc.ok(&["session", "add", "short", "--seconds", "0.005"]);
+    // The scope (D156): the sessions the port is to reproduce, as the person said.
+    assert!(rrc.ok(&["scope"]).contains("scope     not set: every session counts (1)"));
+    let scope = rrc.ok(&["scope", "sh*", "boss"]);
+    assert!(scope.contains("scope     sh*, boss: 1 of 1 sessions"), "{scope}");
+    assert!(scope.contains("unmatched boss: no session of that name yet"), "{scope}");
+    assert!(std::fs::read_to_string(repo.join("rrc.toml")).unwrap().contains("scope = ["));
+    assert!(rrc.ok(&["scope", "--clear"]).contains("scope     not set"));
     let calls = rrc.ok(&["calls", "short", "--min", "10"]);
     assert!(calls.contains("1 functions: step"), "the loop calls step once a pass: {calls}");
     assert!(calls.contains("phase     before tick 1") && calls.contains("phase     loop, ticks 1-"), "{calls}");
