@@ -16,6 +16,7 @@ mod files;
 pub mod formats;
 pub mod frames;
 pub mod game;
+mod journal;
 pub mod knowledge;
 pub mod mapping;
 mod memory;
@@ -170,7 +171,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          ported yet, and says what each feed changed; --fields: the mapped fields alone,
                          not the screen nor the sound (a stretch the port doesn't draw yet); what the
                          port noted (rrc_runtime::note) in the pass that differs, --notes every note.
-                         Exits 1 if it diverges
+                         Exits 1 if it diverges. Ending at the same first difference a third time running,
+                         it says so (stuck), with the kinds of evidence not looked at since (untried)
   compare SESSION --lockstep
                          the port in lockstep with the original (D124): from a transplant at tick 1, given
                          the original's mapped state before every pass, every difference counted and none
@@ -235,6 +237,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
   sources sweep --searched \"A; B\" [--none KIND,...] [--date YYYY-MM-DD]
                          a search made: what was searched for, and the kinds looked for and not found
   sources remove NAME    take a source out of the list
+  journal [--lines N]    what the work in this port was made of (.rrc/journal.jsonl): the commands rrc ran, how
+                         they divide between comparing and each kind of looking (the code, outside sources,
+                         the game's files, runs), how often a comparison was stuck, the last ones
   sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]
                          a library signature pack (sigs/README.md) from this analysis and the linker
                          map of the same build: the library functions the map names, by their
@@ -297,13 +302,19 @@ pub fn main() -> ExitCode {
         Some("peek") => here().and_then(|repo| peek::peek(&repo, rest)),
         Some("sigs") => here().and_then(|repo| sigs::sigs(&repo, rest)),
         Some("sources") => here().and_then(|repo| prior::sources(&repo, rest)),
+        Some("journal") => here().and_then(|repo| journal::journal(&repo, rest)),
         Some("scope") => here().and_then(|mut repo| session::scope(&mut repo, rest)),
         Some(other) => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
-    result.unwrap_or_else(|message| {
+    let code = result.unwrap_or_else(|message| {
         eprintln!("rrc: error: {message}");
         ExitCode::from(1)
-    })
+    });
+    // What ran, kept in the port's journal (D157), which says when a comparison is stuck.
+    if let Ok(repo) = here() {
+        journal::close(&repo, &args, code == ExitCode::SUCCESS);
+    }
+    code
 }
 
 /// The port repository the current folder is in.

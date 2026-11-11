@@ -735,6 +735,24 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D157. The journal: the toolkit says when a route is stuck. Accepted 2026-11-11.
+`rrc` keeps each command it runs in a port in `.rrc/journal.jsonl` (this machine's, not committed): when, the
+command, whether it failed, and for a comparison its session and how it ended (`match`, or its first difference: the
+tick and the field, the screen or the sound). A comparison that ends at the same first difference as its session's
+last two says `stuck`, and `untried` lists the kinds of evidence no command looked at since that difference first
+showed: the code (`rrc show`, `rrc pass`, `rrc calls`), an outside source (`rrc sources WORD`), the game's files
+(`rrc files`, `rrc asset`), the value over the run (`rrc watch`, `rrc trace`, `rrc peek`, `rrc search`, `rrc
+frame`, `rrc inputs`, `rrc ports`). A difference that moved, to another tick or field, is progress and starts the
+count again. `rrc journal` says what the work was made of: the commands, how they divide between comparing and each
+kind of looking, how often a comparison was stuck, the last ones. It signals and never refuses.
+**Why:** changes H and O of the workflow's plan (D154), for the problem the person named: an agent settles into one
+tool and forces it through. Rule 5 (use the whole toolkit; change the source, not the number of tries) was in the
+playbook and was missed, because from inside every retry looks like progress and the rule was read hours before.
+The tool sees what the agent can't, the same answer three times; it can't see which route is right, so it names
+what hasn't been tried and leaves the choice. Three is a guess to tune on the Arena port: a signal that fires too
+often is ignored. The same journal lets a blind test of the playbook (D46, M9) report how the tools were used.
+**Extends:** D148 (a rule that matters is checked, not remembered), D77's rule 5.
+
 ### D156. The scope and the outside sources are in the port's books. Accepted 2026-11-11.
 `rrc.toml`'s `[port] scope` lists the sessions the port is to reproduce (names, `*` and `?` as wildcards), set with
 `rrc scope` from what the person said; while none is set, every session counts. `sources.toml` lists the outside

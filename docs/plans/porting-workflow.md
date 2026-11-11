@@ -12,6 +12,7 @@
 | B: `rrc init` (and `rrc hooks`) makes the port's entry point: `RULES.md` as questions, `AGENTS.md`, `notes/`, the session hook | D155 |
 | C: the scope, `[port] scope` in `rrc.toml`, set with `rrc scope` | D156 |
 | K: outside sources in the port's books: `sources.toml`, `rrc sources`, the sweep's gate in `rrc status`, a source named by `rrc show` | D156 |
+| H: the journal and the stuck signal (`stuck`, `untried`); O's measure, `rrc journal` | D157 |
 
 ## 1. What exists, and where it falls short
 

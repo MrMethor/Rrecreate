@@ -80,6 +80,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         census.save(&file)?;
         census.show(name, 20);
         say("census", crate::path_text(&file));
+        let differing =
+            census.fields.len() + usize::from(census.screen.is_some()) + usize::from(census.sound.is_some());
+        crate::journal::ended(name, format!("census: {differing} things differ"));
         return Ok(if census.differs() { ExitCode::from(1) } else { ExitCode::SUCCESS });
     }
     let tick = |flag: &str| -> Result<Option<u64>, String> {
@@ -341,6 +344,14 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     };
     if fixed.is_none() {
         outcome.save(&work)?;
+        // How it ended, for the journal (D157): the same first difference again and again is a route that stopped paying.
+        let end = match (&diverged, &drawn, &heard) {
+            (Some((t, found)), _, _) => format!("tick {t}: {}", found[0].path),
+            (None, Some((t, _)), _) => format!("tick {t}: the screen"),
+            (None, None, Some((t, _))) => format!("tick {t}: the sound"),
+            (None, None, None) => "match".to_owned(),
+        };
+        crate::journal::ended(name, end);
     }
     let code = match diverged {
         None if heard.is_some() => {

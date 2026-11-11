@@ -150,11 +150,18 @@ SESSION --lockstep` counts every difference of a session at once.
 | Three tries with no progress | Another kind of source: the code instead of runs, an outside source, the game's file. Then fresh eyes, below |
 
 **When stuck.** Three tries of one route that leave the first difference where it was mean the route has stopped
-paying (rule 5). Stop, and write the question without its history: what is asked, what is known (`rrc show` of the
+paying (rule 5). `rrc` says so, since it can't be seen from inside (D157): it keeps the commands run in the port,
+and a comparison that ends at the same first difference a third time running says `stuck`, and `untried`: the kinds
+of evidence not looked at since that difference first showed (the code, an outside source, the game's files, the
+value over the run). Take one of those next, not a fourth try. When none is left, stop and write the question
+without its history: what is asked, what is known (`rrc show` of the
 place), what was tried. Give that, not the transcript, to a fresh agent, and ask it for routes: it has no sunk
 cost. Where none can be started, or the port's `RULES.md` says not to, read `rrc rules` again and plan from the
 question as if new. The same before each new subsystem: the routes first, then the work. If no route answers, it is
 the person's.
+
+`rrc journal` says what the work was made of: the commands, how they divide between comparing and each kind of
+looking, how often a comparison was stuck. A stretch that is all comparing is the drift this is there to show.
 
 ## Recipes, by problem
 

@@ -104,6 +104,11 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 - `saves/`: the games the port saved while played (`rrc_runtime::original::save`, D119), in the original's own
   format and names. A comparison's run has its own (`compare/<session>/saves/`, D131).
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
+- `journal.jsonl`: each command `rrc` ran in the port (D157), a JSON object a line: `t` (seconds since 1970, the
+  host's), `cmd`, `args`, `ok`, and for a comparison its `session` and `end` (`match`, or its first difference:
+  `tick 194: enemies[1].hits`, `tick 102: the screen`, `tick 36: the sound`; a lockstep's `census: N things
+  differ`), with `stuck` on the one that ended there the third time running. Not kept: `init`, `rules`, `status`,
+  `doctor`, `journal`. Nothing the port is judged by.
 
 ## Ghidra's export
 

@@ -960,6 +960,21 @@ fn a_port_matches_the_original_tick_by_tick() {
         all.contains("note      a bounce not counted (TOY.EXE+002FF): first in the pass to tick 194, in 1 ticks"),
         "{all}"
     );
+    // The same first difference a third time running is a route that stopped paying (D157): rrc says so, with the
+    // kinds of evidence nobody looked at since it first showed. The watch between is one of them.
+    assert!(!all.contains("stuck     "), "twice isn't stuck: {all}");
+    rrc.ok(&["watch", "play", "enemies", "--tick", "194", "--ticks", "1"]);
+    let (third, _) = rrc.run(&["compare", "play"]);
+    assert!(
+        third.contains("stuck     the same first difference 3 times running: tick 194: enemies[1].hits"),
+        "{third}"
+    );
+    assert!(third.contains("untried   since it first showed: the code (rrc show ID --c"), "{third}");
+    assert!(third.contains("an outside source (rrc sources WORD)") && !third.contains("the value over the run"));
+    let journal = rrc.ok(&["journal", "--lines", "2"]);
+    assert!(journal.contains("stuck     1 times a comparison ended at the same first difference 3 times running"));
+    assert!(journal.contains("ran       compare play -> tick 194: enemies[1].hits"), "{journal}");
+    assert!(journal.contains("mix       compare 4, code 0, sources 0, files 0, runs "), "{journal}");
     rrc.ok(&["quirk", "bounces", "--remove"]);
     // The enemies fed from the original (D84): the rest is compared over the whole session.
     let fed = rrc.ok(&["compare", "play", "--feed", "enemies"]);
