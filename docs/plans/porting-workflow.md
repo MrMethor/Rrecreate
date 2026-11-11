@@ -2,7 +2,7 @@
 
 > Proposed 2026-11-11, for the person's review. Nothing here is decided, and nothing is built unless it says "today".
 > Accepted, it becomes a decision, the playbook (`docs/porting.md`) is rewritten around it, and the toolkit changes of
-> section 4 follow.
+> sections 4 and 5 follow.
 
 ## 1. What exists, and where it falls short
 
@@ -138,7 +138,49 @@ in), and a refusal there would block honest work in progress. What an agent may 
 The Arena port is the test of D to F: given its scope, `rrc status` should say, unprompted, what the M6 assessment
 found by hand.
 
-## 5. What is yours to decide
+## 5. Keeping the agent on the best tool
+
+The person's review, 2026-11-11: the largest problem in practice is an agent that settles into one approach and
+forces it through every problem, without asking whether another tool, the code, or what is already on the internet
+would answer sooner.
+
+The playbook already says not to (rule 5, the sources' order, "Where to start, by question"), and it still happens.
+A rule that keeps being missed is given to a tool (D148). Why it happens, and which change below answers it:
+
+| Why the agent stays on one tool | Answered by |
+|---|---|
+| The last tool is in front of it; the rule was read hours ago | H, I |
+| Using another tool means knowing it exists and suspecting it would help | I, J, N |
+| From inside, every retry looks like progress | H, L |
+| Outside sources are nowhere in the toolkit, and a download needs asking | K |
+| Whoever dug the hole keeps digging | M |
+| Nothing measures it, so nobody sees it | H, O |
+
+| | Change | What it gives | Size |
+|---|---|---|---|
+| H | **A journal and a stuck signal.** `rrc` notes each command in the cache: the command, the session, the place or field it was about, how it ended (a comparison: its first difference). A comparison that ends at the same first difference a third time says so, with the kinds of evidence not yet looked at for that place (its writer's code, a watch or trace of the value, a source on the subsystem). `rrc status` gives each open item its tool mix (`compare 14, show 0, watch 0, sources 0`) | The agent is told it is stuck, since it can't tell from inside; the person sees drift in one line | medium |
+| I | **Each result names the next moves.** The table of section 3 and the playbook's "Where to start, by question" move into the tools: a difference ends with which row it is and the commands for it, always of two kinds (the code and a run, or a source) | The alternative is met where the choice is made, not in a document read at the start | medium |
+| J | **One answer for "what is known here".** `rrc show` on a place, a name or a field gives all the toolkit holds: name and type, who reads and writes it, the sessions and ticks that run it, the file it was loaded from, the quirks and suspects near it, the sources on its subsystem, the port's code that names it | The other evidence appears without having to think of asking for it | small |
+| K | **Outside sources in the port's books.** `sources.toml`: each source's address, what it covers, how far it is trusted, and the ones the person keeps out (listed, so they aren't found again). `rrc sources TOPIC` says who wrote about a thing, and the work list shows it on each item. The survey's gate asks for the sweep with its searches recorded, over a fixed list of kinds (below). Downloads are asked of the person once, as one list | The internet is part of the workflow, with a gate, and is brought up at each item | small |
+| L | **A question, two routes and a budget for each item.** Taking an item records three lines: the question, the route chosen with one other considered, and the budget (runs or minutes) after which the route changes. The journal counts against it and says when it is spent | "Is there a better tool" is asked when it costs nothing: before starting | small, after E and H |
+| M | **Fresh eyes when stuck.** At a stuck signal the playbook's step: write the question without its history and give it, with `rrc show`'s answer, to a fresh agent, which proposes routes without the sunk cost (where none can be started: `rrc rules`, then plan again from the question). The same before each new subsystem. D34 holds: the toolkit says when, the agent does it | The one way out of a rut that doesn't depend on the agent in it | small (playbook) |
+| N | **Recipes.** The playbook gets "Recipes, by problem": the best-known route, its tools in order and its cost, for what every port meets (the main loop, the random numbers, a file's format, a table's layout, a value that drifts, a sound driver's calls, a level's contents). A route found the hard way is written as a recipe before its item closes; `rrc how WORD` prints those that match | The next port starts from the best-known approach instead of finding it again | small |
+| O | **Measured in the blind tests.** Each blind test of the playbook (D46, M9) reports the journal's tool mix, stuck signals and time for each item; a change to the playbook is judged by them | Whether any of this works is known, not hoped | small, after H |
+
+**The kinds of sources the sweep covers (K).** For the game: its wikis, format documentation, reimplementations (and
+those of other games on the same engine), modding tools, patch notes, walkthroughs and maps (they script sessions),
+bug lists and speedrunners' glitch lists (each entry a candidate quirk and a session to write). For the program's
+parts, as the analysis identified them: the compiler's library, the DOS extender, the sound driver, the compression.
+These are often documented or published, and what is published isn't reverse engineered.
+
+**What I would not do.** Another rule alone: rule 5 is that rule, and it was missed. A refusal: a tool can't know
+which route is right, only that one has stopped paying, so H and L signal and never block. H's threshold (three
+times) is a guess to tune on the Arena port: a signal that fires too often is ignored.
+
+**The order.** H, I and K first: the signal, the alternatives at hand, the internet in the books. J and N are cheap
+and go with them. L and M need the work list (E) and the journal. O follows H.
+
+## 6. What is yours to decide
 
 1. **The stages and their order.** In particular stage 2: you play each port's scope once, early (minutes of your
    time against hours of scripted steering).
@@ -147,3 +189,5 @@ found by hand.
 4. **The six new rules**, and whether any should become a refusal of `rrc check` now.
 5. **When to build it.** A and B can be done at once; C to G are toolkit work that would come before M6 goes on, as
    you said, or beside it.
+6. **Section 5's changes:** which of H to O, and whether fresh eyes (M) may start a second agent on its own or asks
+   you first.
