@@ -1,8 +1,14 @@
-# The standard porting workflow: a proposal
+# The standard porting workflow: the plan
 
-> Proposed 2026-11-11, for the person's review. Nothing here is decided, and nothing is built unless it says "today".
-> Accepted, it becomes a decision, the playbook (`docs/porting.md`) is rewritten around it, and the toolkit changes of
-> sections 4 and 5 follow.
+> Proposed 2026-11-11 and accepted by the person the same day (D154). The workflow itself is the playbook's now
+> (`docs/porting.md`, "The workflow"); this page stays as the plan of the toolkit changes of sections 4 and 5, with
+> what is built listed in "Built so far". Where the playbook and this page differ, the playbook is right.
+
+## Built so far
+
+| Change | Decision |
+|---|---|
+| A: the playbook around the stages, with the six rules, the table, fresh eyes (M) and the recipes (N) | D154 |
 
 ## 1. What exists, and where it falls short
 

@@ -3,7 +3,7 @@
 A whole port repository, small enough to read in one sitting: the toy game of `testbins`
 ([`testbins/src/toy.c`](../../testbins/src/toy.c), built as `testbins/bin/TOY.EXE`), its knowledge, a session,
 the state mapping and the port in Rust. `rrc`'s tests run it (`rrc/tests/flow.rs`), and it is the example
-`docs/porting.md` step 5 points to.
+`docs/porting.md` stage 3 points to.
 
 | File | What |
 |---|---|

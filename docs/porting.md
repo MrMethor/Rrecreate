@@ -1,10 +1,11 @@
 # Porting a game
 
-The agent's playbook (docs/design.md §10). It grows with the toolkit: this is what `rrc` does so far (M3 and M4:
-the original's knowledge and traces, the mapping, the port and the comparison). Formats are in
-`docs/formats.md`. Read "How to work" first: its rules decide how each step below is used.
+The agent's playbook (docs/design.md §10, D154): the one workflow every port follows. Its rules come first ("How to
+work"), then the workflow (its stages, each with a gate; the loop the work repeats; where to look when the port
+differs; the best-known routes), then each stage's reference. Formats are in `docs/formats.md`.
 
-Run `rrc` inside the port repository. `rrc status` names the next step; `rrc doctor` says what's missing.
+Run `rrc` inside the port repository. A session of work starts with `rrc rules` and `rrc status`, and ends with `rrc
+check` passing and a commit. `rrc status` names the next step; `rrc doctor` says what's missing.
 
 ## How to work
 
@@ -63,6 +64,18 @@ the original judges the port, not the code it was read from.
 8. **Nothing departs from the original silently.** Where the port would do other than the original does (a guard
    against its divide by zero, a reading of what the code means, a value it can't model), it's made faithful,
    registered as a quirk, or an `unported` note where it happens.
+9. **An ID comes from a tool, never from arithmetic.** `rrc show DS:7A46` and `rrc data DS:7A46 NAME` take data as the
+   code addresses it (D90), and `rrc show` says an address's ID. An ID worked out by hand is a guess.
+10. **Batch what forces a recording.** The names, sync points, inputs and hooks of the item at hand go in together,
+    then one `rrc record`: a recording is minutes, a comparison seconds.
+11. **Find every loop of a stretch before building sessions on it.** A sync point added later numbers the ticks of
+    every session through that loop otherwise.
+12. **Never tune a layer over an unmatched one below it:** the mapped fields, then the frames, then the sound, then
+    live play. A frame is only compared where the state matches.
+13. **Where the work stands is the toolkit's to say** (`rrc status`, the census, `rrc progress`). Notes hold what was
+    learned and why, never the state of the work.
+14. **A gap in the toolkit is fixed in the toolkit,** as a general feature with a test of its own, never worked
+    around in the port (D10). Then the item goes on.
 
 **Where to start, by question:**
 
@@ -87,7 +100,88 @@ once, then `the 4 calls above ×10800`. `--in FUNCTION --functions` lists every 
 at any depth, with how many times: what porting a part takes (a renderer's fifty functions), to read and port
 one by one.
 
-## 1. Set up
+## The workflow
+
+Eight stages (D154). A stage is done when its gate holds, and each gate is a thing the toolkit answers (`rrc doctor`,
+`rrc check`, `rrc compare`, `rrc progress`), never a note. What a later stage finds wrong in an earlier one is fixed
+there first (rule 12). Stages 4 to 6 repeat one loop.
+
+| Stage | What it is for | Done when |
+|---|---|---|
+| **0 Set up** | The repository, the game's version, the tools, the person's rules | `rrc doctor` misses nothing; the copy is a recorded version; `RULES.md` holds the person's answers |
+| **1 Survey** | Know the program before porting any of it | The analysis is in; a session from power-on into play is recorded and its run repeats; every loop it passes through has a sync point; the boundary values are declared; the outside sources are swept and the game's files listed |
+| **2 Sessions** | Fix what is to be reproduced | The scope is written down as sessions; each is recorded and repeats |
+| **3 Skeleton** | A port that compares before it does anything | The port builds on the runtime and loads a transplant; every session has a census; no named datum is left unmapped |
+| **4 Logic** | The simulation, subsystem by subsystem | Every session matches in its mapped fields with nothing fed; the census has no field left; every suspect is judged and every quirk registered and branched on |
+| **5 Data and start-up** | The port loads the game itself | No hook or part's input gives what the game's files hold; every session from power-on matches in its fields from the port's own start |
+| **6 Presentation** | Frames, then sound | Every session matches in state, frames and each sound device the original uses in it |
+| **7 Play** | A port a person plays | It plays from power-on in a window; saves load both ways with the original; what the person's play-test found became sessions |
+
+Why this order: a transplant means nothing has to be ported before something is compared, so the port exists, empty,
+before any logic is written; loops, state, files and sources are cheap to map early and expensive to discover late;
+and each layer stands on the one below.
+
+**The work loop** (stages 4 to 6), once for each item of the work list. The work list is the census: `rrc compare
+SESSION --lockstep` counts every difference of a session at once.
+
+1. **Take** the top item: the most passes, and among equals the earliest in the pass's order.
+2. **Plan and read**, in the sources' order: what is named already, the decompiled code, the disassembly where it is
+   in doubt, the outside sources on that subsystem, the files it reads. Write the question down first, the route
+   chosen, one other route, and after how many runs the route changes.
+3. **Name and map** everything the item touches, together; record once (rule 10).
+4. **Port** it: a function for each of the original's, its ID in the comment; each bug registered as it is met; each
+   path left out noted where it would be (`rrc_runtime::note`).
+5. **Compare** from a transplant just before the item's first difference; at each divergence, the table below.
+6. **Close:** the census again, the item at zero; the suspects of the sessions it touched judged; `rrc check`; commit.
+
+**When the port differs:**
+
+| What the comparison shows | Look first at |
+|---|---|
+| A difference at the first tick after a transplant | The mapping: a field missing, or its encoding |
+| A field differs and a writer is named | That function's code (`rrc show ID --c`), and the port's function of the same ID |
+| The writer is an interrupt handler, or nothing in the pass wrote it | An input not declared, or a handler's work that is a subsystem (D22) |
+| It matches for many ticks, then drifts with the player's input | A late read (`rrc trace SESSION --tick N`): read it where the original did |
+| It differs only once a feed is removed | The fed part: the comparison says how often the port's own value differed |
+| It differs right after a scenario's edit | The edit, before the port |
+| The port does what the code means and the original doesn't | A bug of the original's: `rrc suspects`, then a quirk |
+| The state matches and the frame doesn't | The drawing code's own state at the transplant (`[[present]]`), then who drew the pixel |
+| The state matches and the sound doesn't | The order of events (`rrc trace SESSION --tick N`), then a driver's answer the port needs a hook for |
+| Three tries with no progress | Another kind of source: the code instead of runs, an outside source, the game's file. Then fresh eyes, below |
+
+**When stuck.** Three tries of one route that leave the first difference where it was mean the route has stopped
+paying (rule 5). Stop, and write the question without its history: what is asked, what is known (`rrc show` of the
+place), what was tried. Give that, not the transcript, to a fresh agent, and ask it for routes: it has no sunk
+cost. Where none can be started, or the port's `RULES.md` says not to, read `rrc rules` again and plan from the
+question as if new. The same before each new subsystem: the routes first, then the work. If no route answers, it is
+the person's.
+
+## Recipes, by problem
+
+The best-known route for what every port meets, its tools in order. A route found the hard way becomes a recipe here
+before its item closes (the toolkit's playbook when it is general, the port's `notes/` when it is the game's), so
+the next port starts from it.
+
+| Problem | Route | Cost |
+|---|---|---|
+| Where a tick ends | `rrc calls SESSION`: the large groups are loops; in a group, the function that waits for the timer; check with `rrc show ID --c`; `rrc sync` where the wait returns | one run |
+| A loop that polls (a menu) | Huge counts in `rrc calls`; a gated sync point at its read of the controls: `rrc sync ID NAME --when-changed ...` | one run |
+| What a tick reads from outside | `rrc inputs SESSION`, by handler; `rrc ports SESSION` for a device answered in registers; `rrc input` | one run |
+| Where a value is kept | `rrc trace SESSION --item KEYS` for when the keys are held; `rrc search` with conditions over a wide span; `rrc watch` the few left; name it | seconds once a span is kept |
+| What a value means | `rrc show DATUM`: who reads and writes it; their `--c`; the sources on the subsystem; `rrc watch` at a tick | seconds |
+| A file's format | `rrc files SESSION --file F`: who reads it; the reader's `--c`; format documentation; `knowledge/formats.toml`; `rrc asset F --session S` until `equal` | one run a check |
+| A table the code reads | Its address as the code has it (`rrc show DS:7A46`); read from the person's copy (`original::program()`), never copied | seconds |
+| The outline of a step | `rrc pass SESSION --tick N`; `--in FUNCTION --functions` for what a part takes | seconds from a snapshot |
+| Code the analysis missed | `rrc analyze --session NAME`; `rrc show ID --asm`; made at run time: `--asm --session NAME` | minutes |
+| A value that matches, then drifts | `rrc trace SESSION --tick N` lists the late reads; move the sync point, or read it with `at_site` | one recording |
+| A state deep in the game | `rrc session add NAME --from SESSION --tick N`; a cheat of the game's; `rrc session edit` | one recording |
+| What a part not ported gives the ported code | `--feed` at sync points; in the pass, `rrc input --part --read-at`; its calls, `rrc hook` | one recording |
+| A frame that differs over matching state | The presentation's own state (`[[present]]`); who drew the pixel; `rrc frame SESSION --tick N --screen` | seconds |
+| A sound that differs | `rrc trace SESSION --tick N`: the events; `rrc ports` for who wrote the device; a driver's answer, a hook | seconds |
+| A bug of the original's | `rrc suspects SESSION`; its code; `rrc quirk`; `keeps`; `rrc compare --fix NAME` | one run a session |
+| What no session runs | `rrc unrun`; a session from a tick that reaches it, or a reading against the code | seconds |
+
+## Stage 0: Set up
 
 ```bash
 rrc init wolf3d-port --program WOLF3D.EXE --name wolf3d --title "Wolfenstein 3-D"
@@ -105,7 +199,18 @@ configuration (`--without SAVEGAM?.WL1,CONFIG.WL1`; `*` and `?` are wildcards). 
 into the repository (`rrc.local.toml`, which holds the folder, isn't committed).
 Tools are found through `rrc.local.toml` or the environment (`docs/formats.md`).
 
-## 2. Analyse
+Then ask the person, once, what is theirs to say, and write the answers in `RULES.md` (`rrc rules` prints it with
+the playbook's): the stretch of the game to port, the sources to keep out, where to commit and as whom, what needs
+asking first (downloads).
+
+## Stage 1: Survey
+
+Know the program before porting any of it, in this order: the analysis; the outside sources; a first session from
+power-on into play; its loops and their sync points (every loop of the stretch, rule 11); its boundary values; a
+recording; then the files it read (`rrc files`) and the outline of a play pass (`rrc pass`), whose top calls get
+their names.
+
+### The analysis
 
 ```bash
 rrc analyze
@@ -135,6 +240,19 @@ time: `rrc show ID --asm` disassembles it with Clockwork, following its jumps, a
 `rrc analyze` adds it. Code the program loaded at run time (drivers) is past its file: read it with
 `rrc show ID --asm --session NAME`.
 
+An address inside a function shows that function: `rrc show ID --asm` lists it from the instruction the
+address is in, and `--c` gives the function's code. Data can be named by its offset in the data segment, as
+the code addresses it: `rrc show DS:7A46`, `rrc data DS:7A46 NAME` (D90; `rrc show` says a datum's `DS:`
+address). A near call through a table of handlers (`call word ptr [si+8]`) reaches functions in its own code
+segment (D89), so `rrc show`'s calls and callers list the handlers.
+
+Some games make code at run time (drawing routines generated for each size, say): `rrc calls` then counts
+functions past the program's file image, which Ghidra can't see. `rrc show ID` says so, and `rrc show ID
+--asm --session NAME [--tick N]` disassembles it from the session's memory, by tick N or at its last
+snapshot. Port what the generator makes, not the bytes (docs/design.md §6).
+
+### The game's files
+
 The game's files are a source too (D78):
 
 ```bash
@@ -148,46 +266,14 @@ memory (named), by which code, when. In an archive `knowledge/formats.toml` desc
 its member (`+A9ECB9 (RAT1.CFA)`, D112), and `--file` takes a member's name too (`--file RAT1.CFA`). A structure in memory leads to the file and offset it came from, the
 file to the function that reads it, and a save routine's writes to which memory each part of a save is.
 
-Once the reader's code says how a kind of file is laid out and coded (and format documentation, as a source,
-what it is), write it in `knowledge/formats.toml` (`docs/formats.md`): an archive's directory, tagged chunks,
-a picture with its palette and its frames, members one after another, a map; its header a structure of
-`types.toml`; its coding one of the toolkit's codecs (PCX run-length, counted runs, LZSS with its parameters,
-LZHUF), pixels packed in bits through a table of colours, frames patched from the one before.
-
-```bash
-rrc asset LEVELS.DAT
-rrc asset LEVELS.DAT/LEVEL1 --session first-level
-rrc asset TITLE.IMG
-rrc asset GLOBAL.BSA/RAT1.CFA/9 --session cell --tick 488
-```
-
-`rrc asset` decodes a file or an archive's member by its format: an archive's members, a picture as PNG with
-its palette, a sound as WAV, music as MIDI (in `.rrc/assets/`), the bytes in the cache. With `--session`, the original checks it (D103):
-where the session read those bytes and by which code, and whether the original's memory holds what this
-decoded at moments after the read (1 ms, then doubling to about 4 s), `equal` and when and where (a map laid
-out in a wider grid is found as its rows), or how far it agrees (D104). What the original decodes when it draws
-(an animation's frame) is searched for at a tick it is drawn in, `--tick N`, and found as decoded or as a step
-of its decoding left it (a frame's runs before its bits are unpacked, D116). A format that decodes equal is the one
-the port's loader decodes by (`rrc_runtime::codecs`). A game's own coding, which no codec of the toolkit is,
-is the port's code, checked by the comparison as the loaded data it makes (mapped state).
-
-An address inside a function shows that function: `rrc show ID --asm` lists it from the instruction the
-address is in, and `--c` gives the function's code. Data can be named by its offset in the data segment, as
-the code addresses it: `rrc show DS:7A46`, `rrc data DS:7A46 NAME` (D90; `rrc show` says a datum's `DS:`
-address). A near call through a table of handlers (`call word ptr [si+8]`) reaches functions in its own code
-segment (D89), so `rrc show`'s calls and callers list the handlers.
-
-Some games make code at run time (drawing routines generated for each size, say): `rrc calls` then counts
-functions past the program's file image, which Ghidra can't see. `rrc show ID` says so, and `rrc show ID
---asm --session NAME [--tick N]` disassembles it from the session's memory, by tick N or at its last
-snapshot. Port what the generator makes, not the bytes (docs/design.md §6).
+### Outside sources
 
 Look for prior art (D32, D77): source releases, reimplementations, format documentation, wikis,
 walkthroughs, bug lists. It is expected, and not relied upon: evidence, named with its source, that the
 original confirms. Projects the person excluded stay out (for Arena, Recreate and tesa-decomp: D66, D69). For a
 test bench whose source is released, used to grade the toolkit, the source stays out of reach (D46, below).
 
-## 3. Sessions and ticks
+### A first session
 
 A session is what to reproduce: an input script or recorded play, and how long it runs.
 
@@ -200,6 +286,8 @@ session then needs `--clockwork "--joystick 1"`): `clockwork/README.md` lists it
 the mouse's motion turns with `{motion DX DY}` (mickeys), not `{move X Y}`, whose motion stops at the screen's
 edge. To find a script, explore the game step by step from a snapshot instead of rerunning it
 (`clockwork/README.md`, "Exploring a game"): the lines that worked are the script.
+
+### Ticks
 
 A tick is one pass of the original's main loop; a sync point is the instruction where it ends. To find one:
 
@@ -343,7 +431,7 @@ name its sync point before it is declared (`rrc record` refuses until it is). De
 it (`rrc` shows what it `was`). `rrc sync` and `rrc input` alone list what is declared; `--remove NAME` takes
 one out. Record the evidence in the notes.
 
-## 4. Record
+### Record
 
 ```bash
 rrc record first-level
@@ -380,7 +468,61 @@ a run from power-on, with the whole call chains. Record a session before asking 
 `rrc calls` and `rrc inputs` keep their answers: asked again with the same session and knowledge, they answer at
 once (`kept`).
 
-## 5. Port and compare
+## Stage 2: Sessions
+
+The scope is what the port is to reproduce, written down as sessions. The person plays the scope once, for minutes:
+scripts reach only what an agent can plan (D124). The agent adds a scripted session for each thing play missed,
+from another session's tick, and a scenario's edits for a state play rarely reaches.
+
+### The person plays
+
+Scripts reach what an agent can plan; the person reaches the rest. `rrc play NAME --from SESSION --tick N` opens
+Clockwork's window on the original from that tick (or power-on without `--from`): the person plays it, and the
+play is recorded as the session `NAME`. While they play, rrc follows: each minute of play (`--every`) becomes a
+part, `NAME/1`, `NAME/2`, ..., each from the last tick of the one before, recorded and compared in lockstep; what
+differs or the port noted is said as it is first found (`new differs`, `new note`), and at the end the whole
+play's census is listed, most passes first, with `next`: where to look first. The parts are sessions like any
+other: compare them, watch them, peek into them, and keep them, as the play's record of what to port. Recording
+runs at about the speed of play, so rrc follows a part or so behind and catches up when the window closes.
+`--replay FILE` follows a play recorded before with `clockwork play --record`.
+
+### A session from another's tick
+
+A scenario deep in the game needn't be played to from power-on each time: a session can start from another's
+tick (D118), with its own input from there:
+
+```bash
+rrc session add boss --from walk --tick 1200 --seconds 140 --inputs boss.inputs
+rrc record boss
+rrc compare boss --transplant 1
+```
+
+Its tick 1 is `walk`'s tick 1200; its input's times and `--seconds` count from power-on (`rrc session add` says
+when that tick is), and a key held there is let go when `walk` let go of it. The port starts from a transplant
+at its first tick, or a paired checkpoint; file tracing sees only what it reads from there.
+
+### A scenario by edits
+
+A scenario is set up by edits instead of play (D59, D64): where the game has a cheat or a debug mode, use it
+first (it goes through the game's own code); otherwise
+
+```bash
+rrc session edit first-level 300 player_health 5
+rrc session edit first-level 300 "actors[3]" "{\"state\": 2}"
+rrc record first-level
+```
+
+writes the values into the original's memory at tick 300's sync point, in every run of the session; the port
+gets the mapped fields they wrote at that tick with its inputs. Edit through the game's structures, whole (a
+count with the list it counts): a state play can't reach makes a divergence after it a false alarm, and
+`rrc compare` names the last edit before a divergence for that reason.
+
+## Stage 3: Skeleton
+
+A port that compares before it does anything. Copy `examples/toy`, find the core state from the loop down (who
+writes what), map it, and compare the empty port in lockstep over every session (`rrc compare SESSION --lockstep`):
+everything differs, and that census is the work list's first state. `rrc progress` names the largest changing
+memory nothing maps: map it, or ignore it with a reason.
 
 Find the state first. What the player changes is found by how it behaves over the session's ticks (D75):
 
@@ -402,26 +544,6 @@ Then map it: `mapping.toml` names each field of the port's state and the origina
 struct serde serializes, its fields named as the mapping says; it implements `Simulation` (`start`: the state at
 the first tick; `step`: one pass with the tick's inputs) and its `main` calls `rrc_runtime::main`. `examples/toy`
 is a whole port repository to copy from: the knowledge, a session, the mapping and the port of a toy game.
-Tables the original's code reads (a sine table, combat tables) are loaded from the person's copy, not copied
-into the port (D82): `rrc_runtime::original::program().i16s(0x46A3C, 640)` reads them at their image offset,
-under `rrc compare` and in the port's own `cargo test` alike (D91). So are the game's files:
-`rrc_runtime::original::file("DATA\\LEVEL1.MAP")` reads one by the name the program opens it with, and
-`rrc_runtime::codecs` decodes the common compressions (PCX's run-length code, LZSS with lzss.c's parameters or
-others); a game's own is the port's code (D101). A port from power-on loads in `start` what the original loads
-before its first sync point hit: `examples/vault` is one. `start` is also the state a transplant's mapped fields
-go over (its unmapped fields come from it), so what only power-on has (the program in its title or menu) belongs
-in `power_on`, which runs from power-on alone. What the start-up makes of input it reads before then
-(a generator seeded from the BIOS clock) is the port's `Simulation::power_on` (D134): declare the input where
-the start-up reads it (`rrc input`, its `read_at`), record, and `power_on` gets the start-up's pass, tick 0,
-whose `tick.inputs.at_site(ID)` is what that read saw; a live port's `Live::power_on` gives it from the host.
-A pass that arrives at a gated wait asks `Gates::arrives` (D143) whether the tick is there: not where the next
-tick is at another sync point (`Tick::next`); at the next tick's, the gate, or the original having gone round no
-more (`Tick::spun`).
-The program's command line is such an input: DOS's command tail in the program's PSP (its offset 80h: a length,
-then the text), where the C start-up reads it; the session's options give it (`clockwork run --args`).
-A port whose `Simulation::INITIAL_DATA` is true starts from the program's own initial data instead (D135): each
-mapped field at a fixed place in the program's image as the image holds it, and the carried memory there (D137),
-set over `start`'s state, so `start` and `power_on` make only what the start-up's code does.
 
 The original's pointers, heap and flag bytes map too (D72): declare a pointer type in `types.toml` with `into`
 the array it points into, and the port's field is an index (or none); map a heap block `via` the pointer that
@@ -429,6 +551,10 @@ finds it, and the port's field is its contents; declare a flag byte as `[[bits]]
 structure of named numbers and booleans. A flags word that holds bits of a part not ported (the renderer's
 scratch next to the game's flags) maps with a `mask` of the bits that are the port's (D95), once the code that
 reads the others is found to be that part's alone; a part the port's code reads is fed instead (`--feed`).
+
+## Stage 4: Logic
+
+The work loop on the mapped fields, with `--fields` so that no screen stops it (D136).
 
 ```bash
 rrc compare first-level
@@ -469,18 +595,6 @@ and the sound that differ, and its notes; the census is in `.rrc/compare/SESSION
 list: take a difference, then `rrc compare SESSION --transplant T` with T the tick before its first, for who wrote
 the original's value.
 
-### The person plays
-
-Scripts reach what an agent can plan; the person reaches the rest. `rrc play NAME --from SESSION --tick N` opens
-Clockwork's window on the original from that tick (or power-on without `--from`): the person plays it, and the
-play is recorded as the session `NAME`. While they play, rrc follows: each minute of play (`--every`) becomes a
-part, `NAME/1`, `NAME/2`, ..., each from the last tick of the one before, recorded and compared in lockstep; what
-differs or the port noted is said as it is first found (`new differs`, `new note`), and at the end the whole
-play's census is listed, most passes first, with `next`: where to look first. The parts are sessions like any
-other: compare them, watch them, peek into them, and keep them, as the play's record of what to port. Recording
-runs at about the speed of play, so rrc follows a part or so behind and catches up when the window closes.
-`--replay FILE` follows a play recorded before with `clockwork play --record`.
-
 `rrc progress` says how far the port is, as the sessions show it (D117): of the program's functions the
 original ran in the sessions, those it ran in passes the port matches (as each session's last `rrc compare`
 left it), and how many of those the port's code names by ID (a bare `+0A2F0` names the program's own); then
@@ -489,34 +603,59 @@ caller, library code, a part fed); and, of the data segment the recording keeps 
 change, how many the mapping maps or ignores, and the largest places that neither does, by name: the state to
 map next.
 
-A scenario deep in the game needn't be played to from power-on each time: a session can start from another's
-tick (D118), with its own input from there:
+## Stage 5: Data and start-up
+
+The work loop on what hooks, parts' inputs and feeds still give the port, then on the start-up's pass and the menus
+before play: the port loads the game's files itself and matches from power-on.
+
+Tables the original's code reads (a sine table, combat tables) are loaded from the person's copy, not copied
+into the port (D82): `rrc_runtime::original::program().i16s(0x46A3C, 640)` reads them at their image offset,
+under `rrc compare` and in the port's own `cargo test` alike (D91). So are the game's files:
+`rrc_runtime::original::file("DATA\\LEVEL1.MAP")` reads one by the name the program opens it with, and
+`rrc_runtime::codecs` decodes the common compressions (PCX's run-length code, LZSS with lzss.c's parameters or
+others); a game's own is the port's code (D101). A port from power-on loads in `start` what the original loads
+before its first sync point hit: `examples/vault` is one. `start` is also the state a transplant's mapped fields
+go over (its unmapped fields come from it), so what only power-on has (the program in its title or menu) belongs
+in `power_on`, which runs from power-on alone. What the start-up makes of input it reads before then
+(a generator seeded from the BIOS clock) is the port's `Simulation::power_on` (D134): declare the input where
+the start-up reads it (`rrc input`, its `read_at`), record, and `power_on` gets the start-up's pass, tick 0,
+whose `tick.inputs.at_site(ID)` is what that read saw; a live port's `Live::power_on` gives it from the host.
+A pass that arrives at a gated wait asks `Gates::arrives` (D143) whether the tick is there: not where the next
+tick is at another sync point (`Tick::next`); at the next tick's, the gate, or the original having gone round no
+more (`Tick::spun`).
+The program's command line is such an input: DOS's command tail in the program's PSP (its offset 80h: a length,
+then the text), where the C start-up reads it; the session's options give it (`clockwork run --args`).
+A port whose `Simulation::INITIAL_DATA` is true starts from the program's own initial data instead (D135): each
+mapped field at a fixed place in the program's image as the image holds it, and the carried memory there (D137),
+set over `start`'s state, so `start` and `power_on` make only what the start-up's code does.
+
+Once the reader's code says how a kind of file is laid out and coded (and format documentation, as a source,
+what it is), write it in `knowledge/formats.toml` (`docs/formats.md`): an archive's directory, tagged chunks,
+a picture with its palette and its frames, members one after another, a map; its header a structure of
+`types.toml`; its coding one of the toolkit's codecs (PCX run-length, counted runs, LZSS with its parameters,
+LZHUF), pixels packed in bits through a table of colours, frames patched from the one before.
 
 ```bash
-rrc session add boss --from walk --tick 1200 --seconds 140 --inputs boss.inputs
-rrc record boss
-rrc compare boss --transplant 1
+rrc asset LEVELS.DAT
+rrc asset LEVELS.DAT/LEVEL1 --session first-level
+rrc asset TITLE.IMG
+rrc asset GLOBAL.BSA/RAT1.CFA/9 --session cell --tick 488
 ```
 
-Its tick 1 is `walk`'s tick 1200; its input's times and `--seconds` count from power-on (`rrc session add` says
-when that tick is), and a key held there is let go when `walk` let go of it. The port starts from a transplant
-at its first tick, or a paired checkpoint; file tracing sees only what it reads from there.
+`rrc asset` decodes a file or an archive's member by its format: an archive's members, a picture as PNG with
+its palette, a sound as WAV, music as MIDI (in `.rrc/assets/`), the bytes in the cache. With `--session`, the original checks it (D103):
+where the session read those bytes and by which code, and whether the original's memory holds what this
+decoded at moments after the read (1 ms, then doubling to about 4 s), `equal` and when and where (a map laid
+out in a wider grid is found as its rows), or how far it agrees (D104). What the original decodes when it draws
+(an animation's frame) is searched for at a tick it is drawn in, `--tick N`, and found as decoded or as a step
+of its decoding left it (a frame's runs before its bits are unpacked, D116). A format that decodes equal is the one
+the port's loader decodes by (`rrc_runtime::codecs`). A game's own coding, which no codec of the toolkit is,
+is the port's code, checked by the comparison as the loaded data it makes (mapped state).
 
-A scenario is set up by edits instead of play (D59, D64): where the game has a cheat or a debug mode, use it
-first (it goes through the game's own code); otherwise
+## Stage 6: Presentation
 
-```bash
-rrc session edit first-level 300 player_health 5
-rrc session edit first-level 300 "actors[3]" "{\"state\": 2}"
-rrc record first-level
-```
-
-writes the values into the original's memory at tick 300's sync point, in every run of the session; the port
-gets the mapped fields they wrote at that tick with its inputs. Edit through the game's structures, whole (a
-count with the list it counts): a state play can't reach makes a divergence after it a false alarm, and
-`rrc compare` names the last edit before a divergence for that reason.
-
-## Frames and sound
+The work loop on frames, the most ticks first, then on sound, a device at a time: the digitized sounds, then the
+music, which is a subsystem at its interrupt's rate (D22).
 
 Once the logic matches, the port draws and sounds (M6, D107, D108). Its simulation never draws: it shows a scene, what there is
 to draw at a tick as meaning (the map, the player, the picture shown: `rrc_runtime::present::Shows`), and a
@@ -557,7 +696,7 @@ game asks a sound driver it doesn't port (whether a sample still plays), a hook 
 answers in a comparison (D99), and live, `Host::pcm_playing` says whether the platform still plays the last
 sample, which `Live::next` answers with (`Inputs::with_calls`).
 
-## Play
+## Stage 7: Play
 
 A port that draws and sounds plays in a window (D119): `rrc_platform` owns the loop, shows the presentation's
 frames, gives the host's keyboard as the PC's (scan codes, set 1) and the mouse in the screen's coordinates,

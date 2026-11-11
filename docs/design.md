@@ -375,19 +375,26 @@ also lists the inputs its pass read after they changed since its sync point (D60
 
 ## 10. The agent's workflow
 
-The agent follows `docs/porting.md`, its rules first ("How to work", D77), and drives `rrc`:
+The agent follows `docs/porting.md`, its rules first ("How to work", D77), and drives `rrc`. Every port goes through
+the same stages (D154), each done when its gate holds, which the toolkit says and never an agent's note:
 
-1. Set up the port repository (`rrc init`); `rrc doctor` names what's missing.
-2. Identify and load the game (`rrc game`), analyse it (`rrc analyze`), look for outside sources and the
-   game's formats (§5).
-3. Record sessions; find the main loop and the sync points; record the boundary values (`rrc record`).
-4. Name the state and build the mapping, starting with what the first subsystem reads.
-5. Port a subsystem; compare from a transplanted checkpoint; at each divergence, *who wrote*, then fix the
-   port or register a quirk.
-6. The game's data and the rest of the program: the port loads the game's files itself and runs from
-   power-on through its menus and loading.
-7. Faithful presentation, compared frame by frame and by sound events, and the platform layer, so the port
-   plays; then modern mode.
+0. **Set up:** the port repository (`rrc init`), the game's version (`rrc game`), the tools (`rrc doctor`), the
+   person's rules (`RULES.md`).
+1. **Survey:** the analysis (`rrc analyze`), the outside sources and the game's files (§5), a first session into
+   play, its loops' sync points and boundary values, a recording (`rrc record`).
+2. **Sessions:** the scope as sessions: the person's play, scripts for what it missed, scenarios.
+3. **Skeleton:** the state named and mapped; an empty port that loads a transplant; a census of every session.
+4. **Logic:** subsystem by subsystem from a transplanted checkpoint; at each divergence, *who wrote*, then fix
+   the port or register a quirk.
+5. **Data and start-up:** the port loads the game's files itself and runs from power-on through its menus and
+   loading.
+6. **Presentation:** compared frame by frame, then by sound events, a device at a time.
+7. **Play:** the platform layer, so the port plays; then modern mode.
+
+Stages 4 to 6 repeat one loop on the work list's items: take, plan and read, name and map, port, compare, close. A
+gate is reported, not refused: stages overlap in honest work, and a commit is refused only for what `rrc check`
+refuses (D148). The playbook also says where to look first for each kind of difference, what to do when a route
+stops paying, and the best-known route for the problems every port meets.
 
 Subagents work in parallel on separate subsystems. Output is short: agents read it.
 

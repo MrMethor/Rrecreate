@@ -287,7 +287,7 @@ pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String>
 }
 
 /// The next step once the game is there: analysis, sessions, ticks and their inputs, traces
-/// (docs/porting.md, steps 2 to 4).
+/// (docs/porting.md, stages 1 to 3).
 fn next_after_setup(repo: &Repo) -> Result<String, String> {
     if crate::analysis::Index::load(repo)?.is_none() {
         return Ok("rrc analyze".into());

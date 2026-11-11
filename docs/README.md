@@ -104,13 +104,15 @@ These hold for every session of work. A rule changes only by the person's word o
 14. **A rule that matters is checked, not remembered** (D148): when a rule keeps being missed, a tool refuses.
 15. **Tool output is read by agents:** short, a label and a value per line; large data goes to the cache.
 
-**When porting a game:** the playbook's rules, [`porting.md`](porting.md) "How to work" (D77), which `rrc rules`
-prints with the port's own. In short: the analysis first, then outside sources, then the game's files, and runs to
-confirm; every bug of the original is registered as a quirk when found; nothing departs from the original silently.
+**When porting a game:** the playbook, [`porting.md`](porting.md): its rules ("How to work", D77), which `rrc rules`
+prints with the port's own, and its workflow (D154), the same for every game: eight stages, each done when the
+toolkit says its gate holds, and one loop the work repeats. In short: the analysis first, then outside sources, then
+the game's files, and runs to confirm; every bug of the original is registered as a quirk when found; nothing departs
+from the original silently; where the work stands is the toolkit's to say, not the notes'.
 
 ## 5. Where we are
 
-As of 2026-11-11 (decisions to D153). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-11 (decisions to D154). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -133,6 +135,12 @@ compared in lockstep with the person's recorded play (D124). The latest gaps it 
 scenario edits in a lockstep (D146, D147), the quirk rule checked by `rrc check` and each quirk given a switch
 (D148, D149), and what no session ran listed (D150 to D152).
 
+**Under way before M6 goes on:** the way the toolkit is used, made standard at the person's word (D154). The playbook
+is now one workflow: stages with gates, one work loop, where to look when the port differs, the best-known routes.
+The toolkit is being changed to drive it ([the plan](plans/porting-workflow.md)): each port's entry point, its
+scope, the stage and its gate said by the toolkit, a work list, a journal that says when a route is stuck, and
+outside sources in the port's books.
+
 **Open against M6's row** (measured on the Arena port, 2026-11-11):
 
 - **The music.** The port makes the digitized sounds only. The OPL's music, most of Arena's sound events, is neither
@@ -144,7 +152,8 @@ scenario edits in a lockstep (D146, D147), the quirk rule checked by `rrc check`
   screens aren't drawn yet.
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
-**Next:** those, in the order the person sets, then M7.
+**Next:** the workflow's toolkit changes, tried on the Arena port; then those above, in the order the person sets;
+then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106), and whether the music and the
 actions seam are M6's or move; the game M9 is run on, which stays out of the toolkit's development until then (D71).
@@ -174,7 +183,7 @@ what the person asked for. The ones that shape the project:
 - **Knowledge and files:** what is learned is text in the port's repository (D31); tools and ports exchange
   documented files, not code (D38, D61); game files are never committed (D33).
 - **Process:** the agent drives, and no program runs the agent (D34); one design and one list of decisions (D35),
-  entered through this page (D153).
+  entered through this page (D153); every port follows one workflow, its stages' gates said by the toolkit (D154).
 
 ## 7. The documents
 
@@ -184,7 +193,7 @@ what the person asked for. The ones that shape the project:
 | [`design.md`](design.md) | The design as decided, by section, and the plan (§12) | The agent: the sections its work touches. The person: for depth on a system |
 | [`decisions.md`](decisions.md) | Every decision, its reason and status | Before changing anything a decision covers; to learn why |
 | [`porting.md`](porting.md) | The playbook: how an agent ports a game with `rrc`, its rules first | An agent porting a game; an agent changing a step of the workflow |
-| [`plans/porting-workflow.md`](plans/porting-workflow.md) | A proposal under review: the standard porting workflow, its stages, gates and rules, and the toolkit changes that enforce it | The person, to decide; then the agent who builds it |
+| [`plans/porting-workflow.md`](plans/porting-workflow.md) | The plan being built (accepted, D154): the standard porting workflow and the toolkit changes that make it the toolkit's core, with what is built so far | The agent building it; the person, for what is left |
 | [`formats.md`](formats.md) | The files `rrc` and a port read and write | An agent changing or reading them |
 | [`protocol.md`](protocol.md) | How tools drive an emulator | An agent changing Clockwork's control or `rrc`'s use of it |
 | [`../clockwork/README.md`](../clockwork/README.md) | Clockwork's manual: running, driving and investigating a program, validating the CPU | An agent working on or with the emulator |

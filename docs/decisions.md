@@ -735,6 +735,31 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D154. The standard porting workflow: stages with gates, one work loop. Accepted 2026-11-11, with the person.
+Every port follows one workflow, the playbook's (`docs/porting.md`, "The workflow"): eight stages, each done when its
+gate holds: 0 set up, 1 survey, 2 sessions, 3 skeleton, 4 logic, 5 data and start-up, 6 presentation, 7 play (modern
+mode after, when the toolkit has it). Stages 4 to 6 repeat one loop on the work list's items: take, plan and read,
+name and map, port, compare, close. The playbook says where to look first for each kind of difference, what to do
+when a route stops paying (another kind of source, then the question without its history to a fresh agent, unless the
+port's `RULES.md` says not to), and the best-known route for the problems every port meets ("Recipes, by problem"),
+which gains a recipe whenever a route is found the hard way. Six rules join D77's: an ID comes from a tool, never
+from arithmetic; batch what forces a recording; find every loop of a stretch before building sessions on it; never
+tune a layer over an unmatched one below it; where the work stands is the toolkit's to say, not the notes'; a gap in
+the toolkit is fixed in the toolkit. A gate is reported, not refused: the toolkit says what a stage lacks, and a
+commit is refused only for what `rrc check` refuses (D148). The toolkit changes that make the workflow its core are
+`docs/plans/porting-workflow.md`'s, each a decision as it is built: a port's entry point, its scope, `rrc status`
+through every stage, a work list, a journal that says when a route is stuck, outside sources in the port's books.
+**Why:** the person asked for one standard way the toolkit is used, the same for every game, and named the largest
+problem in practice: an agent settles into one approach and forces it through every problem, without asking whether
+another tool, the code, or what is already written elsewhere would answer sooner. The playbook had the steps to a
+first comparison and no order after it; no step had a "done" (the Arena port's state against M6 was assessed by
+hand); and the order that worked on Arena (logic before screens, batches closed by a census, the person's play) was
+in that port's handoff. Each new rule is a cost Arena paid: sync points added late numbered a session's ticks again,
+twice; data named one at a time recorded every session again; an ID worked out by hand fed the port wrong memory
+for weeks. Gates aren't refusals because stages overlap in honest work: Arena drew its dungeon before its menus'
+logic was in.
+**Extends:** D77 (its rules stay, with six more), D34 (the toolkit says, the agent does).
+
 ### D152. A question about a whole run is about the recorded run. Accepted 2026-11-09.
 `rrc suspects`, `rrc files` and `rrc contracts` start as a recording does (`trace::begin_run`: the sync points set, so the
 edits are written at their ticks) and run to the session's end by the same clock (`until_ms`), and the run is refused if its
