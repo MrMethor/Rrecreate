@@ -1,6 +1,6 @@
 //! The vault game of `testbins` (`testbins/src/vault.c`), ported from power-on (M5): its data read from
 //! the person's copy of the game (`VAULT.DAT`, through `rrc_runtime::original::file`) and decoded with the
-//! toolkit's codecs, its two loops compared as one session (DESIGN.md §12).
+//! toolkit's codecs, its two loops compared as one session (docs/design.md §12).
 //!
 //! Before its first tick the original reads the archive's directory, takes the map's and the picture's
 //! buffers from the heap and shows the title, its palette and picture loaded: `start`. Then a tick begins
@@ -17,7 +17,7 @@
 //! `vault-port play` plays it in a window (D119): `Devices` are the original's INT 08h and INT 09h handlers,
 //! given the host's clock and keyboard.
 //!
-//! Each function names the original's it reimplements by its ID (DESIGN.md §6.6), which `rrc compare`
+//! Each function names the original's it reimplements by its ID (docs/design.md §6.6), which `rrc compare`
 //! finds when that one wrote a value the port has otherwise.
 
 use rrc_platform::{Host, KeyStates, Live, Next};

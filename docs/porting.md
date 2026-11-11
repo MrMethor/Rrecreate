@@ -1,6 +1,6 @@
 # Porting a game
 
-The agent's playbook (DESIGN.md §10). It grows with the toolkit: this is what `rrc` does so far (M3 and M4:
+The agent's playbook (docs/design.md §10). It grows with the toolkit: this is what `rrc` does so far (M3 and M4:
 the original's knowledge and traces, the mapping, the port and the comparison). Formats are in
 `docs/formats.md`. Read "How to work" first: its rules decide how each step below is used.
 
@@ -180,7 +180,7 @@ segment (D89), so `rrc show`'s calls and callers list the handlers.
 Some games make code at run time (drawing routines generated for each size, say): `rrc calls` then counts
 functions past the program's file image, which Ghidra can't see. `rrc show ID` says so, and `rrc show ID
 --asm --session NAME [--tick N]` disassembles it from the session's memory, by tick N or at its last
-snapshot. Port what the generator makes, not the bytes (DESIGN.md §6).
+snapshot. Port what the generator makes, not the bytes (docs/design.md §6).
 
 Look for prior art (D32, D77): source releases, reimplementations, format documentation, wikis,
 walkthroughs, bug lists. It is expected, and not relied upon: evidence, named with its source, that the
@@ -441,7 +441,7 @@ rrc compare first-level --resume 900
 that does (both values) and how many of its values do (D140), and who wrote
 the original's value between the previous tick's sync point and this one's (the instruction and its call chain:
 read that code; a value copied there, by `MOVS` say, is followed to where its source was written, D85); `port` names the port's code for the function that wrote it (D73), found by the ID each port
-function names in a comment (`/// update (GAME.EXE+00114): one pass`, DESIGN.md §6.6). Fix the port and compare
+function names in a comment (`/// update (GAME.EXE+00114): one pass`, docs/design.md §6.6). Fix the port and compare
 again. A divergence at the port's first tick means its start state
 isn't the original's, or a transplant misses a field (map it). From power-on, a buffer the program hasn't
 filled yet holds leftovers (a heap block's links): leave the port's field `None` until the port sets it.
@@ -589,7 +589,7 @@ or `RRC_SAVES`; the person's in the game's folder are read, never written). `exa
 
 ## Quirks
 
-The original's bugs stay in the faithful port, each as a registered quirk (DESIGN.md §6.5, D74):
+The original's bugs stay in the faithful port, each as a registered quirk (docs/design.md §6.5, D74):
 
 ```bash
 rrc suspects first-level

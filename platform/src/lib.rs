@@ -1,4 +1,4 @@
-//! The platform layer (DESIGN.md §6.1, D119): what a Rust port plays on, outside a comparison. It owns the main
+//! The platform layer (docs/design.md §6.1, D119): what a Rust port plays on, outside a comparison. It owns the main
 //! loop: a window that shows the presentation's frames, the host's keyboard and mouse given to the port as the
 //! PC's (the keyboard controller's bytes, the mouse in the screen's coordinates), and the sound the presentation
 //! makes, played (the OPL3 by Nuked OPL3, the PC speaker, digitized sound). A port's [`Live`] turns those
@@ -350,7 +350,7 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
                 continue;
             }
             ("--fix", Some(quirk)) => {
-                // A quirk fixed for this game (D149, DESIGN.md §6.4).
+                // A quirk fixed for this game (D149, docs/design.md §6.4).
                 if !is_registered(S::QUIRKS, quirk) {
                     return Some(fail(&format!("{quirk}: no such quirk (rrc quirk lists them)")));
                 }

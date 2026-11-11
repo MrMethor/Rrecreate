@@ -1,4 +1,4 @@
-//! Snapshots of a session's run (DESIGN.md §8, D51), kept in the cache so that a question about a late
+//! Snapshots of a session's run (docs/design.md §8, D51), kept in the cache so that a question about a late
 //! tick starts near it instead of from power-on. `rrc record` saves one at the first tick after every
 //! 10 s of emulated time (`RRC_SNAPSHOT_MS` changes that); `rrc watch` and `rrc inputs` start from
 //! the last one before the tick they begin at.

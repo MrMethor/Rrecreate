@@ -1,4 +1,4 @@
-//! The state mapping (DESIGN.md §7, D16, D62, D72): `mapping.toml` in the port repository. Each
+//! The state mapping (docs/design.md §7, D16, D62, D72): `mapping.toml` in the port repository. Each
 //! `[[map]]` is a field of the port's state (a path in its serialization, `player.x`) and the
 //! original's item it is: a data name or an ID, read as the knowledge's type for it or the one given;
 //! or, `via` a pointer, what the pointer points to at each tick (data on the heap); with a `mask`, only

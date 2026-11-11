@@ -1,4 +1,4 @@
-//! The port repository (DESIGN.md §9): `rrc.toml`, the port's settings, committed; `rrc.local.toml`,
+//! The port repository (docs/design.md §9): `rrc.toml`, the port's settings, committed; `rrc.local.toml`,
 //! this machine's (the game's folder, the cache, the tools), not committed; `.rrc/`, this machine's
 //! state (file hashes, the analysis index, the Ghidra project), not committed either.
 

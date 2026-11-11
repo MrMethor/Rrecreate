@@ -1,4 +1,4 @@
-//! `rrc analyze` (DESIGN.md §5, §9): the program as Clockwork unpacks it, analyzed by Ghidra headless,
+//! `rrc analyze` (docs/design.md §5, §9): the program as Clockwork unpacks it, analyzed by Ghidra headless,
 //! exported (`ghidra/RecExport.java`) into the cache. Library functions that a signature pack
 //! (`sigs/`) recognizes by their Function ID hashes are named in the knowledge (`library:<pack>`),
 //! unless someone named them already. What analysis left is indexed in `.rrc/analysis.toml`.
@@ -6,7 +6,7 @@
 //! Functions the knowledge names that Ghidra didn't find (an interrupt handler only a vector
 //! reaches, code called through a pointer) are added to it, so they get calls, references and
 //! decompiled code too; with `--session NAME`, so are all the functions that session's run called
-//! (DESIGN.md §5, "Dynamic"; D79): Ghidra's project of the analysis is kept in the cache, and opened again
+//! (docs/design.md §5, "Dynamic"; D79): Ghidra's project of the analysis is kept in the cache, and opened again
 //! (read only, without analysing it again) to create them and export just their records, which are
 //! read after the analysis's own. That run also gives Ghidra the register contracts the session's run
 //! showed (D81, `contracts.rs`): register parameters and results, a carry flag among them; the functions

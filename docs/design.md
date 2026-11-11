@@ -3,24 +3,9 @@
 > The design as decided. Reasons and history are in `docs/decisions.md` (each decision once, with its
 > status). When a decision changes, both files change in the same commit, and nothing here may describe a
 > superseded decision.
-
-**Status (2026-10-26):** M0, M1 and M2 done: Clockwork is in `clockwork/` and tools drive it through `clockwork
-serve`; the toolkit, `rrc` (§9), keeps a port repository, analyses the game and traces its sessions. Two blind
-tests of the toolkit on a Wolf3D port, with the playbook alone, shaped it (D46-D51, D60). M3 done: the runtime
-(`runtime/`), the mapping, transplants, the comparison with who wrote, paired checkpoints and scenario edits
-(D61-D64); the toy port (`examples/toy`) matches its session tick by tick, edited or not. M4 done, a real
-game's logic, tested on Arena (§12, D70, D71, D100): from a transplant at its first tick, Arena's port matches its
-first dungeon's session to its end (the in-game menu, walking, collisions, the key's pickup, the gate, the
-creatures woken, the fists, the attacks and a rat's death, the rats' bites, the game's clock, the random
-generator), the 3D view's parts given to it as a part not ported (D84, D96, D98, D99); the gaps it found are
-D80-D99. M5 done, the game's data (D101-D106): a port reads and decodes the game's files, and the vault test
-program's port (`examples/vault`) matches from power-on through its title and play; formats are knowledge, and
-`rrc asset` extracts pictures, maps, sounds and music equal to what the original loaded (the vault's members;
-Arena's level map, title, sounds and music); the Arena port reads its level's texts itself. M6 under way: a
-port draws and sounds through a presentation, its frames compared with the original's screen and its sound
-with the original's events (D107, D108). Rrecreate began
-from Recreate's emulator and parts of its tooling
-(§11); Recreate itself is disregarded (D69).
+>
+> Work starts at the hub, `docs/README.md` (D153): the objective, the rules, the map of the documents, and where
+> the work stands, which is said there and nowhere else. The plan is §12.
 
 ## 1. The product
 

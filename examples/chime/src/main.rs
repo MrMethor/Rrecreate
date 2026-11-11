@@ -14,7 +14,7 @@
 //! `chime-port play` plays it in a window, with its sound (D119): `Devices` are the original's INT 08h and
 //! INT 09h handlers, given the host's clock and keyboard.
 //!
-//! Each function names the original's it reimplements by its ID (DESIGN.md §6.6).
+//! Each function names the original's it reimplements by its ID (docs/design.md §6.6).
 
 use rrc_platform::{Host, KeyStates, Live, Next};
 use rrc_runtime::present::{Presentation, Shows, Sounds, Speaker};

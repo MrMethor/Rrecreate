@@ -1,4 +1,4 @@
-//! What a Rust port builds on (DESIGN.md §6, §7, D61, D62): the port's side of its contract with
+//! What a Rust port builds on (docs/design.md §6, §7, D61, D62): the port's side of its contract with
 //! `rrc`. A port is a program; `rrc compare` runs it with the session's inputs, and it writes its
 //! state at every tick for `rrc` to compare with the original's. The files are documented in
 //! `docs/formats.md`, so a port in another language does the same without this crate.
@@ -71,7 +71,7 @@ pub trait Simulation: Serialize + DeserializeOwned {
     /// this tick becomes the state at the next.
     fn step(&mut self, tick: &Tick);
 
-    /// The state the original's values at a tick give (a transplant, DESIGN.md §8): `mapped` is the
+    /// The state the original's values at a tick give (a transplant, docs/design.md §8): `mapped` is the
     /// start state's serialization with every mapped field set from the original. The default
     /// deserializes it; a port overrides this where its state isn't the mapped fields alone (an
     /// index the original keeps as a pointer, a value it derives).
@@ -95,7 +95,7 @@ pub struct Tick<'a> {
     pub next: Option<&'a str>,
 }
 
-/// The quirks fixed in this run (D74): none in a comparison, which keeps every one (DESIGN.md §6.5).
+/// The quirks fixed in this run (D74): none in a comparison, which keeps every one (docs/design.md §6.5).
 static FIXED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 /// Whether the port keeps the original's quirk `name` (the port's `quirks.toml`): its code branches on
@@ -105,7 +105,7 @@ pub fn keeps(name: &str) -> bool {
     !FIXED.lock().is_ok_and(|fixed| fixed.contains(name))
 }
 
-/// Fixes quirk `name` from now on: a behaviour toggle (DESIGN.md §6.4), never on in a comparison.
+/// Fixes quirk `name` from now on: a behaviour toggle (docs/design.md §6.4), never on in a comparison.
 pub fn fix(name: &str) {
     if let Ok(mut fixed) = FIXED.lock() {
         fixed.insert(name.to_owned());

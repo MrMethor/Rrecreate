@@ -10,7 +10,7 @@ license.workspace = true
 [lib]
 name = "rrc_platform"
 
-# Never Clockwork's crates (DESIGN.md §3): a port plays without the emulator.
+# Never Clockwork's crates (docs/design.md §3): a port plays without the emulator.
 [dependencies]
 rrc-runtime = { path = "../runtime" }
 minifb = "0.29"

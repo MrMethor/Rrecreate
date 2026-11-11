@@ -50,7 +50,7 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
 ",
     )?;
     say("port", format!("{name} in {}", dir.display()));
-    // A port is a repository of its own (DESIGN.md §3).
+    // A port is a repository of its own (docs/design.md §3).
     if !dir.join(".git").exists() {
         match std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status() {
             Ok(status) if status.success() => {

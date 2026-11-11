@@ -1,4 +1,4 @@
-//! `rrc`: Rrecreate's toolkit (DESIGN.md §9, §10). It runs inside a port repository, keeps its
+//! `rrc`: Rrecreate's toolkit (docs/design.md §9, §10). It runs inside a port repository, keeps its
 //! knowledge files, and drives Clockwork through `clockwork serve`. Its output is read by agents:
 //! a few lines, a label and a value each.
 

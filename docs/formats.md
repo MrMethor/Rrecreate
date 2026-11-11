@@ -1,6 +1,6 @@
 # File formats
 
-The files a port repository holds and the toolkit writes (DESIGN.md §9). A port in any language reads and
+The files a port repository holds and the toolkit writes (docs/design.md §9). A port in any language reads and
 writes these to be compared (D38). Text is UTF-8 with LF line ends.
 
 ## `rrc.toml`: the port
@@ -437,7 +437,7 @@ provenance = "agent:..."
 ## `quirks.toml`: the quirk register
 
 ```toml
-[[quirk]]                       # an original bug the faithful port keeps (DESIGN.md §6.5, D74)
+[[quirk]]                       # an original bug the faithful port keeps (docs/design.md §6.5, D74)
 name = "enemy_overrun"          # how the port's code names it: if rrc_runtime::keeps("enemy_overrun") { ... }
 at = "GAME.EXE+002FF"           # the original's code that does it
 what = "the sixth enemy's update reads the word after the table as its hits"

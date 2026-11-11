@@ -1,4 +1,4 @@
-// Exports an analyzed program as JSON lines, for the toolkit's knowledge files (DESIGN.md §5).
+// Exports an analyzed program as JSON lines, for the toolkit's knowledge files (docs/design.md §5).
 // Run through Ghidra's headless analyzer:
 //   analyzeHeadless ... -postScript RecExport.java <out.jsonl> [decompile] [functions <file>]
 //       [signatures <file>] [only]

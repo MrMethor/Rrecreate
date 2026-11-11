@@ -1,4 +1,4 @@
-//! Sessions (DESIGN.md §7): what to reproduce. A session is a TOML file in `sessions/` naming its input
+//! Sessions (docs/design.md §7): what to reproduce. A session is a TOML file in `sessions/` naming its input
 //! (an input script, or play recorded by `clockwork play --record`, kept beside it), its length and the
 //! edits that set up its scenario (D59, D64), or the session and tick it starts from (D118); `rrc record`
 //! adds the hashes of its trace and its run (D44, D54), and `rrc compare --pair` its paired checkpoints (D63).

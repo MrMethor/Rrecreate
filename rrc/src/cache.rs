@@ -1,4 +1,4 @@
-//! The cache (DESIGN.md §9, D44): files addressed by their SHA-256, per user and outside git:
+//! The cache (docs/design.md §9, D44): files addressed by their SHA-256, per user and outside git:
 //! program images, Ghidra exports, snapshots, traces. `RRC_CACHE` names its folder; otherwise
 //! `rrc.local.toml` does, or the user's cache folder (`%LOCALAPPDATA%\rrecreate\cache`,
 //! `$XDG_CACHE_HOME/rrecreate` or `~/.cache/rrecreate`).

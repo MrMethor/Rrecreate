@@ -1,4 +1,4 @@
-//! `rrc compare SESSION` (DESIGN.md §7, §8, D61-D63): the port against the original, tick by tick.
+//! `rrc compare SESSION` (docs/design.md §7, §8, D61-D63): the port against the original, tick by tick.
 //!
 //! rrc writes the session's inputs (`rrc-inputs`) from the original's trace, runs the port (`[port]
 //! command` in rrc.toml) with them, from its start state, a transplant of the original's mapped values
@@ -1859,7 +1859,7 @@ fn through_copies(
 }
 
 /// Where the port does what the original's writing function did (D73): its code that names that
-/// function's ID (DESIGN.md §6.6), or, if none does, a caller's in the chain.
+/// function's ID (docs/design.md §6.6), or, if none does, a caller's in the chain.
 fn port_code(repo: &Repo, k: &Knowledge, chain: &[Id]) {
     let Some(writer) = chain.first() else { return };
     let named = |id: &Id| {
@@ -1888,7 +1888,7 @@ fn port_code(repo: &Repo, k: &Knowledge, chain: &[Id]) {
         "port",
         format!(
             "no code names {} or its callers: name the original each function reimplements, by its ID, in a \
-             comment (DESIGN.md §6.6)",
+             comment (docs/design.md §6.6)",
             named(writer)
         ),
     );

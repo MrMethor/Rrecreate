@@ -1,4 +1,4 @@
-//! Stable IDs of a program's functions and data (DESIGN.md §5, decision D53).
+//! Stable IDs of a program's functions and data (docs/design.md §5, decision D53).
 //!
 //! Canonical text form: `<MODULE>[#<n>]+<offset>`, for example `GAME.EXE+0A4D2` or
 //! `GAME.EXE#3+00120`. `#n` is a part of the module: an overlay of an MZ program, or an object of an

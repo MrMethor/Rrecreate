@@ -1,6 +1,6 @@
 //! `rrc calls SESSION`: how often the session calls each function, grouped by count. Functions that
 //! one loop calls once a pass are called equally often, so a large group is a loop, and a function
-//! in it that waits for the timer is where a tick ends: a sync point (DESIGN.md §10, step 3).
+//! in it that waits for the timer is where a tick ends: a sync point (docs/design.md §10, step 3).
 //!
 //! The counts are split into phases: before the first tick, then each run of ticks at one sync point
 //! (a loop: the menus, play), to the next phase's first tick or the session's end. With a function,

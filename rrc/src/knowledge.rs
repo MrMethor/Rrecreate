@@ -1,4 +1,4 @@
-//! The knowledge files (DESIGN.md §9, `docs/formats.md`): named functions and data as TSV tables,
+//! The knowledge files (docs/design.md §9, `docs/formats.md`): named functions and data as TSV tables,
 //! one item per line sorted by ID; types and ticks as TOML.
 
 pub use rrc_types::{BitField, Bits, Enum, Field, Pointer, Struct, Types};

@@ -1,7 +1,7 @@
-//! `rrc progress` (DESIGN.md §7, D117): how far the port is, as the sessions show it. Code: the program's
+//! `rrc progress` (docs/design.md §7, D117): how far the port is, as the sessions show it. Code: the program's
 //! functions the original ran in the sessions, those it ran in the passes the port matches (as `rrc compare`
 //! last left each session: from its start or transplant to the last tick that matched), and of those, the
-//! ones the port's code names (DESIGN.md §6.6). State: of the memory a recording keeps at every tick (D92,
+//! ones the port's code names (docs/design.md §6.6). State: of the memory a recording keeps at every tick (D92,
 //! the data segment), the bytes that change in the session's ticks, and how many of them the mapping maps
 //! (with the presentation's own, D110), ignores, or neither; the largest left, by name.
 

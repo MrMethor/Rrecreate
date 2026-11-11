@@ -9,30 +9,27 @@ The original game runs in **Clockwork**, a deterministic DOS emulator; the agent
 compares the two tick by tick, traces each difference to the original code that caused it, and keeps the books.
 The port's faithful mode is checked against the original for good; modernizations are toggles on top.
 
-**Status:** the emulator, Clockwork, runs and tools drive it (`clockwork/`, with its own
-[README](clockwork/README.md)). The toolkit, `rrc` (`rrc/`), keeps a port repository: the game's versions,
-analysis through Ghidra, knowledge files, sessions and per-tick traces of the original
-([`docs/porting.md`](docs/porting.md)), and runs a port against the original tick by tick: the runtime a Rust
-port builds on is `runtime/`, and [`examples/toy`](examples/toy) is a whole port of a toy game. The design is
-[`DESIGN.md`](DESIGN.md); the decisions and their reasons are in [`docs/decisions.md`](docs/decisions.md), the
-file formats in [`docs/formats.md`](docs/formats.md), and how tools drive an emulator in
-[`docs/protocol.md`](docs/protocol.md).
+**Start at the hub, [`docs/README.md`](docs/README.md):** the objective, how the project is built, its rules, where
+the work stands, what was decided, and where every document is (the design, the decisions, the playbook for porting
+a game, the file formats, the emulator protocol).
 
 ```bash
 cargo build --release -p rrc -p clockwork
 ```
 
-Rrecreate began from Recreate, a private predecessor whose emulator it took over (`DESIGN.md` §11). Recreate is
+Rrecreate began from Recreate, a private predecessor whose emulator it took over (`docs/design.md` §11). Recreate is
 disregarded: nothing is read or taken from it (D69).
 
 ## Layout
 
 | Path | What |
 |---|---|
+| `docs/` | Every document, entered through the hub, `docs/README.md` |
 | `clockwork/` | The emulator (GPL-2.0-or-later) |
 | `rrc/` | The toolkit's command line, `rrc` |
-| `runtime/` | What a Rust port builds on: the simulation's step, and the files it exchanges with `rrc` |
-| `examples/toy/` | A port repository: the toy game of `testbins`, ported and compared |
+| `runtime/`, `types/`, `ids/` | What a Rust port builds on: the simulation's step, and the files it exchanges with `rrc` |
+| `platform/` | What a port plays on: a window, input devices, sound |
+| `examples/` | Port repositories of the test programs: `toy`, `chime` (sound), `vault` (data files, from power-on) |
 | `ghidra/` | The Ghidra scripts: export, and names written back |
 | `sigs/` | Library signature packs |
 | `testdata/inputs/` | Walkthroughs of the test games, as input scripts |

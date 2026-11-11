@@ -1,7 +1,7 @@
 # Clockwork
 
 A deterministic IBM PC with DOS, emulated in Rust: the controlled environment Rrecreate runs original games
-in (`../DESIGN.md` §4). The same program with the same inputs gives the same run, bit for bit: time is
+in (`../docs/design.md` §4). The same program with the same inputs gives the same run, bit for bit: time is
 virtual, counted in executed instructions.
 
 - **CPU:** our own 486 interpreter (real, protected and virtual-8086 mode, paging) with an 80387-compatible

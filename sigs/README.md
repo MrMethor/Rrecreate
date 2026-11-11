@@ -1,7 +1,7 @@
 # sigs/
 
 Library signature packs: compiler runtime functions known by their Ghidra Function ID hashes, used for
-library identification during analysis (`DESIGN.md` §5): a function whose hashes match one name is marked as
+library identification during analysis (`docs/design.md` §5): a function whose hashes match one name is marked as
 a library function and named after it (provenance `library:<pack>`), so nobody reimplements it. Functions
 under 6 code units aren't matched (short ones hash alike too easily), nor a hash several names share.
 

@@ -1,6 +1,6 @@
 # Decisions
 
-Each decision once, with its status. `accepted` decisions are what `DESIGN.md` describes. A changed decision
+Each decision once, with its status. `accepted` decisions are what `docs/design.md` describes. A changed decision
 is marked `superseded by Dn` and the new one is added; the design is updated in the same commit. `open`
 decisions wait for the person.
 
@@ -205,7 +205,7 @@ nothing wrote, with when (the pass to tick N), registered ones marked. An instru
 data is a sweep (a clear or a copy running over them) and is said once. At a divergence, a quirk registered at
 the writing instruction or a function of its chain is named. The port branches on `rrc_runtime::keeps(NAME)`,
 true unless the run fixes it (`rrc_runtime::fix`), which a comparison never does.
-**Why:** D18 and DESIGN.md §6.5: candidates come from Clockwork's checks, and each kept bug is found from both
+**Why:** D18 and docs/design.md §6.5: candidates come from Clockwork's checks, and each kept bug is found from both
 sides by its name and its ID. Measured on a test program: an index one past a table and a read of unwritten
 memory are found and registered. On the toy game the C runtime's clearing of its data at start is one sweep,
 not six suspects.
@@ -297,6 +297,26 @@ subsystems.
 **Why:** Recreate's long design document kept descriptions of superseded decisions next to current ones, which
 confused readers, agents included.
 
+### D153. The hub: one entry point for the agent and the person. Accepted 2026-11-11; asked for by the person, its form the agent's.
+`docs/README.md`, the hub, is where work on Rrecreate starts. It says, in plain words and without code: the objective,
+how the project works and its systems, the standing rules, where the work stands (the milestones, what is under way,
+what is next, which calls are the person's) and the decisions that shape the project, and it lists every document with
+who reads it and when. `CLAUDE.md` loads it, so an agent has it before anything else and after a summary; the person
+reads it and what it links, and nothing else. Every document is in `docs/` (the design moved there:
+`docs/design.md`) or is a component's own README, and has a row in the hub. The state of the work is written in the
+hub alone: the design, `CLAUDE.md` and the README carry none. A test (`rrc/tests/hub.rs`) fails when a document isn't
+listed in the hub, one of its links leads nowhere, its milestones aren't the plan's (`docs/design.md` §12), its
+state doesn't name the latest decision (so each decision's commit passes through it), a state appears outside it,
+or `CLAUDE.md` stops loading it.
+**Why:** the person asked for one place the agent meets first and the only one they read, so that an agent doesn't
+drift from the objective and the rules, and they can see what is worked on, how the project is built and what was
+decided. Before it, the state was written in three places that disagreed (`CLAUDE.md`: the comparison is M3's, to
+come; the design: M6 under way, dated 2026-10-26; the README: neither); the person's standing rules (straight to
+`main`, what to ask for, never deleting) were in an agent's memory and a port's `RULES.md`, not here; and the rules
+for work on Rrecreate were among `CLAUDE.md`'s technical notes, which a person doesn't read. A page alone would rot
+as those did: reminding doesn't hold, a refusal does (D148).
+**Extends:** D35: the hub is the front page of the design and this list, not a third description of either.
+
 ## Languages and platforms
 
 ### D36. Rust, with room for other languages. Accepted 2026-10-19, with the person.
@@ -344,7 +364,7 @@ in a folder of its own, outside Recreate's tree (2026-10-21). Rrecreate's public
 carry names from Recreate, stays as it is: the pilot doesn't read it (2026-10-21, with the person: a rewrite
 would need a force-push).
 **Why:** D3. Knowledge derived from the source would let the pilot take shortcuts, and it would prove nothing.
-**Supersedes:** the plan (DESIGN.md §11, M2) to give the Wolf3D port Recreate's knowledge as evidence.
+**Supersedes:** the plan (docs/design.md §11, M2) to give the Wolf3D port Recreate's knowledge as evidence.
 
 ### D47. A tick ends where the wait is over. Accepted 2026-10-20.
 A sync point sits where the loop's timer wait has ended and the pass hasn't read its inputs yet (usually the
@@ -481,7 +501,7 @@ writes values into the original's memory at chosen ticks (named data through the
 there is any, IDs otherwise), then runs its input. The edits are part of the session, in what makes its run
 the same (its snapshots, traces and kept answers follow them), and its trace lists them, so a divergence can
 be traced to an edit. Only the original is edited: the port gets the same scenario by a transplant at that
-tick (DESIGN.md §8). Where a game has its own cheats or debug modes, they come first: they reach the
+tick (docs/design.md §8). Where a game has its own cheats or debug modes, they come first: they reach the
 scenario through the game's own code.
 **Why:** reaching a scenario by play (input scripts found by trial) is the slowest part of the work, and the
 goal is to implement a game as efficiently as possible; the person proposed it. The risk is a state play
@@ -547,7 +567,7 @@ its own. `[[ignore]]` names the original's memory that may differ. `rrc record` 
 transplant writes the mapped values at a tick (`rrc-state`), and the runtime sets them over the port's start
 state's serialization. `rrc check` checks the mapping, and `rrc compare` lists the named data neither mapped
 nor ignored.
-**Why:** DESIGN.md §7: one mapping for comparison and transplant, so a gap shows as a divergence. The
+**Why:** docs/design.md §7: one mapping for comparison and transplant, so a gap shows as a divergence. The
 knowledge's types already say how memory reads; with the port's serialization as the meeting point, a port in
 any language maps by naming its fields. **Not yet:** encodings the types don't have (a pointer as an index,
 packed bits, a flag as a boolean): until the mapping has them, a port serializes such a field the original's
@@ -605,7 +625,7 @@ the transplant is what differs instead. It exits 1 on a divergence. `--transplan
 original's mapped values at tick N. `--pair N` keeps a paired checkpoint when the port matched through tick N:
 its own state there (`rrc-port-state`) and Clockwork's snapshot at the end of tick N, in the cache, listed in
 the session's file (`[[pair]]`); `--resume N` starts the port from it.
-**Why:** DESIGN.md §7, §8: the first divergence localizes a bug, and who wrote it says which original code to
+**Why:** docs/design.md §7, §8: the first divergence localizes a bug, and who wrote it says which original code to
 read. Comparing needs no emulator (D26): only the watch and a pair's snapshot run Clockwork. Measured on the toy
 port: its 20-second session matches at all 1400 ticks; with a bounce left uncounted it diverges at tick 194, and
 the report names `update`'s instruction that wrote the count. **Not yet:** the port's side of the divergence
@@ -618,10 +638,10 @@ src/main.rs:113`), else a caller's in the chain, else that no code names them. I
 not the repository's knowledge, sessions, notes, settings or build output.
 **Why:** a call trace of the port would need tracing put into every port, in each language, and the agent
 would still have to find the code from it. The code rules already have each function name the original it
-reimplements (DESIGN.md §6.6), so one ID finds both sides, and the comparison stays a matter of files (D61).
+reimplements (docs/design.md §6.6), so one ID finds both sides, and the comparison stays a matter of files (D61).
 Where a game shows a divergence this can't place (a field written from many places), the runtime can add a
 trace then. Measured on the toy port: a bounce left uncounted names `update` and the line of `step`.
-**Supersedes:** the port's own call trace at a divergence (DESIGN.md §7, D63's "Not yet", D71's M4).
+**Supersedes:** the port's own call trace at a divergence (docs/design.md §7, D63's "Not yet", D71's M4).
 
 ### D64. Scenario edits: written by the emulator at counted ticks, and given to the port with the inputs. Accepted 2026-10-26.
 A session's edits (`[[edit]]` in its file, or `rrc session edit`) name named data or an ID, a path into it as
@@ -750,7 +770,7 @@ output says so, and the outcome isn't kept for `rrc progress`. Every other compa
 **Why:** the person asked for a switch for each of the original's bugs, and `rrc_runtime::fix` had no caller: a switch nothing
 can flip isn't one, and a fix's code runs in no comparison, so it could be wrong or never reached and nothing would show.
 A try on a session that reaches the quirk shows both. A misspelt name would do nothing and say nothing, so it's refused.
-Saves don't record the fixes in force yet (DESIGN.md §6.4), and there's no menu: those are M7's.
+Saves don't record the fixes in force yet (docs/design.md §6.4), and there's no menu: those are M7's.
 
 ### D148. The rule that every bug is registered is checked, not remembered. Accepted 2026-11-09, with the person.
 `rrc check` fails, and `rrc status` names the first, while a comment in the port's code says `bug` or `quirk` with no
@@ -1076,7 +1096,7 @@ handling (its keyboard and timer handlers): from the devices, the boundary value
 loop takes a pass, waits or ends. `rrc_platform::main` gives a port `play [--game DIR] [--no-sound]` beside its
 comparison runs. Saved games go to the port's saves (`rrc_runtime::original::save`; `.rrc/saves` or
 `RRC_SAVES`), never into the person's game folder, whose saves are read.
-**Why:** M6 asks for a port that plays in a window with sound, and DESIGN.md §6.1 for a platform that owns the
+**Why:** M6 asks for a port that plays in a window with sound, and docs/design.md §6.1 for a platform that owns the
 loop and turns devices into what the simulation reads. minifb and tinyaudio instead of SDL3: Clockwork's `play`
 uses them already, they need no native library, and the seams keep a later SDL3 or web platform the same.
 Measured on the examples: the vault's title shows in its palette, Enter starts play and the arrows walk; the
@@ -1105,7 +1125,7 @@ them); the ones that ran in matching passes without code that names them, most c
 data segment each recording keeps at every tick (D92), the bytes that change, the share the mapping maps
 (with the presentation's own) or ignores, and the largest places neither does, by name. An offset alone in
 the port's code (`+0A2F0`) names the program's own function, for `rrc compare`'s port side (D73) too.
-**Why:** DESIGN.md §7 asked for the share of executed code exercised by matching sessions and of the state
+**Why:** docs/design.md §7 asked for the share of executed code exercised by matching sessions and of the state
 mapped, and nothing measured either: "how far is the port" was answered by reading notes. Functions alone would
 count a feed's subsystem as done, so the port naming them is the stronger number; the state that changes but
 nothing maps is the list of what to port next. Arena's port names most functions by `+OFFSET` alone, which D73's
@@ -1196,7 +1216,7 @@ at tick 2 of the cell session, 52 functions, from the cells' walk (`+0C9FF` ×21
 (`+0B835` ×770).
 
 ### D108. A port's sound is compared with the original's events, in order and without times. Accepted 2026-10-30.
-M6's second piece (DESIGN.md §6.1, §7):
+M6's second piece (docs/design.md §6.1, §7):
 - **What is compared:** each tick's sound events by device, as Clockwork logs them for the trace (the OPL's
   register writes, the speaker's states, digitized sounds started, MIDI bytes), in order, without their
   times: a port can't make the emulated nanoseconds within a pass, and the order and values are what a
@@ -1212,14 +1232,14 @@ M6's second piece (DESIGN.md §6.1, §7):
 
 The writer is the instruction that wrote the port (in a C library's `outp`, the caller isn't named); a call
 chain for port writes comes as games need it. Digitized sound is compared by its starts, not its samples.
-**Why:** a faithful port's sound must be the original's (M6), and DESIGN.md §7 compares sound as events.
+**Why:** a faithful port's sound must be the original's (M6), and docs/design.md §7 compares sound as events.
 `testbins/src/chime.c`, a note on the speaker and the OPL, is the test program: its port (`examples/chime`)
 sounds as the original at all 182 ticks, the instrument at start-up and three notes, one cutting another off
 (the speaker held high while the timer is set again); a note keyed an octave low is found at tick 36, its key
 on (`B0=35`, the port's `B0=31`).
 
 ### D107. A port's frames are compared with the original's screen at each sync point. Accepted 2026-10-30.
-M6's first piece (DESIGN.md §6.1, §7):
+M6's first piece (docs/design.md §6.1, §7):
 - **What is compared:** what the original's screen holds at a tick's sync point, its memory and palette
   rendered as a frame's picture (indexed pixels and the DAC's colours), not the frames its display showed: a
   retrace shows what was drawn by then, which depends on timing the logic doesn't have, while the screen at
@@ -1257,7 +1277,7 @@ M5 closes with both its tests passing and the rest of its scope done, as the per
 Left to later milestones: the creatures' images and sounds the renderer and the sound use (M6); Arena's own
 picture formats (CFA, DFA, CIF, headerless textures), as M6 needs them; sessions of Arena from power-on (the
 cell session starts from a transplant at its first tick).
-**Why:** DESIGN.md §12's M5 row: a test program's port that loads its data files matches from power-on
+**Why:** docs/design.md §12's M5 row: a test program's port that loads its data files matches from power-on
 through two loops, and Arena's level map and a picture extracted from its files equal what it loaded.
 
 ### D105. Sounds and music: Creative's Voice Files and XMIDI; archives without offsets. Accepted 2026-10-29, with the person.
@@ -1549,7 +1569,7 @@ Copies through a register (`MOV AX,[a]` then `MOV [b],AX`) aren't followed: two 
 `rrc compare SESSION --feed FIELD,...` gives the port the original's values of those mapped fields (or the groups
 they are in) at every tick before it steps, as a scenario's edits are given (D64): they match by construction,
 and the subsystem being ported reads what the original's other subsystems made.
-**Why:** DESIGN.md §2 ports subsystem by subsystem from a transplant, but a subsystem not ported yet diverges at
+**Why:** docs/design.md §2 ports subsystem by subsystem from a transplant, but a subsystem not ported yet diverges at
 the next tick and the comparison stops there. Arena's walking matched at tick 401 while the creatures' random
 draws (not ported) changed the generator's seed, so nothing after tick 401 could be checked. A fed field still
 in the port's state can't hide a bug of the ported code: it is overwritten, not compared.
@@ -1634,7 +1654,7 @@ memory. A port loads the person's copy of the game, so it needs the formats anyw
 
 ### D69. Recreate is disregarded. Accepted 2026-10-27, with the person.
 Nothing more is taken from Recreate and nothing is read from it: not its code, its design (`PROJECT.md`) or its
-knowledge. What came from it (DESIGN.md §11) is Rrecreate's own now, and the decisions carried from it stand as
+knowledge. What came from it (docs/design.md §11) is Rrecreate's own now, and the decisions carried from it stand as
 Rrecreate's decisions. Clockwork no longer reads the session files Recreate's `rec-host` wrote.
 **Why:** the person knows of nothing in Recreate that is still relevant, and it confuses the project (D66).
 Its folder is deleted, and no work here may need it.

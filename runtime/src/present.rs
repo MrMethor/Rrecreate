@@ -1,4 +1,4 @@
-//! The presentation (DESIGN.md §6.1, D107): what a port draws, read from the simulation's scene, never
+//! The presentation (docs/design.md §6.1, D107): what a port draws, read from the simulation's scene, never
 //! changing it. Its frame at a tick is what the original's screen holds at that tick's sync point (its memory
 //! and palette, as Clockwork renders them), which `rrc compare` compares pixel by pixel. A presentation keeps
 //! its own state (what it has drawn), as the original's drawing code keeps its own.
@@ -65,7 +65,7 @@ impl Frame {
     }
 }
 
-/// The scene seam of a simulation (DESIGN.md §6.1): what there is to draw at a tick, as meaning (the map,
+/// The scene seam of a simulation (docs/design.md §6.1): what there is to draw at a tick, as meaning (the map,
 /// the player, the picture shown), which a presentation draws from. It borrows from the simulation.
 pub trait Shows {
     type Scene<'a>

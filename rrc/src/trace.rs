@@ -1,4 +1,4 @@
-//! Traces (DESIGN.md §9, D54): a session run through Clockwork, read at every tick. A tick ends when
+//! Traces (docs/design.md §9, D54): a session run through Clockwork, read at every tick. A tick ends when
 //! the original reaches a sync point; there the trace takes the boundary values and the named data
 //! that changed since they were last read, and the frames and sound events of the tick.
 //!

@@ -1,20 +1,25 @@
 # Rrecreate
 
 A toolkit an AI agent uses to port DOS games to modern systems: the original runs in our deterministic
-emulator, Clockwork, and a native port is compared with it tick by tick (`DESIGN.md` §1, §2).
-**Status:** Clockwork is in `clockwork/`, driven by tools through `clockwork serve` (M0, M1); the toolkit, `rrc`,
-is in `rrc/` (M2); the runtime, in `runtime/`, and the comparison are M3's (`DESIGN.md` §12). The goal is the
-complete toolkit, and games only test it (D70); the plan to it is `DESIGN.md` §12 (D71).
+emulator, Clockwork, and a native port is compared with it tick by tick.
+
+**Start at the hub, `docs/README.md`** (D153): the objective, the systems, the rules, where the work stands and
+where every document is. The line below loads it. If its text isn't in your context, read the file now, before
+anything else, and again after a summary; work by its rules and report in its terms (its section 8).
+
+@docs/README.md
 
 - **Porting a game:** follow `docs/porting.md`, its rules first ("How to work"), inside the game's port
-  repository (`rrc status` names the next step).
-- **Working on Rrecreate itself:** the notes below.
+  repository (`rrc status` names the next step, `rrc rules` prints the rules).
+- **Working on Rrecreate itself:** the hub's rules, and the technical notes below.
 
-## Notes for agents working on Rrecreate
+## Technical notes for agents working on Rrecreate
 
-- `DESIGN.md` is the design, `docs/decisions.md` the decisions and their reasons. Read the sections you need.
-  When a decision changes: mark the old one `superseded by Dn`, add the new one, and update `DESIGN.md` in the
-  same commit. Never leave text that describes a superseded decision.
+What the hub leaves out because a person doesn't need it: commands, helpers and where things are.
+
+- `docs/design.md` is the design, `docs/decisions.md` the decisions and their reasons. Read the sections you need.
+  A changed decision is marked `superseded by Dn`; decisions and commit messages that name what is disregarded
+  (Recreate, D69) are history and stay.
 - Tests: `cargo test --workspace`. Lint: `cargo clippy --workspace --all-targets -- -D warnings`. Format:
   `cargo fmt --all` (`rustfmt.toml`). CI runs all three on Windows and Linux.
 - To check Clockwork on a real program: `cargo build --release -p clockwork`, then
@@ -32,31 +37,23 @@ complete toolkit, and games only test it (D70); the plan to it is `DESIGN.md` §
   Open Watcom (`testbins/README.md`); the DOS/4GW tests need `WATCOM` set (they skip without it).
 - `clockwork/dos/src/fonts.rs` and `vga_params.rs` are generated from DOSBox Staging's sources by the scripts in
   `clockwork/tools/`; don't edit them by hand.
-- Licences: everything is MIT except `clockwork/`, which is GPL-2.0-or-later. Code from DOSBox or other GPL
-  sources goes into `clockwork/` only. `rrc` and `runtime/` never depend on Clockwork's crates; they use its
-  control protocol.
-- Clockwork stays deterministic: never read the host clock or use randomness; time comes from executed
-  instructions. Floating point must give the same bits on every host (`libm`, not the `f64` methods; no NaN bits
-  produced by the host CPU in machine state). Runs are compared by state hash, which covers the machine's state
-  only: records (sound logs, frames, console; `dos/src/record.rs`) and the analysis tools (`Machine::probes`)
-  aren't state, and the analysis tools never change what the machine does.
-- Before adding a Clockwork feature, look at how DOSBox Staging, DOSBox-X, 86Box, PCem, MAME, Spice86 and MartyPC
-  do it, and port or adapt the best. Start the module's docs with "Ported from <emulator> `<path>` (<licence>)",
-  add a row to `THIRD_PARTY.md`, and add tests of our own. Only GPL-2.0-compatible sources may be copied. Their
-  sources are cloned under `reference/` (git-ignored).
-- Games only reveal gaps: implement each as a general feature with its own test, never a game-specific workaround.
-  Unsupported things are reported (a stop, a diagnostic), never guessed.
-- Game files are never committed. Each game's port lives in its own repository (`DESIGN.md` §3).
+- Determinism in Clockwork's code: time comes from executed instructions. Floating point must give the same bits on
+  every host (`libm`, not the `f64` methods; no NaN bits produced by the host CPU in machine state). Runs are
+  compared by state hash, which covers the machine's state only: records (sound logs, frames, console;
+  `dos/src/record.rs`) and the analysis tools (`Machine::probes`) aren't state, and the analysis tools never change
+  what the machine does.
+- A Clockwork feature adopted from another emulator (DOSBox Staging, DOSBox-X, 86Box, PCem, MAME, Spice86,
+  MartyPC; cloned under `reference/`, git-ignored): start the module's docs with "Ported from <emulator> `<path>`
+  (<licence>)", add a row to `THIRD_PARTY.md`, and add tests of our own. Only GPL-2.0-compatible sources may be
+  copied.
 - IDs: `<MODULE>[#<n>]+<offset>` (`#n`: an overlay or an LE/LX object; the offset in the loaded image, uppercase
   hex, 5 to 8 digits), for functions and data alike; `MEM+<linear>` for memory outside the images (D53). The
   `ids` crate parses and prints them; its cases are in `testdata/function_ids.tsv`.
-- Tool output is read by agents: keep it short. Large data goes to the cache, and the output gives its hash.
-  `rrc` prints a label and a value per line.
 - `rrc` (MIT) drives Clockwork as a program (`clockwork serve`, `clockwork run`, `clockwork unpack`), never as a
   library. `clockwork serve` speaks the emulator protocol, `docs/protocol.md` (D58): a change to it is a new
   revision (`PROTOCOL` in `serve.rs` and `rrc/src/clockwork.rs`) and goes into that document; keep what is
-  DOS's in the `dos-pc` extension. The files it reads and writes are documented in `docs/formats.md`: change the two together, and
-  `docs/porting.md` when a step of the workflow changes. `rrc/tests/flow.rs` runs the whole flow on a small
-  program with the workspace's debug `clockwork`.
-- Recreate, the project Rrecreate began from (`DESIGN.md` §11), is disregarded (D69): don't read its code,
-  design or knowledge, or take anything from it. Commit messages and decisions that name it are history.
+  DOS's in the `dos-pc` extension. The files it reads and writes are documented in `docs/formats.md`: change the
+  two together, and `docs/porting.md` when a step of the workflow changes. `rrc/tests/flow.rs` runs the whole flow
+  on a small program with the workspace's debug `clockwork`.
+- The hub is checked by `rrc/tests/hub.rs`: a new document needs its row there, and the state of the work is
+  written in the hub's section 5 only.

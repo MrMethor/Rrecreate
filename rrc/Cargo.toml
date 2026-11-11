@@ -11,7 +11,7 @@ license.workspace = true
 name = "rrc"
 path = "src/main.rs"
 
-# Clockwork is driven through its protocol, never linked (DESIGN.md §3, D12).
+# Clockwork is driven through its protocol, never linked (docs/design.md §3, D12).
 [dependencies]
 ids = { path = "../ids" }
 rrc-types = { path = "../types" }

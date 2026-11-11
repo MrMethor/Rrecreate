@@ -1,4 +1,4 @@
-//! The quirk register (DESIGN.md §6.5, D18, D74): `quirks.toml` in the port repository lists the
+//! The quirk register (docs/design.md §6.5, D18, D74): `quirks.toml` in the port repository lists the
 //! original's bugs the faithful port keeps. Each is an explicit branch in the port's code, which names
 //! it (`rrc_runtime::keeps("enemy_overrun")`), kept in comparisons and fixed by a toggle elsewhere.
 //! `rrc quirk` keeps the register and says where the port's code names each; `rrc suspects` finds
@@ -285,7 +285,7 @@ fn say_sites(repo: &Repo, name: &str) {
     }
 }
 
-/// `rrc suspects SESSION`: quirk candidates in the session's run (DESIGN.md §6.5): the original's
+/// `rrc suspects SESSION`: quirk candidates in the session's run (docs/design.md §6.5): the original's
 /// instructions that reach past named data's ends, and its reads of memory nothing wrote. They're kept
 /// (`suspects.toml`, D148) until judged; `--judge ID` judges one.
 pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {

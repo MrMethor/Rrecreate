@@ -4,7 +4,7 @@
 //!
 //! `clockwork gdb [--port N] DIR PROGRAM [run's options]`: the program, stopped at its entry, for a
 //! debugger that speaks GDB's remote serial protocol (gdb, Ghidra's debugger), on 127.0.0.1:N
-//! (1234 by default) (DESIGN.md §4.2, D7).
+//! (1234 by default) (docs/design.md §4.2, D7).
 //! Registers are 32-bit; in real mode EIP is the offset in CS, so gdb's `$pc` is too (`x/i
 //! $cs*16+$eip` shows the instruction). Addresses in `m`, `M` and breakpoints are linear (through the
 //! page tables when paging is on). Watchpoints aren't offered: gdb then steps and compares, and

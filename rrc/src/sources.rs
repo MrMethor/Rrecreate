@@ -1,5 +1,5 @@
 //! The port's code (D73, D74, D117): where its files name an original's function by ID, as the code rules
-//! ask of every function that reimplements one (DESIGN.md §6.6), or a quirk by its name. At a
+//! ask of every function that reimplements one (docs/design.md §6.6), or a quirk by its name. At a
 //! divergence, `rrc compare` names the port's code for the original's function that wrote the
 //! differing value, so both sides are found by the same ID whatever language the port is in; `rrc
 //! progress` counts the functions it names. An offset alone (`+0A2F0`, not part of an ID) names the

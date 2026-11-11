@@ -1,4 +1,4 @@
-//! `clockwork serve`: Clockwork as a long-lived process that tools drive (DESIGN.md §4.2), speaking the
+//! `clockwork serve`: Clockwork as a long-lived process that tools drive (docs/design.md §4.2), speaking the
 //! emulator protocol (`docs/protocol.md`, revision [`PROTOCOL`]): its core and the `dos-pc` platform's
 //! extension. Requests are JSON objects, one per line, on stdin (or a TCP connection with `--port N`); each
 //! gets one line back with the same `id`. A request that panics inside Clockwork gets an error, and the

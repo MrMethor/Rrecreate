@@ -1,4 +1,4 @@
-//! A scenario session's edits (DESIGN.md §8, D59, D64): values written into the original's memory at
+//! A scenario session's edits (docs/design.md §8, D59, D64): values written into the original's memory at
 //! ticks, so a session sets up the scenario it needs instead of playing to it. Each names named data
 //! (or an ID), a path into it as its type reads (`enemies[2].alive`) and a value; it becomes bytes at
 //! IDs, which Clockwork writes when the session's tick is counted, before that pass reads them. Every

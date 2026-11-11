@@ -1,5 +1,5 @@
 //! The toy game of `testbins` (`testbins/src/toy.c`), ported: the game's state and its pass, as a
-//! simulation `rrc compare` checks against the original tick by tick (DESIGN.md §6, §7).
+//! simulation `rrc compare` checks against the original tick by tick (docs/design.md §6, §7).
 //!
 //! A tick begins where the original's `wait_tick` returns. Its inputs are the timer count (INT 08h's,
 //! 70 Hz) and the key states (INT 09h's); one step is `update`. The original's `draw` only writes the
@@ -7,7 +7,7 @@
 //! original's pointer to the nearest enemy is an index here, its trail on the heap an array, and its
 //! status bits a structure (mapping.toml).
 //!
-//! Each function names the original's it reimplements by its ID (DESIGN.md §6.6), which `rrc compare`
+//! Each function names the original's it reimplements by its ID (docs/design.md §6.6), which `rrc compare`
 //! finds when that one wrote a value the port has otherwise.
 //!
 //! `TOY_BUG=1` leaves a bug in (not the original's): a bounce doesn't count; `TOY_BUG=trail`, another: the trail keeps y.
