@@ -124,6 +124,11 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["init", ".", "--program", "T.COM", "--name", "t"]).contains("next      rrc game"));
     assert!(repo.join(".gitattributes").is_file() && repo.join(".gitignore").is_file());
     assert!(repo.join(".git").is_dir(), "a port is a git repository");
+    // What an agent meets first (D155): the person's rules to ask for, the agent's page, the notes, the session hook.
+    for file in ["RULES.md", "AGENTS.md", "CLAUDE.md", "notes/README.md", ".claude/settings.local.json"] {
+        assert!(repo.join(file).is_file(), "{file}");
+    }
+    assert!(rrc.ok(&["rules"]).contains("ASK: which stretch of the game is this port to reproduce?"));
     // A saved game isn't part of the version.
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved").unwrap();
     let added = rrc.ok(&["game", game.to_str().unwrap(), "--add-version", "1.0", "--without", "*.sav"]);
@@ -131,6 +136,7 @@ fn a_session_is_traced_tick_by_tick() {
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
     assert!(doctor.contains("game      ") && doctor.contains(", protocol 16, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("rules     RULES.md: 5 questions for the person not answered yet"), "{doctor}");
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--evidence", "step adds 1", "--confidence", "0.5"]);

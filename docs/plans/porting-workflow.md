@@ -9,6 +9,7 @@
 | Change | Decision |
 |---|---|
 | A: the playbook around the stages, with the six rules, the table, fresh eyes (M) and the recipes (N) | D154 |
+| B: `rrc init` (and `rrc hooks`) makes the port's entry point: `RULES.md` as questions, `AGENTS.md`, `notes/`, the session hook | D155 |
 
 ## 1. What exists, and where it falls short
 

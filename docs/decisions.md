@@ -735,6 +735,21 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D155. A port's entry point is made by `rrc init`. Accepted 2026-11-11.
+`rrc init` writes, and `rrc hooks` adds to a port that lacks them: `RULES.md`, the person's rules for the port, as
+five questions (the stretch to port, the sources kept out, where to commit and as whom, what needs asking first,
+whether a second agent may be started when stuck), each a line with `ASK:` until it is answered, which `rrc doctor`
+counts; `AGENTS.md`, loaded by `CLAUDE.md`, which tells an agent to run `rrc rules` and `rrc status` before anything
+else; `notes/`; and this machine's session hook (`.claude/settings.local.json`, not committed), which runs both at
+a session's start and after a summary. Files there already are kept, and settings that aren't `rrc`'s are left
+alone.
+**Why:** change B of the workflow's plan (D154). A port repository had no file an agent meets first: Arena's rules
+reached an agent through a hook written by hand in another repository, and its `RULES.md` was written from an
+agent's memory of what the person had said. The hub does this for Rrecreate (D153); a port needs the same, and from
+the toolkit, so that every port starts with it. The questions are asked at the start because their answers (what to
+port, what to keep out) decide the work, and an agent left to guess them drifts.
+**Extends:** D148 (`rrc rules`, the commit hook), D153.
+
 ### D154. The standard porting workflow: stages with gates, one work loop. Accepted 2026-11-11, with the person.
 Every port follows one workflow, the playbook's (`docs/porting.md`, "The workflow"): eight stages, each done when its
 gate holds: 0 set up, 1 survey, 2 sessions, 3 skeleton, 4 logic, 5 data and start-up, 6 presentation, 7 play (modern

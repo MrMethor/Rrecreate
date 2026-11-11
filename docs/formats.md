@@ -28,8 +28,19 @@ setup check, then the game), `module` names the game's program, a path like `pro
 analysed, and its file name is the module of IDs (`FALL.EXE#1+8DEB4`); the sessions still start the launcher,
 and find where it puts the game's program (`index/places`, below).
 
-A port repository also has `.gitignore` (`rrc.local.toml`, `.rrc/`, `target/`) and `.gitattributes` (text with
-LF line ends on every platform).
+A port repository also has `.gitignore` (`rrc.local.toml`, `.rrc/`, `target/`, `.claude/settings.local.json`) and
+`.gitattributes` (text with LF line ends on every platform).
+
+What an agent meets first in it is written by `rrc init` too, and by `rrc hooks` where a port lacks it (D155):
+
+- `RULES.md`: the person's rules for the port. Each is a question, a line with `ASK:`, until the agent has asked
+  it and written the answer in its place. `rrc rules` prints the file after the playbook's rules; `rrc doctor`
+  counts the questions left.
+- `AGENTS.md`: tells an agent to run `rrc rules` and `rrc status` before anything else (`CLAUDE.md` loads it).
+- `notes/`: what was learned about the game and why, one file a subject; never the state of the work.
+- `.claude/settings.local.json`, not committed: this machine's session hook, which runs the two commands at an
+  agent's session start and after a summary, as the `rrc` that wrote it. Settings that aren't `rrc`'s are left
+  alone.
 
 `[port] imports = false` makes `rrc sigs name` refuse: an honest test bench's knowledge comes from its own
 analysis only (D46).

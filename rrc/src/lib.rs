@@ -11,6 +11,7 @@ pub mod clockwork;
 mod compare;
 mod contracts;
 pub mod edits;
+mod entry;
 mod files;
 pub mod formats;
 pub mod frames;
@@ -49,7 +50,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   init [DIR] --program PROGRAM [--name NAME] [--title TEXT]
                          make a port repository in DIR (default: here; a git repository too) for the
                          game whose program is PROGRAM (as `clockwork run` takes it, in the game's
-                         folder)
+                         folder), with what an agent meets first: RULES.md (the person's rules, to ask
+                         for), AGENTS.md, notes/
   doctor                 what is there and what is missing: Clockwork, the game, the cache, Ghidra
   status                 the next step
   game [FOLDER] [--add-version NAME [--without FILE,...]]
@@ -65,7 +67,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          those the session's run called (reached through vectors and pointers)
   check                  the knowledge files: IDs, names, sizes, ticks, types (and against the image); and that
                          every bug of the original is registered and branched on, and every suspect judged (D148)
-  hooks                  the commit hook that refuses a commit while rrc check fails
+  hooks                  the commit hook that refuses a commit while rrc check fails, this machine's session hook
+                         (rrc rules and rrc status at an agent's session start), and the entry files a port lacks
+                         (RULES.md, AGENTS.md, notes/)
   rules                  the playbook's rules and the port's own (RULES.md), as they're written
   name ID NAME           name a function (--evidence TEXT, --confidence 0-1, --by WHO: who decided,
                          else RRC_BY, else agent)

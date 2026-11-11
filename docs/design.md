@@ -335,6 +335,9 @@ knowledge/
   types.toml        structures and enumerations
   ticks.toml        sync points (where a tick ends) and boundary values (what a tick reads)
 sessions/           a TOML file per session (its inputs, its length, its recorded trace's hash)
+RULES.md            the person's rules for this port, asked for once (D155)
+AGENTS.md           what an agent runs before anything else: rrc rules, rrc status
+notes/              what was learned and why, one file a subject; never the state of the work
 ```
 
 - Tables have one item per line, sorted by ID, so parallel changes merge.

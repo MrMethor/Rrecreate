@@ -199,9 +199,12 @@ configuration (`--without SAVEGAM?.WL1,CONFIG.WL1`; `*` and `?` are wildcards). 
 into the repository (`rrc.local.toml`, which holds the folder, isn't committed).
 Tools are found through `rrc.local.toml` or the environment (`docs/formats.md`).
 
-Then ask the person, once, what is theirs to say, and write the answers in `RULES.md` (`rrc rules` prints it with
-the playbook's): the stretch of the game to port, the sources to keep out, where to commit and as whom, what needs
-asking first (downloads).
+`rrc init` also writes what an agent meets first (D155): `AGENTS.md` (run `rrc rules` and `rrc status` before
+anything else, which this machine's session hook does too), `notes/`, and `RULES.md`, the person's rules for the
+port, as questions. Ask the person each once and write the answer in its place: the stretch of the game to port,
+the sources to keep out, where to commit and as whom, what needs asking first, whether a second agent may be
+started when stuck. `rrc rules` prints the file with the playbook's rules, and `rrc doctor` counts the questions
+left. A port made before this gets the files from `rrc hooks`.
 
 ## Stage 1: Survey
 

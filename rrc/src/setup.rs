@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use crate::args::Args;
 use crate::cache::Cache;
+use crate::entry::{self, write_new};
 use crate::repo::{self, Game, Original, Port, Repo, Settings, Version};
 use crate::{clockwork, game, knowledge, say, tools};
 
@@ -42,7 +43,7 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
     for (file, text) in files {
         write_new(&knowledge.join(file), &text)?;
     }
-    ignore(&dir, &["/rrc.local.toml", "/.rrc/", "/target/"])?;
+    ignore(&dir, &["/rrc.local.toml", "/.rrc/", "/target/", "/.claude/settings.local.json"])?;
     // The knowledge files are text with LF line ends on every platform (docs/formats.md).
     write_new(
         &dir.join(".gitattributes"),
@@ -50,6 +51,9 @@ pub(crate) fn init(args: &[String]) -> Result<ExitCode, String> {
 ",
     )?;
     say("port", format!("{name} in {}", dir.display()));
+    // What an agent meets first (D155): the person's rules to ask for, the agent's page, the notes, the session hook.
+    entry::write(&dir, &name)?;
+    entry::install_session_hook(&dir)?;
     // A port is a repository of its own (docs/design.md §3).
     if !dir.join(".git").exists() {
         match std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status() {
@@ -72,14 +76,6 @@ fn matches(pattern: &[u8], text: &[u8]) -> bool {
         (Some(&p), Some(&c)) if p == b'?' || p == c => matches(&pattern[1..], &text[1..]),
         _ => false,
     }
-}
-
-/// Writes `text` to `path` unless the file is there already.
-fn write_new(path: &Path, text: &str) -> Result<(), String> {
-    if path.exists() {
-        return Ok(());
-    }
-    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Adds the lines `.gitignore` lacks.
@@ -122,6 +118,14 @@ pub(crate) fn doctor(repo: &Repo) -> Result<ExitCode, String> {
     let hook =
         hook_path(&repo.root).filter(|path| std::fs::read_to_string(path).is_ok_and(|text| text.contains(HOOK_MARK)));
     say("hook", hook.map_or("no commit hook (rrc hooks writes it)".to_owned(), |p| p.display().to_string()));
+    say(
+        "rules",
+        match entry::unanswered(&repo.root) {
+            None => format!("no {} (rrc hooks writes it): the person's rules for this port", entry::RULES),
+            Some(left) if left.is_empty() => entry::RULES.to_owned(),
+            Some(left) => format!("{}: {} questions for the person not answered yet", entry::RULES, left.len()),
+        },
+    );
     check("ghidra", tools::ghidra(&repo.local).map(|d| d.display().to_string()), false);
     check("java", tools::java(&repo.local).map(|d| d.display().to_string()), false);
     Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(1) })
@@ -167,16 +171,19 @@ fn install_hook(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// `rrc hooks`: the commit hook written (again, as this rrc).
+/// `rrc hooks`: the commit hook and the session hook written (again, as this rrc), and the entry files a port made
+/// before them lacks (D155).
 pub(crate) fn hooks(repo: &Repo) -> Result<ExitCode, String> {
     install_hook(&repo.root)?;
+    entry::write(&repo.root, &repo.settings.game.name)?;
+    entry::install_session_hook(&repo.root)?;
     Ok(ExitCode::SUCCESS)
 }
 
 /// The playbook, as this rrc was built with it (`docs/porting.md`).
 const PLAYBOOK: &str = include_str!("../../docs/porting.md");
 /// A port's own rules, from the person who runs it.
-const PORT_RULES: &str = "RULES.md";
+const PORT_RULES: &str = entry::RULES;
 
 /// From the line starting `from` up to the line starting `to`.
 fn between<'a>(text: &'a str, from: &str, to: &str) -> &'a str {
