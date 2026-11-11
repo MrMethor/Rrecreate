@@ -133,10 +133,21 @@ compared in lockstep with the person's recorded play (D124). The latest gaps it 
 scenario edits in a lockstep (D146, D147), the quirk rule checked by `rrc check` and each quirk given a switch
 (D148, D149), and what no session ran listed (D150 to D152).
 
-**Next:** the rest of M6 (the screens of those systems drawn and compared, Arena from power-on), then M7.
+**Open against M6's row** (measured on the Arena port, 2026-11-11):
 
-**The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
-out of the toolkit's development until then (D71).
+- **The music.** The port makes the digitized sounds only. The OPL's music, most of Arena's sound events, is neither
+  made nor compared on a real game; the chime test program alone tests that path (D108, D121).
+- **The actions seam** ([design](design.md) §6.1). The platform gives a port the devices as the PC's (D119); nothing
+  turns them into actions yet.
+- **Frames beyond the first session.** The first dungeon's session matches state, screen and digitized sound at all
+  656 of its world's ticks. Its continuation differs at 13 of 774 frames and one sound, and the menus' and systems'
+  screens aren't drawn yet.
+- **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
+
+**Next:** those, in the order the person sets, then M7.
+
+**The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106), and whether the music and the
+actions seam are M6's or move; the game M9 is run on, which stays out of the toolkit's development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: its `notes/handoff.md`).
 
