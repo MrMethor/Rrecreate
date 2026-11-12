@@ -3,23 +3,121 @@
 
 use minifb::{Key, KeyRepeat, Window};
 
-/// The bytes the keyboard sent for the keys pressed and let go since the window's last update: the presses,
-/// then the releases.
-pub(crate) fn scancodes(window: &Window) -> Vec<u8> {
-    let mut out = Vec::new();
-    for key in window.get_keys_pressed(KeyRepeat::No) {
-        if let Some((grey, code)) = scancode(key) {
-            out.extend(grey.then_some(0xE0));
-            out.push(code);
-        }
-    }
-    for key in window.get_keys_released() {
-        if let Some((grey, code)) = scancode(key) {
-            out.extend(grey.then_some(0xE0));
-            out.push(code | 0x80);
-        }
-    }
-    out
+/// The keys pressed and let go since the window's last update, which the controls make the keyboard's bytes
+/// (`Controls::give`).
+pub(crate) fn changed(window: &Window) -> (Vec<Key>, Vec<Key>) {
+    (window.get_keys_pressed(KeyRepeat::No), window.get_keys_released())
+}
+
+/// Every key a PC's keyboard has, in its scan codes' order: what a controls file can name.
+pub(crate) const KEYS: [Key; 99] = {
+    use Key::*;
+    [
+        Escape,
+        Key1,
+        Key2,
+        Key3,
+        Key4,
+        Key5,
+        Key6,
+        Key7,
+        Key8,
+        Key9,
+        Key0,
+        Minus,
+        Equal,
+        Backspace,
+        Tab,
+        Q,
+        W,
+        E,
+        R,
+        T,
+        Y,
+        U,
+        I,
+        O,
+        P,
+        LeftBracket,
+        RightBracket,
+        Enter,
+        LeftCtrl,
+        A,
+        S,
+        D,
+        F,
+        G,
+        H,
+        J,
+        K,
+        L,
+        Semicolon,
+        Apostrophe,
+        Backquote,
+        LeftShift,
+        Backslash,
+        Z,
+        X,
+        C,
+        V,
+        B,
+        N,
+        M,
+        Comma,
+        Period,
+        Slash,
+        RightShift,
+        NumPadAsterisk,
+        LeftAlt,
+        Space,
+        CapsLock,
+        F1,
+        F2,
+        F3,
+        F4,
+        F5,
+        F6,
+        F7,
+        F8,
+        F9,
+        F10,
+        NumLock,
+        ScrollLock,
+        NumPad7,
+        NumPad8,
+        NumPad9,
+        NumPadMinus,
+        NumPad4,
+        NumPad5,
+        NumPad6,
+        NumPadPlus,
+        NumPad1,
+        NumPad2,
+        NumPad3,
+        NumPad0,
+        NumPadDot,
+        F11,
+        F12,
+        NumPadEnter,
+        RightCtrl,
+        NumPadSlash,
+        RightAlt,
+        Home,
+        Up,
+        PageUp,
+        Left,
+        Right,
+        End,
+        Down,
+        PageDown,
+        Insert,
+        Delete,
+    ]
+};
+
+/// The key of this name (minifb's: `W`, `Up`, `LeftCtrl`, `NumPad8`...), among those a PC's keyboard has.
+pub(crate) fn named(name: &str) -> Option<Key> {
+    KEYS.iter().copied().find(|key| format!("{key:?}") == name)
 }
 
 /// A key's scan code (set 1) and whether it is a grey key, sent after E0h; none for a key a PC's keyboard
@@ -143,5 +241,12 @@ mod tests {
         assert_eq!(scancode(Key::Left), Some((true, 0x4B)), "the grey arrows, after E0h");
         assert_eq!(scancode(Key::NumPad4), Some((false, 0x4B)), "the keypad's, without");
         assert_eq!(scancode(Key::LeftSuper), None);
+    }
+
+    #[test]
+    fn every_key_of_a_pc_has_a_name() {
+        assert!(KEYS.iter().all(|&key| scancode(key).is_some()));
+        assert_eq!((named("W"), named("Up"), named("NumPad8")), (Some(Key::W), Some(Key::Up), Some(Key::NumPad8)));
+        assert_eq!((named("w"), named("LeftSuper")), (None, None), "names as minifb has them, a PC's keys only");
     }
 }

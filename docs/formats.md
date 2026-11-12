@@ -734,3 +734,18 @@ inputs and the trace are JSON lines.
   `opl` `[register, value]`, `speaker` `{"steady": on}`, `{"tone": [period, high]}` (timer ticks) or
   `{"one_shot": true}`, `pcm` `[rate, stereo]`, `midi` a byte. `rrc compare` compares them with the original's
   events of the tick, their times and a tone's origin left out, in order, device by device: those it makes.
+
+## A port's controls file
+
+What `PORT play --controls FILE` reads (D162): the port's actions (`Live::ACTIONS`; `PORT play --actions` lists
+them) bound to the host's keys, an action a line, `#` beginning a comment:
+
+```
+forward = W, Up                 # an action's name = the host's keys that do it
+use = E
+```
+
+Keys are named as minifb names them (`A` to `Z`, `Key0` to `Key9`, `F1` to `F12`, `Up`, `Left`, `Space`, `Enter`,
+`Escape`, `LeftCtrl`, `RightShift`, `NumPad8`...), a PC keyboard's only. An action named has those keys only, and a
+key named does that action only; the rest keep the neutral binding, each action the host key that is its own PC
+key, and a key bound to no action sends its own. An unknown action or key is refused with its line.

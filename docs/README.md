@@ -118,7 +118,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-12 (decisions to D161). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-12 (decisions to D162). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -163,8 +163,9 @@ whose kept path is still a note, not reproduced: those, and showing each switch,
 
 - **The music.** The port makes the digitized sounds only. The OPL's music, most of Arena's sound events, is neither
   made nor compared on a real game; the chime test program alone tests that path (D108, D121).
-- **The actions seam** ([design](design.md) §6.1). The platform gives a port the devices as the PC's (D119); nothing
-  turns them into actions yet.
+- **The actions seam** ([design](design.md) §6.1). Built (D162): a port declares its game's actions, each the PC
+  input the original takes for it, and the platform's controls bind the host's keys to them, each still given to
+  the port as the original's own input; tried on the vault. Arena's actions aren't declared yet.
 - **Frames beyond the first session.** The first dungeon's session matches state, screen and digitized sound at all
   656 of its world's ticks. Its continuation differs at 13 of 774 frames and one sound, and the menus' and systems'
   screens aren't drawn yet.

@@ -189,7 +189,10 @@ The simulation meets the rest through three **seams**, which carry meaning, neve
   register writes.
 - **Actions:** what the player does (move, turn, use, fire), not scancodes. The platform turns devices into
   actions; the faithful mode derives them from the boundary values (§6.2) exactly as the original's input code
-  did.
+  did. A port declares its game's actions, each with the PC input the original takes for it; the platform's
+  controls bind the host's keys to them and give each to the port as that input, so the faithful port is the same
+  program under any binding (a presentation toggle, §6.4), and names the actions for a port that reads them
+  (D162).
 
 Backends sit behind the seams. The faithful renderer and sound backend reproduce the original's pixels and its
 OPL and Sound Blaster writes from the scene and the sound events; a modern backend uses the same seams its own

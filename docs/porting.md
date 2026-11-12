@@ -781,7 +781,11 @@ fn main() -> ExitCode {
 }
 ```
 
-so `PORT play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]...` plays and anything else runs a comparison as before. A
+so `PORT play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]... [--controls FILE]` plays and anything else runs a
+comparison as before. Declare the game's actions in `Live::ACTIONS` (D162: each the key or button the original takes
+for it, with what it does, as the analysis found its input code), and read keys in the simulation through them
+(`Action::held`) where the original reads a key-state array: a person binds them to other keys with a controls
+file (`PORT play --actions` lists them), and each still reaches the port as the original's own key. A
 port that doesn't reach a stretch from power-on yet (the menus and the character's creation before a dungeon)
 plays from where a session's original is (D120): `rrc start SESSION --tick N` writes the mapped fields' values,
 the presentation's own state and the screen there into `.rrc/start/SESSION-N`, made once from the person's copy,

@@ -22,8 +22,10 @@
 //! What the port loads from the person's copy of the game (the program's static data, the game's
 //! files) is in [`original`] (D82). A port that draws (M6) shows its simulation's scene through a
 //! presentation and calls [`main_drawn`]; its frames are compared with the original's screen ([`present`],
-//! D107).
+//! D107). What the player does is its game's actions ([`actions`], D162), which the platform binds to the host's
+//! devices.
 
+pub mod actions;
 pub mod audio;
 pub mod codecs;
 mod files;

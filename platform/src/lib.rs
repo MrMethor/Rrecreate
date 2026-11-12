@@ -4,7 +4,9 @@
 //! makes, played (the OPL3 by Nuked OPL3, the PC speaker, digitized sound). A port's [`Live`] turns those
 //! devices into each tick's boundary values as the original's interrupt handlers and timer did, and says when
 //! the original's loop would go on. The wall clock is read here, and only here: the simulation steps as it
-//! does in a comparison, and the presentation draws and sounds as it does there.
+//! does in a comparison, and the presentation draws and sounds as it does there. The host's keys reach the port
+//! through its actions ([`Live::ACTIONS`], [`Controls`], D162): bound to other keys by a controls file, each still
+//! comes as the PC key the original takes for it.
 //!
 //! ```no_run
 //! # use rrc_platform::{Host, KeyStates, Live, Next};
@@ -30,12 +32,16 @@
 //! ```
 
 mod audio;
+mod controls;
 mod keys;
+
+pub use controls::Controls;
 
 use std::collections::BTreeMap;
 use std::time::Instant;
 
 use minifb::{MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
+use rrc_runtime::actions::Action;
 use rrc_runtime::mouse::{MOUSE, MouseRanges};
 use rrc_runtime::present::{Frame, Presentation, Shows, Sounds};
 use rrc_runtime::{Inputs, Simulation, Started, Tick};
@@ -63,6 +69,9 @@ pub struct Host {
     /// The host's time of day when play began, in milliseconds since midnight (UTC): what a PC's clock would
     /// have read at power-on (D134).
     pub day_ms: u64,
+    /// The port's actions begun (true) and ended since the last tick, in order, by name (D162): what the keys in
+    /// `scancodes` and `buttons` are, for a port that reads actions instead (a modern mode, M7).
+    pub actions: Vec<(&'static str, bool)>,
 }
 
 /// The window's mouse buttons pressed as its messages come (Windows: the window's procedure, subclassed), so a
@@ -155,6 +164,10 @@ pub trait Live: Simulation + Shows {
     /// Whether the program draws its own mouse pointer (D142): the host's is then hidden over the window, as a PC's
     /// screen showed only the game's. False by default (a program that shows the mouse driver's, or none).
     const OWN_POINTER: bool = false;
+
+    /// The game's actions (D162): what the player does, each with the PC input the original takes for it, which a
+    /// controls file binds to the host's keys (`play --controls FILE`). None by default: every key is its own.
+    const ACTIONS: &'static [Action] = &[];
 
     /// The port's `quirks.toml` (`include_str!`), for `play --fix`'s names (D149): a misspelt one would do nothing and
     /// say nothing. Empty by default: a port with no quirks registered, which takes none.
@@ -335,9 +348,29 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
     }
     let mut sound = true;
     let mut from = None;
+    if let Err(e) = rrc_runtime::actions::check(S::ACTIONS) {
+        return Some(fail(&format!("the port's actions: {e}")));
+    }
+    let mut controls = Controls::new(S::ACTIONS);
     let mut rest = args[1..].iter();
     while let Some(arg) = rest.next() {
         match (arg.as_str(), rest.clone().next()) {
+            ("--controls", Some(file)) => {
+                // The actions bound to the host's keys (D162, docs/formats.md).
+                let text = match std::fs::read_to_string(file) {
+                    Ok(text) => text,
+                    Err(e) => return Some(fail(&format!("{file}: {e}"))),
+                };
+                controls = match Controls::read(S::ACTIONS, &text) {
+                    Ok(controls) => controls,
+                    Err(e) => return Some(fail(&format!("{file}: {e}"))),
+                };
+            }
+            ("--actions", _) => {
+                // What the actions are and the keys that do them, for a controls file.
+                print!("{}", controls::list(&controls));
+                return Some(std::process::ExitCode::SUCCESS);
+            }
             ("--game", Some(dir)) => rrc_runtime::original::use_game_dir(dir.into()),
             ("--start", Some(dir)) => {
                 // The game goes on from there: its files the original had changed, and the games saved since (D131).
@@ -357,7 +390,9 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
                 rrc_runtime::fix(quirk);
             }
             (other, _) => {
-                return Some(fail(&format!("{other}: play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]...")));
+                return Some(fail(&format!(
+                    "{other}: play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]... [--controls FILE] [--actions]"
+                )));
             }
         }
         rest.next();
@@ -377,7 +412,7 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
             }
         },
     };
-    Some(match play::<S, P>(title, started, sound) {
+    Some(match play::<S, P>(title, started, sound, controls) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => fail(&e),
     })
@@ -394,8 +429,14 @@ fn fail(message: &str) -> std::process::ExitCode {
 }
 
 /// Plays from `started` (the port's start, or where `rrc start` left the original) with its presentation `P` in
-/// a window titled `title`, with its sound if `sound`, until the window is closed or the original's loop ends.
-pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound: bool) -> Result<(), String> {
+/// a window titled `title`, with its sound if `sound`, the host's keys given by `controls`, until the window is
+/// closed or the original's loop ends.
+pub fn play<S: Live, P: Presentation<S>>(
+    title: &str,
+    started: Started<S>,
+    sound: bool,
+    mut controls: Controls,
+) -> Result<(), String> {
     let Started { mut state, presentation: own, screen, power_on } = started;
     let mut presentation = P::default();
     if let Some(own) = own {
@@ -448,13 +489,16 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
     let mut number = 0;
     let mut pixels = vec![0u32; WIDTH * HEIGHT];
     'play: while window.is_open() {
+        let (down, up) = keys::changed(&window);
+        let given = controls.give(&down, &up);
         let mut host = Host {
             ms: started.elapsed().as_millis() as u64,
-            scancodes: keys::scancodes(&window),
+            scancodes: given.scancodes,
             mouse: mouse(&window, &frame),
-            buttons: buttons(&window, &mut pressed),
+            buttons: buttons(&window, &mut pressed) | given.buttons,
             pcm_playing: audio.as_ref().is_some_and(audio::Audio::pcm_playing),
             day_ms,
+            actions: given.actions,
         };
         for _ in 0..CATCH_UP {
             let (sync, inputs) = match state.next(&mut devices, &host) {
@@ -474,8 +518,9 @@ pub fn play<S: Live, P: Presentation<S>>(title: &str, started: Started<S>, sound
                 presentation.sound(Some(&sync), &scene, &mut sounds);
                 audio.play(&sounds);
             }
-            // The bytes went to this tick's handlers.
+            // The bytes and the actions went to this tick's handlers.
             host.scancodes.clear();
+            host.actions.clear();
         }
         // The host's cursor where the program's pointer is, inside the window while it has the keys (D145).
         if let (Some(at), Some(pointer)) = (host.mouse, state.pointer(&devices))

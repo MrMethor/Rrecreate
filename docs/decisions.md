@@ -745,6 +745,25 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D162. The actions seam: a port's actions are the PC inputs the original takes; the platform's controls bind them. Accepted 2026-11-12.
+A port declares its game's actions (`rrc_runtime::actions::Action`: a name, the PC input the original takes for
+it, a key by its scan code, a grey key or a mouse button, and what it does), as `Live::ACTIONS`, checked when it
+plays. The platform binds the host's keys to them (`rrc_platform::Controls`): by default each action to the host
+key that is its own PC key, so every key sends what it sent before (the neutral binding); `PORT play --controls
+FILE` binds actions to other keys (docs/formats.md) and `PORT play --actions` lists them with their keys. Under
+any binding an action reaches the port as its PC input (its key's make and break codes, its button held, a press
+let go within a frame still a press), so the original's input handling the port has (`Live::next`) and every
+comparison are unchanged: a binding is a presentation toggle (docs/design.md §6.4). `Host::actions` names the
+actions begun and ended since the last tick, for a port that reads actions instead (a modern mode, M7), and
+`Action::held` reads one back from the boundary values as the original's input code reads its key.
+**Why:** §6.1 asks for a seam that carries what the player does, not scancodes, which the faithful mode derives
+from the boundary values as the original's input code did. Giving each action back to the port as the original's
+own input keeps the faithful port the same program under any controls, with nothing to compare anew; a port that
+reads its keys through its actions says what each key means; and a gamepad, a touch platform or a modern mode
+later gives the same actions without the PC's devices. Measured on the vault: its six actions (Enter, the arrows,
+Escape), read in its passes through `Action::held`; the platform's tests bind W and Up to one action (both held,
+it ends with the last let go), a key to a mouse button, and refuse a file's unknown action or key by its line.
+
 ### D160. The first rule of a port: every bug of the original is reproduced and has a switch, and is never out of sight. Accepted 2026-11-12, with the person.
 The person's rule, set above the playbook's others: every bug of the original is reproduced in the port and has a
 switch, kept by default and fixed by it, so that both can be had; every one, registered the moment it is found. It

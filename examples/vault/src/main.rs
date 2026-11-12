@@ -21,6 +21,7 @@
 //! finds when that one wrote a value the port has otherwise.
 
 use rrc_platform::{Host, KeyStates, Live, Next};
+use rrc_runtime::actions::{Action, Pc};
 use rrc_runtime::codecs::{Lzss, runs};
 use rrc_runtime::original::file;
 use rrc_runtime::present::{Frame, Presentation, Shows};
@@ -36,9 +37,19 @@ const LEVELS: u8 = 2;
 const PICTURE: usize = 320 * 200;
 const ENTRY: usize = 24;
 
-const KEY_ENTER: usize = 0x1C;
-/// The arrow keys, in the order a pass looks at them: left, right, up, down.
-const ARROWS: [(usize, i8, i8); 4] = [(0x4B, -1, 0), (0x4D, 1, 0), (0x48, 0, -1), (0x50, 0, 1)];
+/// The game's actions (D162), each the key the original reads: Enter, the arrows, Escape.
+const ACTIONS: &[Action] = &[
+    Action { name: "start", pc: Pc::Key(0x1C), what: "start the first level" },
+    Action { name: "west", pc: Pc::GreyKey(0x4B), what: "a cell west" },
+    Action { name: "east", pc: Pc::GreyKey(0x4D), what: "a cell east" },
+    Action { name: "north", pc: Pc::GreyKey(0x48), what: "a cell north" },
+    Action { name: "south", pc: Pc::GreyKey(0x50), what: "a cell south" },
+    Action { name: "quit", pc: Pc::Key(0x01), what: "leave the game" },
+];
+const START_LEVEL: &Action = &ACTIONS[0];
+/// The arrows' actions, in the order a pass looks at them (left, right, up, down), and their steps.
+const ARROWS: [(&Action, i8, i8); 4] =
+    [(&ACTIONS[1], -1, 0), (&ACTIONS[2], 1, 0), (&ACTIONS[3], 0, -1), (&ACTIONS[4], 0, 1)];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct Vault {
@@ -148,7 +159,7 @@ impl Vault {
         self.last_count = tick.inputs.u16("timer_count");
         self.pass_count = self.pass_count.wrapping_add(1);
         self.title_passes = self.title_passes.wrapping_add(1);
-        if tick.inputs.u8_at("key_down", KEY_ENTER) != 0 {
+        if START_LEVEL.held(tick.inputs.bytes("key_down"), 0) {
             self.level = 1;
             self.load_level();
             self.scene = 1;
@@ -161,8 +172,8 @@ impl Vault {
         self.last_count = tick.inputs.u16("timer_count");
         self.pass_count = self.pass_count.wrapping_add(1);
         let mut held = 0;
-        for (k, &(scan, dx, dy)) in ARROWS.iter().enumerate() {
-            if tick.inputs.u8_at("key_down", scan) == 0 {
+        for (k, &(action, dx, dy)) in ARROWS.iter().enumerate() {
+            if !action.held(tick.inputs.bytes("key_down"), 0) {
                 continue;
             }
             held |= 1 << k;
@@ -340,6 +351,7 @@ struct Devices {
 
 impl Live for Vault {
     type Devices = Devices;
+    const ACTIONS: &'static [Action] = ACTIONS;
 
     /// `main`'s loops (VAULT.EXE+00653): the title's while its scene is 0, play's while it is 1, each until
     /// Escape is down; a pass each time the count moves.
