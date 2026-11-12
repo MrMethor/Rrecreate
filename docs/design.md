@@ -351,7 +351,8 @@ notes/              what was learned and why, one file a subject; never the stat
 
 **The toolkit, `rrc`**, is one Rust program run inside a port repository. It drives Clockwork as a child
 process through `clockwork serve`. Its commands are short and print little: `init`, `doctor`, `status` (the
-next step), `game` (the game's folder and its version), `analyze`, `check`, `name`, `data`, `sync`, `input`,
+stage of the workflow the port is at, what its gate lacks, the next step: D158), `work` (the work list and the
+card), `game` (the game's folder and its version), `analyze`, `check`, `name`, `data`, `sync`, `input`,
 `show`, `session`, `record`, `calls` (how often a session calls each function: loops and their ticks), `inputs`
 (what the program reads that interrupt handlers or services write: boundary value candidates), `watch` (who
 writes or reads a value, with the call chain), `search` (memory by how it behaves over ticks), `files` (which file bytes went where), `ports`,
@@ -398,8 +399,11 @@ the same stages (D154), each done when its gate holds, which the toolkit says an
 6. **Presentation:** compared frame by frame, then by sound events, a device at a time.
 7. **Play:** the platform layer, so the port plays; then modern mode.
 
-Stages 4 to 6 repeat one loop on the work list's items: take, plan and read, name and map, port, compare, close. A
-gate is reported, not refused: stages overlap in honest work, and a commit is refused only for what `rrc check`
+`rrc status` works each gate out from the repository every time it is asked (D158): the scope's sessions, their
+recordings, their censuses and their last comparisons, so a stage can't be marked done. Stages 4 to 6 repeat one
+loop on the items of the work list (`rrc work`: the censuses merged and ranked): take, with a card that names the
+question, the route chosen and one other; plan and read; name and map; port; compare; close. A gate is reported, not
+refused: stages overlap in honest work, and a commit is refused only for what `rrc check`
 refuses (D148). The playbook also says where to look first for each kind of difference, what to do when a route
 stops paying, and the best-known route for the problems every port meets.
 

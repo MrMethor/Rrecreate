@@ -35,12 +35,14 @@ mod setup;
 mod sigs;
 pub mod snapshots;
 mod sources;
+mod stage;
 mod ticks;
 pub mod tools;
 pub mod trace;
 mod unrun;
 pub mod values;
 mod watch;
+mod work;
 
 use std::process::ExitCode;
 
@@ -55,7 +57,17 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          folder), with what an agent meets first: RULES.md (the person's rules, to ask
                          for), AGENTS.md, notes/
   doctor                 what is there and what is missing: Clockwork, the game, the cache, Ghidra
-  status                 the next step
+  status [--all]         the stage of the workflow the port is at (0 set up to 7 play), what its gate lacks and
+                         the next step, worked out from the repository; the card that is open; --all: every
+                         stage's gate, and each session of the scope that doesn't match in everything
+  work [--run] [--lines N]
+                         the work list: what the censuses of the scope's sessions count, merged, the fields
+                         first, then paths not ported, frames, sound, the most passes first; --run counts
+                         again (in lockstep) each session whose census the port's code as it is didn't make
+  work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]
+                         take an item: the question, the route chosen, one other considered, and after how
+                         many comparisons (6) the route changes; rrc says when they are spent
+  work done | work drop  close the card (what it took goes in the journal), or drop it
   game [FOLDER] [--add-version NAME [--without FILE,...]]
                          the person's copy of the game (FOLDER is kept in rrc.local.toml) and which
                          version it is; --add-version records its files as a version the port supports
@@ -267,7 +279,8 @@ pub fn main() -> ExitCode {
         }
         Some("init") => setup::init(rest),
         Some("doctor") => here().and_then(|repo| setup::doctor(&repo)),
-        Some("status") => here().and_then(|repo| setup::status(&repo)),
+        Some("status") => here().and_then(|repo| stage::status(&repo, rest)),
+        Some("work") => here().and_then(|repo| work::work(&repo, rest)),
         Some("game") => here().and_then(|mut repo| setup::game(&mut repo, rest)),
         Some("analyze") => here().and_then(|repo| analysis::analyze(&repo, rest)),
         Some("check") => here().and_then(|repo| naming::check(&repo)),

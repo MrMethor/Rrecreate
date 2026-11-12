@@ -109,6 +109,21 @@ pub fn ids(root: &Path, module: &str) -> BTreeSet<String> {
     found
 }
 
+/// The port's code as it is: the hash of its files' paths and contents, in path order. What a comparison found
+/// holds for the code it ran, so a comparison is kept with this, and one the code as it is now didn't make is said to
+/// be stale (D158).
+pub fn fingerprint(root: &Path) -> String {
+    let mut all = Vec::new();
+    each_file(root, root, &mut |relative, text| {
+        all.extend_from_slice(relative.as_bytes());
+        all.push(0);
+        all.extend_from_slice(text.as_bytes());
+        all.push(0);
+        true
+    });
+    crate::cache::sha256(&all)
+}
+
 /// The port's code files under `dir`, in path order, each given to `f` with its path from `root` (with `/`)
 /// until it says to stop; whether it did not.
 fn each_file(root: &Path, dir: &Path, f: &mut dyn FnMut(&str, &str) -> bool) -> bool {
@@ -236,6 +251,12 @@ mod tests {
         // An offset alone names the program's own.
         write("src/draw.rs", "/// `+00200`: draws (and +002001, X+00200 are others)\nfn draw() {}\n");
         assert_eq!(naming(&root, "GAME.EXE+00200", Some("+00200"), 10), [("src/draw.rs".to_owned(), 1)]);
+        // The code as it is: another hash when a file's text changes, the same for what isn't code.
+        let before = fingerprint(&root);
+        write("notes.md", "more notes\n");
+        assert_eq!(fingerprint(&root), before);
+        write("src/draw.rs", "/// `+00200`: draws (and +002001, X+00200 are others)\nfn draw() { }\n");
+        assert_ne!(fingerprint(&root), before);
         let ids = ids(&root, "GAME.EXE");
         assert!(ids.contains("GAME.EXE+00114") && ids.contains("GAME.EXE+00200"), "{ids:?}");
         assert!(!ids.contains("GAME.EXE+002001") && !ids.iter().any(|id| id.contains("00114 ")), "{ids:?}");

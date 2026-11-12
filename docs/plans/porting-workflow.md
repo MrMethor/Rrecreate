@@ -13,6 +13,11 @@
 | C: the scope, `[port] scope` in `rrc.toml`, set with `rrc scope` | D156 |
 | K: outside sources in the port's books: `sources.toml`, `rrc sources`, the sweep's gate in `rrc status`, a source named by `rrc show` | D156 |
 | H: the journal and the stuck signal (`stuck`, `untried`); O's measure, `rrc journal` | D157 |
+| D: `rrc status` names the stage, what its gate lacks and the next step, worked out from the repository | D158 |
+| E: `rrc work`, the work list: the scope's censuses merged and ranked; `--run` counts the stale ones again | D158 |
+| L: the card, `rrc work take` with the question, two routes and a budget; `rrc work done` | D158 |
+| F: `rrc status --all`, what a handoff would say | D158 |
+| G: a flow test walks the toy port through the stages (`the_workflow_s_stages_are_walked`) | D158 |
 
 ## 1. What exists, and where it falls short
 

@@ -332,6 +332,13 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         (None, None, Some((t, _))) => (t - 1, Some("sound")),
         (None, None, None) => (last, None),
     };
+    // The devices the original sounded in these ticks that nothing was compared for (D158): a session matches in
+    // sound when there is none.
+    let compared = |device: &str| sounding && made.contains(&device);
+    let sounded =
+        |device: &str| trace.ticks[(first - 1) as usize..last as usize].iter().any(|t| t.sound.contains_key(device));
+    let unsounded: Vec<String> =
+        SOUND_DEVICES.iter().map(|(d, _)| *d).filter(|d| sounded(d) && !compared(d)).map(str::to_owned).collect();
     let outcome = crate::progress::Outcome {
         recorded: recorded.hash.clone(),
         from: after,
@@ -341,6 +348,10 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         ticks,
         fed: fed.clone(),
         differs: differs.map(str::to_owned),
+        fields_only,
+        drew: seen.compared > 0,
+        unsounded,
+        port: crate::sources::fingerprint(&repo.root),
     };
     if fixed.is_none() {
         outcome.save(&work)?;
@@ -1076,6 +1087,12 @@ pub(crate) struct Seen {
 /// every field its own pass left otherwise, the frames and the sound that differ, and what it noted.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Census {
+    /// The recording it is of, and the port's code that made it (`sources::fingerprint`): a census holds for those
+    /// (D158).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recorded: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub port: String,
     /// The port's own passes compared.
     pub passes: u64,
     /// Fields its pass left otherwise than the original's.
@@ -1190,6 +1207,13 @@ impl Census {
         }
     }
 
+    /// The session's census, as `rrc compare --lockstep` or `rrc work --run` last left it.
+    pub fn load(repo: &Repo, name: &str) -> Result<Option<Census>, String> {
+        let path = repo.state()?.join("compare").join(name).join("census.json");
+        let Ok(text) = std::fs::read_to_string(&path) else { return Ok(None) };
+        serde_json::from_str(&text).map(Some).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
     pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -1221,7 +1245,8 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
         let linear = |linear: u32| places.linear_id(linear).ok();
         original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
     };
-    let mut census = Census::default();
+    let mut census =
+        Census { recorded: recorded.hash.clone(), port: crate::sources::fingerprint(&repo.root), ..Census::default() };
     let ticks = trace.ticks.len() as u64;
     if ticks < 2 {
         return Ok(census);
@@ -1943,6 +1968,17 @@ fn keep_pair(
 
 /// Says which named data the mapping neither maps nor ignores: the state not compared yet.
 fn unmapped(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<(), String> {
+    let left = unmapped_names(k, mapped, repo)?;
+    if !left.is_empty() {
+        let shown: Vec<&str> = left.iter().take(10).map(String::as_str).collect();
+        let more = if left.len() > 10 { format!(" and {} more", left.len() - 10) } else { String::new() };
+        say("unmapped", format!("{} named data not mapped or ignored: {}{more}", left.len(), shown.join(", ")));
+    }
+    Ok(())
+}
+
+/// The named data the mapping neither maps nor ignores, and no input is: the state nothing compares yet.
+pub(crate) fn unmapped_names(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<Vec<String>, String> {
     let mapping = Mapping::load(repo)?;
     let ignored = mapping.ignored(k)?;
     let presented = mapping.resolve_present(k)?;
@@ -1957,18 +1993,11 @@ fn unmapped(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<(), String>
             || ignored.iter().any(|(at, n)| inside(at, *n))
     };
     let inputs: Vec<String> = k.ticks.inputs.iter().map(|i| i.at.clone()).collect();
-    let left: Vec<&str> = k
-        .data
+    Ok(k.data
         .iter()
         .filter(|(id, d)| d.size.is_some_and(|size| !covered(id, size)) && !inputs.contains(&id.to_string()))
-        .map(|(_, d)| d.decision.name.as_str())
-        .collect();
-    if !left.is_empty() {
-        let shown: Vec<&str> = left.iter().take(10).copied().collect();
-        let more = if left.len() > 10 { format!(" and {} more", left.len() - 10) } else { String::new() };
-        say("unmapped", format!("{} named data not mapped or ignored: {}{more}", left.len(), shown.join(", ")));
-    }
-    Ok(())
+        .map(|(_, d)| d.decision.name.clone())
+        .collect())
 }
 
 fn unhex(text: &str) -> Result<Vec<u8>, String> {

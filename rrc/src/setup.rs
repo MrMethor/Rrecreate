@@ -204,7 +204,7 @@ pub(crate) fn rules(repo: Option<&Repo>) -> ExitCode {
 }
 
 /// The game's folder and which version it is (an error if none the port knows).
-fn which_version(repo: &Repo) -> Result<(PathBuf, String), String> {
+pub(crate) fn which_version(repo: &Repo) -> Result<(PathBuf, String), String> {
     let dir = repo.game_dir()?.to_path_buf();
     let files = game::hash_folder(&dir, &repo.state()?)?;
     if repo.settings.versions.is_empty() {
@@ -214,28 +214,6 @@ fn which_version(repo: &Repo) -> Result<(PathBuf, String), String> {
         Some(version) => Ok((dir, version.name.clone())),
         None => Err(format!("{}: not a version the port knows (rrc game says how it differs)", dir.display())),
     }
-}
-
-pub(crate) fn status(repo: &Repo) -> Result<ExitCode, String> {
-    let next = match which_version(repo) {
-        Err(_) if repo.game_dir().is_err() => "rrc game <the game's folder>".to_owned(),
-        Err(_) if repo.settings.versions.is_empty() => {
-            "rrc game --add-version <name>: record this copy's files as a version".to_owned()
-        }
-        Err(e) => e,
-        Ok(_) => next_after_setup(repo)?,
-    };
-    say("next", next);
-    // What the rule still asks (D148), beside whatever is next.
-    let open = crate::quirks::open(repo)?;
-    if let Some(first) = open.first() {
-        say("open", format!("{} rrc check refuses; the first: {first}", open.len()));
-    }
-    // What the survey still asks of the outside sources (D156).
-    for line in crate::prior::open(repo)? {
-        say("sources", line);
-    }
-    Ok(ExitCode::SUCCESS)
 }
 
 pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String> {
@@ -295,58 +273,6 @@ pub(crate) fn game(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String>
         }
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// The next step once the game is there: analysis, sessions, ticks and their inputs, traces
-/// (docs/porting.md, stages 1 to 3).
-fn next_after_setup(repo: &Repo) -> Result<String, String> {
-    if crate::analysis::Index::load(repo)?.is_none() {
-        return Ok("rrc analyze".into());
-    }
-    let k = knowledge::Knowledge::load(&repo.knowledge())?;
-    let sessions = crate::session::names(repo)?;
-    let Some(first) = sessions.first() else {
-        return Ok("rrc session add NAME --seconds N --inputs FILE: a session to reproduce, into play".into());
-    };
-    if k.ticks.syncs.is_empty() {
-        return Ok(format!("find where a tick ends: rrc calls {first} lists the loops; then rrc sync ID NAME"));
-    }
-    if k.ticks.inputs.is_empty() {
-        return Ok(format!("find what a tick reads from outside: rrc inputs {first}; then rrc input ID NAME"));
-    }
-    let cache = crate::cache::Cache::open(&repo.local)?;
-    let (syncs, inputs, state) = crate::trace::items(repo, &k, &repo.module())?;
-    for name in &sessions {
-        let session = crate::session::Session::load(repo, name)?;
-        let edits = crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?);
-        let Some(recorded) = session.trace else {
-            return Ok(format!("rrc record {name}"));
-        };
-        match crate::trace::recorded_header(&cache, &recorded.hash) {
-            None => return Ok(format!("rrc record {name}: its trace isn't in this machine's cache")),
-            Some(h) if h.version != crate::trace::VERSION => {
-                return Ok(format!("rrc record {name}: its trace is in an older format"));
-            }
-            Some(h) if (&h.syncs, &h.inputs, &h.state) != (&syncs, &inputs, &state) => {
-                return Ok(format!("rrc record {name}: the knowledge changed since it was recorded"));
-            }
-            Some(h) if h.edits != edits => {
-                return Ok(format!("rrc record {name}: its edits changed since it was recorded"));
-            }
-            Some(_) => {}
-        }
-    }
-    let mapped = crate::mapping::Mapping::load(repo)?.resolve(&k)?;
-    if mapped.is_empty() {
-        return Ok(format!(
-            "every session is recorded; map the state: {} names the port's fields and the original's items",
-            crate::mapping::MAPPING
-        ));
-    }
-    if repo.settings.port.command.is_empty() {
-        return Ok("rrc.toml: [port] command, the port's program (docs/formats.md)".into());
-    }
-    Ok(format!("rrc compare {first}: the port against the original, tick by tick"))
 }
 
 #[cfg(test)]

@@ -149,6 +149,9 @@ pub(crate) fn close(repo: &Repo, args: &[String], ok: bool) {
             ),
         }
     }
+    if entry.cmd == "compare" {
+        crate::work::compared(repo, &before);
+    }
     // Kept whatever happens to the rest: a journal that can't be written doesn't fail the command.
     let Ok(line) = serde_json::to_string(&entry) else { return };
     let file = path(repo).and_then(|path| {
@@ -168,6 +171,9 @@ pub(crate) fn close(repo: &Repo, args: &[String], ok: bool) {
 /// don't break the run; a comparison of the session that ended otherwise does.
 fn stuck_run(before: &[Entry], entry: &Entry) -> Option<Vec<usize>> {
     let end = entry.end.as_ref().filter(|end| *end != "match" && !end.starts_with("census"))?;
+    if entry.cmd != "compare" {
+        return None;
+    }
     let mut run = Vec::new();
     for (i, e) in before.iter().enumerate().rev() {
         if e.cmd != "compare" || e.session != entry.session || e.end.is_none() {

@@ -137,6 +137,14 @@ fn a_session_is_traced_tick_by_tick() {
     let doctor = rrc.ok(&["doctor"]);
     assert!(doctor.contains("game      ") && doctor.contains(", protocol 16, dos-pc ("), "{doctor}");
     assert!(doctor.contains("rules     RULES.md: 5 questions for the person not answered yet"), "{doctor}");
+    // The stage the port is at, and what its gate lacks (D158): the person's answers, in place of the questions.
+    let asking = rrc.ok(&["status"]);
+    assert!(asking.contains("stage     0 Set up, of 0 Set up to 7 Play"), "{asking}");
+    assert!(
+        asking.contains("lacks     RULES.md: 5 questions for the person not answered; the first: which"),
+        "{asking}"
+    );
+    std::fs::write(repo.join("RULES.md"), "## Rules the person set for this port\n\n- The loop.\n").unwrap();
     assert!(rrc.ok(&["game"]).contains("version   1.0"));
     rrc.ok(&["name", "T.COM+0000E", "step", "--by", "human"]);
     rrc.ok(&["data", "T.COM+0000F", "count", "--size", "2", "--evidence", "step adds 1", "--confidence", "0.5"]);
@@ -147,7 +155,7 @@ fn a_session_is_traced_tick_by_tick() {
     // The outside sources are in the port's books (D156): found by what they cover, met at the thing they cover, and
     // a sweep's gate is each kind found or looked for.
     assert!(rrc.ok(&["sources"]).contains("swept     never: search for each kind"));
-    assert!(rrc.ok(&["status"]).contains("sources   the outside sources aren't swept"));
+    assert!(rrc.ok(&["status"]).contains("lacks     the outside sources aren't swept"));
     let wiki =
         ["sources", "add", "the-wiki", "--kind", "wiki", "--at", "https://example.org/t", "--covers", "count,steps"];
     let added = rrc.ok(&wiki);
@@ -163,7 +171,7 @@ fn a_session_is_traced_tick_by_tick() {
     let swept = rrc.ok(&sweep);
     assert!(swept.contains("swept     2026-11-11: 2 searches"), "{swept}");
     assert!(swept.contains("missing   neither found nor looked for: reimplementation, patches, "), "{swept}");
-    assert!(rrc.ok(&["status"]).contains("sources   sources neither found nor looked for: reimplementation, "));
+    assert!(rrc.ok(&["status"]).contains("lacks     sources neither found nor looked for: reimplementation, "));
     let listed = rrc.ok(&["sources"]);
     assert!(listed.contains("excluded  its-source: the person: it grades the toolkit"), "{listed}");
     assert!(rrc.ok(&["check"]).contains("sources   1 outside sources, 1 kept out, 1 sweeps"));
@@ -271,7 +279,14 @@ fn a_session_is_traced_tick_by_tick() {
     let status = rrc.ok(&["status"]);
     assert!(status.contains("rrc record short: the knowledge changed since it was recorded"), "{status}");
     assert!(rrc.ok(&["record", "short"]).contains("same      run as before"));
-    assert!(rrc.ok(&["status"]).contains("every session is recorded; map the state: mapping.toml"));
+    // The survey's gate holds: the next stage wants the scope, and the one after it the mapping (D158).
+    let sessions = rrc.ok(&["status"]);
+    assert!(sessions.contains("stage     2 Sessions, of 0 Set up to 7 Play; 0 to 1 hold"), "{sessions}");
+    assert!(sessions.contains("lacks     no scope: the sessions the port is to reproduce"), "{sessions}");
+    rrc.ok(&["scope", "short"]);
+    let skeleton = rrc.ok(&["status"]);
+    assert!(skeleton.contains("stage     3 Skeleton, of 0 Set up to 7 Play; 0 to 2 hold"), "{skeleton}");
+    assert!(skeleton.contains("next      map the state: mapping.toml names the port's fields"), "{skeleton}");
     let (refused, ok) = rrc.run(&["input", "T.COM+00011", "other"]);
     assert!(!ok && refused.contains("give --size N"), "{refused}");
     // What a part not ported writes, read where the ported code reads it (D96).
@@ -1052,6 +1067,143 @@ tick = 150"
     let (missing, ok) = rrc.run(&["compare", "play"]);
     assert!(!ok && missing.contains("lifes: original 3, port missing"), "{missing}");
     assert!(missing.contains("start     at the port's first tick"), "{missing}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_workflow_s_stages_are_walked() {
+    // The toy port taken through the workflow (D154, D158): at each stage `rrc status` names it, what its gate lacks
+    // and the next step, worked out from the repository, and the step makes the gate hold.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, mut rrc) = setup_file("stages", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
+    let port = built("toy-port", "toy-port", true);
+    let knowledge = ["functions.tsv", "data.tsv", "types.toml", "ticks.toml"].map(|f| format!("knowledge/{f}"));
+    let files = ["mapping.toml", "sessions/play.toml", "sessions/play.inputs", "src/main.rs"];
+    example_repository(&rrc, "toy", &port, &[&files[..], &knowledge.each_ref().map(String::as_str)[..]].concat());
+    rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
+    let status = |rrc: &Rrc| rrc.ok(&["status"]);
+    let at = |text: &str, stage: &str| assert!(text.contains(&format!("stage     {stage}, of 0 Set up")), "{text}");
+
+    // 0 Set up: the game's folder, then the person's rules: asked for by `rrc hooks` in a port made before them.
+    let s = status(&rrc);
+    at(&s, "0 Set up");
+    assert!(
+        s.contains("lacks     the game's folder isn't set") && s.contains("next      rrc game <the game's folder>")
+    );
+    assert!(s.contains("lacks     no RULES.md: the person's rules for this port"), "{s}");
+    assert!(rrc.ok(&["game", dir.join("game").to_str().unwrap()]).contains("version   1.0"));
+    assert!(rrc.ok(&["hooks"]).contains("entry     RULES.md, AGENTS.md, CLAUDE.md, notes/README.md"));
+    let s = status(&rrc);
+    assert!(s.contains("next      ask the person, and write each answer in its place in RULES.md"), "{s}");
+    std::fs::write(rrc.repo.join("RULES.md"), "## Rules the person set for this port\n\n- All of it.\n").unwrap();
+
+    // 1 Survey: the analysis (a stand-in: tests have no Ghidra), the session recorded, the outside sources swept.
+    let s = status(&rrc);
+    at(&s, "1 Survey");
+    assert!(s.contains("lacks     the program isn't analysed") && s.contains("next      rrc analyze"), "{s}");
+    assert!(s.contains("lacks     the outside sources aren't swept"), "{s}");
+    let export = r#"{"record":"program","name":"TOY.EXE","entry":{"linear":65536,"text":"1000:0000"},"ghidra":"-"}"#;
+    let cache = rrc::cache::Cache::at(&rrc.cache).unwrap();
+    let export = cache.put(export.as_bytes()).unwrap();
+    let program = cache.put(&std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap()).unwrap();
+    let index = format!(
+        "original = \"{program}\"\nprogram = \"{program}\"\nunpacked = false\nexport = \"{export}\"\nentry = 0\nghidra \
+         = \"-\"\n"
+    );
+    std::fs::write(rrc.repo.join(".rrc/analysis.toml"), index).unwrap();
+    let s = status(&rrc);
+    assert!(
+        s.contains("lacks     play isn't recorded as the knowledge is now") && s.contains("next      rrc record play")
+    );
+    rrc.ok(&["session", "set", "play", "--seconds", "3"]);
+    rrc.ok(&["record", "play"]);
+    let none = "wiki,formats,reimplementation,tools,patches,walkthrough,bugs,library,extender,sound,compression";
+    rrc.ok(&["sources", "sweep", "--searched", "the toy game", "--none", none]);
+
+    // 2 Sessions: the scope, as the person said.
+    let s = status(&rrc);
+    at(&s, "2 Sessions");
+    assert!(s.contains("; 0 to 1 hold") && s.contains("lacks     no scope: the sessions the port is to reproduce"));
+    rrc.ok(&["scope", "play"]);
+
+    // 3 Skeleton: a census of every session in scope. The port doesn't count a bounce yet.
+    let s = status(&rrc);
+    at(&s, "3 Skeleton");
+    assert!(s.contains("lacks     the session without a census of the recording: play"), "{s}");
+    assert!(s.contains("next      rrc compare play --lockstep (rrc work --run: every one)"), "{s}");
+    rrc.env.push(("TOY_BUG", "1"));
+    let counted = rrc.ok(&["work", "--run"]);
+    assert!(counted.contains("counted   play: 208 passes, 1 fields, 1 notes"), "{counted}");
+    assert!(counted.contains("work      2 items in the censuses of 1 of 1 sessions in scope"), "{counted}");
+    assert!(counted.contains("differs   enemies: in ") && counted.contains("first at play's tick 194"), "{counted}");
+    assert!(counted.contains("note      a bounce not counted (TOY.EXE+002FF): not ported, taken in "), "{counted}");
+    assert!(counted.contains("next      rrc work take \"enemies\" --question TEXT --route TEXT --other TEXT"));
+
+    // 4 Logic: the work list's top item, taken with its question, two routes and a budget; the comparisons count
+    // against it, and rrc says when they are spent.
+    let s = status(&rrc);
+    at(&s, "4 Logic");
+    assert!(s.contains("lacks     the session with fields in the census the port leaves otherwise or unset: play (1)"));
+    assert!(s.contains("next      rrc work: the list, the most passes first"), "{s}");
+    let (refused, ok) = rrc.run(&["work", "take", "enemies", "--question", "who counts a bounce?"]);
+    assert!(!ok && refused.contains("the route chosen and one other considered"), "{refused}");
+    let take = ["work", "take", "enemies", "--question", "who counts a bounce?", "--route", "the writer's code"];
+    let taken = rrc.ok(&[&take[..], &["--other", "a watch of hits over the session", "--budget", "2"]].concat());
+    assert!(taken.contains("card      enemies: who counts a bounce?"), "{taken}");
+    assert!(taken.contains("budget    2 comparisons, then the route changes"), "{taken}");
+    let (first, _) = rrc.run(&["compare", "play", "--fields"]);
+    assert!(first.contains("diverges  at tick 194") && !first.contains("budget    "), "{first}");
+    let (second, _) = rrc.run(&["compare", "play", "--fields"]);
+    assert!(second.contains("budget    spent: this route was to change after 2 comparisons"), "{second}");
+    assert!(second.contains("The other route: a watch of hits over the session"), "{second}");
+    let s = status(&rrc);
+    assert!(s.contains("card      enemies: who counts a bounce?"), "{s}");
+    assert!(s.contains("spent     2 of 2 comparisons; compare 2, code 0, sources 0, files 0, runs 0"), "{s}");
+    // The port counts it: the census is clean, the card closes with what it took, and the fields match.
+    rrc.env.pop();
+    rrc.ok(&["compare", "play", "--lockstep"]);
+    let done = rrc.ok(&["work", "done"]);
+    assert!(done.contains("closed    enemies: not in the censuses as they stand"), "{done}");
+    assert!(done.contains("took      enemies: 3 commands over "), "{done}");
+    assert!(rrc.ok(&["journal"]).contains("item      enemies: 3 commands over "));
+    let s = status(&rrc);
+    at(&s, "4 Logic");
+    assert!(s.contains(
+        "not matching in the mapped fields to the end with nothing fed: play (its state differs at tick 194)"
+    ));
+    assert!(s.contains("next      rrc compare play --fields") && !s.contains("card      "), "{s}");
+    rrc.ok(&["compare", "play", "--fields"]);
+    let s = status(&rrc);
+    assert!(s.contains("lacks     rrc check refuses 1 things; the first: session play: its run hasn't been"), "{s}");
+    rrc.ok(&["suspects", "play"]);
+
+    // 5 Data and start-up holds with it: that comparison was from the port's own start. 6 Presentation is where
+    // the toy port stands: it draws nothing, and the next step is to write that, not to compare again.
+    let s = status(&rrc);
+    at(&s, "6 Presentation");
+    assert!(
+        s.contains("; 0 to 5 hold") && s.contains("play (not compared)") && s.contains("next      rrc compare play")
+    );
+    rrc.ok(&["compare", "play"]);
+    let all = rrc.ok(&["status", "--all"]);
+    assert!(all.contains("gate      5 Data and start-up: holds"), "{all}");
+    let lacks = "gate      6 Presentation: lacks: the session not matching in frames and sound: play (the port draws no \
+                 frames)";
+    assert!(all.contains(lacks) && all.contains("gate      7 Play: lacks: play isn't tested by rrc"), "{all}");
+    let play = "session   play (209 ticks): fields match from the port's start; census: 0 fields, 0 unset, 0 notes";
+    assert!(all.contains(play) && all.contains("work      0 items in the censuses (rrc work)"), "{all}");
+    assert!(all.contains("quirks    0 registered") && all.contains("mix       compare "), "{all}");
+    assert!(all.contains("next      the port's presentation draws no frames yet: Presentation::draw"), "{all}");
+    // The port's code changed since: what was compared before it is said to be, and counted again.
+    let main = rrc.repo.join("src/main.rs");
+    std::fs::write(&main, std::fs::read_to_string(&main).unwrap() + "\n// A change.\n").unwrap();
+    let s = status(&rrc);
+    assert!(
+        s.contains("stale     the session last compared before the port's code changed: play (rrc work --run"),
+        "{s}"
+    );
+    assert!(rrc.ok(&["work", "--run"]).contains("counted   play: 208 passes, 0 fields, 0 notes"));
+    assert!(rrc.ok(&["work", "--run"]).contains("counted   nothing: every census is of its recording"));
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -735,6 +735,38 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D158. Where a port stands is worked out by `rrc status`; the work list and the card. Accepted 2026-11-11.
+`rrc status` names the stage of the workflow (D154) the port is at, the first whose gate lacks something, with what
+it lacks and the next step; `--all` lists every stage's gate, each session of the scope that doesn't match in
+everything, the top of the work list, what parts not ported still give the port, the quirks and what the work was
+made of. Nothing of it is stored: each gate is read from the repository when asked. The gates: 0, the copy a
+recorded version, Clockwork found, `RULES.md` without a question left; 1, the analysis, a session with a sync point
+and a boundary value recorded as the knowledge is now, the sources swept (D156); 2, the scope set and its sessions
+recorded; 3, something mapped, the port's program named, a census of every session, no named datum neither mapped
+nor ignored; 4, no census with a field, an unset field or a path noted as not ported, every session matching in its
+fields to its end with nothing fed, `rrc check` refusing nothing; 5, every session that starts at power-on matching
+in its fields from the port's own start; 6, every session matching from its start in frames and in each device the
+original sounds, and no census with a frame or a sound; 7 isn't tested by `rrc` and is the person's to close. For
+that, `rrc compare` keeps what each kind of comparison last found of a whole session (`outcomes.json`: from the
+port's start or a transplant, of all or the fields alone), with whether frames were compared, the devices the
+original sounded that nothing was compared for, and the hash of the port's code; a census has its recording and that
+hash too. A comparison counts for the recording it was made of; one the port's code as it is now didn't make is
+said to be stale, and still counts. `rrc work` is the work list: the scope's censuses merged over the sessions, the
+fields first, then paths not ported, frames and sound, the most passes first; `--run` counts again in lockstep each
+session whose census the code as it is didn't make. `rrc work take ITEM --question --route --other [--budget N]`
+writes a card; the journal (D157) counts the comparisons made for it, and `rrc` says when the budget is spent; `rrc
+work done` closes it and puts what it took in the journal. A test walks the toy port from an empty repository to
+the stage it stops at (6: it draws nothing).
+**Why:** changes D, E, F, G and L of the workflow's plan (D154). `rrc status` drove the set-up and then said
+`rrc compare <first session>` for the rest of the port: on the Arena port, 58 sessions in, `rrc compare a-16`. The
+state of the work was a hand-written handoff of 526 lines, where an agent's summaries had softened a rule before
+(D148), and whether M6's row held had to be assessed by hand. A gate that is computed can't drift, and can't be
+claimed; a list ranked across sessions replaces the backlog kept in notes. Staleness is said and not counted
+against a gate, because a gate that fell whenever a line of the port changed would say "skeleton" of a port that
+draws. The card asks for a second route before the work, the one moment an agent isn't yet invested in the first;
+its budget is in comparisons because that is the tool an agent repeats.
+**Extends:** D117 (`rrc progress`, the outcome kept), D124 (the census), D148.
+
 ### D157. The journal: the toolkit says when a route is stuck. Accepted 2026-11-11.
 `rrc` keeps each command it runs in a port in `.rrc/journal.jsonl` (this machine's, not committed): when, the
 command, whether it failed, and for a comparison its session and how it ended (`match`, or its first difference: the

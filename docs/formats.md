@@ -92,6 +92,15 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   `outcome.json`, what it found, which `rrc progress` reads (D117): the recording's hash, the tick it started
   from (`from`, 0 for the port's start), the ticks compared (`first`, `last`, of `ticks`), the last that matched
   (`matched`), the fields fed and what differed after (`state`, `screen`, `sound` or none).
+  With it, `outcomes.json` (D158): by kind of comparison (`start-all`, `start-fields`, `transplant-all`,
+  `transplant-fields`: from the port's own start or from a transplant, of everything or of the fields alone), what
+  the last of that kind found that says something of the whole session (one stopped short by `--to` isn't kept, and
+  a match from a later tick doesn't replace one of the same recording and code from an earlier). An outcome also has
+  `fields_only`, `drew` (the port's frames were compared), `unsounded` (the devices the original sounded that
+  nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has
+  the recording it is of (`recorded`) and the port's code (`port`) too. The workflow's gates read these.
+- `work/card.json`: the item taken with `rrc work take` (D158): `item`, `question`, `route`, `other`, `budget`
+  (comparisons), and where the journal was then (`taken`, `t`).
 - `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).
 - `start/<session>-<tick>/`: where `rrc start` left a session's original for the port to play from (D120):
   `state.json` (the mapped fields' values, as a transplant's `rrc-state`), `presentation.json` (the

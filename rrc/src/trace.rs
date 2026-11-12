@@ -628,9 +628,11 @@ pub(crate) fn items(repo: &Repo, k: &Knowledge, module: &str) -> Result<Items, S
 
 /// The header of the trace recorded under `hash`, if this machine's cache has it.
 pub(crate) fn recorded_header(cache: &Cache, hash: &str) -> Option<Header> {
-    let text = cache.get(hash).ok()?;
-    let first = text.split(|&b| b == b'\n').next()?;
-    serde_json::from_slice(first).ok()
+    // Its first line alone: `rrc status` asks this of every session.
+    use std::io::BufRead;
+    let mut first = String::new();
+    std::io::BufReader::new(std::fs::File::open(cache.path(hash)).ok()?).read_line(&mut first).ok()?;
+    serde_json::from_str(&first).ok()
 }
 
 /// The session's original in a fresh Clockwork with the sync points set: Clockwork, what `load`

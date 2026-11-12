@@ -5,7 +5,8 @@ work"), then the workflow (its stages, each with a gate; the loop the work repea
 differs; the best-known routes), then each stage's reference. Formats are in `docs/formats.md`.
 
 Run `rrc` inside the port repository. A session of work starts with `rrc rules` and `rrc status`, and ends with `rrc
-check` passing and a commit. `rrc status` names the next step; `rrc doctor` says what's missing.
+check` passing and a commit. `rrc status` names the stage the port is at, what its gate lacks and the next step;
+`rrc doctor` says what's missing.
 
 ## How to work
 
@@ -72,7 +73,7 @@ the original judges the port, not the code it was read from.
     every session through that loop otherwise.
 12. **Never tune a layer over an unmatched one below it:** the mapped fields, then the frames, then the sound, then
     live play. A frame is only compared where the state matches.
-13. **Where the work stands is the toolkit's to say** (`rrc status`, the census, `rrc progress`). Notes hold what was
+13. **Where the work stands is the toolkit's to say** (`rrc status`, `rrc work`, `rrc progress`). Notes hold what was
     learned and why, never the state of the work.
 14. **A gap in the toolkit is fixed in the toolkit,** as a general feature with a test of its own, never worked
     around in the port (D10). Then the item goes on.
@@ -102,37 +103,52 @@ one by one.
 
 ## The workflow
 
-Eight stages (D154). A stage is done when its gate holds, and each gate is a thing the toolkit answers (`rrc doctor`,
-`rrc check`, `rrc compare`, `rrc progress`), never a note. What a later stage finds wrong in an earlier one is fixed
-there first (rule 12). Stages 4 to 6 repeat one loop.
+Eight stages (D154). A stage is done when its gate holds, and `rrc status` works every gate out from the repository
+each time it is asked (D158): a gate can't be marked done, and a note doesn't count. It names the stage the port is
+at (the first whose gate lacks something), what the gate lacks and the next step. `rrc status --all` says what a
+handoff would: every stage's gate, each session of the scope that doesn't match in everything, the top of the work
+list, what parts not ported still give the port, and what the work was made of. A gate is reported, not refused:
+stages overlap in honest work, and a commit is refused only for what `rrc check` refuses. What a later stage finds
+wrong in an earlier one is fixed there first (rule 12). Stages 4 to 6 repeat one loop.
 
-| Stage | What it is for | Done when |
+| Stage | What it is for | Its gate, as `rrc status` tests it |
 |---|---|---|
-| **0 Set up** | The repository, the game's version, the tools, the person's rules | `rrc doctor` misses nothing; the copy is a recorded version; `RULES.md` holds the person's answers |
-| **1 Survey** | Know the program before porting any of it | The analysis is in; a session from power-on into play is recorded and its run repeats; every loop it passes through has a sync point; the boundary values are declared; the outside sources are swept and the game's files listed |
-| **2 Sessions** | Fix what is to be reproduced | The scope is written down as sessions; each is recorded and repeats |
-| **3 Skeleton** | A port that compares before it does anything | The port builds on the runtime and loads a transplant; every session has a census; no named datum is left unmapped |
-| **4 Logic** | The simulation, subsystem by subsystem | Every session matches in its mapped fields with nothing fed; the census has no field left; every suspect is judged and every quirk registered and branched on |
-| **5 Data and start-up** | The port loads the game itself | No hook or part's input gives what the game's files hold; every session from power-on matches in its fields from the port's own start |
-| **6 Presentation** | Frames, then sound | Every session matches in state, frames and each sound device the original uses in it |
-| **7 Play** | A port a person plays | It plays from power-on in a window; saves load both ways with the original; what the person's play-test found became sessions |
+| **0 Set up** | The repository, the game's version, the tools, the person's rules | The game's copy is a recorded version; Clockwork is found; `RULES.md` has no question left |
+| **1 Survey** | Know the program before porting any of it | The analysis is in; there is a session, a sync point and a boundary value, and the session is recorded as the knowledge is now; the outside sources are swept, each kind found or looked for |
+| **2 Sessions** | Fix what is to be reproduced | The scope is set and names sessions; each is recorded as the knowledge is now |
+| **3 Skeleton** | A port that compares before it does anything | Something is mapped and the port's program named; every session has a census of its recording; no named datum is neither mapped nor ignored |
+| **4 Logic** | The simulation, subsystem by subsystem | No census has a field the port leaves otherwise or unset, or a path noted as not ported; every session matches in its mapped fields to its end with nothing fed; `rrc check` refuses nothing |
+| **5 Data and start-up** | The port loads the game itself | Every session that starts at power-on matches in its fields from the port's own start |
+| **6 Presentation** | Frames, then sound | Every session matches from its start in state, frames and each device the original sounds in it; no census has a frame or a sound that differs |
+| **7 Play** | A port a person plays | Not something `rrc` tests: it plays from power-on in a window, saves load both ways with the original, and what the person's play-test found became sessions. The person closes it |
+
+The gate is what a tool can test. A stage does more, which only the agent can judge and its section below says:
+every loop of the stretch given its sync point, the game's files listed, a play pass's top calls named, what hooks
+and parts' inputs still give the port. The sessions measured are the scope's (`rrc scope`); a comparison counts for
+the recording it was made of, and one made before the port's code changed is said to be `stale`.
 
 Why this order: a transplant means nothing has to be ported before something is compared, so the port exists, empty,
 before any logic is written; loops, state, files and sources are cheap to map early and expensive to discover late;
 and each layer stands on the one below.
 
-**The work loop** (stages 4 to 6), once for each item of the work list. The work list is the census: `rrc compare
-SESSION --lockstep` counts every difference of a session at once.
+**The work loop** (stages 4 to 6), once for each item of the work list. `rrc work` is the list (D158): what the
+censuses of the scope's sessions count (`rrc compare SESSION --lockstep`, D124), merged over the sessions: the mapped
+fields first, then the paths noted as not ported, then the frames, then the sound, the most passes first. `rrc work
+--run` counts again each session whose census the port's code as it is now didn't make.
 
-1. **Take** the top item: the most passes, and among equals the earliest in the pass's order.
+1. **Take** the top item, with a card: `rrc work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]`.
+   The question, the route chosen, one other route considered, and after how many comparisons (6 unless said) the
+   route changes. Naming the other route is the point: it is the one moment "is there a better tool" costs nothing.
 2. **Plan and read**, in the sources' order: what is named already, the decompiled code, the disassembly where it is
-   in doubt, the outside sources on that subsystem, the files it reads. Write the question down first, the route
-   chosen, one other route, and after how many runs the route changes.
+   in doubt, the outside sources on that subsystem (`rrc sources WORD`), the files it reads.
 3. **Name and map** everything the item touches, together; record once (rule 10).
 4. **Port** it: a function for each of the original's, its ID in the comment; each bug registered as it is met; each
    path left out noted where it would be (`rrc_runtime::note`).
-5. **Compare** from a transplant just before the item's first difference; at each divergence, the table below.
-6. **Close:** the census again, the item at zero; the suspects of the sessions it touched judged; `rrc check`; commit.
+5. **Compare** from a transplant just before the item's first difference; at each divergence, the table below. When
+   the card's comparisons are spent `rrc` says so (`budget`): change the route, and take the card again with it.
+6. **Close:** `rrc work --run`, the item gone from the list; the suspects of the sessions it touched judged; `rrc
+   check`; `rrc work done`, which says what the item took (it goes in the journal); a route found the hard way
+   written as a recipe; commit.
 
 **When the port differs:**
 
@@ -551,8 +567,8 @@ count with the list it counts): a state play can't reach makes a divergence afte
 ## Stage 3: Skeleton
 
 A port that compares before it does anything. Copy `examples/toy`, find the core state from the loop down (who
-writes what), map it, and compare the empty port in lockstep over every session (`rrc compare SESSION --lockstep`):
-everything differs, and that census is the work list's first state. `rrc progress` names the largest changing
+writes what), map it, and compare the empty port in lockstep over every session of the scope (`rrc work --run`):
+everything differs, and those censuses are the work list's first state. `rrc progress` names the largest changing
 memory nothing maps: map it, or ignore it with a reason.
 
 Find the state first. What the player changes is found by how it behaves over the session's ticks (D75):

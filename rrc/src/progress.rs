@@ -30,13 +30,15 @@ const USAGE: &str = "progress [--lines N]";
 const SHOWN: usize = 6;
 /// Where `rrc compare` keeps what it found, in its work folder.
 const OUTCOME: &str = "outcome.json";
+/// And what each kind of comparison last found, by kind (D158).
+const OUTCOMES: &str = "outcomes.json";
 /// Bytes that don't change, this many or fewer between two that do, join them in one place left.
 const GAP: usize = 4;
 
 /// What `rrc compare` last found for a session (D117): the recording it compared, the tick it started from
 /// (0: the port's own start), the ticks it compared, the last that matched (state, screen and sound), the
 /// fields it fed, and what differed after.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Outcome {
     pub recorded: String,
     pub from: u64,
@@ -46,13 +48,67 @@ pub(crate) struct Outcome {
     pub ticks: u64,
     pub fed: Vec<String>,
     pub differs: Option<String>,
+    /// Whether the mapped fields alone were compared (`--fields`), not the screen nor the sound.
+    #[serde(default)]
+    pub fields_only: bool,
+    /// Whether the port's frames were compared with the original's screen.
+    #[serde(default)]
+    pub drew: bool,
+    /// The devices the original sounded in those ticks that the port's sound wasn't compared for.
+    #[serde(default)]
+    pub unsounded: Vec<String>,
+    /// The port's code then (`sources::fingerprint`): a comparison holds for the code it ran (D158).
+    #[serde(default)]
+    pub port: String,
 }
 
 impl Outcome {
+    /// Which comparison it was: from the port's own start or from a transplant, of the fields alone or of all.
+    pub(crate) fn kind(&self) -> &'static str {
+        match (self.from == 0, self.fields_only) {
+            (true, true) => "start-fields",
+            (true, false) => "start-all",
+            (false, true) => "transplant-fields",
+            (false, false) => "transplant-all",
+        }
+    }
+
+    /// Whether it compared the session to its end and found everything the same, with nothing fed.
+    fn whole(&self) -> bool {
+        self.differs.is_none() && self.last >= self.ticks && self.fed.is_empty()
+    }
+
     pub(crate) fn save(&self, work: &Path) -> Result<(), String> {
         let path = work.join(OUTCOME);
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        // By kind too, for the workflow's gates (D158): the last of each kind that says something of the whole
+        // session. A comparison stopped short by --to says nothing of the rest, and a match from a later tick
+        // doesn't replace one of the same recording and code from an earlier.
+        if self.differs.is_none() && self.last < self.ticks {
+            return Ok(());
+        }
+        let path = work.join(OUTCOMES);
+        let mut kept: BTreeMap<String, Outcome> =
+            std::fs::read_to_string(&path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+        let wider = |old: &Outcome| {
+            old.whole()
+                && self.whole()
+                && old.from < self.from
+                && (&old.recorded, &old.port) == (&self.recorded, &self.port)
+        };
+        if !kept.get(self.kind()).is_some_and(wider) {
+            kept.insert(self.kind().to_owned(), self.clone());
+        }
+        let text = serde_json::to_string_pretty(&kept).map_err(|e| e.to_string())?;
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// What each kind of comparison of the session last found.
+    pub(crate) fn kept(repo: &Repo, name: &str) -> Result<BTreeMap<String, Outcome>, String> {
+        let path = repo.state()?.join("compare").join(name).join(OUTCOMES);
+        let Ok(text) = std::fs::read_to_string(&path) else { return Ok(BTreeMap::new()) };
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     fn load(repo: &Repo, name: &str) -> Result<Option<Outcome>, String> {
@@ -422,7 +478,9 @@ mod tests {
             ticks: 650,
             fed: Vec::new(),
             differs: Some("state".into()),
+            ..Outcome::default()
         };
+        assert_eq!(o.kind(), "transplant-all");
         assert!(!o.matches((1, 1)), "the pass to the transplant's tick is the original's");
         assert!(o.matches((1, 2)) && o.matches((279, 300)));
         assert!(!o.matches((280, 651)), "the pass to the tick that differs");
@@ -430,6 +488,20 @@ mod tests {
             outcome_text(&o),
             "ticks 1-279 of 650 match, then its state differs, from a transplant at tick 1, no feed"
         );
+        // Kept by kind: a whole match from an earlier tick stays when a later one matches too; a difference replaces.
+        let work = std::env::temp_dir().join(format!("rrc-outcomes-{}", std::process::id()));
+        std::fs::create_dir_all(&work).unwrap();
+        let whole = |from: u64| Outcome { from, matched: 650, differs: None, fields_only: true, ..o.clone() };
+        whole(1).save(&work).unwrap();
+        whole(300).save(&work).unwrap();
+        Outcome { last: 400, matched: 400, ..whole(1) }.save(&work).unwrap();
+        let kept = |work: &Path| -> BTreeMap<String, Outcome> {
+            serde_json::from_str(&std::fs::read_to_string(work.join(OUTCOMES)).unwrap()).unwrap()
+        };
+        assert_eq!(kept(&work)["transplant-fields"].from, 1, "the earlier, and never one stopped short by --to");
+        Outcome { fields_only: true, ..o.clone() }.save(&work).unwrap();
+        assert_eq!(kept(&work)["transplant-fields"].differs.as_deref(), Some("state"));
+        std::fs::remove_dir_all(&work).ok();
         let all = Outcome { matched: 650, differs: None, from: 0, fed: vec!["level.flats".into()], ..o };
         assert!(all.matches((1, 1)), "from the port's start, its first pass is its own");
         assert_eq!(outcome_text(&all), "ticks 1-650 of 650 match, from the port's start, fed level.flats");
