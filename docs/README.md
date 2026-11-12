@@ -164,7 +164,8 @@ whose kept path was still a note. Taken through the gates since (2026-11-12): it
 its books (Arena's sound driver is Miles' AIL 2, whose source its author released), the named data are all mapped
 or set aside, and the toolkit puts it at stage 4. One of the three kept paths is reproduced; the other two read
 memory the port doesn't model (a buffer ten routines write their texts to; the renderer's state, for people in
-towns), which its notes say. 14 of 33 quirks' switches are shown by a session.
+towns), which its notes say. 14 of its 30 quirks' switches are shown by a session (three that changed nothing
+the game does left the register, D163).
 
 **Open against M6's row** (measured on the Arena port, 2026-11-11):
 
