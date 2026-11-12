@@ -404,6 +404,11 @@ fn quirk_candidates_are_found_and_registered() {
     assert!(added.contains("quirk     overrun at T.COM+00005"), "{added}");
     assert!(added.contains("  fix     stops at the table's end"), "{added}");
     assert!(added.contains("  shown   not yet: rrc compare SESSION --fix overrun"), "{added}");
+    // Shown by a test of the port's own where no comparison reaches it; a new fix is to be shown again.
+    let by_test = rrc.ok(&["quirk", "overrun", "--shown", "test sim::overrun_both_ways"]);
+    assert!(by_test.contains("  shown   test sim::overrun_both_ways"), "{by_test}");
+    let again = rrc.ok(&["quirk", "overrun", "--fix", "stops at the table's end, and says so"]);
+    assert!(again.contains("  shown   not yet"), "{again}");
     assert!(added.contains("no code names it yet: branch on rrc_runtime::keeps(\"overrun\")"), "{added}");
     assert!(rrc.ok(&["suspects", "s"]).contains("by T.COM+00005 (quirk overrun)"));
     std::fs::create_dir_all(rrc.repo.join("src")).unwrap();

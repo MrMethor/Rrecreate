@@ -238,9 +238,9 @@ fn judge(repo: &Repo, a: &Args, at: &str) -> Result<ExitCode, String> {
 
 /// `rrc quirk`: the register, or a quirk added, changed or removed.
 pub(crate) fn quirk(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let options = ["--at", "--what", "--fix", "--evidence", "--by"];
+    let options = ["--at", "--what", "--fix", "--evidence", "--by", "--shown"];
     let a = Args::parse(args, &options, &["--remove"])?;
-    let usage = "quirk [NAME (--at ID --what TEXT --fix TEXT [--evidence TEXT] [--by WHO] | --remove)]";
+    let usage = "quirk [NAME (--at ID --what TEXT --fix TEXT [--evidence TEXT] [--shown TEXT] [--by WHO] | --remove)]";
     let names = a.positionals(0, 1, usage)?;
     let mut register = Quirks::load(repo)?;
     let Some(name) = names.first() else {
@@ -273,6 +273,11 @@ pub(crate) fn quirk(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     // What the fix changed is to be shown again.
     if a.value("--fix").is_some() || a.value("--at").is_some() {
         q.shown.clear();
+    }
+    // A switch no session's comparison can reach (the port's own input handlers, which play alone runs) is shown by
+    // the port's own test: said by hand, naming the test.
+    if let Some(shown) = a.value("--shown") {
+        q.shown = shown.trim().to_owned();
     }
     match found {
         Some(i) => register.quirks[i] = q.clone(),

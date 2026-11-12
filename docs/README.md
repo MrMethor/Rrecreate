@@ -155,7 +155,9 @@ Tried on the Arena port: the toolkit answers in about a second, and what the ass
 unasked. It puts the port at stage 1, because its outside sources aren't in its books; past that, the gates name
 eight named data nothing maps or ignores, two suspects not judged, the first session stopping from power-on at the
 cinematic's sound, and fourteen sessions whose frames or sound differ. Its 58 sessions counted again give a work
-list of 121 items.
+list of 121 items. Its scope is all 58 (the person, 2026-11-12). The first rule's checks found two bugs of the
+original its notes named and its register didn't (both now registered, with switches), and three registered bugs
+whose kept path is still a note, not reproduced: those, and showing each switch, are its first work.
 
 **Open against M6's row** (measured on the Arena port, 2026-11-11):
 
@@ -172,8 +174,7 @@ list of 121 items.
 recorded, its suspects judged, the top of its work list); then the open points above, in the order the person sets;
 then M7.
 
-**The person's calls ahead:** the Arena port's scope, which of its sessions it is to reproduce (until it is set,
-every session counts); closing M6, as M4 and M5 were closed (D100, D106), and whether the music and the actions seam
+**The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106), and whether the music and the actions seam
 are M6's or move; the game M9 is run on, which stays out of the toolkit's development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: its `notes/handoff.md`).

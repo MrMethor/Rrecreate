@@ -234,11 +234,12 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          whose values, read as T (u16 unless --type says), meet every condition over
                          the session's ticks: changed:A-B, same:A-B (at every tick between), more:A-B,
                          less:A-B, is:T=V; --step N: every N bytes (1)
-  quirk [NAME (--at ID --what TEXT --fix TEXT [--evidence TEXT] [--by WHO] | --remove)]
+  quirk [NAME (--at ID --what TEXT --fix TEXT [--evidence TEXT] [--shown TEXT] [--by WHO] | --remove)]
                          the quirk register (quirks.toml): the original's bugs the port keeps, each with
                          what its switch does when fixed, where a session showed the switch, and the
                          port's code that names it; or one added, changed or removed. Every bug of the
-                         original is registered when found: the first rule
+                         original is registered when found: the first rule. --shown: how its switch was
+                         shown where no comparison reaches it (the port's own test, by name)
   suspects SESSION [--lines N]
                          quirk candidates in the session's run: the original's instructions that
                          reach past named data's ends, and that read memory nothing wrote; kept in

@@ -490,7 +490,8 @@ evidence = "rrc suspects play: past enemies by GAME.EXE+002FF, offset 60"
 asked for when a quirk is registered, and `rrc check` refuses a register with a quirk that has none. `shown` is
 written by `rrc compare SESSION --fix NAME` where the port matches the original to a tick with the bug kept and
 first differs there with it fixed: the session, the tick and what differed; changing a quirk's `at` or `fix` clears
-it.
+it. A switch no comparison reaches (in the port's own input handlers, which only play runs) is shown by the port's
+own test instead, and `rrc quirk NAME --shown TEXT` says which.
 
 ## `sources.toml`: the outside sources
 

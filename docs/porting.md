@@ -818,7 +818,9 @@ returns its neighbour) reproduces that neighbour's data deliberately.
 Every quirk has both sides (D160). `--fix` says what its switch does, and is asked for when the bug is registered.
 `rrc compare SESSION --fix NAME` then shows the switch: where the port matches the original with the bug kept and
 differs with it fixed, it keeps the session, the tick and what differed with the quirk (`shown`), and `rrc quirk`
-lists it. A quirk no session has shown is one of stage 4's lacks: it wants a session that reaches it.
+lists it. A quirk no session has shown is one of stage 4's lacks: it wants a session that reaches it. A switch in
+what no comparison runs (the port's own keyboard or timer handlers, which only play uses) is shown by a test of the
+port's own that runs it both ways, and `rrc quirk NAME --shown "test NAME"` says which.
 
 A comparison only shows what a session reaches and what's mapped, so a bug fixed by accident elsewhere shows
 nowhere: this is why they're registered as they're found. `rrc check` refuses (and `rrc status` names, D148) a comment
