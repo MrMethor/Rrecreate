@@ -299,7 +299,8 @@ fn part(
     };
     std::fs::create_dir_all(repo.sessions().join(name)).map_err(|e| e.to_string())?;
     session.save(repo, &part)?;
-    crate::quietly(|| crate::trace::record(repo, std::slice::from_ref(&part)))?;
+    // A part recorded is read back below; its exit code says nothing more.
+    let _ = crate::quietly(|| crate::trace::record(repo, std::slice::from_ref(&part)))?;
     let ticks = Session::load(repo, &part)?.trace.map_or(0, |t| t.ticks);
     if ticks == 0 {
         return Ok(None);

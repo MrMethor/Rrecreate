@@ -566,7 +566,8 @@ fn report_sound(repo: &Repo, name: &str, trace: &Trace, t: u64, diff: &SoundDiff
         say("wrote", format!("its ports ({ports}), between the sync points of ticks {} and {t}:", t.saturating_sub(1)));
         let args: Vec<String> =
             [name, ports, "--tick", &t.to_string(), "--ticks", "1"].iter().map(|s| s.to_string()).collect();
-        crate::watch::ports(repo, &args)?;
+        // Its exit code is the watch's own; the comparison's is said by the caller.
+        let _ = crate::watch::ports(repo, &args)?;
     }
     say(
         "next",

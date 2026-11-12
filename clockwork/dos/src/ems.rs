@@ -222,9 +222,9 @@ fn deallocate(m: &mut Machine, id: u16) -> u8 {
     if handle.saved_map.is_some() {
         return status::CONTEXT_EXISTS;
     }
-    for physical in 0..PHYSICAL_PAGES {
-        if matches!(m.ems.mapped[physical], Some((h, _)) if h == id) {
-            m.ems.mapped[physical] = None;
+    for slot in m.ems.mapped.iter_mut() {
+        if matches!(*slot, Some((h, _)) if h == id) {
+            *slot = None;
         }
     }
     if id == 0 {
@@ -247,9 +247,9 @@ fn reallocate(m: &mut Machine, id: u16, count: u16) -> u8 {
     }
     if count < current {
         // Pages being dropped must not stay mapped.
-        for physical in 0..PHYSICAL_PAGES {
-            if matches!(m.ems.mapped[physical], Some((h, l)) if h == id && l >= count) {
-                m.ems.mapped[physical] = None;
+        for slot in m.ems.mapped.iter_mut() {
+            if matches!(*slot, Some((h, l)) if h == id && l >= count) {
+                *slot = None;
             }
         }
     }

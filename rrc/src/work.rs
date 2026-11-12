@@ -263,7 +263,8 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             if !from_start {
                 args.extend(["--transplant".to_owned(), "1".to_owned()]);
             }
-            crate::quietly(|| crate::compare::compare(repo, &args))?;
+            // Whether it matched is in what the comparison kept, read next.
+            let _ = crate::quietly(|| crate::compare::compare(repo, &args))?;
             let kept = crate::progress::Outcome::kept(repo, name)?;
             let found = kept.values().find(|o| o.port == port).map(crate::progress::outcome_text);
             say("compared", format!("{name}: {}", found.unwrap_or_else(|| "nothing kept of it".to_owned())));
