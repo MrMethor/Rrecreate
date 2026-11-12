@@ -175,6 +175,17 @@ fn a_session_is_traced_tick_by_tick() {
     let listed = rrc.ok(&["sources"]);
     assert!(listed.contains("excluded  its-source: the person: it grades the toolkit"), "{listed}");
     assert!(rrc.ok(&["check"]).contains("sources   1 outside sources, 1 kept out, 1 sweeps"));
+    // A port that reads none says so (an honest test bench, D46), and is asked for no sweep (D159).
+    assert!(rrc.ok(&["sources", "none", "--why", "a test bench"]).contains("none      no outside source is read"));
+    assert!(!rrc.ok(&["status"]).contains("sources neither found"));
+    // The best-known routes by a word (D159): the playbook's recipes and questions, and the port's own.
+    let how = rrc.ok(&["how", "tick", "ends"]);
+    assert!(how.contains("recipe    Where a tick ends: `rrc calls SESSION`: the large groups are loops"), "{how}");
+    assert!(rrc.ok(&["how"]).contains("question  What does this value mean?"));
+    assert!(rrc.ok(&["how", "zebra"]).contains("none      no recipe has zebra"));
+    let recipes = "# Recipes\n\n| Problem | Route | Cost |\n|---|---|---|\n| A zebra crossing | its table | 1 run |\n";
+    std::fs::write(repo.join("notes/recipes.md"), recipes).unwrap();
+    assert!(rrc.ok(&["how", "zebra"]).contains("noted     A zebra crossing: its table; 1 run"));
     let (taken, ok) = rrc.run(&["data", "T.COM+00011", "count", "--size", "2"]);
     assert!(!ok && taken.contains("count names T.COM+0000F already"), "{taken}");
     // A name taken back, by its name or ID.
@@ -782,6 +793,10 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(drawn.contains("pixel   (64, 4): original 40, port 41"), "{drawn}");
     assert!(drawn.contains("write MEM+A0540 = 28h (was 20h) by VAULT.EXE+00581 in draw_cell < draw < main"), "{drawn}");
     assert!(drawn.contains("port      draw_cell (VAULT.EXE+004DD) is src/main.rs:"), "{drawn}");
+    assert!(
+        drawn.contains("next      its code: rrc show VAULT.EXE+004DD --c; the drawing code's own state"),
+        "{drawn}"
+    );
     // A write's chain, as many calls of it as asked.
     let one = rrc.ok(&["watch", "play", "MEM+A0540", "--len", "1", "--tick", "102", "--ticks", "1", "--chain", "1"]);
     assert!(one.contains("by VAULT.EXE+00581 in draw_cell < …"), "{one}");
@@ -886,6 +901,7 @@ fn a_port_s_sound_is_the_original_s() {
     assert!(!ok && heard.contains("diverges  at tick 36 (pass): the opl sound: 2 events, the port's 2"), "{heard}");
     assert!(heard.contains("event   2: original B0=35, port B0=31"), "{heard}");
     assert!(heard.contains("389h      written by CHIME.EXE+0030F (2)"), "{heard}");
+    assert!(heard.contains("next      the events in order: rrc trace play --tick 36"), "{heard}");
     rrc.env.pop();
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -966,6 +982,14 @@ fn a_port_matches_the_original_tick_by_tick() {
     // The port's code for the function that wrote it (D73).
     assert!(diverged.contains("port      update (TOY.EXE+00114) is src/main.rs:"), "{diverged}");
     assert!(diverged.contains("quirk     bounces is at TOY.EXE+002FF"), "{diverged}");
+    // The next moves, of more than one kind (D159): the writer's code, the value over the pass, what is written.
+    let next = "next      its code: rrc show TOY.EXE+00114 --c; the value over the pass: rrc watch play TOY.EXE+";
+    assert!(diverged.contains(next) && diverged.contains("what is written of it: rrc sources enemies"), "{diverged}");
+    // And what else is held about a place: the quirk in it, the port's field mapped to it, the port's code.
+    let shown = rrc.ok(&["show", "TOY.EXE+002FF"]);
+    assert!(shown.contains("quirk     bounces at TOY.EXE+002FF: counts a bounce"), "{shown}");
+    assert!(rrc.ok(&["show", "enemies"]).contains("mapped    the port's enemies (mapping.toml)"));
+    assert!(rrc.ok(&["show", "update"]).contains("port      named in src/main.rs:"));
     let progress = rrc.ok(&["progress"]);
     assert!(progress.contains("session   play: ticks 1-193 of 209 match, then its state differs"), "{progress}");
     // What the port noted in the pass to it (D115).
@@ -984,12 +1008,16 @@ fn a_port_matches_the_original_tick_by_tick() {
         third.contains("stuck     the same first difference 3 times running: tick 194: enemies[1].hits"),
         "{third}"
     );
-    assert!(third.contains("untried   since it first showed: the code (rrc show ID --c"), "{third}");
-    assert!(third.contains("an outside source (rrc sources WORD)") && !third.contains("the value over the run"));
+    // The code was looked at since (the rrc show above) and so was the run: what is left is the sources and the files.
+    assert!(
+        third.contains("untried   since it first showed: an outside source (rrc sources WORD); the game"),
+        "{third}"
+    );
+    assert!(!third.contains("the code (rrc show ID --c") && !third.contains("the value over the run"), "{third}");
     let journal = rrc.ok(&["journal", "--lines", "2"]);
     assert!(journal.contains("stuck     1 times a comparison ended at the same first difference 3 times running"));
     assert!(journal.contains("ran       compare play -> tick 194: enemies[1].hits"), "{journal}");
-    assert!(journal.contains("mix       compare 4, code 0, sources 0, files 0, runs "), "{journal}");
+    assert!(journal.contains("mix       compare 4, code 3, sources 0, files 0, runs "), "{journal}");
     rrc.ok(&["quirk", "bounces", "--remove"]);
     // The enemies fed from the original (D84): the rest is compared over the whole session.
     let fed = rrc.ok(&["compare", "play", "--feed", "enemies"]);
@@ -1007,6 +1035,7 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(census.contains("first at play's tick 194 (enemies[1].hits: original 1, port 0)"), "{census}");
     assert!(census.contains("note      a bounce not counted (TOY.EXE+002FF): in "), "{census}");
     assert!(census.contains("census    ") && census.contains("census.json"), "{census}");
+    assert!(census.contains("next      rrc work: this with every other session's census, ranked"), "{census}");
     rrc.env.pop();
     let matched = rrc.ok(&["compare", "play", "--lockstep"]);
     assert!(matched.contains("match     play: every mapped field, frame and sound in all 208 passes"), "{matched}");

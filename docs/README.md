@@ -112,7 +112,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-11 (decisions to D158). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-11 (decisions to D159). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -137,10 +137,11 @@ scenario edits in a lockstep (D146, D147), the quirk rule checked by `rrc check`
 
 **Under way before M6 goes on:** the way the toolkit is used, made standard at the person's word (D154). The playbook
 is now one workflow: stages with gates, one work loop, where to look when the port differs, the best-known routes.
-The toolkit now drives it (D155 to D158; [the plan](plans/porting-workflow.md) lists what is built): each port's
+The toolkit now drives it (D155 to D159; [the plan](plans/porting-workflow.md) lists what is built): each port's
 entry point, its scope, outside sources in its books, a journal that says when a route is stuck, the stage and its
-gate said by `rrc status`, and a work list with a card for the item taken. A test walks the toy port through the
-stages. Left of the plan: the next moves named in each result, and the trial on the Arena port.
+gate said by `rrc status`, a work list with a card for the item taken, the next moves named at each difference, and
+the recipes by a word. A test walks the toy port through the stages. Left: the Arena port taken into the workflow
+(its rules as the entry files have them, its scope from the person, its censuses counted again).
 
 **Open against M6's row** (measured on the Arena port, 2026-11-11):
 

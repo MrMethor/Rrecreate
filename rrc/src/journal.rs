@@ -87,7 +87,7 @@ impl Entry {
             "compare" => Kind::Compare,
             "show" | "pass" | "calls" => Kind::Code,
             // Keeping the list isn't looking something up in it.
-            "sources" if !matches!(verb, "" | "add" | "exclude" | "remove" | "sweep") => Kind::Sources,
+            "sources" if !matches!(verb, "" | "add" | "exclude" | "remove" | "sweep" | "none") => Kind::Sources,
             "files" | "asset" => Kind::Files,
             "watch" | "trace" | "peek" | "search" | "frame" | "inputs" | "ports" => Kind::Runs,
             _ => Kind::Other,

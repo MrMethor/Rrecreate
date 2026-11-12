@@ -32,6 +32,9 @@ const OTHER: &str = "other";
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sources {
+    /// Why no outside source is read for this port, if none is: an honest test bench (D46). No sweep is asked then.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub none: String,
     #[serde(default, rename = "sweep", skip_serializing_if = "Vec::is_empty")]
     pub sweeps: Vec<Sweep>,
     #[serde(default, rename = "source", skip_serializing_if = "Vec::is_empty")]
@@ -127,13 +130,13 @@ impl Sources {
     }
 }
 
-/// What the survey's gate still asks of the outside sources (docs/porting.md, stage 1): nothing of a port that takes
-/// no imports, an honest test bench (D46).
+/// What the survey's gate still asks of the outside sources (docs/porting.md, stage 1): nothing of a port that says
+/// it reads none, an honest test bench (D46).
 pub(crate) fn open(repo: &Repo) -> Result<Vec<String>, String> {
-    if !repo.settings.port.imports {
+    let sources = Sources::load(repo)?;
+    if !sources.none.is_empty() {
         return Ok(Vec::new());
     }
-    let sources = Sources::load(repo)?;
     if sources.sweeps.is_empty() {
         return Ok(vec![
             "the outside sources aren't swept: search, rrc sources add each, then rrc sources sweep --searched TEXT"
@@ -164,7 +167,7 @@ pub(crate) fn about(repo: &Repo, words: &[String]) -> Option<String> {
 
 const USAGE: &str = "sources [WORD...] | sources add NAME --kind KIND [--at WHERE] [--covers A,B] [--trust TEXT] \
                      [--note TEXT] | sources exclude NAME --why TEXT [--kind KIND] | sources sweep --searched \"A; B\" \
-                     [--none KIND,...] [--date YYYY-MM-DD] | sources remove NAME";
+                     [--none KIND,...] [--date YYYY-MM-DD] | sources remove NAME | sources none --why TEXT";
 
 /// `rrc sources`: the outside sources, those that cover a word, or one added, excluded or removed, or a sweep
 /// recorded.
@@ -213,6 +216,11 @@ pub(crate) fn sources(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             sources.save(repo)?;
             say("removed", name);
         }
+        [verb] if verb == "none" => {
+            sources.none = a.required("--why")?.trim().to_owned();
+            sources.save(repo)?;
+            say("none", format!("no outside source is read for this port: {}", sources.none));
+        }
         [verb] if verb == "sweep" => {
             let sweep = Sweep {
                 date: a.value("--date").map_or_else(today, str::to_owned),
@@ -234,10 +242,13 @@ pub(crate) fn sources(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             say("swept", text);
             show_missing(&sources);
         }
-        [verb, ..] if ["add", "exclude", "remove", "sweep"].contains(&verb.as_str()) => {
+        [verb, ..] if ["add", "exclude", "remove", "sweep", "none"].contains(&verb.as_str()) => {
             return Err(format!("usage: rrc {USAGE}"));
         }
         [] => {
+            if !sources.none.is_empty() {
+                say("none", format!("no outside source is read for this port: {}", sources.none));
+            }
             for s in &sources.sources {
                 match s.excluded.is_empty() {
                     true => say("source", line(s)),
@@ -247,7 +258,7 @@ pub(crate) fn sources(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             for sweep in &sources.sweeps {
                 say("swept", format!("{}: {} searches ({})", sweep.date, sweep.searched.len(), sweep.provenance));
             }
-            if sources.sweeps.is_empty() {
+            if sources.sweeps.is_empty() && sources.none.is_empty() {
                 say("swept", "never: search for each kind, rrc sources add what is found, then rrc sources sweep");
                 for (kind, what) in KINDS {
                     say("kind", format!("{kind}: {what}"));
@@ -378,9 +389,10 @@ mod tests {
             provenance: "agent".into(),
         });
         assert_eq!(sources.missing(), ["sound"]);
+        sources.none = "a test bench".into();
         assert!(sources.problems().is_empty());
         let text = toml::to_string_pretty(&sources).unwrap();
-        assert!(text.contains("[[sweep]]") && text.contains("[[source]]"), "{text}");
+        assert!(text.starts_with("none = ") && text.contains("[[sweep]]") && text.contains("[[source]]"), "{text}");
         assert_eq!(toml::from_str::<Sources>(&text).unwrap(), sources);
     }
 

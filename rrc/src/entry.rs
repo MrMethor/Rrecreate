@@ -35,8 +35,9 @@ const NOTES_TEXT: &str = "\
 # Notes
 
 What was learned about the game and why: one file a subject (a loop, a format, a subsystem), referred to from the
-knowledge's evidence (`rrc name ID NAME --evidence \"...; notes/loops.md\"`). A route found the hard way goes here
-too, as a recipe for the next agent (docs/porting.md, \"Recipes, by problem\").
+knowledge's evidence (`rrc name ID NAME --evidence \"...; notes/loops.md\"`). A route found the hard way goes in
+`notes/recipes.md`, a table like the playbook's (`| Problem | Route | Cost |`), which `rrc how WORD` reads with the
+playbook's recipes.
 
 Not the state of the work: `rrc status` says that, and a note that says it goes stale.
 ";

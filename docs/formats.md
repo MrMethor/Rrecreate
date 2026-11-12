@@ -38,6 +38,8 @@ What an agent meets first in it is written by `rrc init` too, and by `rrc hooks`
   counts the questions left.
 - `AGENTS.md`: tells an agent to run `rrc rules` and `rrc status` before anything else (`CLAUDE.md` loads it).
 - `notes/`: what was learned about the game and why, one file a subject; never the state of the work.
+  `notes/recipes.md` holds the port's own recipes, a table `| Problem | Route | Cost |` like the playbook's, which
+  `rrc how` reads with it (D159).
 - `.claude/settings.local.json`, not committed: this machine's session hook, which runs the two commands at an
   agent's session start and after a summary, as the `rrc` that wrote it. Settings that aren't `rrc`'s are left
   alone.
@@ -486,6 +488,8 @@ evidence = "rrc suspects play: past enemies by GAME.EXE+002FF, offset 60"
 What others wrote about the game and the program's parts (D156), kept by `rrc sources`:
 
 ```toml
+# none = "its source grades the toolkit"   # no outside source is read for this port (D46): no sweep is asked
+
 [[sweep]]                       # a search made
 date = "2026-11-11"
 searched = ["the game's name and file formats", "its sound driver's name"]
@@ -511,7 +515,8 @@ The kinds: `wiki`, `formats`, `reimplementation`, `tools`, `patches`, `walkthrou
 `library` (the compiler's), `extender`, `sound` (the driver), `compression` for the program's parts; `other`. A
 source has a place (`at`) or is `excluded`. `rrc sources WORD` lists the kept sources whose `covers`, name, kind or
 note has the word (or is in it), whatever the case. The sweep is done when each kind but `other` has a source or is
-in a sweep's `none`; `rrc status` says which aren't. A port with `imports = false` is asked for none (D46).
+in a sweep's `none`; `rrc status` says which aren't. A port that reads none says so at the top (`none = "why"`,
+`rrc sources none --why TEXT`) and is asked for no sweep (D46).
 
 ## `sessions/<name>.toml`: a session
 

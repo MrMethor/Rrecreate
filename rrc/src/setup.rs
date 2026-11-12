@@ -203,6 +203,58 @@ pub(crate) fn rules(repo: Option<&Repo>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The rows of the first table at or after the line `heading` starts in `text`, each as its cells, without the
+/// table's two head lines.
+fn table<'a>(text: &'a str, heading: &str) -> Vec<Vec<&'a str>> {
+    let Some(start) = text.find(heading) else { return Vec::new() };
+    let rows = text[start..].lines().skip_while(|line| !line.starts_with('|')).take_while(|line| line.starts_with('|'));
+    rows.skip(2).map(|line| line.trim().trim_matches('|').split('|').map(str::trim).collect()).collect()
+}
+
+/// `rrc how [WORD...]`: the best-known routes (D159): the playbook's recipes and its questions, and the port's own
+/// recipes (`notes/recipes.md`, a table like the playbook's), those that have every word; or, with none, what they
+/// are about.
+pub(crate) fn how(repo: Option<&Repo>, args: &[String]) -> ExitCode {
+    let words: Vec<String> = args.iter().map(|word| word.to_lowercase()).collect();
+    let has = |row: &[&str]| {
+        let text = row.join(" ").to_lowercase();
+        words.iter().all(|word| text.contains(word.as_str()))
+    };
+    let noted = repo.and_then(|repo| std::fs::read_to_string(repo.root.join("notes/recipes.md")).ok());
+    let tables = [
+        ("recipe", table(PLAYBOOK, "## Recipes, by problem")),
+        ("question", table(PLAYBOOK, "**Where to start, by question:**")),
+        ("noted", noted.as_deref().map(|text| table(text, "|")).unwrap_or_default()),
+    ];
+    let mut found = 0;
+    for (label, rows) in &tables {
+        for row in rows.iter().filter(|row| has(row)) {
+            match (words.is_empty(), row.as_slice()) {
+                (true, [about, ..]) => say(label, about),
+                (false, [question, start, then, confirm]) => {
+                    say(label, format!("{question} Start from {start}; then {then}; confirm with {confirm}"));
+                }
+                (false, [about, rest @ ..]) => say(label, format!("{about}: {}", rest.join("; "))),
+                (_, []) => continue,
+            }
+            found += 1;
+        }
+    }
+    if words.is_empty() {
+        say("how", "rrc how WORD...: the routes that have every word");
+    } else if found == 0 {
+        say(
+            "none",
+            format!(
+                "no recipe has {}: rrc how lists what there is; a route found the hard way becomes one \
+                 (docs/porting.md, \"Recipes, by problem\"; the port's notes/recipes.md)",
+                words.join(" ")
+            ),
+        );
+    }
+    ExitCode::SUCCESS
+}
+
 /// The game's folder and which version it is (an error if none the port knows).
 pub(crate) fn which_version(repo: &Repo) -> Result<(PathBuf, String), String> {
     let dir = repo.game_dir()?.to_path_buf();
@@ -284,6 +336,21 @@ mod tests {
         assert!(rules.contains("registered as it's found") && !rules.contains("Where to start"), "{rules}");
         let quirks = super::between(super::PLAYBOOK, "## Quirks", "\n## ");
         assert!(quirks.contains("rrc_runtime::keeps") && !quirks.contains("## Naming"), "{quirks}");
+    }
+
+    #[test]
+    fn the_recipes_are_the_playbook_s_tables() {
+        let recipes = super::table(super::PLAYBOOK, "## Recipes, by problem");
+        assert!(recipes.len() >= 12 && recipes.iter().all(|row| row.len() == 3), "{recipes:?}");
+        assert_eq!(recipes[0][0], "Where a tick ends");
+        assert!(recipes[0][1].starts_with("`rrc calls SESSION`"), "{:?}", recipes[0]);
+        let questions = super::table(super::PLAYBOOK, "**Where to start, by question:**");
+        assert!(questions.len() >= 6 && questions.iter().all(|row| row.len() == 4), "{questions:?}");
+        let noted = super::table(
+            "# Recipes\n\n| Problem | Route | Cost |\n|---|---|---|\n| A door | its table | 1 run |\n",
+            "|",
+        );
+        assert_eq!(noted, [["A door", "its table", "1 run"]]);
     }
 
     #[test]

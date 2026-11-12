@@ -150,7 +150,9 @@ fields first, then the paths noted as not ported, then the frames, then the soun
    check`; `rrc work done`, which says what the item took (it goes in the journal); a route found the hard way
    written as a recipe; commit.
 
-**When the port differs:**
+**When the port differs,** `rrc compare` ends what it found with `next`: the moves for that difference, always of
+more than one kind (its writer's code, the value over the pass, what is written of it), so the other tool is met
+where the choice is made (D159). The table is the same thing for reading:
 
 | What the comparison shows | Look first at |
 |---|---|
@@ -181,9 +183,10 @@ looking, how often a comparison was stuck. A stretch that is all comparing is th
 
 ## Recipes, by problem
 
-The best-known route for what every port meets, its tools in order. A route found the hard way becomes a recipe here
-before its item closes (the toolkit's playbook when it is general, the port's `notes/` when it is the game's), so
-the next port starts from it.
+The best-known route for what every port meets, its tools in order. A route found the hard way becomes a recipe
+before its item closes: here when it is general, in the port's `notes/recipes.md` (a table like this one) when it
+is the game's, so the next agent starts from it. `rrc how WORD...` prints the recipes that have every word, from
+both, with the questions of "Where to start"; `rrc how` alone lists what they are about (D159).
 
 | Problem | Route | Cost |
 |---|---|---|
@@ -251,7 +254,9 @@ Ghidra's `FUN_` and `DAT_` names become the names you gave (`name[+N]` for a byt
 targets are IDs, and each instruction's data, as Ghidra's references have it, is named after it
 (`; tick_count`). For data, it lists the instructions that read it, write
 it or take its address, by function (ten functions a kind; `--all` lists them all).
-Decompiled code is a hint, not a source (D2): it is partly wrong.
+Decompiled code is a hint, not a source (D2): it is partly wrong. `rrc show` also says what else the toolkit holds
+about the place, so that it is met without being asked for (D159): the outside sources that cover it, the port's
+fields mapped to it, the port's code that names it, the quirks registered and the suspects found in it.
 
 Ghidra misses code that only a vector or a pointer reaches: interrupt handlers (`rrc inputs` names them
 by their entry), and in many games most of the per-frame logic, called through far pointers. Once a session
@@ -317,7 +322,8 @@ A source is expected, and not relied upon: evidence, named with its source (`pri
 confirms or overrules. Reading a page is free; a download is asked of the person, once, as one list. Projects the
 person excluded stay out, listed with `rrc sources exclude` so that they aren't found again (for Arena, Recreate
 and tesa-decomp: D66, D69). For a test bench whose source is released, used to grade the toolkit, the source stays
-out of reach (D46, below): a port with `imports = false` is asked for no sweep.
+out of reach (D46, below): such a port says that it reads none, `rrc sources none --why TEXT`, and is asked for no
+sweep.
 
 ### A first session
 
@@ -849,8 +855,12 @@ D46), proves the approach only if nothing from that source helps. For such a por
   about the game's code;
 - keep the game's copy in a folder of its own, away from projects that hold derived knowledge;
 - don't read Rrecreate's git history: its commit messages carry names from the project before it;
-- set `[port] imports = false` in `rrc.toml`, so `rrc sigs name` refuses;
+- set `[port] imports = false` in `rrc.toml`, so `rrc sigs name` refuses, and say that no outside source is read
+  (`rrc sources none --why "its source grades the toolkit"`);
 - give it a cache of its own (`cache` in `rrc.local.toml`): the cache is shared by the ports on a machine,
   and `rrc analyze` reuses an analysis of the same program, with the functions other ports' knowledge added
   to Ghidra's;
-- name things after what the code does, with evidence from this toolkit only.
+- name things after what the code does, with evidence from this toolkit only;
+- report `rrc journal` with the result: how the commands divided between comparing and each kind of looking, how
+  often a comparison was stuck, and what each item took. A change to the playbook is judged by these, not by an
+  impression (D157).

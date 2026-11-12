@@ -357,7 +357,9 @@ card), `game` (the game's folder and its version), `analyze`, `check`, `name`, `
 (what the program reads that interrupt handlers or services write: boundary value candidates), `watch` (who
 writes or reads a value, with the call chain), `search` (memory by how it behaves over ticks), `files` (which file bytes went where), `ports`,
 `frame`, `trace`, `compare`, `quirk`, `suspects` (quirk candidates), `sigs`, `scope` (the sessions the port is to
-reproduce), `sources` (the outside sources, by what they cover) and `journal` (what the work was made of). It keeps
+reproduce), `sources` (the outside sources, by what they cover), `how` (the best-known routes, by a word) and
+`journal` (what the work was made of). A comparison's difference ends with the next moves for it, of more than one
+kind (D159). It keeps
 each command it ran in the port (D157), and a comparison that ends at the same first difference a third time
 running says so, with the kinds of evidence not looked at since.
 

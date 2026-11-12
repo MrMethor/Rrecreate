@@ -85,6 +85,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          (rrc rules and rrc status at an agent's session start), and the entry files a port lacks
                          (RULES.md, AGENTS.md, notes/)
   rules                  the playbook's rules and the port's own (RULES.md), as they're written
+  how [WORD...]          the best-known routes that have every word: the playbook's recipes by problem and its
+                         questions, and the port's own (notes/recipes.md); with no word, what they are about
   name ID NAME           name a function (--evidence TEXT, --confidence 0-1, --by WHO: who decided,
                          else RRC_BY, else agent)
   data ID NAME [--size N] [--type T]
@@ -101,7 +103,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          entry ID in a pass with those registers, given the port (D98); --remove NAME
   show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
-                         its DAT_SEG_OFF names): its name and evidence, what Ghidra found (size,
+                         its DAT_SEG_OFF names): its name and evidence, the outside sources that cover
+                         it, the port's fields mapped to it and code that names it, the quirks and
+                         suspects in it, what Ghidra found (size,
                          calls, callers; the function an address is inside; who reads and writes
                          data), its disassembly (--asm, lines and targets as IDs, each instruction's
                          data named; Clockwork's for code Ghidra has no function for), Clockwork's
@@ -249,6 +253,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   sources sweep --searched \"A; B\" [--none KIND,...] [--date YYYY-MM-DD]
                          a search made: what was searched for, and the kinds looked for and not found
   sources remove NAME    take a source out of the list
+  sources none --why TEXT
+                         no outside source is read for this port (an honest test bench): no sweep is asked
   journal [--lines N]    what the work in this port was made of (.rrc/journal.jsonl): the commands rrc ran, how
                          they divide between comparing and each kind of looking (the code, outside sources,
                          the game's files, runs), how often a comparison was stuck, the last ones
@@ -286,6 +292,7 @@ pub fn main() -> ExitCode {
         Some("check") => here().and_then(|repo| naming::check(&repo)),
         Some("hooks") => here().and_then(|repo| setup::hooks(&repo)),
         Some("rules") => Ok(setup::rules(here().ok().as_ref())),
+        Some("how") => Ok(setup::how(here().ok().as_ref(), rest)),
         Some("name") => here().and_then(|repo| naming::name(&repo, rest)),
         Some("data") => here().and_then(|repo| naming::data(&repo, rest)),
         Some("forget") => here().and_then(|repo| naming::forget(&repo, rest)),

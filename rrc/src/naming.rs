@@ -245,6 +245,7 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             say("sources", sources);
         }
     }
+    also(repo, &k, analysis.as_ref(), &id)?;
     let text = id.to_string();
     for s in k.ticks.syncs.iter().filter(|s| s.at == text) {
         say("sync", format!("{}{}", s.name, note(&s.note)));
@@ -310,6 +311,46 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// What else the toolkit holds about the place (D159), so that it is met without being asked for: the port's fields
+/// mapped to it, the port's code that names it, the quirks registered and the suspects found in it.
+fn also(repo: &Repo, k: &Knowledge, analysis: Option<&Analysis>, id: &Id) -> Result<(), String> {
+    // The bytes the place covers: a function's, a datum's, else the one.
+    let function = analysis.and_then(|a| a.functions.get(id)).map(|f| f.size);
+    let size = function.or_else(|| k.data.get(id).and_then(|d| d.size)).unwrap_or(1).max(1);
+    let overlaps = |at: &Id, n: u32| {
+        at.module() == id.module()
+            && at.part() == id.part()
+            && at.offset() < id.offset().saturating_add(size)
+            && id.offset() < at.offset().saturating_add(n.max(1))
+    };
+    let mapping = crate::mapping::Mapping::load(repo)?;
+    // A mapping that doesn't resolve is `rrc check`'s to say.
+    if let Ok(mapped) = mapping.resolve(k) {
+        let fields: Vec<&str> =
+            mapped.iter().filter(|m| overlaps(m.covers().0, m.covers().1)).map(|m| m.field.as_str()).take(6).collect();
+        if !fields.is_empty() {
+            say("mapped", format!("the port's {} ({})", fields.join(", "), crate::mapping::MAPPING));
+        }
+    }
+    let text = id.to_string();
+    let short = text.split_once('+').map(|(_, offset)| format!("+{offset}"));
+    let short = short.filter(|_| id.module() == repo.module() && id.part().is_none());
+    let named = crate::sources::naming(&repo.root, &text, short.as_deref(), 3);
+    if !named.is_empty() {
+        let at: Vec<String> = named.iter().map(|(file, line)| format!("{file}:{line}")).collect();
+        say("port", format!("named in {}", at.join(", ")));
+    }
+    let inside = |at: &str| parse_id(at).is_ok_and(|at| overlaps(&at, 1));
+    for q in crate::quirks::Quirks::load(repo)?.quirks.iter().filter(|q| inside(&q.at)) {
+        say("quirk", format!("{} at {}: {}", q.name, q.at, q.what));
+    }
+    for s in crate::quirks::Suspects::load(repo)?.suspects.iter().filter(|s| inside(&s.at)) {
+        let verdict = if s.verdict.is_empty() { "not judged".to_owned() } else { s.verdict.clone() };
+        say("suspect", format!("{} ({}): {}; {verdict}", s.at, s.kind, s.what));
+    }
+    Ok(())
 }
 
 /// The instructions that refer to the `size` bytes at `id`, by kind and function (Ghidra's data

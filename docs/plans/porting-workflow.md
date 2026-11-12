@@ -18,6 +18,15 @@
 | L: the card, `rrc work take` with the question, two routes and a budget; `rrc work done` | D158 |
 | F: `rrc status --all`, what a handoff would say | D158 |
 | G: a flow test walks the toy port through the stages (`the_workflow_s_stages_are_walked`) | D158 |
+| I: a comparison's difference ends with `next`, the moves for it, of more than one kind | D159 |
+| J: `rrc show` says what else is held about a place: sources, mapped fields, the port's code, quirks, suspects | D159 |
+| N: `rrc how WORD`, the recipes by a word, with the port's own (`notes/recipes.md`) | D159 |
+| O: an honest test bench reports `rrc journal` with its result | D157, D159 |
+
+Not built as proposed: J's "the file it was loaded from" and "the sessions and ticks that run it" (each needs a run;
+`rrc files` and `rrc calls` answer them); E's "code no session runs" in the list (`rrc unrun` lists it); the gate
+of stage 7, which `rrc` can't test. K's exemption was first read off `imports = false`; the Arena port sets that
+and reads outside sources, so a port that reads none now says so (`rrc sources none`).
 
 ## 1. What exists, and where it falls short
 

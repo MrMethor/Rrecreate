@@ -735,6 +735,26 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D159. A difference names the next moves; `rrc show` says what else is known; `rrc how`. Accepted 2026-11-12.
+Where `rrc compare` reports a difference it ends with `next`: for a field, its writer's code (`rrc show ID --c`),
+the value over the pass (`rrc watch`) and what is written of it (`rrc sources WORD`); where nothing in the pass
+wrote it, an input not declared or a handler's work; at a transplant's own tick, the mapping; for a frame, the
+drawing code, the presentation's own state and the original's screen; for a sound, the events in order, who wrote
+the device, a driver's answer. A lockstep's census ends with `rrc work`. `rrc show` adds what else the toolkit
+holds about a place: the port's fields mapped to it, the port's code that names it, the quirks registered and the
+suspects found in it, with the sources that cover it (D156). `rrc how WORD...` prints the best-known routes that
+have every word: the playbook's recipes by problem and its questions, and the port's own (`notes/recipes.md`, a
+table like the playbook's). An honest test bench reports `rrc journal` with its result. And a port that reads no
+outside source says so (`rrc sources none --why TEXT`), where D156 read it off `imports = false`.
+**Why:** changes I, J and N of the workflow's plan (D154), for the same problem as D157: an agent goes on with the
+tool it used last because the others have to be thought of, and the playbook's table of where to look was read at
+the start of a session, not at the difference. A line at the difference costs nothing to read and names two kinds
+of evidence besides another comparison. `rrc show` giving the rest unasked removes the step of suspecting it is
+there. Recipes behind a word are found when the problem is met, and a port's own keep what was learned the hard
+way from being learned twice. The sources' exemption was wrong on the first real port it met: Arena takes no
+imports (`rrc sigs name`) and does read wikis, so the two are separate statements.
+**Extends:** D73, D154, D156, D157.
+
 ### D158. Where a port stands is worked out by `rrc status`; the work list and the card. Accepted 2026-11-11.
 `rrc status` names the stage of the workflow (D154) the port is at, the first whose gate lacks something, with what
 it lacks and the next step; `--all` lists every stage's gate, each session of the scope that doesn't match in
@@ -794,7 +814,8 @@ the kinds looked for and not found. The kinds are fixed: for the game, wikis, fo
 reimplementations, tools, patch notes, walkthroughs and bug lists; for the program's parts, the compiler's library,
 the extender, the sound driver and the compression. `rrc sources WORD` and `rrc show NAME` say which sources cover
 a thing; `rrc status` says while no sweep is recorded or a kind was neither found nor looked for; `rrc check`
-checks the file. A port that takes no imports (D46) is asked for no sweep.
+checks the file. A port that reads none (an honest test bench, D46) says so, `rrc sources none --why TEXT`, and is
+asked for no sweep (first read off `imports = false`; the Arena port sets that and reads outside sources: D159).
 **Why:** changes C and K of the workflow's plan (D154). The gates need something to be measured over, and what to
 port is the person's call, so it is a setting they give. Outside sources were a rule (D77: expected, not relied
 upon) with nothing in the toolkit behind it: nothing listed them and nothing brought one up at the moment it would

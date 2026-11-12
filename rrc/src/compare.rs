@@ -80,6 +80,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         census.save(&file)?;
         census.show(name, 20);
         say("census", crate::path_text(&file));
+        if census.differs() || !census.unset.is_empty() || !census.notes.is_empty() {
+            say("next", "rrc work: this with every other session's census, ranked; rrc work take ITEM for the top one");
+        }
         let differing =
             census.fields.len() + usize::from(census.screen.is_some()) + usize::from(census.sound.is_some());
         crate::journal::ended(name, format!("census: {differing} things differ"));
@@ -533,6 +536,13 @@ fn report_sound(repo: &Repo, name: &str, trace: &Trace, t: u64, diff: &SoundDiff
             [name, ports, "--tick", &t.to_string(), "--ticks", "1"].iter().map(|s| s.to_string()).collect();
         crate::watch::ports(repo, &args)?;
     }
+    say(
+        "next",
+        format!(
+            "the events in order: rrc trace {name} --tick {t}; the code that made them: rrc show ID --c of who wrote \
+             the device; a driver's answer the port needs: rrc hook (docs/porting.md, stage 6)"
+        ),
+    );
     Ok(())
 }
 
@@ -753,6 +763,14 @@ fn report_screen(
     // A pixel copied from a buffer (a view drawn off the screen) was decided where the buffer's was drawn.
     let writer = through_copies(repo, name, k, writer, 1, t)?;
     port_code(repo, k, &writer.chain);
+    let code = writer.chain.first().map_or_else(|| "ID".to_owned(), ToString::to_string);
+    say(
+        "next",
+        format!(
+            "its code: rrc show {code} --c; the drawing code's own state at the transplant ([[present]] in \
+             mapping.toml); the original's screen: rrc frame {name} --tick {t} --screen"
+        ),
+    );
     Ok(())
 }
 
@@ -1765,6 +1783,11 @@ fn report(
                 "at the port's first tick: its start() isn't the original's state at its first sync point hit"
             },
         );
+        say(
+            "next",
+            "the mapping first: rrc show ITEM for the item's type and size, against mapping.toml; then how the port \
+             builds the field from it",
+        );
         return Ok(());
     }
     let before = &trace.ticks[(t - 2) as usize];
@@ -1801,6 +1824,26 @@ fn report(
         say("quirk", format!("{} is at {}: does the port keep it (rrc_runtime::keeps({:?}))?", q.name, q.at, q.name));
     }
     port_code(repo, k, &writer.chain);
+    // The next moves, of more than one kind (D159): the code, the value over the run, what others wrote of it.
+    let word = path.split(['.', '[']).next().unwrap_or(path);
+    match writer.chain.first().filter(|_| writer.instruction.is_some()) {
+        Some(function) => say(
+            "next",
+            format!(
+                "its code: rrc show {function} --c; the value over the pass: rrc watch {name} {id} --tick {t} --ticks 1 \
+                 --reads; what is written of it: rrc sources {word}"
+            ),
+        ),
+        None => say(
+            "next",
+            format!(
+                "nothing in the pass wrote it: an input not declared (rrc inputs {name} --tick {t}), or a handler's \
+                 work, which is a subsystem (rrc watch {name} {id} --tick {} --ticks 2); what is written of it: rrc \
+                 sources {word}",
+                t.saturating_sub(1)
+            ),
+        ),
+    }
     Ok(())
 }
 
