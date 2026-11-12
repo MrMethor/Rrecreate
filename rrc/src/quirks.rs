@@ -332,12 +332,20 @@ pub(crate) fn shown(repo: &Repo, name: &str, what: &str) -> Result<(), String> {
     register.save(repo)
 }
 
+/// Everything of the first rule that `rrc check` refuses: what is wrong in the register itself (a quirk with no fix
+/// said), then what the port still owes it ([`open`]).
+pub(crate) fn refused(repo: &Repo) -> Result<Vec<String>, String> {
+    let mut refused = Quirks::load(repo)?.problems(&repo.module());
+    refused.extend(open(repo)?);
+    Ok(refused)
+}
+
 /// The first rule and the register's state, in a line (D160): said by `rrc status` and `rrc check` every time, so
 /// that it is never out of sight.
 pub(crate) fn rule_line(repo: &Repo) -> Result<String, String> {
     let register = Quirks::load(repo)?;
     let unshown = register.quirks.iter().filter(|q| q.shown.is_empty()).count();
-    let refused = open(repo)?.len() + register.problems(&repo.module()).len();
+    let refused = refused(repo)?.len();
     Ok(format!(
         "every bug of the original is reproduced and has a switch, registered when found (rrc quirk): {} registered, \
          {unshown} with a switch not shown yet, {refused} things rrc check refuses",

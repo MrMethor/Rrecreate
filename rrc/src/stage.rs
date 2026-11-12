@@ -285,7 +285,7 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         let from = if first.starts_at_power_on() { "" } else { " --transplant 1" };
         logic.push(lack(what, format!("rrc compare {} --fields{from}", first.name)));
     }
-    let open = crate::quirks::open(repo)?;
+    let open = crate::quirks::refused(repo)?;
     if let Some(first) = open.first() {
         logic.push(lack(format!("rrc check refuses {} things; the first: {first}", open.len()), "rrc check"));
     }
@@ -484,7 +484,7 @@ pub(crate) fn status(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     // What a commit is refused for (D148), whatever the stage: named here unless the stage's own gate just did.
     if at != 4 {
-        let open = crate::quirks::open(repo)?;
+        let open = crate::quirks::refused(repo)?;
         if let Some(first) = open.first() {
             say("open", format!("{} rrc check refuses; the first: {first}", open.len()));
         }

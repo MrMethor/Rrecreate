@@ -291,7 +291,7 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             ),
         );
     }
-    let open = crate::quirks::open(repo)?;
+    let open = crate::quirks::refused(repo)?;
     if let Some(first) = open.first() {
         say("check", format!("rrc check refuses {} things; the first: {first}", open.len()));
     }
