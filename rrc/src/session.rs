@@ -190,16 +190,35 @@ pub fn in_scope(repo: &Repo) -> Result<(Vec<String>, Vec<String>), String> {
     Ok((inside, unmatched))
 }
 
+/// Writes the scope into `rrc.toml` where it is, the rest of the file (its comments among it) as it was.
+fn save_scope(repo: &Repo) -> Result<(), String> {
+    let path = repo.root.join(crate::repo::SETTINGS);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let scope = &repo.settings.port.scope;
+    let names: Vec<toml::Value> = scope.iter().cloned().map(toml::Value::String).collect();
+    let value = (!scope.is_empty()).then(|| toml::Value::Array(names).to_string());
+    let new = crate::repo::with_port_key(&text, "scope", value.as_deref());
+    // It has to read back as what was set, and nothing else changed.
+    let read: Result<crate::repo::Settings, _> = toml::from_str(&new);
+    if read.as_ref().ok() != Some(&repo.settings) {
+        return Err(format!(
+            "{}: its [port] table couldn't be changed in place; write scope = [...] in it by hand",
+            path.display()
+        ));
+    }
+    std::fs::write(&path, new).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// `rrc scope`: the port's scope, or it set to the sessions named.
 pub(crate) fn scope(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &[], &["--clear"])?;
     if a.has("--clear") {
         a.positionals(0, 0, "scope [SESSION...] [--clear]")?;
         repo.settings.port.scope.clear();
-        repo.save_settings()?;
+        save_scope(repo)?;
     } else if !a.positional.is_empty() {
         repo.settings.port.scope = a.positional.clone();
-        repo.save_settings()?;
+        save_scope(repo)?;
     }
     let all = names(repo)?;
     let (inside, unmatched) = in_scope(repo)?;

@@ -215,6 +215,51 @@ impl Repo {
     }
 }
 
+/// `text`, an `rrc.toml`, with `key` of its `[port]` table set to `value` (TOML, on one line) or taken out: the rest
+/// of the file, its comments among it, as it was. What a person wrote in the port's settings isn't `rrc`'s to lose.
+pub fn with_port_key(text: &str, key: &str, value: Option<&str>) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let line = value.map(|value| format!("{key} = {value}"));
+    let mut out: Vec<String> = Vec::new();
+    match lines.iter().position(|l| l.trim() == "[port]") {
+        None => {
+            out.extend(lines.iter().map(|l| l.to_string()));
+            if let Some(line) = line {
+                if out.last().is_some_and(|last| !last.trim().is_empty()) {
+                    out.push(String::new());
+                }
+                out.extend(["[port]".to_owned(), line]);
+            }
+        }
+        Some(header) => {
+            let table = lines[header + 1..].iter().position(|l| l.trim_start().starts_with('['));
+            let end = table.map_or(lines.len(), |i| header + 1 + i);
+            let is_key =
+                |l: &str| l.trim_start().strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='));
+            // The key's lines: from its own to the one that closes its value's brackets.
+            let (from, to) = match (header + 1..end).find(|&i| is_key(lines[i])) {
+                None => (header + 1, header + 1),
+                Some(start) => {
+                    let mut depth = 0i64;
+                    let mut last = start;
+                    for (i, l) in lines.iter().enumerate().take(end).skip(start) {
+                        depth += l.matches('[').count() as i64 - l.matches(']').count() as i64;
+                        last = i;
+                        if depth <= 0 {
+                            break;
+                        }
+                    }
+                    (start, last + 1)
+                }
+            };
+            out.extend(lines[..from].iter().map(|l| l.to_string()));
+            out.extend(line);
+            out.extend(lines[to..].iter().map(|l| l.to_string()));
+        }
+    }
+    out.join("\n") + "\n"
+}
+
 pub fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
@@ -247,6 +292,23 @@ mod tests {
         let text = toml::to_string_pretty(&settings).unwrap();
         assert!(text.contains("[[version]]"), "{text}");
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
+    }
+
+    #[test]
+    fn a_port_s_key_is_set_where_it_is_and_the_rest_kept() {
+        let text = "[game]\nname = \"t\"\n\n[port]\n# The port's program.\ncommand = [\"p\"]\n\n[original]\nprogram = \"T.COM\"\n";
+        let set = with_port_key(text, "scope", Some("[\"a\", \"b*\"]"));
+        assert_eq!(set, text.replace("[port]\n", "[port]\nscope = [\"a\", \"b*\"]\n"), "its comments stay");
+        assert_eq!(toml::from_str::<Settings>(&set).unwrap().port.scope, ["a", "b*"]);
+        // Set again in place, over a value written on several lines; taken out; and with no table yet.
+        let long = set.replace("scope = [\"a\", \"b*\"]", "scope = [\n    \"a\",\n    \"b*\",\n]");
+        assert_eq!(with_port_key(&long, "scope", Some("[\"c\"]")), set.replace("[\"a\", \"b*\"]", "[\"c\"]"));
+        assert_eq!(with_port_key(&long, "scope", None), text);
+        let bare = "[game]\nname = \"t\"\n\n[original]\nprogram = \"T.COM\"";
+        let added = with_port_key(bare, "scope", Some("[\"a\"]"));
+        assert_eq!(added, format!("{bare}\n\n[port]\nscope = [\"a\"]\n"));
+        assert_eq!(toml::from_str::<Settings>(&added).unwrap().port.scope, ["a"]);
+        assert_eq!(with_port_key(bare, "scope", None), format!("{bare}\n"));
     }
 
     #[test]

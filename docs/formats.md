@@ -63,7 +63,8 @@ scope = ["cell", "dungeon*"]    # the sessions the port is to reproduce (D156): 
 ```
 
 `scope` is what the person said to port, as sessions (`rrc scope` sets and lists it). The workflow's gates are
-measured over them; while none is set, over every session.
+measured over them; while none is set, over every session. `rrc scope` writes that one key where it is: the rest of
+the file, a person's comments among it, stays as it was.
 
 ## `rrc.local.toml`: this machine (not committed)
 
