@@ -176,9 +176,9 @@ the game does left the register, D163).
   the port as the original's own input; tried on the vault, and Arena's world (21 actions) reads its keys through
   them.
 - **Frames beyond the first session.** The first dungeon's session matches state, screen and digitized sound at all
-  656 of its world's ticks. Its continuation differs at 13 of 774 frames and one sound: the first is the floor's and
-  ceiling's tables, which the original builds only when its logic asks (a climb out of a chasm built them at a
-  passing height), not yet reproduced. The menus' and systems' screens aren't drawn yet.
+  656 of its world's ticks, and its continuation now at all 775 (2026-11-12: the floor's and ceiling's tables kept
+  as the original's logic builds them, the pits' sides from inside a chasm, the splash into water). The menus' and
+  systems' screens aren't drawn yet.
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
 **Next:** the Arena port taken through the workflow from where the toolkit puts it (its entry files, its sources
