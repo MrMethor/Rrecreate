@@ -157,7 +157,11 @@ eight named data nothing maps or ignores, two suspects not judged, the first ses
 cinematic's sound, and fourteen sessions whose frames or sound differ. Its 58 sessions counted again give a work
 list of 121 items. Its scope is all 58 (the person, 2026-11-12). The first rule's checks found two bugs of the
 original its notes named and its register didn't (both now registered, with switches), and three registered bugs
-whose kept path is still a note, not reproduced: those, and showing each switch, are its first work.
+whose kept path was still a note. Taken through the gates since (2026-11-12): its outside sources are swept and in
+its books (Arena's sound driver is Miles' AIL 2, whose source its author released), the named data are all mapped
+or set aside, and the toolkit puts it at stage 4. One of the three kept paths is reproduced; the other two read
+memory the port doesn't model (a buffer ten routines write their texts to; the renderer's state, for people in
+towns), which its notes say. 14 of 33 quirks' switches are shown by a session.
 
 **Open against M6's row** (measured on the Arena port, 2026-11-11):
 
@@ -165,10 +169,12 @@ whose kept path is still a note, not reproduced: those, and showing each switch,
   made nor compared on a real game; the chime test program alone tests that path (D108, D121).
 - **The actions seam** ([design](design.md) §6.1). Built (D162): a port declares its game's actions, each the PC
   input the original takes for it, and the platform's controls bind the host's keys to them, each still given to
-  the port as the original's own input; tried on the vault. Arena's actions aren't declared yet.
+  the port as the original's own input; tried on the vault, and Arena's world (21 actions) reads its keys through
+  them.
 - **Frames beyond the first session.** The first dungeon's session matches state, screen and digitized sound at all
-  656 of its world's ticks. Its continuation differs at 13 of 774 frames and one sound, and the menus' and systems'
-  screens aren't drawn yet.
+  656 of its world's ticks. Its continuation differs at 13 of 774 frames and one sound: the first is the floor's and
+  ceiling's tables, which the original builds only when its logic asks (a climb out of a chasm built them at a
+  passing height), not yet reproduced. The menus' and systems' screens aren't drawn yet.
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
 **Next:** the Arena port taken through the workflow from where the toolkit puts it (its entry files, its sources
