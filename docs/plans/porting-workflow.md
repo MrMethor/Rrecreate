@@ -22,6 +22,7 @@
 | J: `rrc show` says what else is held about a place: sources, mapped fields, the port's code, quirks, suspects | D159 |
 | N: `rrc how WORD`, the recipes by a word, with the port's own (`notes/recipes.md`) | D159 |
 | O: an honest test bench reports `rrc journal` with its result | D157, D159 |
+| The first rule, the person's (2026-11-12): every bug of the original reproduced and switchable; said first by `rrc status`, `rrc check` and `rrc rules`; a fix required; its switch shown by a session; the notes read for bugs; `rrc work done --bugs` | D160 |
 
 ## Tried on the Arena port (2026-11-12)
 

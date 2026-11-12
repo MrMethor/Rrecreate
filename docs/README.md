@@ -73,6 +73,12 @@ own repository; the game's files are never committed anywhere.
 
 These hold for every session of work. A rule changes only by the person's word or a decision.
 
+**Before all of them, the first rule of every port, the person's (D160):** every bug of the original is reproduced
+in the port and has a switch, kept by default and fixed by it, so that both can be had. Every one, registered the
+moment it is found: a bug left out or fixed by accident shows in no comparison, and one missed can cost the port.
+The toolkit says it first at every step, asks for it when a piece of work is closed, and refuses a commit that names
+a bug without registering it.
+
 **What the work serves**
 
 1. **The toolkit is the goal** (D70). Judge every step by what it adds to the toolkit. A game is ported only as far
@@ -112,7 +118,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-12 (decisions to D159). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-12 (decisions to D160). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -141,7 +147,9 @@ routes. The toolkit drives it: a port is given its entry point when it is made; 
 outside sources; `rrc status` works out the stage the port is at and what its gate lacks; `rrc work` is the ranked
 work list, with a card for the item taken that names a second route; a journal says when a route is stuck; each
 difference ends with the next moves, of more than one kind. A test walks the toy port through the stages
-([the plan](plans/porting-workflow.md) lists what was built and what the trial changed).
+([the plan](plans/porting-workflow.md) lists what was built and what the trial changed). Above the playbook's rules
+stands the first rule (D160, section 4): the toolkit states it first in what an agent runs most, asks for each
+quirk's fix and for a session that shows its switch, and reads the notes for bugs left unregistered.
 
 Tried on the Arena port: the toolkit answers in about a second, and what the assessment below found by hand it says
 unasked. It puts the port at stage 1, because its outside sources aren't in its books; past that, the gates name
@@ -189,7 +197,7 @@ what the person asked for. The ones that shape the project:
   transplants and save states (D17), frames as pixels and sound as events (D25); the person plays the original and
   the toolkit follows (D124).
 - **The original's bugs:** kept in the faithful port, each registered, checked and switchable (D18, D74, D148,
-  D149).
+  D149); every one, as the first rule of a port, never out of an agent's sight (D160).
 - **Knowledge and files:** what is learned is text in the port's repository (D31); tools and ports exchange
   documented files, not code (D38, D61); game files are never committed (D33).
 - **Process:** the agent drives, and no program runs the agent (D34); one design and one list of decisions (D35),

@@ -42,9 +42,13 @@ pub struct Quirk {
     pub at: String,
     /// What happens.
     pub what: String,
-    /// What fixing it does (its toggle).
+    /// What its switch does when the bug is fixed: every bug has both (D160).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub fix: String,
+    /// Where its switch was shown to change a run (D160): the session and the first difference its fix makes there,
+    /// as `rrc compare SESSION --fix NAME` found it while the port, the bug kept, matches the original to that tick.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub shown: String,
     pub provenance: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub evidence: String,
@@ -79,6 +83,13 @@ impl Quirks {
             }
             if q.what.trim().is_empty() {
                 problems.push(wrong("say what happens (what)".into()));
+            }
+            if q.fix.trim().is_empty() {
+                problems.push(wrong(
+                    "no fix: say what its switch does when the bug is fixed (rrc quirk NAME --fix TEXT); every bug \
+                     is kept and has a switch (D160)"
+                        .into(),
+                ));
             }
         }
         problems
@@ -171,6 +182,13 @@ pub(crate) fn open(repo: &Repo) -> Result<Vec<String>, String> {
     for (file, line, text) in crate::sources::unmarked(&repo.root, &names) {
         open.push(format!("{file}:{line}: says a bug or quirk without naming a registered one: {text}"));
     }
+    // The notes and the knowledge too (D160): a bug written down there and nowhere else is a bug missed.
+    for (file, line, text) in crate::sources::unmarked_text(&repo.root, &names) {
+        let text: String = text.chars().take(90).collect();
+        open.push(format!(
+            "{file}:{line}: says a bug or quirk without naming a registered one (or saying `not a bug`): {text}"
+        ));
+    }
     let suspects = Suspects::load(repo)?;
     for name in crate::session::names(repo)? {
         let Some(recorded) = Session::load(repo, &name)?.trace else { continue };
@@ -222,7 +240,7 @@ fn judge(repo: &Repo, a: &Args, at: &str) -> Result<ExitCode, String> {
 pub(crate) fn quirk(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let options = ["--at", "--what", "--fix", "--evidence", "--by"];
     let a = Args::parse(args, &options, &["--remove"])?;
-    let usage = "quirk [NAME (--at ID --what TEXT [--fix TEXT] [--evidence TEXT] [--by WHO] | --remove)]";
+    let usage = "quirk [NAME (--at ID --what TEXT --fix TEXT [--evidence TEXT] [--by WHO] | --remove)]";
     let names = a.positionals(0, 1, usage)?;
     let mut register = Quirks::load(repo)?;
     let Some(name) = names.first() else {
@@ -246,19 +264,29 @@ pub(crate) fn quirk(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         .map(str::to_owned)
         .or_else(|| std::env::var("RRC_BY").ok())
         .unwrap_or_else(|| if q.provenance.is_empty() { "agent".into() } else { q.provenance.clone() });
-    if q.at.is_empty() || q.what.is_empty() {
-        return Err(format!("a quirk needs --at (the original's code) and --what (what happens): {usage}"));
+    if q.at.is_empty() || q.what.is_empty() || q.fix.is_empty() {
+        return Err(format!(
+            "a quirk needs --at (the original's code), --what (what happens) and --fix (what its switch does when the \
+             bug is fixed): {usage}"
+        ));
+    }
+    // What the fix changed is to be shown again.
+    if a.value("--fix").is_some() || a.value("--at").is_some() {
+        q.shown.clear();
     }
     match found {
         Some(i) => register.quirks[i] = q.clone(),
         None => register.quirks.push(q.clone()),
     }
     register.quirks.sort_by(|a, b| a.name.cmp(&b.name));
-    if let Some(problem) = register.problems(&repo.module()).into_iter().next() {
+    // This quirk's own problems: another's (a register kept before a switch was asked of each) don't stop this one.
+    let own = format!("{QUIRKS}: quirk {}: ", q.name);
+    if let Some(problem) = register.problems(&repo.module()).into_iter().find(|p| p.starts_with(&own)) {
         return Err(problem);
     }
     register.save(repo)?;
     say("quirk", format!("{} at {}{}", q.name, q.at, if found.is_some() { " (changed)" } else { "" }));
+    say_switch(&q);
     say_sites(repo, &q.name);
     Ok(ExitCode::SUCCESS)
 }
@@ -269,9 +297,52 @@ fn list(repo: &Repo, register: &Quirks) -> Result<ExitCode, String> {
     }
     for q in &register.quirks {
         say("quirk", format!("{} at {}: {}", q.name, q.at, q.what));
+        say_switch(q);
         say_sites(repo, &q.name);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A quirk's switch: what its fix does, and where a session showed it.
+fn say_switch(q: &Quirk) {
+    say("  fix", if q.fix.is_empty() { "not said: rrc quirk NAME --fix TEXT" } else { &q.fix });
+    match q.shown.is_empty() {
+        false => say("  shown", &q.shown),
+        true => say(
+            "  shown",
+            format!(
+                "not yet: rrc compare SESSION --fix {}, on a session that reaches it and matches with it kept",
+                q.name
+            ),
+        ),
+    }
+}
+
+/// The registered quirks whose switch no session has shown to change a run (D160).
+pub(crate) fn unshown(repo: &Repo) -> Result<Vec<String>, String> {
+    Ok(Quirks::load(repo)?.quirks.into_iter().filter(|q| q.shown.is_empty()).map(|q| q.name).collect())
+}
+
+/// `rrc compare SESSION --fix NAME` found what the fix of quirk `name` changes, where the port matches with the bug
+/// kept: kept with the quirk (D160).
+pub(crate) fn shown(repo: &Repo, name: &str, what: &str) -> Result<(), String> {
+    let mut register = Quirks::load(repo)?;
+    let q = register.quirks.iter_mut().find(|q| q.name == name).ok_or_else(|| format!("no quirk {name}"))?;
+    q.shown = what.to_owned();
+    register.save(repo)
+}
+
+/// The first rule and the register's state, in a line (D160): said by `rrc status` and `rrc check` every time, so
+/// that it is never out of sight.
+pub(crate) fn rule_line(repo: &Repo) -> Result<String, String> {
+    let register = Quirks::load(repo)?;
+    let unshown = register.quirks.iter().filter(|q| q.shown.is_empty()).count();
+    let refused = open(repo)?.len() + register.problems(&repo.module()).len();
+    Ok(format!(
+        "every bug of the original is reproduced and has a switch, registered when found (rrc quirk): {} registered, \
+         {unshown} with a switch not shown yet, {refused} things rrc check refuses",
+        register.quirks.len()
+    ))
 }
 
 /// Where the port's code names quirk `name`, or that it doesn't yet.
@@ -522,22 +593,26 @@ mod tests {
 
     #[test]
     fn the_register_is_checked() {
-        let quirk = |name: &str, at: &str, what: &str| Quirk {
+        let quirk = |name: &str, at: &str, what: &str, fix: &str| Quirk {
             name: name.into(),
             at: at.into(),
             what: what.into(),
+            fix: fix.into(),
             provenance: "human".into(),
             ..Quirk::default()
         };
         let register = Quirks {
             quirks: vec![
-                quirk("overrun", "GAME.EXE+00100", "reads past the table"),
-                quirk("overrun", "GAME.EXE+00200", "again"),
-                quirk("bad name", "OTHER.EXE+00100", ""),
+                quirk("overrun", "GAME.EXE+00100", "reads past the table", "reads 0"),
+                quirk("overrun", "GAME.EXE+00200", "again", "doesn't"),
+                quirk("bad name", "OTHER.EXE+00100", "", "none"),
+                // A bug kept with no switch said: every one has both (D160).
+                quirk("kept_only", "GAME.EXE+00300", "wraps at 256", " "),
             ],
         };
+        let problems = register.problems("GAME.EXE");
         assert_eq!(
-            register.problems("GAME.EXE"),
+            problems[..4],
             [
                 "quirks.toml: quirk overrun: named twice",
                 "quirks.toml: quirk bad name: isn't a name",
@@ -545,5 +620,17 @@ mod tests {
                 "quirks.toml: quirk bad name: say what happens (what)",
             ]
         );
+        assert!(
+            problems[4].starts_with("quirks.toml: quirk kept_only: no fix: say what its switch does"),
+            "{problems:?}"
+        );
+        assert_eq!(problems.len(), 5);
+        // Where a session showed the switch is kept with the quirk, and read back.
+        let shown = Quirks {
+            quirks: vec![Quirk { shown: "play tick 194: enemies[1].x".into(), ..register.quirks[0].clone() }],
+        };
+        let text = toml::to_string_pretty(&shown).unwrap();
+        assert!(text.contains("shown = \"play tick 194: enemies[1].x\""), "{text}");
+        assert_eq!(toml::from_str::<Quirks>(&text).unwrap(), shown);
     }
 }

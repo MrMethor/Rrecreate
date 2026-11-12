@@ -333,6 +333,10 @@ mod tests {
     fn the_rules_are_the_playbook_s_own_words() {
         let rules = super::between(super::PLAYBOOK, "**Rules:**", "**Where to start");
         assert!(rules.starts_with("**Rules:**") && rules.contains("Plan before running"), "{rules}");
+        assert!(
+            rules.contains("The first rule") && rules.contains("has a switch"),
+            "the first rule is printed: {rules}"
+        );
         assert!(rules.contains("registered as it's found") && !rules.contains("Where to start"), "{rules}");
         let quirks = super::between(super::PLAYBOOK, "## Quirks", "\n## ");
         assert!(quirks.contains("rrc_runtime::keeps") && !quirks.contains("## Naming"), "{quirks}");

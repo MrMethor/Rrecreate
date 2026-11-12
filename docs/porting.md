@@ -44,6 +44,21 @@ the original judges the port, not the code it was read from.
 
 **Rules:**
 
+**The first rule, the person's (D160): every bug of the original is reproduced in the port and has a switch.** Kept
+by default, so the faithful port does what the original does; fixed by its switch, so both can be had. Every one,
+with no exception:
+
+- **registered the moment it is found** (`rrc quirk NAME --at ID --what TEXT --fix TEXT`), before the code that
+  reproduces it is finished and before anything else is looked at: a note, a comment or a memory doesn't count;
+- **branched on** in the port: `if rrc_runtime::keeps("NAME") { the original's way } else { the fix }`;
+- **shown:** its switch tried on a session that reaches it (`rrc compare SESSION --fix NAME`), which keeps where the
+  fix changes the run.
+
+A bug left out, or fixed by accident while the code was made tidy, shows in no comparison and can't be found again:
+one missed can cost the whole port. So it is never out of sight. `rrc status` and `rrc check` say the register's
+state first, every time; `rrc check` refuses a commit while a bug is named in the code, the notes or the knowledge
+without being registered; and closing an item asks which bugs it met (`rrc work done --bugs`).
+
 1. **Plan before running.** Write the question down and the cheapest way to answer it from the sources
    above. A run checks an answer; it is not how to look for one.
 2. **Don't play the game to find things.** Script a session from what the analysis, the sources and the
@@ -59,7 +74,7 @@ the original judges the port, not the code it was read from.
    few tries of one approach haven't answered, change the source, not the number of tries.
 6. **The original is the specification.** Code, sources and files explain it; where they disagree with how
    the original runs, the run wins, and a disagreement worth keeping is a note or a quirk.
-7. **Every bug of the original is registered as it's found** (`rrc quirk`, "Quirks" below), and the port branches on
+7. **Every bug of the original is registered as it's found** (the first rule; `rrc quirk`, "Quirks" below), and the port branches on
    `rrc_runtime::keeps`. A comment or a note saying so doesn't count: `rrc check` refuses it. Look for them too: `rrc
    suspects` on every session, and each finding judged.
 8. **Nothing departs from the original silently.** Where the port would do other than the original does (a guard
@@ -117,7 +132,7 @@ wrong in an earlier one is fixed there first (rule 12). Stages 4 to 6 repeat one
 | **1 Survey** | Know the program before porting any of it | The analysis is in; there is a session, a sync point and a boundary value, and the session is recorded as the knowledge is now; the outside sources are swept, each kind found or looked for |
 | **2 Sessions** | Fix what is to be reproduced | The scope is set and names sessions; each is recorded as the knowledge is now |
 | **3 Skeleton** | A port that compares before it does anything | Something is mapped and the port's program named; every session has a census of its recording; no named datum is neither mapped nor ignored |
-| **4 Logic** | The simulation, subsystem by subsystem | No census has a field the port leaves otherwise or unset, or a path noted as not ported; every session matches in its mapped fields to its end with nothing fed; `rrc check` refuses nothing |
+| **4 Logic** | The simulation, subsystem by subsystem | No census has a field the port leaves otherwise or unset, or a path noted as not ported; every session matches in its mapped fields to its end with nothing fed; `rrc check` refuses nothing; every quirk's switch has been shown by a session |
 | **5 Data and start-up** | The port loads the game itself | Every session that starts at power-on matches in its fields from the port's own start |
 | **6 Presentation** | Frames, then sound | Every session matches from its start in state, frames and each device the original sounds in it; no census has a frame or a sound that differs |
 | **7 Play** | A port a person plays | Not something `rrc` tests: it plays from power-on in a window, saves load both ways with the original, and what the person's play-test found became sessions. The person closes it |
@@ -148,8 +163,9 @@ that nothing compared since (the fields alone before stage 6), so one command br
 5. **Compare** from a transplant just before the item's first difference; at each divergence, the table below. When
    the card's comparisons are spent `rrc` says so (`budget`): change the route, and take the card again with it.
 6. **Close:** `rrc work --run`, the item gone from the list; the suspects of the sessions it touched judged; `rrc
-   check`; `rrc work done`, which says what the item took (it goes in the journal); a route found the hard way
-   written as a recipe; commit.
+   check`; `rrc work done --bugs none` (or `--bugs NAME,...`): closing asks which bugs of the original the item met,
+   each one registered (the first rule), and says what the item took (it goes in the journal); a route found the
+   hard way written as a recipe; commit.
 
 **When the port differs,** `rrc compare` ends what it found with `next`: the moves for that difference, always of
 more than one kind (its writer's code, the value over the pass, what is written of it), so the other tool is met
@@ -799,12 +815,20 @@ source. Register the bug, and branch on it where the port does that code: `if rr
 Comparisons keep every quirk. A quirk that depends on the original's memory layout (a read past a table
 returns its neighbour) reproduces that neighbour's data deliberately.
 
+Every quirk has both sides (D160). `--fix` says what its switch does, and is asked for when the bug is registered.
+`rrc compare SESSION --fix NAME` then shows the switch: where the port matches the original with the bug kept and
+differs with it fixed, it keeps the session, the tick and what differed with the quirk (`shown`), and `rrc quirk`
+lists it. A quirk no session has shown is one of stage 4's lacks: it wants a session that reaches it.
+
 A comparison only shows what a session reaches and what's mapped, so a bug fixed by accident elsewhere shows
 nowhere: this is why they're registered as they're found. `rrc check` refuses (and `rrc status` names, D148) a comment
 in the port's code that says `bug` or `quirk` with no registered quirk named within two lines (a bug of the port's own
 says `not the original's`), a `keeps` not registered, a
-quirk nothing branches on, a session's run that `rrc suspects` hasn't looked through, and a suspect not judged (`rrc
-suspects --judge ID --quirk NAME`, or `--not-a-bug WHY`, kept in `suspects.toml`). `rrc hooks` writes a commit hook that
+quirk nothing branches on, a quirk with no fix said, a session's run that `rrc suspects` hasn't looked through, and a
+suspect not judged (`rrc suspects --judge ID --quirk NAME`, or `--not-a-bug WHY`, kept in `suspects.toml`). The notes
+and the knowledge are read the same way (D160): a line of `notes/` or `knowledge/` that says `bug`, `quirk`, `glitch`
+or `buggy` names a registered quirk within two lines, or says `not a bug`, or is about the register itself (`rrc
+quirk`, `quirks.toml`); a bug written down there and nowhere else is a bug the port can lose. `rrc hooks` writes a commit hook that
 refuses a commit while `rrc check` fails (`rrc init` does too); don't skip it. `rrc rules` prints the rules as they're
 written, with the port's own from `RULES.md`, for the start of a session and after a summary.
 

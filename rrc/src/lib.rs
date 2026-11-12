@@ -68,7 +68,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
   work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]
                          take an item: the question, the route chosen, one other considered, and after how
                          many comparisons (6) the route changes; rrc says when they are spent
-  work done | work drop  close the card (what it took goes in the journal), or drop it
+  work done --bugs none|NAME,...
+                         close the card, saying the bugs of the original the item met, each registered
+                         (what it took goes in the journal)
+  work drop              drop the card
   game [FOLDER] [--add-version NAME [--without FILE,...]]
                          the person's copy of the game (FOLDER is kept in rrc.local.toml) and which
                          version it is; --add-version records its files as a version the port supports
@@ -231,9 +234,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          whose values, read as T (u16 unless --type says), meet every condition over
                          the session's ticks: changed:A-B, same:A-B (at every tick between), more:A-B,
                          less:A-B, is:T=V; --step N: every N bytes (1)
-  quirk [NAME (--at ID --what TEXT [--fix TEXT] [--evidence TEXT] [--by WHO] | --remove)]
-                         the quirk register (quirks.toml): the original's bugs the port keeps, each
-                         with the port's code that names it; or one added, changed or removed
+  quirk [NAME (--at ID --what TEXT --fix TEXT [--evidence TEXT] [--by WHO] | --remove)]
+                         the quirk register (quirks.toml): the original's bugs the port keeps, each with
+                         what its switch does when fixed, where a session showed the switch, and the
+                         port's code that names it; or one added, changed or removed. Every bug of the
+                         original is registered when found: the first rule
   suspects SESSION [--lines N]
                          quirk candidates in the session's run: the original's instructions that
                          reach past named data's ends, and that read memory nothing wrote; kept in

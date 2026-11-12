@@ -69,6 +69,62 @@ pub fn unmarked(root: &Path, names: &[String]) -> Vec<(String, usize, String)> {
     found
 }
 
+/// The words that call something a bug.
+const BUG_WORDS: [&str; 7] = ["bug", "bugs", "buggy", "quirk", "quirks", "glitch", "glitches"];
+/// What a line says that makes its bug word no bug of the original's left out: it denies one, or it is about the
+/// register and its tools.
+const NOT_ONE: [&str; 7] =
+    ["not the original's", "not a bug", "no bug", "rrc quirk", "rrc suspects", "quirks.toml", "keeps("];
+
+/// Whether `text` has one of [`BUG_WORDS`] as a word.
+fn says_bug(text: &str) -> bool {
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|word| BUG_WORDS.contains(&word.to_ascii_lowercase().as_str()))
+}
+
+/// Where the port's notes and knowledge (`notes/`, `knowledge/`) call something a bug or a quirk without naming a
+/// quirk of `names` on that line or the two either side, nor saying it isn't one (D160): (path, line number, the
+/// line). A bug written down there and nowhere else is one the port can lose.
+pub fn unmarked_text(root: &Path, names: &[String]) -> Vec<(String, usize, String)> {
+    fn files(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                files(&path, found);
+            } else if path.metadata().is_ok_and(|m| m.len() <= MAX_FILE) {
+                found.push(path);
+            }
+        }
+    }
+    let mut paths = Vec::new();
+    for dir in ["notes", "knowledge"] {
+        files(&root.join(dir), &mut paths);
+    }
+    let mut found = Vec::new();
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+        let lines: Vec<&str> = text.lines().collect();
+        for at in unmarked_text_lines(&lines, names) {
+            found.push((relative.clone(), at + 1, lines[at].trim().to_owned()));
+        }
+    }
+    found
+}
+
+/// The lines of a note that say a bug word, don't say it isn't one of the original's left out, and have none of
+/// `names` near.
+fn unmarked_text_lines(lines: &[&str], names: &[String]) -> Vec<usize> {
+    let says = |line: &str| says_bug(line) && !NOT_ONE.iter().any(|not| line.contains(not));
+    let named = |at: usize| {
+        let near = &lines[at.saturating_sub(2)..(at + 3).min(lines.len())];
+        near.iter().any(|line| names.iter().any(|name| self::names(line, name)))
+    };
+    (0..lines.len()).filter(|&at| says(lines[at]) && !named(at)).collect()
+}
+
 /// A line's comment, if it has one: what's after its `//`, `/*` or `#`, or all of it when it goes on a block's ` * `.
 fn comment(line: &str) -> Option<&str> {
     let at = ["//", "/*", "#"].iter().filter_map(|mark| line.find(mark)).min();
@@ -81,14 +137,7 @@ fn comment(line: &str) -> Option<&str> {
 /// The lines whose comment says `quirk` or `bug` as a word, and doesn't say it's `not the original's` (a port's own), with
 /// none of `names` near.
 fn unmarked_lines(lines: &[&str], names: &[String]) -> Vec<usize> {
-    let says = |line: &str| {
-        comment(line).is_some_and(|text| {
-            !text.contains("not the original's")
-                && text
-                    .split(|c: char| !c.is_alphanumeric() && c != '_')
-                    .any(|word| matches!(word.to_ascii_lowercase().as_str(), "quirk" | "quirks" | "bug" | "bugs"))
-        })
-    };
+    let says = |line: &str| comment(line).is_some_and(|text| !text.contains("not the original's") && says_bug(text));
     let named = |at: usize| {
         let near = &lines[at.saturating_sub(2)..(at + 3).min(lines.len())];
         near.iter().any(|line| names.iter().any(|name| self::names(line, name)))
@@ -221,6 +270,24 @@ mod tests {
         assert_eq!(unmarked_lines(&lines, &names), [0, 9], "a comment's word, and only the original's");
         let near = ["// a bug", "x", "if rrc_runtime::keeps(\"overrun\") {"];
         assert_eq!(unmarked_lines(&near, &names), [] as [usize; 0], "two lines off is near");
+    }
+
+    #[test]
+    fn a_bug_said_in_the_notes_names_its_quirk() {
+        let names = ["overrun".to_owned()];
+        let lines = [
+            "The sixth enemy reads past the table: a bug.",
+            "",
+            "",
+            "The seed is never reset, which is a glitch: quirk overrun",
+            "and its neighbour's line is near enough.",
+            "",
+            "",
+            "Debugging showed nothing here, and this is not a bug: the table is longer.",
+            "Every bug is registered with rrc quirk as it is found.",
+            "The loop is Buggy at the wall.",
+        ];
+        assert_eq!(unmarked_text_lines(&lines, &names), [0, 9]);
     }
 
     #[test]

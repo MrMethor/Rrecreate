@@ -1,0 +1,8 @@
+[[quirk]]
+name = "bounce_step"
+at = "TOY.EXE+002FD"
+what = "an enemy that crosses a wall is stepped back twice its speed from where it overshot, so it ends off the wall"
+fix = "the enemy is put on the wall"
+shown = "play tick 194: enemies[1].x"
+provenance = "human"
+evidence = "testbins/src/toy.c, update: e->x += 2 * e->dx * elapsed after the turn; rrc watch play enemies --tick 194"

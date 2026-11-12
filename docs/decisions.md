@@ -735,6 +735,29 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D160. The first rule of a port: every bug of the original is reproduced and has a switch, and is never out of sight. Accepted 2026-11-12, with the person.
+The person's rule, set above the playbook's others: every bug of the original is reproduced in the port and has a
+switch, kept by default and fixed by it, so that both can be had; every one, registered the moment it is found. It
+is said first wherever an agent looks: the playbook's rules, and so `rrc rules`, open with it; `rrc status` and `rrc
+check`, and so every commit, begin with a line that states it with the register's numbers; a new port's `AGENTS.md`
+and `RULES.md` carry it; the hub has it before its rules. And more of it is checked. A quirk is registered with what
+its fix does (`--fix`, required; a register with a quirk that has none is refused). `rrc compare SESSION --fix NAME`
+keeps with the quirk where its switch changed a run in which the port, the bug kept, matches the original (`shown`),
+and a quirk no session has shown is one of stage 4's lacks. `rrc check` refuses a bug named in the port's notes or
+knowledge (`bug`, `quirk`, `glitch`, `buggy`) with no registered quirk named within two lines, as D148 did for
+comments in the code, unless the line says it isn't one or is about the register. `rrc work done` asks which bugs of
+the original the item met: `--bugs none`, or their registered names. The toy example keeps one of its original's own
+(`bounce_step`), with its switch, and the tests show it.
+**Why:** the person: if even one bug is missed the work may as well start over, because a bug left out or fixed by
+accident shows in no comparison and is never found again; and the last port's agent did forget (D148: some 25 bugs
+as comments, one registered). D148 made the rule a refusal, and it was still one rule of fourteen, read at a
+session's start. What can't be afforded to be forgotten has to be in front of the agent at every step: the first
+line of the two commands it runs most, and a question it must answer to close each piece of work. The fix and its
+showing are asked for because the rule has two sides: a bug registered with no switch, or with a switch nothing
+ever ran, is half kept. The notes are read because that is where a bug found while reading code is first written,
+and where Arena's were left.
+**Extends:** D18, D74, D148, D149, D158.
+
 ### D159. A difference names the next moves; `rrc show` says what else is known; `rrc how`. Accepted 2026-11-12.
 Where `rrc compare` reports a difference it ends with `next`: for a field, its writer's code (`rrc show ID --c`),
 the value over the pass (`rrc watch`) and what is written of it (`rrc sources WORD`); where nothing in the pass

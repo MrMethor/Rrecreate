@@ -396,8 +396,14 @@ fn quirk_candidates_are_found_and_registered() {
     std::fs::remove_file(rrc.repo.join("src/named.rs")).unwrap();
 
     // Registered, then named in the port's code.
-    let added = rrc.ok(&["quirk", "overrun", "--at", "T.COM+00005", "--what", "writes a byte past table"]);
+    // Every bug has both sides (D160): what its switch does is asked for with it.
+    let overrun = ["quirk", "overrun", "--at", "T.COM+00005", "--what", "writes a byte past table"];
+    let (refused, ok) = rrc.run(&overrun);
+    assert!(!ok && refused.contains("--fix (what its switch does when the bug is fixed)"), "{refused}");
+    let added = rrc.ok(&[&overrun[..], &["--fix", "stops at the table's end"]].concat());
     assert!(added.contains("quirk     overrun at T.COM+00005"), "{added}");
+    assert!(added.contains("  fix     stops at the table's end"), "{added}");
+    assert!(added.contains("  shown   not yet: rrc compare SESSION --fix overrun"), "{added}");
     assert!(added.contains("no code names it yet: branch on rrc_runtime::keeps(\"overrun\")"), "{added}");
     assert!(rrc.ok(&["suspects", "s"]).contains("by T.COM+00005 (quirk overrun)"));
     std::fs::create_dir_all(rrc.repo.join("src")).unwrap();
@@ -407,7 +413,7 @@ fn quirk_candidates_are_found_and_registered() {
     assert!(listed.contains("quirk     overrun at T.COM+00005: writes a byte past table"), "{listed}");
     assert!(listed.contains("  port    src/sim.rs:1"), "{listed}");
     assert!(rrc.ok(&["check"]).contains("quirks    1"));
-    let (refused, ok) = rrc.run(&["quirk", "other", "--at", "nowhere", "--what", "x"]);
+    let (refused, ok) = rrc.run(&["quirk", "other", "--at", "nowhere", "--what", "x", "--fix", "y"]);
     assert!(!ok && refused.contains("quirk other: at:"), "{refused}");
     // The rule (D148): every bug registered and branched on, every suspect judged, or check refuses.
     std::fs::write(rrc.repo.join("src/more.rs"), "// a bug: it reads on past the end\n").unwrap();
@@ -415,6 +421,23 @@ fn quirk_candidates_are_found_and_registered() {
     assert!(!ok && refused.contains("src/more.rs:1: says a bug or quirk"), "{refused}");
     assert!(rrc.ok(&["status"]).contains("src/more.rs:1"), "status names it");
     std::fs::write(rrc.repo.join("src/more.rs"), "// a bug: quirk overrun\n").unwrap();
+    let check = rrc.ok(&["check"]);
+    // The first rule is said at every check, and by status first of all (D160).
+    let rule = "bugs      every bug of the original is reproduced and has a switch, registered when found (rrc quirk): 1 \
+                registered, 1 with a switch not shown yet, 0 things rrc check refuses";
+    assert!(check.contains(rule), "{check}");
+    assert!(rrc.ok(&["status"]).starts_with(rule));
+    // The notes and the knowledge are read too: a bug written there and nowhere else is a bug the port can lose.
+    std::fs::write(rrc.repo.join("notes/loops.md"), "The copy runs one past the table, a bug.\n").unwrap();
+    let (refused, ok) = rrc.run(&["check"]);
+    assert!(
+        !ok && refused.contains("notes/loops.md:1: says a bug or quirk without naming a registered one"),
+        "{refused}"
+    );
+    std::fs::write(rrc.repo.join("notes/loops.md"), "The copy runs one past the table: quirk overrun.\n").unwrap();
+    rrc.ok(&["check"]);
+    std::fs::write(rrc.repo.join("notes/loops.md"), "The table's end looked like a bug; not a bug: it is longer.\n")
+        .unwrap();
     rrc.ok(&["check"]);
     std::fs::write(rrc.repo.join("src/more.rs"), "if rrc_runtime::keeps(\"unheard\") {}\n").unwrap();
     let (refused, ok) = rrc.run(&["check"]);
@@ -432,6 +455,11 @@ fn quirk_candidates_are_found_and_registered() {
     // The rules as written; and the commit hook.
     let rules = rrc.ok(&["rules"]);
     assert!(rules.contains("Plan before running") && rules.contains("## Quirks"), "{rules}");
+    let first = rules.find("The first rule, the person's (D160): every bug of the original is reproduced");
+    assert!(
+        first.is_some_and(|at| at < rules.find("Plan before running").unwrap()),
+        "the first rule comes first: {rules}"
+    );
     std::fs::write(rrc.repo.join("RULES.md"), "Never cross the streams.\n").unwrap();
     assert!(rrc.ok(&["rules"]).contains("Never cross the streams."));
     std::fs::remove_dir_all(&dir).ok();
@@ -773,6 +801,7 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     rrc.ok(&["quirk", "tried", "--at", "VAULT.EXE+00000", "--what", "for the test", "--fix", "none"]);
     let tried = rrc.ok(&["compare", "play", "--fix", "tried"]);
     assert!(tried.contains("fixed     tried:"), "{tried}");
+    assert!(tried.contains("shown     not here: tried's fix changes nothing in these ticks"), "{tried}");
     rrc.ok(&["quirk", "tried", "--remove"]);
     // Until the first level, the map's buffer holds the far heap's links, which the port leaves unset
     // (D102): who wrote them is the C library's allocator.
@@ -918,6 +947,7 @@ fn a_port_matches_the_original_tick_by_tick() {
         &port,
         &[
             "mapping.toml",
+            "quirks.toml",
             "knowledge/functions.tsv",
             "knowledge/data.tsv",
             "knowledge/types.toml",
@@ -971,7 +1001,21 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(progress.contains(state), "{progress}");
     // A bug: the port doesn't count a bounce. The divergence, and who wrote the original's value; a quirk
     // registered at that code is named (D74).
-    rrc.ok(&["quirk", "bounces", "--at", "TOY.EXE+002FF", "--what", "counts a bounce"]);
+    // The first rule (D160): the original's own bug is kept and has a switch, and a session that reaches it shows
+    // the switch: the port matches with the bug kept, differs with it fixed, and where is kept with the quirk.
+    let quirks = rrc.repo.join("quirks.toml");
+    let register = std::fs::read_to_string(&quirks).unwrap();
+    assert!(register.contains("shown = \"play tick 194: enemies[1].x\""), "{register}");
+    std::fs::write(&quirks, register.replace("shown = \"play tick 194: enemies[1].x\"\n", "")).unwrap();
+    assert!(rrc.ok(&["quirk"]).contains("  shown   not yet: rrc compare SESSION --fix bounce_step"));
+    let (fixed, ok) = rrc.run(&["compare", "play", "--fix", "bounce_step"]);
+    assert!(!ok && fixed.contains("diverges  at tick 194 (play): 1 field differ"), "{fixed}");
+    assert!(fixed.contains("  field   enemies[1].x: original 3, port 0"), "the enemy put on the wall: {fixed}");
+    let shown = "shown     bounce_step: its switch changes play tick 194: enemies[1].x; kept in quirks.toml";
+    assert!(fixed.contains(shown), "{fixed}");
+    assert_eq!(std::fs::read_to_string(&quirks).unwrap(), register, "as the example has it");
+    assert!(rrc.ok(&["quirk"]).contains("  shown   play tick 194: enemies[1].x"));
+    rrc.ok(&["quirk", "bounces", "--at", "TOY.EXE+002FF", "--what", "counts a bounce", "--fix", "doesn't count it"]);
     rrc.env.push(("TOY_BUG", "1"));
     let (diverged, ok) = rrc.run(&["compare", "play"]);
     assert!(!ok, "a divergence fails: {diverged}");
@@ -1017,7 +1061,7 @@ fn a_port_matches_the_original_tick_by_tick() {
     let journal = rrc.ok(&["journal", "--lines", "2"]);
     assert!(journal.contains("stuck     1 times a comparison ended at the same first difference 3 times running"));
     assert!(journal.contains("ran       compare play -> tick 194: enemies[1].hits"), "{journal}");
-    assert!(journal.contains("mix       compare 4, code 3, sources 0, files 0, runs "), "{journal}");
+    assert!(journal.contains("mix       compare 5, code 3, sources 0, files 0, runs "), "{journal}");
     rrc.ok(&["quirk", "bounces", "--remove"]);
     // The enemies fed from the original (D84): the rest is compared over the whole session.
     let fed = rrc.ok(&["compare", "play", "--feed", "enemies"]);
@@ -1107,7 +1151,7 @@ fn the_workflow_s_stages_are_walked() {
     let (dir, mut rrc) = setup_file("stages", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
     let port = built("toy-port", "toy-port", true);
     let knowledge = ["functions.tsv", "data.tsv", "types.toml", "ticks.toml"].map(|f| format!("knowledge/{f}"));
-    let files = ["mapping.toml", "sessions/play.toml", "sessions/play.inputs", "src/main.rs"];
+    let files = ["mapping.toml", "quirks.toml", "sessions/play.toml", "sessions/play.inputs", "src/main.rs"];
     example_repository(&rrc, "toy", &port, &[&files[..], &knowledge.each_ref().map(String::as_str)[..]].concat());
     rrc.env.push(("RRC_SNAPSHOT_MS", "1000"));
     let status = |rrc: &Rrc| rrc.ok(&["status"]);
@@ -1191,10 +1235,16 @@ fn the_workflow_s_stages_are_walked() {
     // The port counts it: the census is clean, the card closes with what it took, and the fields match.
     rrc.env.pop();
     rrc.ok(&["compare", "play", "--lockstep"]);
-    let done = rrc.ok(&["work", "done"]);
+    // Closing asks which bugs of the original the item met (D160): none, or their registered names.
+    let (refused, ok) = rrc.run(&["work", "done"]);
+    assert!(!ok && refused.contains("the first rule: every bug of the original is reproduced and has a switch"));
+    let (refused, ok) = rrc.run(&["work", "done", "--bugs", "bounce_wall"]);
+    assert!(!ok && refused.contains("no quirk bounce_wall: register it first"), "{refused}");
+    let done = rrc.ok(&["work", "done", "--bugs", "bounce_step"]);
+    assert!(done.contains("; bugs of the original met: bounce_step"), "{done}");
     assert!(done.contains("closed    enemies: not in the censuses as they stand"), "{done}");
-    assert!(done.contains("took      enemies: 3 commands over "), "{done}");
-    assert!(rrc.ok(&["journal"]).contains("item      enemies: 3 commands over "));
+    assert!(done.contains("took      enemies: 5 commands over "), "{done}");
+    assert!(rrc.ok(&["journal"]).contains("item      enemies: 5 commands over "));
     let s = status(&rrc);
     at(&s, "4 Logic");
     assert!(s.contains(
@@ -1221,7 +1271,8 @@ fn the_workflow_s_stages_are_walked() {
     assert!(all.contains(lacks) && all.contains("gate      7 Play: lacks: play isn't tested by rrc"), "{all}");
     let play = "session   play (209 ticks): fields match from the port's start; census: 0 fields, 0 unset, 0 notes";
     assert!(all.contains(play) && all.contains("work      0 items in the censuses (rrc work)"), "{all}");
-    assert!(all.contains("quirks    0 registered") && all.contains("mix       compare "), "{all}");
+    assert!(all.contains("quirks    1 registered") && all.contains("mix       compare "), "{all}");
+    assert!(all.starts_with("bugs      every bug of the original is reproduced and has a switch"), "{all}");
     assert!(all.contains("next      the port's presentation draws no frames yet: Presentation::draw"), "{all}");
     // The port's code changed since: what was compared before it is said to be, and counted again.
     let main = rrc.repo.join("src/main.rs");
@@ -1251,6 +1302,7 @@ fn a_session_starts_from_another_s_tick() {
         &port,
         &[
             "mapping.toml",
+            "quirks.toml",
             "knowledge/functions.tsv",
             "knowledge/data.tsv",
             "knowledge/types.toml",
@@ -1339,6 +1391,7 @@ fn a_play_is_followed_in_parts_and_compared_in_lockstep() {
         &port,
         &[
             "mapping.toml",
+            "quirks.toml",
             "knowledge/functions.tsv",
             "knowledge/data.tsv",
             "knowledge/types.toml",

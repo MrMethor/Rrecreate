@@ -25,7 +25,11 @@ const SHOWN: usize = 10;
 const BUDGET: usize = 6;
 const CARD: &str = "card.json";
 const USAGE: &str = "work [--run] [--lines N] | work take ITEM --question TEXT --route TEXT --other TEXT [--budget N] | \
-                     work done | work drop";
+                     work done --bugs none|NAME,... | work drop";
+/// What closing an item asks (D160).
+const BUGS: &str = "the first rule: every bug of the original is reproduced and has a switch. Which did this item \
+                    meet? rrc work done --bugs none, or --bugs NAME,... (each registered: rrc quirk NAME --at ID --what \
+                    TEXT --fix TEXT)";
 
 /// A thing the censuses count: its layer (0 fields, 1 notes, 2 frames, 3 sound), what kind of line it is, its name,
 /// in how many passes and sessions, and where first.
@@ -204,11 +208,11 @@ pub(crate) fn show(items: &[Item], shown: usize) {
 
 /// `rrc work`: the list, the censuses counted again, or the card taken, closed or dropped.
 pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--lines", "--question", "--route", "--other", "--budget"], &["--run"])?;
+    let a = Args::parse(args, &["--lines", "--question", "--route", "--other", "--budget", "--bugs"], &["--run"])?;
     match a.positionals(0, 2, USAGE)? {
         [] => {}
         [verb, item] if verb == "take" => return take(repo, &a, item),
-        [verb] if verb == "done" => return done(repo),
+        [verb] if verb == "done" => return done(repo, &a),
         [verb] if verb == "drop" => {
             Card::drop(repo)?;
             say("dropped", "the card: nothing is taken");
@@ -348,10 +352,22 @@ fn take(repo: &Repo, a: &Args, item: &str) -> Result<ExitCode, String> {
 }
 
 /// `rrc work done`: the card closed, with whether its item still stands in the censuses and what it took.
-fn done(repo: &Repo) -> Result<ExitCode, String> {
+fn done(repo: &Repo, a: &Args) -> Result<ExitCode, String> {
     let Some(card) = Card::load(repo)? else {
         return Err("no card is open: rrc work take ITEM ...".into());
     };
+    // The bugs of the original the item met (D160): said at every close, each one registered.
+    let bugs = a.value("--bugs").map(str::trim).filter(|bugs| !bugs.is_empty()).ok_or(BUGS)?;
+    let bugs: Vec<&str> = match bugs {
+        "none" => Vec::new(),
+        names => names.split(',').map(str::trim).filter(|name| !name.is_empty()).collect(),
+    };
+    let register = crate::quirks::Quirks::load(repo)?;
+    if let Some(unknown) = bugs.iter().find(|name| !register.quirks.iter().any(|q| q.name == **name)) {
+        return Err(format!(
+            "no quirk {unknown}: register it first (rrc quirk {unknown} --at ID --what TEXT --fix TEXT), then close"
+        ));
+    }
     let standing = crate::stage::standing(repo)?;
     let left = list(&standing).into_iter().find(|i| i.name() == card.item);
     match &left {
@@ -365,12 +381,13 @@ fn done(repo: &Repo) -> Result<ExitCode, String> {
     let since = card.since(&journal);
     let minutes = journal.last().map_or(0, |e| e.t.saturating_sub(card.t)) / 60;
     let took = format!(
-        "{}: {} commands over {} ({}){}",
+        "{}: {} commands over {} ({}){}; bugs of the original met: {}",
         card.item,
         since.len(),
         crate::journal::span(minutes),
         crate::journal::mix(since),
-        if left.is_some() { ", its item still standing" } else { "" }
+        if left.is_some() { ", its item still standing" } else { "" },
+        if bugs.is_empty() { "none".to_owned() } else { bugs.join(", ") }
     );
     say("took", &took);
     say("recipe", "a route found the hard way? Write it down before going on (docs/porting.md, \"Recipes\"; notes/)");

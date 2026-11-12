@@ -367,6 +367,38 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         };
         crate::journal::ended(name, end);
     }
+    if let Some(quirk) = fixed {
+        // What its fix changes here (D160): a switch is shown where the port matches the original with the bug kept,
+        // and differs with it fixed.
+        let first = match (&diverged, &drawn, &heard) {
+            (Some((t, found)), _, _) => Some((*t, found[0].path.clone())),
+            (None, Some((t, _)), _) => Some((*t, "the screen".to_owned())),
+            (None, None, Some((t, _))) => Some((*t, "the sound".to_owned())),
+            (None, None, None) => None,
+        };
+        match first {
+            None => say(
+                "shown",
+                format!("not here: {quirk}'s fix changes nothing in these ticks, so no pass of them reaches it"),
+            ),
+            Some((t, what)) => {
+                let kept = crate::progress::Outcome::kept(repo, name)?;
+                if kept.values().any(|o| o.recorded == recorded.hash && o.matched >= t) {
+                    let text = format!("{name} tick {t}: {what}");
+                    crate::quirks::shown(repo, quirk, &text)?;
+                    say("shown", format!("{quirk}: its switch changes {text}; kept in quirks.toml"));
+                } else {
+                    say(
+                        "shown",
+                        format!(
+                            "not yet: with the bug kept the port has to match the original to tick {t} first (rrc \
+                             compare {name}, without --fix)"
+                        ),
+                    );
+                }
+            }
+        }
+    }
     let code = match diverged {
         None if heard.is_some() => {
             let (t, diff) = heard.as_ref().expect("a sound that differs");

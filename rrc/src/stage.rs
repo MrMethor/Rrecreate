@@ -289,6 +289,14 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
     if let Some(first) = open.first() {
         logic.push(lack(format!("rrc check refuses {} things; the first: {first}", open.len()), "rrc check"));
     }
+    // The first rule (D160): each bug kept has a switch a session has shown to change the run.
+    let unshown = crate::quirks::unshown(repo)?;
+    if let Some(first) = unshown.first() {
+        let what =
+            format!("{} quirks with a switch no session has shown: {}", unshown.len(), some(&unshown, String::clone));
+        let next = format!("rrc compare SESSION --fix {first}: on a session that reaches it and matches with it kept");
+        logic.push(lack(what, next));
+    }
     lacks.push(logic);
 
     // 5 Data and start-up: each session that starts at power-on matches in its fields from the port's own start.
@@ -409,6 +417,8 @@ fn set_up(repo: &Repo) -> Vec<Lack> {
 pub(crate) fn status(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &[], &["--all"])?;
     a.positionals(0, 0, "status [--all]")?;
+    // The first rule, before anything else, every time (D160).
+    say("bugs", crate::quirks::rule_line(repo)?);
     let standing = standing(repo)?;
     let at = standing.stage();
     if a.has("--all") {

@@ -56,6 +56,8 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         Ok(_) => {}
         Err(e) => problems.push(e),
     }
+    // The first rule, said at every check and so at every commit (D160).
+    say("bugs", crate::quirks::rule_line(repo)?);
     let quirks = crate::quirks::Quirks::load(repo)?;
     if !quirks.quirks.is_empty() {
         say("quirks", quirks.quirks.len());

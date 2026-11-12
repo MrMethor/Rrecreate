@@ -10,6 +10,9 @@
 //! Each function names the original's it reimplements by its ID (docs/design.md §6.6), which `rrc compare`
 //! finds when that one wrote a value the port has otherwise.
 //!
+//! The original's own bug is kept, with its switch (docs/porting.md, the first rule): quirk bounce_step, in
+//! `quirks.toml`.
+//!
 //! `TOY_BUG=1` leaves a bug in (not the original's): a bounce doesn't count; `TOY_BUG=trail`, another: the trail keeps y.
 //! `rrc`'s tests use them to see a divergence found, and who wrote the original's value.
 
@@ -164,7 +167,13 @@ impl Simulation for Toy {
             e.y = e.y.wrapping_add(e.dy.wrapping_mul(elapsed));
             if e.x < 0 || e.x > FIELD_W - 16 {
                 e.dx = e.dx.wrapping_neg();
-                e.x = e.x.wrapping_add(2i16.wrapping_mul(e.dx).wrapping_mul(elapsed));
+                // The original's own bug, kept and switched: quirk bounce_step (TOY.EXE+002FD). It steps the enemy
+                // back from where it overshot, so it ends off the wall; fixed, the enemy is put on the wall.
+                if rrc_runtime::keeps("bounce_step") {
+                    e.x = e.x.wrapping_add(2i16.wrapping_mul(e.dx).wrapping_mul(elapsed));
+                } else {
+                    e.x = if e.x < 0 { 0 } else { FIELD_W - 16 };
+                }
                 if bug("1") {
                     // What a port notes where it leaves something out (D115).
                     rrc_runtime::note("a bounce not counted (TOY.EXE+002FF)");

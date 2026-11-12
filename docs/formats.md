@@ -479,12 +479,17 @@ provenance = "agent:..."
 name = "enemy_overrun"          # how the port's code names it: if rrc_runtime::keeps("enemy_overrun") { ... }
 at = "GAME.EXE+002FF"           # the original's code that does it
 what = "the sixth enemy's update reads the word after the table as its hits"
-fix = "reads 0 instead"         # optional: what fixing it does
+fix = "reads 0 instead"         # what its switch does when the bug is fixed: every quirk has one (D160)
+shown = "play tick 194: enemies[5].hits"   # where a session showed the switch (rrc compare --fix writes it)
 provenance = "agent:claude-opus-5-5"
 evidence = "rrc suspects play: past enemies by GAME.EXE+002FF, offset 60"
 ```
 
-`rrc quirk` writes it, sorted by name. Names are names, each once; `at` is an ID of the game's program.
+`rrc quirk` writes it, sorted by name. Names are names, each once; `at` is an ID of the game's program. `fix` is
+asked for when a quirk is registered, and `rrc check` refuses a register with a quirk that has none. `shown` is
+written by `rrc compare SESSION --fix NAME` where the port matches the original to a tick with the bug kept and
+first differs there with it fixed: the session, the tick and what differed; changing a quirk's `at` or `fix` clears
+it.
 
 ## `sources.toml`: the outside sources
 

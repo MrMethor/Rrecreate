@@ -11,6 +11,7 @@ the state mapping and the port in Rust. `rrc`'s tests run it (`rrc/tests/flow.rs
 | `knowledge/` | The functions and data, named from the linker map (`TOY.MAP`, provenance `map`); the `enemy` structure, the pointer to one (`enemy_ptr`, read as an index into `enemies`) and the status bits; the sync point (where `wait_tick` returns) and the inputs (INT 08h's timer count, INT 09h's key states) |
 | `sessions/play.*` | 20 seconds of play: the arrow keys and the three bombs |
 | `mapping.toml` | The port's fields and the original's data they are, the trail on the heap through its far pointer (`via`) |
+| `quirks.toml` | The original's bug the port keeps, with its switch: an enemy that crosses a wall ends off it (`bounce_step`) |
 | `src/main.rs` | The port: the game's state and its pass, on `rrc-runtime` |
 
 To run it, with `rrc` and `clockwork` built (`cargo build --release -p rrc -p clockwork`) and on the path:
@@ -26,3 +27,7 @@ rrc compare play
 the port: the comparison diverges at tick 194 and names the instruction in `update` that wrote the count.
 `TOY_BUG=trail` keeps the player's y in the trail: it diverges at tick 2, in the trail on the heap, and names
 the instruction that wrote it there.
+
+The original has a bug of its own, and the port keeps it with a switch, as the first rule of a port asks
+(`docs/porting.md`): `rrc quirk` lists `bounce_step`, and `rrc compare play --fix bounce_step` runs the port with it
+fixed, which differs at tick 194, where an enemy first crosses a wall.
