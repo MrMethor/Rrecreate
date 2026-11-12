@@ -27,7 +27,8 @@ const CARD: &str = "card.json";
 const USAGE: &str = "work [--run] [--lines N] | work take ITEM --question TEXT --route TEXT --other TEXT [--budget N] | \
                      work done --bugs none|NAME,... | work drop";
 /// What closing an item asks (D160).
-const BUGS: &str = "the first rule: every bug of the original is reproduced and has a switch. Which did this item \
+const BUGS: &str = "the first rule: every bug of the original that changes what the game does is reproduced and has \
+                    a switch. Which did this item \
                     meet? rrc work done --bugs none, or --bugs NAME,... (each registered: rrc quirk NAME --at ID --what \
                     TEXT --fix TEXT)";
 

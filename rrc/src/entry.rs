@@ -28,9 +28,10 @@ prints this file with the playbook's rules; `rrc status` and `rrc doctor` count 
 - **Commits.** ASK: where does this port commit and push, and as whom?
 - **Asking first.** ASK: what needs asking first? (Unless said otherwise: downloading, publishing, deleting.)
 - **A second agent.** ASK: may the agent start a fresh agent for routes when it is stuck?
-- **Every bug of the original is reproduced in the port and has a switch** (D160): registered the moment it is
-  found (`rrc quirk NAME --at ID --what TEXT --fix TEXT`), kept by default, fixed by its switch. Every one: a bug
-  left out or fixed by accident can't be found again by any comparison, and can cost the port.
+- **Every bug of the original that changes what the game does is reproduced in the port and has a switch** (D160,
+  D163): registered the moment it is found (`rrc quirk NAME --at ID --what TEXT --fix TEXT`), kept by default, fixed
+  by its switch. Every one: a bug left out or fixed by accident can't be found again by any comparison, and can cost
+  the port. One that changes nothing the game does is said so (`changes nothing`) and left.
 - The game's files are never committed, nor anything extracted from them (D33, D82).
 ";
 
@@ -56,10 +57,11 @@ Before anything else, and again whenever your context is summarised, run in this
 - `rrc rules`: the playbook's rules and this port's own (`RULES.md`), as they are written;
 - `rrc status`: where the port stands and the next step.
 
-**The first rule:** every bug of the original is reproduced in the port and has a switch, so that both the bug and
-its fix can be had. Register each the moment it is found (`rrc quirk NAME --at ID --what TEXT --fix TEXT`) and branch
-on it (`rrc_runtime::keeps`). Every one, with no exception: a bug left out or fixed by accident can't be found again
-by any comparison, and can cost the whole port.
+**The first rule:** every bug of the original that changes what the game does is reproduced in the port and has a
+switch, so that both the bug and its fix can be had. Register each the moment it is found (`rrc quirk NAME --at ID
+--what TEXT --fix TEXT`) and branch on it (`rrc_runtime::keeps`). Every one, with no exception: a bug left out or
+fixed by accident can't be found again by any comparison, and can cost the whole port. A bug that changes nothing the
+game does (a value nothing reads, a drawing slip the game goes on the same through) is said so and left.
 
 Then work by the playbook, Rrecreate's `docs/porting.md`: one workflow for every port, in stages, each done when the
 toolkit says so. Where the work stands is what `rrc status` says, never what a note says; `notes/` holds what was

@@ -469,7 +469,7 @@ at = "GAME.EXE+002FF"           # the instruction
 kind = "past"                   # past: past named data's end; uninit: reads memory nothing wrote
 what = "table (GAME.EXE+1E0A4, 16 bytes): offsets 16 17"
 sessions = ["first-level"]      # the sessions that find it
-verdict = "quirk enemy_overrun" # or "not a bug: why"; none: not judged yet (a quirk registered at it counts)
+verdict = "quirk enemy_overrun" # or "not a bug: why", "changes nothing: why"; none: not judged yet (a quirk registered at it counts)
 provenance = "agent:..."
 ```
 

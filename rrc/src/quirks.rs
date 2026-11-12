@@ -186,7 +186,7 @@ pub(crate) fn open(repo: &Repo) -> Result<Vec<String>, String> {
     for (file, line, text) in crate::sources::unmarked_text(&repo.root, &names) {
         let text: String = text.chars().take(90).collect();
         open.push(format!(
-            "{file}:{line}: says a bug or quirk without naming a registered one (or saying `not a bug`): {text}"
+            "{file}:{line}: says a bug or quirk without naming a registered one (or saying `not a bug` or `changes nothing`): {text}"
         ));
     }
     let suspects = Suspects::load(repo)?;
@@ -199,7 +199,7 @@ pub(crate) fn open(repo: &Repo) -> Result<Vec<String>, String> {
     for s in &suspects.suspects {
         if s.verdict.is_empty() && !register.quirks.iter().any(|q| q.at == s.at) {
             open.push(format!(
-                "suspect {} ({}): {}: judge it: rrc suspects --judge {} (--quirk NAME | --not-a-bug WHY)",
+                "suspect {} ({}): {}: judge it: rrc suspects --judge {} (--quirk NAME | --not-a-bug WHY | --changes-nothing WHY)",
                 s.at, s.kind, s.what, s.at
             ));
         }
@@ -210,15 +210,21 @@ pub(crate) fn open(repo: &Repo) -> Result<Vec<String>, String> {
 /// `rrc suspects --judge ID`: what an instruction `rrc suspects` found turned out to be.
 fn judge(repo: &Repo, a: &Args, at: &str) -> Result<ExitCode, String> {
     let id = parse_id(at)?.to_string();
-    let verdict = match (a.value("--quirk"), a.value("--not-a-bug")) {
-        (Some(name), None) => {
+    let verdict = match (a.value("--quirk"), a.value("--not-a-bug"), a.value("--changes-nothing")) {
+        (Some(name), None, None) => {
             if !Quirks::load(repo)?.quirks.iter().any(|q| q.name == name) {
                 return Err(format!("no quirk {name}: rrc quirk {name} --at ID --what TEXT"));
             }
             format!("quirk {name}")
         }
-        (None, Some(why)) if !why.trim().is_empty() => format!("not a bug: {why}"),
-        _ => return Err("--judge ID --quirk NAME, or --judge ID --not-a-bug WHY".into()),
+        (None, Some(why), None) if !why.trim().is_empty() => format!("not a bug: {why}"),
+        // A bug of the original that touches nothing the game does is no quirk (D163).
+        (None, None, Some(why)) if !why.trim().is_empty() => format!("changes nothing: {why}"),
+        _ => {
+            return Err(
+                "--judge ID --quirk NAME, --judge ID --not-a-bug WHY, or --judge ID --changes-nothing WHY".into()
+            );
+        }
     };
     let mut suspects = Suspects::load(repo)?;
     let provenance =
@@ -352,7 +358,8 @@ pub(crate) fn rule_line(repo: &Repo) -> Result<String, String> {
     let unshown = register.quirks.iter().filter(|q| q.shown.is_empty()).count();
     let refused = refused(repo)?.len();
     Ok(format!(
-        "every bug of the original is reproduced and has a switch, registered when found (rrc quirk): {} registered, \
+        "every bug of the original that changes what the game does is reproduced and has a switch, registered when \
+         found (rrc quirk): {} registered, \
          {unshown} with a switch not shown yet, {refused} things rrc check refuses",
         register.quirks.len()
     ))
@@ -373,7 +380,7 @@ fn say_sites(repo: &Repo, name: &str) {
 /// instructions that reach past named data's ends, and its reads of memory nothing wrote. They're kept
 /// (`suspects.toml`, D148) until judged; `--judge ID` judges one.
 pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--lines", "--judge", "--quirk", "--not-a-bug", "--by"], &[])?;
+    let a = Args::parse(args, &["--lines", "--judge", "--quirk", "--not-a-bug", "--changes-nothing", "--by"], &[])?;
     if let Some(at) = a.value("--judge") {
         return judge(repo, &a, at);
     }
@@ -519,7 +526,12 @@ pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
     }
     if !findings.is_empty() || !reads.is_empty() {
         say("next", "read each one's code: a bug the port has to keep is a quirk (rrc quirk NAME --at ID --what TEXT)");
-        say("kept", format!("in {SUSPECTS}, until judged: rrc suspects --judge ID (--quirk NAME | --not-a-bug WHY)"));
+        say(
+            "kept",
+            format!(
+                "in {SUSPECTS}, until judged: rrc suspects --judge ID (--quirk NAME | --not-a-bug WHY | --changes-nothing WHY)"
+            ),
+        );
     }
     Ok(ExitCode::SUCCESS)
 }

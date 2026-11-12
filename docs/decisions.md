@@ -745,6 +745,23 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D163. The first rule is for bugs that change what the game does. Accepted 2026-11-12, with the person.
+Every bug of the original that changes the game's behaviour, its state and what follows from it, is reproduced in
+the port and has a switch, kept by default and fixed by it: registered the moment it is found, branched on, its switch
+shown by a session (D148, D149, D160's tools, unchanged). A bug whose effect never reaches the game's state is not
+registered and has no switch: a value nothing reads afterwards, a flag nothing tests, a register left wrong that
+nothing uses, a drawing or a sound that goes wrong while the game goes on the same. Where such a slip shows in a
+frame or a sound, the faithful port reproduces it as it reproduces the rest of the original, and that is all. A
+note or a comment says so with `changes nothing` (which `rrc check` takes as it takes `not a bug`), and a suspect
+that is such a bug is judged `rrc suspects --judge ID --changes-nothing WHY`. A behaviour-changing bug whose kept
+path reads what the port doesn't model is registered all the same, its kept path an `unported` note where it would
+run, until the port models it.
+**Why:** the person (2026-11-12): bugs are kept and switchable to be faithful to the original's behaviour, so the
+ones that don't influence it can be ignored; registering them cost the work without making the port any more
+faithful. Measured on Arena: of its 33 registered quirks, three touched nothing the game does (a result nothing
+reads, a renderer's texture step, a sound driver's call), and were taken out of the register.
+**Supersedes:** D160's scope (every bug of the original).
+
 ### D162. The actions seam: a port's actions are the PC inputs the original takes; the platform's controls bind them. Accepted 2026-11-12.
 A port declares its game's actions (`rrc_runtime::actions::Action`: a name, the PC input the original takes for
 it, a key by its scan code, a grey key or a mouse button, and what it does), as `Live::ACTIONS`, checked when it
@@ -764,7 +781,7 @@ later gives the same actions without the PC's devices. Measured on the vault: it
 Escape), read in its passes through `Action::held`; the platform's tests bind W and Up to one action (both held,
 it ends with the last let go), a key to a mouse button, and refuse a file's unknown action or key by its line.
 
-### D160. The first rule of a port: every bug of the original is reproduced and has a switch, and is never out of sight. Accepted 2026-11-12, with the person.
+### D160. The first rule of a port: every bug of the original is reproduced and has a switch, and is never out of sight. Accepted 2026-11-12, with the person; its scope, bugs that change what the game does: superseded by D163.
 The person's rule, set above the playbook's others: every bug of the original is reproduced in the port and has a
 switch, kept by default and fixed by it, so that both can be had; every one, registered the moment it is found. It
 is said first wherever an agent looks: the playbook's rules, and so `rrc rules`, open with it; `rrc status` and `rrc

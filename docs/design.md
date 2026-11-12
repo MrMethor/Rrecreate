@@ -246,8 +246,10 @@ a table returns its neighbour) reproduces that neighbour's data deliberately. `r
 candidates from Clockwork's checks, `rrc quirk` keeps the register and finds each quirk's branch by its name, and
 the port branches on `rrc_runtime::keeps(NAME)` (D74).
 
-This is the first rule of a port, the person's (D160): every bug of the original is reproduced and has a switch,
-every one, registered the moment it is found, because a bug left out or fixed by accident shows in no comparison.
+This is the first rule of a port, the person's (D160): every bug of the original that changes what the game does
+(its state, and what follows from it: D163) is reproduced and has a switch, every one, registered the moment it is
+found, because a bug left out or fixed by accident shows in no comparison. A bug that changes nothing the game does
+is said so where it is met and left: where it shows in a frame or a sound, the port reproduces it as the rest.
 The toolkit keeps it in sight and checks both sides: `rrc status` and `rrc check` begin with the register's state; a
 quirk is registered with what its fix does; `rrc compare SESSION --fix NAME` keeps where the switch changed a run
 the port otherwise matches, and a quirk nothing has shown is a lack of the logic's gate; a bug named in the port's

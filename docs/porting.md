@@ -44,9 +44,9 @@ the original judges the port, not the code it was read from.
 
 **Rules:**
 
-**The first rule, the person's (D160): every bug of the original is reproduced in the port and has a switch.** Kept
-by default, so the faithful port does what the original does; fixed by its switch, so both can be had. Every one,
-with no exception:
+**The first rule, the person's (D160, D163): every bug of the original that changes what the game does is reproduced
+in the port and has a switch.** Kept by default, so the faithful port does what the original does; fixed by its
+switch, so both can be had. Every one that changes the game's state, and what follows from it, with no exception:
 
 - **registered the moment it is found** (`rrc quirk NAME --at ID --what TEXT --fix TEXT`), before the code that
   reproduces it is finished and before anything else is looked at: a note, a comment or a memory doesn't count;
@@ -58,6 +58,13 @@ A bug left out, or fixed by accident while the code was made tidy, shows in no c
 one missed can cost the whole port. So it is never out of sight. `rrc status` and `rrc check` say the register's
 state first, every time; `rrc check` refuses a commit while a bug is named in the code, the notes or the knowledge
 without being registered; and closing an item asks which bugs it met (`rrc work done --bugs`).
+
+A bug that changes nothing the game does is not registered and has no switch (D163): a value nothing reads
+afterwards, a flag nothing tests, a register left wrong that nothing uses, a drawing or a sound that goes wrong while
+the game goes on the same. Where it shows in a frame or a sound, the port reproduces it as it does the rest of the
+original. Say so where it is met (`changes nothing: WHY` in a comment or a note; a suspect: `rrc suspects --judge ID
+--changes-nothing WHY`). Whether the game's state is touched is read in the code and checked with a run (`rrc watch`
+on what it wrote: nothing reads it, or what reads it goes the same).
 
 1. **Plan before running.** Write the question down and the cheapest way to answer it from the sources
    above. A run checks an answer; it is not how to look for one.
@@ -74,7 +81,8 @@ without being registered; and closing an item asks which bugs it met (`rrc work 
    few tries of one approach haven't answered, change the source, not the number of tries.
 6. **The original is the specification.** Code, sources and files explain it; where they disagree with how
    the original runs, the run wins, and a disagreement worth keeping is a note or a quirk.
-7. **Every bug of the original is registered as it's found** (the first rule; `rrc quirk`, "Quirks" below), and the port branches on
+7. **Every bug of the original that changes what the game does is registered as it's found** (the first rule; `rrc
+   quirk`, "Quirks" below; one that changes nothing is said so and left), and the port branches on
    `rrc_runtime::keeps`. A comment or a note saying so doesn't count: `rrc check` refuses it. Look for them too: `rrc
    suspects` on every session, and each finding judged.
 8. **Nothing departs from the original silently.** Where the port would do other than the original does (a guard
@@ -829,11 +837,13 @@ port's own that runs it both ways, and `rrc quirk NAME --shown "test NAME"` says
 A comparison only shows what a session reaches and what's mapped, so a bug fixed by accident elsewhere shows
 nowhere: this is why they're registered as they're found. `rrc check` refuses (and `rrc status` names, D148) a comment
 in the port's code that says `bug` or `quirk` with no registered quirk named within two lines (a bug of the port's own
-says `not the original's`), a `keeps` not registered, a
+says `not the original's`, one of the original's that touches nothing the game does `changes nothing`), a `keeps`
+not registered, a
 quirk nothing branches on, a quirk with no fix said, a session's run that `rrc suspects` hasn't looked through, and a
-suspect not judged (`rrc suspects --judge ID --quirk NAME`, or `--not-a-bug WHY`, kept in `suspects.toml`). The notes
-and the knowledge are read the same way (D160): a line of `notes/` or `knowledge/` that says `bug`, `quirk`, `glitch`
-or `buggy` names a registered quirk within two lines, or says `not a bug`, or is about the register itself (`rrc
+suspect not judged (`rrc suspects --judge ID --quirk NAME`, `--not-a-bug WHY`, or `--changes-nothing WHY` for a bug
+that touches nothing the game does, kept in `suspects.toml`). The notes and the knowledge are read the same way
+(D160): a line of `notes/` or `knowledge/` that says `bug`, `quirk`, `glitch` or `buggy` names a registered quirk
+within two lines, or says `not a bug` or `changes nothing`, or is about the register itself (`rrc
 quirk`, `quirks.toml`); a bug written down there and nowhere else is a bug the port can lose. `rrc hooks` writes a commit hook that
 refuses a commit while `rrc check` fails (`rrc init` does too); don't skip it. `rrc rules` prints the rules as they're
 written, with the port's own from `RULES.md`, for the start of a session and after a summary.

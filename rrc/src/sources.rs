@@ -73,8 +73,16 @@ pub fn unmarked(root: &Path, names: &[String]) -> Vec<(String, usize, String)> {
 const BUG_WORDS: [&str; 7] = ["bug", "bugs", "buggy", "quirk", "quirks", "glitch", "glitches"];
 /// What a line says that makes its bug word no bug of the original's left out: it denies one, or it is about the
 /// register and its tools.
-const NOT_ONE: [&str; 7] =
-    ["not the original's", "not a bug", "no bug", "rrc quirk", "rrc suspects", "quirks.toml", "keeps("];
+const NOT_ONE: [&str; 8] = [
+    "not the original's",
+    "not a bug",
+    "no bug",
+    "changes nothing",
+    "rrc quirk",
+    "rrc suspects",
+    "quirks.toml",
+    "keeps(",
+];
 
 /// Whether `text` has one of [`BUG_WORDS`] as a word.
 fn says_bug(text: &str) -> bool {
@@ -134,10 +142,14 @@ fn comment(line: &str) -> Option<&str> {
     }
 }
 
-/// The lines whose comment says `quirk` or `bug` as a word, and doesn't say it's `not the original's` (a port's own), with
-/// none of `names` near.
+/// The lines whose comment says `quirk` or `bug` as a word, and doesn't say it's `not the original's` (a port's own) or
+/// that it `changes nothing` the game does (D163), with none of `names` near.
 fn unmarked_lines(lines: &[&str], names: &[String]) -> Vec<usize> {
-    let says = |line: &str| comment(line).is_some_and(|text| !text.contains("not the original's") && says_bug(text));
+    let says = |line: &str| {
+        comment(line).is_some_and(|text| {
+            !text.contains("not the original's") && !text.contains("changes nothing") && says_bug(text)
+        })
+    };
     let named = |at: usize| {
         let near = &lines[at.saturating_sub(2)..(at + 3).min(lines.len())];
         near.iter().any(|line| names.iter().any(|name| self::names(line, name)))
@@ -266,6 +278,9 @@ mod tests {
             "fn bug(which: &str) -> bool {",
             "let a = 1; // a bug of the test's, not the original's",
             "unported(\"a bug\");",
+            "",
+            "",
+            "// The original's bug, but it changes nothing the game does: the value is never read.",
         ];
         assert_eq!(unmarked_lines(&lines, &names), [0, 9], "a comment's word, and only the original's");
         let near = ["// a bug", "x", "if rrc_runtime::keeps(\"overrun\") {"];
@@ -286,6 +301,9 @@ mod tests {
             "Debugging showed nothing here, and this is not a bug: the table is longer.",
             "Every bug is registered with rrc quirk as it is found.",
             "The loop is Buggy at the wall.",
+            "",
+            "",
+            "A bug of the original's that changes nothing: what it writes nothing reads.",
         ];
         assert_eq!(unmarked_text_lines(&lines, &names), [0, 9]);
     }

@@ -428,7 +428,7 @@ fn quirk_candidates_are_found_and_registered() {
     std::fs::write(rrc.repo.join("src/more.rs"), "// a bug: quirk overrun\n").unwrap();
     let check = rrc.ok(&["check"]);
     // The first rule is said at every check, and by status first of all (D160).
-    let rule = "bugs      every bug of the original is reproduced and has a switch, registered when found (rrc quirk): 1 \
+    let rule = "bugs      every bug of the original that changes what the game does is reproduced and has a switch, registered when found (rrc quirk): 1 \
                 registered, 1 with a switch not shown yet, 0 things rrc check refuses";
     assert!(check.contains(rule), "{check}");
     assert!(rrc.ok(&["status"]).starts_with(rule));
@@ -456,11 +456,18 @@ fn quirk_candidates_are_found_and_registered() {
     let (refused, ok) = rrc.run(&["suspects", "--judge", "T.COM+00005", "--quirk", "nothing"]);
     assert!(!ok && refused.contains("no quirk nothing"), "{refused}");
     assert!(rrc.ok(&["suspects", "--judge", "T.COM+00005", "--not-a-bug", "the table is longer"]).contains("judged"));
+    // A bug of the original's that touches nothing the game does is judged so, not registered (D163).
+    let (both, ok) = rrc.run(&["suspects", "--judge", "T.COM+00005", "--not-a-bug", "x", "--changes-nothing", "y"]);
+    assert!(!ok && both.contains("--changes-nothing WHY"), "{both}");
+    rrc.ok(&["suspects", "--judge", "T.COM+00005", "--changes-nothing", "what it reads is never used"]);
+    let kept = std::fs::read_to_string(rrc.repo.join("suspects.toml")).unwrap();
+    assert!(kept.contains("changes nothing: what it reads is never used"), "{kept}");
     rrc.ok(&["check"]);
     // The rules as written; and the commit hook.
     let rules = rrc.ok(&["rules"]);
     assert!(rules.contains("Plan before running") && rules.contains("## Quirks"), "{rules}");
-    let first = rules.find("The first rule, the person's (D160): every bug of the original is reproduced");
+    let first = rules
+        .find("The first rule, the person's (D160, D163): every bug of the original that changes what the game does");
     assert!(
         first.is_some_and(|at| at < rules.find("Plan before running").unwrap()),
         "the first rule comes first: {rules}"
@@ -1242,7 +1249,11 @@ fn the_workflow_s_stages_are_walked() {
     rrc.ok(&["compare", "play", "--lockstep"]);
     // Closing asks which bugs of the original the item met (D160): none, or their registered names.
     let (refused, ok) = rrc.run(&["work", "done"]);
-    assert!(!ok && refused.contains("the first rule: every bug of the original is reproduced and has a switch"));
+    assert!(
+        !ok && refused.contains(
+            "the first rule: every bug of the original that changes what the game does is reproduced and has a switch"
+        )
+    );
     let (refused, ok) = rrc.run(&["work", "done", "--bugs", "bounce_wall"]);
     assert!(!ok && refused.contains("no quirk bounce_wall: register it first"), "{refused}");
     let done = rrc.ok(&["work", "done", "--bugs", "bounce_step"]);
@@ -1277,7 +1288,12 @@ fn the_workflow_s_stages_are_walked() {
     let play = "session   play (209 ticks): fields match from the port's start; census: 0 fields, 0 unset, 0 notes";
     assert!(all.contains(play) && all.contains("work      0 items in the censuses (rrc work)"), "{all}");
     assert!(all.contains("quirks    1 registered") && all.contains("mix       compare "), "{all}");
-    assert!(all.starts_with("bugs      every bug of the original is reproduced and has a switch"), "{all}");
+    assert!(
+        all.starts_with(
+            "bugs      every bug of the original that changes what the game does is reproduced and has a switch"
+        ),
+        "{all}"
+    );
     assert!(all.contains("next      the port's presentation draws no frames yet: Presentation::draw"), "{all}");
     // The port's code changed since: what was compared before it is said to be, and counted again.
     let main = rrc.repo.join("src/main.rs");
