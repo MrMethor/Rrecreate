@@ -134,7 +134,8 @@ and each layer stands on the one below.
 **The work loop** (stages 4 to 6), once for each item of the work list. `rrc work` is the list (D158): what the
 censuses of the scope's sessions count (`rrc compare SESSION --lockstep`, D124), merged over the sessions: the mapped
 fields first, then the paths noted as not ported, then the frames, then the sound, the most passes first. `rrc work
---run` counts again each session whose census the port's code as it is now didn't make.
+--run` counts again each session whose census the port's code as it is now didn't make, and compares again each
+that nothing compared since (the fields alone before stage 6), so one command brings every gate up to the code.
 
 1. **Take** the top item, with a card: `rrc work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]`.
    The question, the route chosen, one other route considered, and after how many comparisons (6 unless said) the

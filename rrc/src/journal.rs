@@ -212,7 +212,8 @@ pub(crate) fn journal(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let stuck = entries.iter().filter(|e| e.stuck).count();
     say("stuck", format!("{stuck} times a comparison ended at the same first difference {STUCK} times running"));
     // Each item taken and closed (`rrc work`), with what it took.
-    for e in entries.iter().filter(|e| e.cmd == "work" && e.end.is_some()) {
+    let closed = |e: &&Entry| e.cmd == "work" && e.args.first().is_some_and(|verb| verb == "done") && e.end.is_some();
+    for e in entries.iter().filter(closed) {
         say("item", e.end.as_deref().unwrap_or_default());
     }
     for e in entries.iter().rev().take(shown).rev() {

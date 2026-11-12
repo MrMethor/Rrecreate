@@ -63,7 +63,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
   work [--run] [--lines N]
                          the work list: what the censuses of the scope's sessions count, merged, the fields
                          first, then paths not ported, frames, sound, the most passes first; --run counts
-                         again (in lockstep) each session whose census the port's code as it is didn't make
+                         again (in lockstep) each session whose census the port's code as it is didn't make,
+                         and compares again each that nothing compared since (the fields alone before stage 6)
   work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]
                          take an item: the question, the route chosen, one other considered, and after how
                          many comparisons (6) the route changes; rrc says when they are spent

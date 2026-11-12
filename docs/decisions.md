@@ -776,7 +776,11 @@ fields first, then paths not ported, frames and sound, the most passes first; `-
 session whose census the code as it is didn't make. `rrc work take ITEM --question --route --other [--budget N]`
 writes a card; the journal (D157) counts the comparisons made for it, and `rrc` says when the budget is spent; `rrc
 work done` closes it and puts what it took in the journal. A test walks the toy port from an empty repository to
-the stage it stops at (6: it draws nothing).
+the stage it stops at (6: it draws nothing). From the trial on the Arena port, 2026-11-12: `--run` also compares
+again each session nothing compared as its recording and the port's code are now (the fields alone before stage 6),
+so one command brings every gate up to the code; what was kept before this decision counts, as stale (an
+`outcome.json` alone as a comparison of the fields, a census as one of the recording there is); `--all` says the
+sessions that stand the same in one line; and stage 0 asks for the entry files (D155) of a port made before them.
 **Why:** changes D, E, F, G and L of the workflow's plan (D154). `rrc status` drove the set-up and then said
 `rrc compare <first session>` for the rest of the port: on the Arena port, 58 sessions in, `rrc compare a-16`. The
 state of the work was a hand-written handoff of 526 lines, where an agent's summaries had softened a rule before

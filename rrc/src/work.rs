@@ -1,7 +1,8 @@
 //! The work list and the card (D158; docs/porting.md, "The work loop"). The list is every difference the censuses of
 //! the scope's sessions count (`rrc compare --lockstep`, D124), merged and ranked: the mapped fields first, then the
 //! paths noted as not ported, then the frames, then the sound (a layer stands on the one below), the most passes
-//! first. `rrc work --run` counts again the sessions whose census the port's code as it is now didn't make. A card is
+//! first. `rrc work --run` counts again the sessions whose census the port's code as it is now didn't make, and
+//! compares again those nothing compared since. A card is
 //! the item taken: its question, the route chosen, one other considered, and after how many comparisons the route
 //! changes; the journal counts against it, so the question "is there a better tool" is asked before the work and
 //! answered again when the budget is spent.
@@ -218,7 +219,8 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let shown: usize = a.value("--lines").map_or(Ok(SHOWN), str::parse).map_err(|_| "--lines is a count")?;
     let mut standing = crate::stage::standing(repo)?;
     if a.has("--run") {
-        // Each session of the scope whose census isn't of its recording and the port's code as they are now.
+        // Each session of the scope whose census isn't of its recording and the port's code as they are now is
+        // counted again.
         let port = crate::sources::fingerprint(&repo.root);
         let again: Vec<String> = standing
             .held
@@ -238,8 +240,32 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 format!("{name}: {} passes, {things} fields{more}, {} notes", census.passes, census.notes.len()),
             );
         }
-        if again.is_empty() {
-            say("counted", "nothing: every census is of its recording and the port's code as they are");
+        // And compared again, at the layer the port is at (the fields alone before stage 6: a frame that differs
+        // would stop a whole comparison short of the fields after it): each session nothing compared as its
+        // recording and the port's code are now, from the port's own start, or from a transplant one that starts at
+        // another's tick.
+        let fields_only = standing.stage() < 6;
+        let compare: Vec<(String, bool)> = standing
+            .held
+            .iter()
+            .filter(|h| h.unrecorded.is_none() && !h.outcomes.values().any(|o| o.port == port))
+            .map(|h| (h.name.clone(), h.starts_at_power_on()))
+            .collect();
+        for (name, from_start) in &compare {
+            let mut args = vec![name.clone()];
+            if fields_only {
+                args.push("--fields".to_owned());
+            }
+            if !from_start {
+                args.extend(["--transplant".to_owned(), "1".to_owned()]);
+            }
+            crate::quietly(|| crate::compare::compare(repo, &args))?;
+            let kept = crate::progress::Outcome::kept(repo, name)?;
+            let found = kept.values().find(|o| o.port == port).map(crate::progress::outcome_text);
+            say("compared", format!("{name}: {}", found.unwrap_or_else(|| "nothing kept of it".to_owned())));
+        }
+        if again.is_empty() && compare.is_empty() {
+            say("counted", "nothing: every census and comparison is of its recording and the port's code as they are");
         }
         standing = crate::stage::standing(repo)?;
     }
@@ -254,8 +280,8 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         say(
             "uncounted",
             format!(
-                "{} sessions have no census of their recording, {} one the port's code as it is didn't make: rrc work \
-                 --run",
+                "{} sessions without a census of their recording, {} with a census or a comparison made before the \
+                 port's code changed: rrc work --run",
                 standing.held.len() - counted,
                 standing.stale.len()
             ),

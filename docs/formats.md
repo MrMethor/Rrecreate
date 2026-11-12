@@ -36,7 +36,8 @@ What an agent meets first in it is written by `rrc init` too, and by `rrc hooks`
 - `RULES.md`: the person's rules for the port. Each is a question, a line with `ASK:`, until the agent has asked
   it and written the answer in its place. `rrc rules` prints the file after the playbook's rules; `rrc doctor`
   counts the questions left.
-- `AGENTS.md`: tells an agent to run `rrc rules` and `rrc status` before anything else (`CLAUDE.md` loads it).
+- `AGENTS.md`: tells an agent to run `rrc rules` and `rrc status` before anything else (`CLAUDE.md` loads it). A
+  port without these files is said to lack them by `rrc status` (stage 0).
 - `notes/`: what was learned about the game and why, one file a subject; never the state of the work.
   `notes/recipes.md` holds the port's own recipes, a table `| Problem | Route | Cost |` like the playbook's, which
   `rrc how` reads with it (D159).
@@ -100,7 +101,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   a match from a later tick doesn't replace one of the same recording and code from an earlier). An outcome also has
   `fields_only`, `drew` (the port's frames were compared), `unsounded` (the devices the original sounded that
   nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has
-  the recording it is of (`recorded`) and the port's code (`port`) too. The workflow's gates read these.
+  the recording it is of (`recorded`) and the port's code (`port`) too. The workflow's gates read these. What was
+  kept before them counts as other code's (stale): an `outcome.json` alone as a comparison of the fields, a census
+  without `recorded` as one of the recording there is.
 - `work/card.json`: the item taken with `rrc work take` (D158): `item`, `question`, `route`, `other`, `budget`
   (comparisons), and where the journal was then (`taken`, `t`).
 - `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).

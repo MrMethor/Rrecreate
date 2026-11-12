@@ -112,7 +112,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-11 (decisions to D159). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-12 (decisions to D159). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -135,13 +135,19 @@ compared in lockstep with the person's recorded play (D124). The latest gaps it 
 scenario edits in a lockstep (D146, D147), the quirk rule checked by `rrc check` and each quirk given a switch
 (D148, D149), and what no session ran listed (D150 to D152).
 
-**Under way before M6 goes on:** the way the toolkit is used, made standard at the person's word (D154). The playbook
-is now one workflow: stages with gates, one work loop, where to look when the port differs, the best-known routes.
-The toolkit now drives it (D155 to D159; [the plan](plans/porting-workflow.md) lists what is built): each port's
-entry point, its scope, outside sources in its books, a journal that says when a route is stuck, the stage and its
-gate said by `rrc status`, a work list with a card for the item taken, the next moves named at each difference, and
-the recipes by a word. A test walks the toy port through the stages. Left: the Arena port taken into the workflow
-(its rules as the entry files have them, its scope from the person, its censuses counted again).
+**The standard workflow, built before M6 goes on** (D154 to D159, 2026-11-12), at the person's word. The playbook is
+one workflow for every game: stages with gates, one work loop, where to look when the port differs, the best-known
+routes. The toolkit drives it: a port is given its entry point when it is made; its books hold its scope and its
+outside sources; `rrc status` works out the stage the port is at and what its gate lacks; `rrc work` is the ranked
+work list, with a card for the item taken that names a second route; a journal says when a route is stuck; each
+difference ends with the next moves, of more than one kind. A test walks the toy port through the stages
+([the plan](plans/porting-workflow.md) lists what was built and what the trial changed).
+
+Tried on the Arena port: the toolkit answers in about a second, and what the assessment below found by hand it says
+unasked. It puts the port at stage 1, because its outside sources aren't in its books; past that, the gates name
+eight named data nothing maps or ignores, two suspects not judged, the first session stopping from power-on at the
+cinematic's sound, and fourteen sessions whose frames or sound differ. Its 58 sessions counted again give a work
+list of 121 items.
 
 **Open against M6's row** (measured on the Arena port, 2026-11-11):
 
@@ -154,11 +160,13 @@ the recipes by a word. A test walks the toy port through the stages. Left: the A
   screens aren't drawn yet.
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
-**Next:** the workflow's toolkit changes, tried on the Arena port; then those above, in the order the person sets;
+**Next:** the Arena port taken through the workflow from where the toolkit puts it (its entry files, its sources
+recorded, its suspects judged, the top of its work list); then the open points above, in the order the person sets;
 then M7.
 
-**The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106), and whether the music and the
-actions seam are M6's or move; the game M9 is run on, which stays out of the toolkit's development until then (D71).
+**The person's calls ahead:** the Arena port's scope, which of its sessions it is to reproduce (until it is set,
+every session counts); closing M6, as M4 and M5 were closed (D100, D106), and whether the music and the actions seam
+are M6's or move; the game M9 is run on, which stays out of the toolkit's development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: its `notes/handoff.md`).
 

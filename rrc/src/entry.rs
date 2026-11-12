@@ -93,6 +93,11 @@ pub(crate) fn write(root: &Path, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The entry files the port in `root` lacks: one made before `rrc init` wrote them.
+pub(crate) fn missing(root: &Path) -> Vec<&'static str> {
+    ["AGENTS.md", "CLAUDE.md", "notes/README.md"].into_iter().filter(|file| !root.join(file).is_file()).collect()
+}
+
 /// The questions of the port's `RULES.md` the person hasn't answered; none if the port has no such file.
 pub(crate) fn unanswered(root: &Path) -> Option<Vec<String>> {
     let text = std::fs::read_to_string(root.join(RULES)).ok()?;
@@ -156,6 +161,9 @@ mod tests {
         assert_eq!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(), "@AGENTS.md\n");
         assert!(root.join("notes/README.md").is_file());
         assert_eq!(unanswered(&root).map(|q| q.len()), Some(5));
+        assert!(missing(&root).is_empty());
+        std::fs::remove_file(root.join("CLAUDE.md")).unwrap();
+        assert_eq!(missing(&root), ["CLAUDE.md"]);
         // The person's answers stay.
         std::fs::write(root.join(RULES), "- Commit locally.\n").unwrap();
         write(&root, "toy").unwrap();

@@ -23,6 +23,19 @@
 | N: `rrc how WORD`, the recipes by a word, with the port's own (`notes/recipes.md`) | D159 |
 | O: an honest test bench reports `rrc journal` with its result | D157, D159 |
 
+## Tried on the Arena port (2026-11-12)
+
+Read-only, but for this machine's state of the port (`.rrc/`: its censuses counted again, a journal).
+
+| What was run | What it said | What it changed in the toolkit |
+|---|---|---|
+| `rrc status` | In 1.1 s: stage 1, the outside sources aren't swept; two things `rrc check` refuses | The exemption from the sweep was read off `imports = false`, which this port sets while reading wikis: now said outright (`rrc sources none`) |
+| `rrc status --all` | 3: eight named data neither mapped nor ignored. 4: fields in two censuses, 27 sessions taking paths noted as not ported, `cell` stopping at the sound of tick 95. 5: `cell` from power-on. 6: fourteen censuses with frames or sound that differ | It printed a line a session (58): sessions that stand the same are one line now. Comparisons and censuses kept before this weren't counted: they count, as stale |
+| `rrc work --run` | 58 sessions counted in 14.5 minutes; 121 items; the top, `movement.buttons`, in 46 passes of two sessions | The stale line stayed, since only the censuses were made again: `--run` compares again too |
+
+Left for the port's own next session: `rrc hooks` (its entry files, which stage 0 now asks for), its sources into
+`sources.toml`, its two suspects judged, and its scope, which is the person's.
+
 Not built as proposed: J's "the file it was loaded from" and "the sessions and ticks that run it" (each needs a run;
 `rrc files` and `rrc calls` answer them); E's "code no session runs" in the list (`rrc unrun` lists it); the gate
 of stage 7, which `rrc` can't test. K's exemption was first read off `imports = false`; the Arena port sets that

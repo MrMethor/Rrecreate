@@ -1227,12 +1227,14 @@ fn the_workflow_s_stages_are_walked() {
     let main = rrc.repo.join("src/main.rs");
     std::fs::write(&main, std::fs::read_to_string(&main).unwrap() + "\n// A change.\n").unwrap();
     let s = status(&rrc);
-    assert!(
-        s.contains("stale     the session last compared before the port's code changed: play (rrc work --run"),
-        "{s}"
-    );
-    assert!(rrc.ok(&["work", "--run"]).contains("counted   play: 208 passes, 0 fields, 0 notes"));
-    assert!(rrc.ok(&["work", "--run"]).contains("counted   nothing: every census is of its recording"));
+    let stale = "stale     the session with a census or a comparison made before the port's code changed: play";
+    assert!(s.contains(stale), "{s}");
+    // One command brings every gate up to the code: the census counted again, the session compared again.
+    let again = rrc.ok(&["work", "--run"]);
+    assert!(again.contains("counted   play: 208 passes, 0 fields, 0 notes"), "{again}");
+    assert!(again.contains("compared  play: ticks 1-209 of 209 match, from the port's start, no feed"), "{again}");
+    assert!(!status(&rrc).contains("stale     "));
+    assert!(rrc.ok(&["work", "--run"]).contains("counted   nothing: every census and comparison is of its recording"));
     std::fs::remove_dir_all(&dir).ok();
 }
 

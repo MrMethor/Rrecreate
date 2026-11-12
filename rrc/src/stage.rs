@@ -23,6 +23,8 @@ pub(crate) const STAGES: [&str; 8] =
 const SHOWN: usize = 4;
 /// Sessions named in a line.
 const NAMED: usize = 3;
+/// Ways the scope's sessions stand, listed at most.
+const GROUPS: usize = 10;
 
 /// A thing a stage's gate lacks, and the step that gives it.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,7 +51,7 @@ pub(crate) struct Held {
 
 impl Held {
     /// Whether the session starts at power-on, not at another's tick (D118): one the port can run from its own start.
-    fn starts_at_power_on(&self) -> bool {
+    pub(crate) fn starts_at_power_on(&self) -> bool {
         self.session.from.is_none()
     }
 
@@ -72,9 +74,11 @@ impl Held {
         Err(why)
     }
 
-    /// Whether anything kept of it was made by other code of the port than `port`'s (`sources::fingerprint`).
+    /// Whether what is kept of it was made by other code of the port than `port`'s (`sources::fingerprint`): its
+    /// census, or every comparison of it (one of the code as it is now is what `rrc work --run` makes).
     pub(crate) fn stale(&self, port: &str) -> bool {
-        self.census.as_ref().is_some_and(|c| c.port != port) || self.outcomes.values().any(|o| o.port != port)
+        self.census.as_ref().is_some_and(|c| c.port != port)
+            || (!self.outcomes.is_empty() && self.outcomes.values().all(|o| o.port != port))
     }
 }
 
@@ -138,7 +142,8 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         let session = Session::load(repo, name)?;
         let recorded = session.trace.as_ref().map(|t| t.hash.clone());
         let current = |made_of: &str| recorded.as_deref() == Some(made_of);
-        let census = Census::load(repo, name)?.filter(|c| current(&c.recorded));
+        // A census kept before it said which recording it was of counts, as other code's than now's (stale).
+        let census = Census::load(repo, name)?.filter(|c| c.recorded.is_empty() || current(&c.recorded));
         let mut outcomes = Outcome::kept(repo, name)?;
         outcomes.retain(|_, o| current(&o.recorded));
         held.push(Held { unrecorded: unrecorded(name, &session)?, name: name.clone(), session, census, outcomes });
@@ -389,6 +394,13 @@ fn set_up(repo: &Repo) -> Vec<Lack> {
         )),
         Some(_) => {}
     }
+    let missing = crate::entry::missing(&repo.root);
+    if !missing.is_empty() {
+        lacks.push(lack(
+            format!("what an agent meets first isn't there: {}", missing.join(", ")),
+            "rrc hooks writes it",
+        ));
+    }
     lacks
 }
 
@@ -453,7 +465,8 @@ pub(crate) fn status(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         say(
             "stale",
             format!(
-                "{} last compared before the port's code changed: {} (rrc work --run counts again)",
+                "{} with a census or a comparison made before the port's code changed: {} (rrc work --run counts \
+                 and compares again)",
                 of(standing.stale.len(), standing.held.len()),
                 some(&standing.stale, String::clone)
             ),
@@ -470,9 +483,11 @@ pub(crate) fn status(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The scope's sessions, each with where it stands; those that match in everything as a count.
+/// The scope's sessions by where they stand: those that stand the same in one line, the most first; those that
+/// match in everything as a count.
 fn sessions(standing: &Standing) {
     let mut whole = 0;
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for h in &standing.held {
         let kind = if h.starts_at_power_on() { "start-all" } else { "transplant-all" };
         let all = h.matches(&[kind]).is_ok_and(|o| o.drew && o.unsounded.is_empty());
@@ -497,7 +512,19 @@ fn sessions(standing: &Standing) {
                 if c.sound.is_some() { ", sound differs" } else { "" }
             ),
         };
-        say("session", format!("{} ({} ticks): {fields}; {census}", h.name, h.ticks()));
+        groups.entry(format!("{fields}; {census}")).or_default().push(format!("{} ({} ticks)", h.name, h.ticks()));
+    }
+    let mut groups: Vec<(String, Vec<String>)> = groups.into_iter().collect();
+    groups.sort_by_key(|(_, names)| std::cmp::Reverse(names.len()));
+    for (how, names) in groups.iter().take(GROUPS) {
+        match names.as_slice() {
+            [one] => say("session", format!("{one}: {how}")),
+            many => say("sessions", format!("{}: {how}: {}", many.len(), some(many, String::clone))),
+        }
+    }
+    if groups.len() > GROUPS {
+        let left: usize = groups[GROUPS..].iter().map(|(_, names)| names.len()).sum();
+        say("sessions", format!("{left} more, standing otherwise"));
     }
     if whole > 0 {
         say("sessions", format!("{whole} of {} match in state, frames and sound", standing.held.len()));
@@ -557,6 +584,9 @@ mod tests {
         let h = held(&[("start-all", made("abc"))], None);
         assert!(!h.stale("abc") && h.stale("abd"));
         assert!(!held(&[], None).stale("abc"), "nothing kept, nothing stale");
+        // One comparison by the code as it is now is enough: the others are what it replaced.
+        let both = held(&[("start-all", made("abd")), ("start-fields", made("abc"))], None);
+        assert!(!both.stale("abd") && both.stale("xyz"));
     }
 
     #[test]

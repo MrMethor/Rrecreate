@@ -107,7 +107,13 @@ impl Outcome {
     /// What each kind of comparison of the session last found.
     pub(crate) fn kept(repo: &Repo, name: &str) -> Result<BTreeMap<String, Outcome>, String> {
         let path = repo.state()?.join("compare").join(name).join(OUTCOMES);
-        let Ok(text) = std::fs::read_to_string(&path) else { return Ok(BTreeMap::new()) };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            // A comparison kept before the kinds were: what it found counts for the fields, which is all it is known
+            // to have compared, and as other code's than now's (it has no hash of the port's).
+            let before = Outcome::load(repo, name)?.filter(|o| o.port.is_empty());
+            let before = before.map(|o| Outcome { fields_only: true, ..o });
+            return Ok(before.into_iter().map(|o| (o.kind().to_owned(), o)).collect());
+        };
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
@@ -279,7 +285,7 @@ pub(crate) fn progress(repo: &Repo, args: &[String]) -> Result<ExitCode, String>
 }
 
 /// What a comparison found, in words.
-fn outcome_text(o: &Outcome) -> String {
+pub(crate) fn outcome_text(o: &Outcome) -> String {
     let start =
         if o.from == 0 { "from the port's start".to_owned() } else { format!("from a transplant at tick {}", o.from) };
     let fed = if o.fed.is_empty() { "no feed".to_owned() } else { format!("fed {}", o.fed.join(", ")) };
