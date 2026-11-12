@@ -96,6 +96,16 @@ tests showed that an agent with the playbook alone finds what the toolkit's auth
 **Supersedes:** D70's milestone numbers (32-bit games were M7; Arena tests M4, M6 and M7, and M5 where a test
 program isn't enough).
 
+### D161. M6 keeps the music and the actions seam; its open points in order. Accepted 2026-11-12, with the person.
+M6 closes only when a real game's music is made and compared (Arena's: Miles' XMIDI driver's OPL writes, as a
+backend other AIL games can share) and the platform turns the input devices into actions (docs/design.md §6.1).
+Its open points are worked in this order: the frames past the first session (the dungeon's continuation, the
+menus' and systems' screens), then the actions seam, then the music and the cinematic's sound before the dungeon.
+The person is told before the music is started.
+**Why:** both are M6's contents in the plan (§12, D71), and the hub left it to the person whether they move; the
+person kept the design as written. Frames come first because what is drawn already is compared on most sessions,
+the seam is the smaller design piece, and the music is the largest single piece of M6.
+
 ## The emulator
 
 ### D4. Our own emulator, Clockwork, runs the original. Accepted 2026-10-19, with the person.

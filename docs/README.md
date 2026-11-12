@@ -118,7 +118,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-12 (decisions to D160). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-12 (decisions to D161). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -171,13 +171,15 @@ whose kept path is still a note, not reproduced: those, and showing each switch,
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
 **Next:** the Arena port taken through the workflow from where the toolkit puts it (its entry files, its sources
-recorded, its suspects judged, the top of its work list); then the open points above, in the order the person sets;
-then M7.
+recorded, its suspects judged, the top of its work list); then the open points above, which stay M6's, in the
+person's order (D161): the frames past the first session, the actions seam, then the music (the person is told
+before it starts); then M7.
 
-**The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106), and whether the music and the actions seam
-are M6's or move; the game M9 is run on, which stays out of the toolkit's development until then (D71).
+**The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
+out of the toolkit's development until then (D71).
 
-The test games' own state is in their repositories on the person's machine (Arena's: its `notes/handoff.md`).
+The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
+`notes/handoff.md` says how to pick it up).
 
 ## 6. What was decided
 
