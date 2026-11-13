@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D168. A played port's sound output buffers 41 ms halves, and a player can choose more. Accepted 2026-11-13.
+The platform asks the host's output for 2048 samples a channel at a time (about 41 ms at the OPL's rate), twice
+buffered, where it asked for 1024; `PORT play --sound-buffer FRAMES` (256 to 16384) sets another. A tick's sound
+starts within two buffers of its tick.
+**Why:** the person heard the Arena port's sound break up as an audio buffer set too small does. Filling a buffer
+takes 0.3 ms of its 20.6 and the output asked for buffers on time even with every core busy, so the time is lost
+outside the port: Windows emulates DirectSound over its audio engine, which reads ahead of where it plays, and with
+a USB interface 20 ms halves were played before they were written. Twice the length leaves the read-ahead its
+margin for the price of 20 ms more delay; the option is for a host that needs more.
+
 ### D167. A port run whose code changed while it ran is refused. Accepted 2026-11-13.
 rrc takes the port's fingerprint (D158) before it builds and runs the port, and again after; when they differ, the
 run's results are refused and nothing is kept of them: run it again with the code as it is.

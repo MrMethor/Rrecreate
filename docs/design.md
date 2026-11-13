@@ -170,7 +170,8 @@ the session.
   at any rate. It keeps state of its own as the original's drawing code does (what it drew last, an
   off-screen buffer); a faithful one started mid-session is given the original's (D110).
 - **Platform:** window, input devices, audio output and file access (`rrc_platform` on the desktop: minifb and
-  tinyaudio, as `clockwork play` has them, and Nuked OPL3; D119). It owns the main loop and calls the
+  tinyaudio, as `clockwork play` has them, and Nuked OPL3; D119; its output in 41 ms halves, or what the player
+  asks, D168). It owns the main loop and calls the
   simulation and the presentation, so a web or mobile platform layer can be added without changing either. A
   live port's input handling (`Live`) makes the boundary values from the devices as the original's handlers
   did. A port plays from a start folder `rrc start` wrote: where a session's original was at a tick (D120), or

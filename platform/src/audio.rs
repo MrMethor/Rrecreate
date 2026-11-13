@@ -17,8 +17,10 @@ const PIT_HZ: f64 = 1_193_182.0;
 /// The speaker's and digitized sound's loudness against the OPL's.
 const SPEAKER: f32 = 6000.0;
 const PCM: f32 = 64.0;
-/// Samples a channel the output asks for at once: about 20 ms.
-const BUFFER: usize = 1024;
+/// Samples a channel the output asks for at once, by default: about 41 ms, which it buffers twice (D168). Windows'
+/// DirectSound, emulated over its audio engine, reads ahead of where it plays: with halves of 1024 (20 ms) on a USB
+/// interface a half was played before it was written, and the sound broke up as an audio buffer set too small does.
+pub(crate) const BUFFER: usize = 2048;
 
 /// The host's audio output, playing what [`Audio::play`] is given.
 pub(crate) struct Audio {
@@ -27,10 +29,11 @@ pub(crate) struct Audio {
 }
 
 impl Audio {
-    pub(crate) fn start() -> Result<Audio, String> {
+    /// The output, asked for `frames` samples a channel at a time.
+    pub(crate) fn start(frames: usize) -> Result<Audio, String> {
         let mixer = Arc::new(Mutex::new(Mixer::new()));
         let feeding = Arc::clone(&mixer);
-        let params = OutputDeviceParameters { sample_rate: RATE, channels_count: 2, channel_sample_count: BUFFER };
+        let params = OutputDeviceParameters { sample_rate: RATE, channels_count: 2, channel_sample_count: frames };
         let device = run_output_device(params, move |out| {
             if let Ok(mut mixer) = feeding.lock() {
                 mixer.fill(out);

@@ -329,7 +329,8 @@ pub fn inputs(values: &[(&str, &[u8])]) -> Inputs {
     Inputs::new(values.iter().map(|(name, bytes)| ((*name).to_owned(), bytes.to_vec())).collect::<BTreeMap<_, _>>())
 }
 
-/// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]...`): the game's folder chosen,
+/// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--fix QUIRK]...`):
+/// the game's folder chosen,
 /// the port's start (`start`, from power-on, or the folder `rrc start` wrote, D120, of tick 0 from power-on
 /// with the program's initial data, D141: none for a port that starts from a folder alone), then [`play`]; none
 /// when the
@@ -346,7 +347,7 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
     if args.first().map(String::as_str) != Some("play") {
         return None;
     }
-    let mut sound = true;
+    let mut sound = Some(audio::BUFFER);
     let mut from = None;
     if let Err(e) = rrc_runtime::actions::check(S::ACTIONS) {
         return Some(fail(&format!("the port's actions: {e}")));
@@ -379,9 +380,14 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
                 from = Some(dir);
             }
             ("--no-sound", _) => {
-                sound = false;
+                sound = None;
                 continue;
             }
+            ("--sound-buffer", Some(frames)) => match sound_buffer(frames) {
+                // The output's buffer, if the sound breaks up (D168).
+                Ok(frames) => sound = sound.map(|_| frames),
+                Err(e) => return Some(fail(&e)),
+            },
             ("--fix", Some(quirk)) => {
                 // A quirk fixed for this game (D149, docs/design.md §6.4).
                 if !is_registered(S::QUIRKS, quirk) {
@@ -391,7 +397,8 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
             }
             (other, _) => {
                 return Some(fail(&format!(
-                    "{other}: play [--game DIR] [--start DIR] [--no-sound] [--fix QUIRK]... [--controls FILE] [--actions]"
+                    "{other}: play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--fix QUIRK]... \
+                     [--controls FILE] [--actions]"
                 )));
             }
         }
@@ -418,6 +425,15 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
     })
 }
 
+/// `--sound-buffer`'s samples a channel the output takes at a time (twice buffered): 256 to 16384.
+fn sound_buffer(frames: &str) -> Result<usize, String> {
+    frames
+        .parse::<usize>()
+        .ok()
+        .filter(|f| (256..=16384).contains(f))
+        .ok_or_else(|| format!("--sound-buffer {frames}: samples a channel, 256 to 16384"))
+}
+
 /// Whether `quirks.toml`'s text registers `quirk`.
 fn is_registered(quirks: &str, quirk: &str) -> bool {
     quirks.lines().any(|line| line.trim() == format!("name = \"{quirk}\""))
@@ -429,12 +445,12 @@ fn fail(message: &str) -> std::process::ExitCode {
 }
 
 /// Plays from `started` (the port's start, or where `rrc start` left the original) with its presentation `P` in
-/// a window titled `title`, with its sound if `sound`, the host's keys given by `controls`, until the window is
-/// closed or the original's loop ends.
+/// a window titled `title`, with its sound if `sound` (the output's buffer: samples a channel), the host's keys
+/// given by `controls`, until the window is closed or the original's loop ends.
 pub fn play<S: Live, P: Presentation<S>>(
     title: &str,
     started: Started<S>,
-    sound: bool,
+    sound: Option<usize>,
     mut controls: Controls,
 ) -> Result<(), String> {
     let Started { mut state, presentation: own, screen, power_on } = started;
@@ -458,8 +474,8 @@ pub fn play<S: Live, P: Presentation<S>>(
     }
     let mut frame = screen.unwrap_or_else(|| Frame::new(WIDTH, HEIGHT));
     presentation.start(&state.scene(), &mut frame, given);
-    let audio = if P::SOUNDS && sound {
-        match audio::Audio::start() {
+    let audio = if let Some(frames) = sound.filter(|_| P::SOUNDS) {
+        match audio::Audio::start(frames) {
             Ok(audio) => Some(audio),
             Err(e) => {
                 eprintln!("no sound: {e}");
@@ -577,6 +593,14 @@ fn buttons(window: &Window, pressed: &mut [u32; 3]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sound_buffer_is_a_number_of_samples_in_range() {
+        assert_eq!(sound_buffer("4096"), Ok(4096));
+        assert!(sound_buffer("100").is_err() && sound_buffer("lots").is_err() && sound_buffer("20000").is_err());
+        // The default lasts longer than Windows' DirectSound reads ahead (D168).
+        assert!(audio::BUFFER as f64 / 49_716.0 > 0.04);
+    }
 
     #[test]
     fn a_fix_names_a_registered_quirk() {
