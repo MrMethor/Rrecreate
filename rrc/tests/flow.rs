@@ -135,7 +135,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 16, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 17, dos-pc ("), "{doctor}");
     assert!(doctor.contains("rules     RULES.md: 5 questions for the person not answered yet"), "{doctor}");
     // The stage the port is at, and what its gate lacks (D158): the person's answers, in place of the questions.
     let asking = rrc.ok(&["status"]);

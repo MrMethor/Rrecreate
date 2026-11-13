@@ -764,6 +764,15 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D171. A watch keeps at most 100000 accesses, and may keep the program's alone. Accepted 2026-11-14.
+Clockwork's watch keeps at most 100000 hits whatever its limit asks (protocol revision 17), and `rrc watch` refuses a
+larger `--limit`. With `"program": true` (`rrc watch --program`) only the program's own accesses and the session's
+edits are kept; the bytes host services and devices wrote are counted (`host`) and not kept.
+**Why:** a watch of Arena's EMS page frame with a limit of millions took the person's machine (8 GB) down twice on
+2026-11-13: every page the EMS driver maps copies 16 KB into the frame, a hit a byte, each held with its call chain
+in Clockwork, in its answer and in rrc. No question an agent asks may take the machine it runs on. Leaving the
+host's copies out is what finding the program's writes into such memory needs; counting them says they happened.
+
 ### D170. A session runs on the game's folder as it was recorded. Accepted 2026-11-13.
 A session's first recording from power-on (`rrc record`, `rrc play`) keeps the game's folder it ran on: every file
 by its path and SHA-256 in the session file (`[folder]`; a folder without files as `PATH/`), their contents in the

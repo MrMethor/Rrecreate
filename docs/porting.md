@@ -526,6 +526,10 @@ rrc frame first-level --tick 120
 ```
 
 lists each access in those ticks (or the whole session) with the instruction, the value and the call chain.
+A watch keeps at most 100000 accesses: watch a few bytes over a few ticks, not a whole buffer over a session. The
+host's own copies into watched memory (a DOS read, an EMS page mapped into its frame: 16 KB at a time) count byte by
+byte; `--program` leaves them out and counts them, which is how the program's writes into such memory are found.
+`SEG:OFF` is Ghidra's address; `MEM+LINEAR` the machine's.
 A value is shown as the data's type reads it; an access to part of an element (`seed[+2]`, a word of a
 doubleword) as the number the instruction wrote, in hex (`57E9h`: the bytes E9 57). `rrc frame` writes what the screen showed by the end of a tick as a PNG, to look at.
 Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and record again: the trace follows

@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-13 (decisions to D170). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-14 (decisions to D171). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -144,7 +144,8 @@ scenario edits in a lockstep (D146, D147), the quirk rule checked by `rrc check`
 (D148, D149), what no session ran listed (D150 to D152), a scenario edit's tick drawn in a lockstep as the pass
 left it (D166), a port run refused when its code changed under it (D167), a played port's sound output given the
 buffer Windows needs (D168) and the Sound Blaster's output filter (D169, with the person), and each session run on
-the game's folder as it was recorded, so that playing the game outside the toolkit changes no session (D170).
+the game's folder as it was recorded, so that playing the game outside the toolkit changes no session (D170), and a
+watch's memory bounded after one took the person's machine down (D171).
 
 **The standard workflow, built before M6 goes on** (D154 to D159, 2026-11-12), at the person's word. The playbook is
 one workflow for every game: stages with gates, one work loop, where to look when the port differs, the best-known

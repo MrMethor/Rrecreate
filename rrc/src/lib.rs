@@ -148,11 +148,13 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          group that waits for the timer is where a tick ends; with a function, how
                          often each phase calls it
   watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles]
-        [--limit N] [--lines N] [--chain N]
+        [--limit N] [--lines N] [--chain N] [--program]
                          who writes (and with --reads, reads) it during the session, or from tick N
                          for N ticks: the instruction, the value, and the call chain, --chain calls
                          of it (3) (start: before the first sync point hit); at most --limit
-                         accesses (10000), --lines lines
+                         accesses (10000, at most 100000), --lines lines; --program: the program's
+                         own, the host's copies (a DOS read, an EMS page mapped) only counted.
+                         SEG:OFF is Ghidra's address; MEM+LINEAR the machine's
   peek SESSION --tick N ID|NAME|SEG:OFF... [--len N]
                          memory at the end of tick N (its sync point), named or not, without
                          recording: as its type reads it, else as a number or bytes (--len: 2, or

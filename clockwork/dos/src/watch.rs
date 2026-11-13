@@ -30,6 +30,11 @@ pub use crate::calls::Frame;
 /// Hits kept, at most; later ones are counted in [`Watch::dropped`].
 pub const DEFAULT_LIMIT: usize = 10_000;
 
+/// The most hits a watch keeps, whatever its limit asks (D171): each is held with its call chain, and a host
+/// service's copy is a hit a byte (an EMS page mapped into the frame is 16 KB of them), so a larger limit could
+/// take the host's memory.
+pub const MAX_LIMIT: usize = 100_000;
+
 /// Video memory, which devices hold rather than memory: the host's writes there are found by
 /// comparing.
 const VIDEO: Range<u32> = 0xA_0000..0xC_0000;
@@ -106,6 +111,10 @@ pub struct Watch {
     pub hits: Vec<Hit>,
     /// Hits past `limit`.
     pub dropped: u64,
+    /// Only the program's accesses kept (D171): the bytes host services and devices write are counted in
+    /// `host` instead.
+    pub program_only: bool,
+    pub host: u64,
     /// For a summary watch: who touched each byte (physical address), instead of `hits`.
     pub touches: Option<BTreeMap<u32, Touch>>,
     /// For a summary watch: the host services called (by callback, which for the BIOS's, DOS's and
@@ -127,6 +136,8 @@ impl Watch {
             limit: DEFAULT_LIMIT,
             hits: Vec::new(),
             dropped: 0,
+            program_only: false,
+            host: 0,
             touches: None,
             services: BTreeMap::new(),
             port_reads: BTreeMap::new(),
@@ -167,7 +178,11 @@ impl Watch {
             }
             return;
         }
-        if self.hits.len() >= self.limit {
+        if self.program_only && !matches!(hit.by, By::Instruction { .. } | By::Edit) {
+            self.host += 1;
+            return;
+        }
+        if self.hits.len() >= self.limit.min(MAX_LIMIT) {
             self.dropped += 1;
             return;
         }

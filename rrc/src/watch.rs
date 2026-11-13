@@ -118,13 +118,16 @@ pub(crate) struct Writer {
     pub copied: Option<String>,
 }
 
+/// The most accesses a watch keeps, as Clockwork's limit (D171).
+const MAX_LIMIT: u64 = 100_000;
+
 /// Does what `rrc watch` does; and says who wrote last (nothing, if nothing wrote), or with `--before
 /// CYCLE` (for rrc's own use), last before that cycle. `--quiet` (rrc's own too) says nothing.
 pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     let a = Args::parse(
         args,
         &["--len", "--tick", "--ticks", "--limit", "--lines", "--before", "--chain"],
-        &["--reads", "--cycles", "--quiet"],
+        &["--reads", "--cycles", "--quiet", "--program"],
     )?;
     let say = |label: &str, text: &dyn std::fmt::Display| {
         if !a.has("--quiet") {
@@ -133,10 +136,17 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     };
     let before: u64 = a.value("--before").map_or(Ok(u64::MAX), str::parse).map_err(|_| "--before is a cycle")?;
     let usage = "watch SESSION ID|NAME|SEG:OFF [--len N] [--tick N] [--ticks N] [--reads] [--cycles] [--limit N] \
-                 [--lines N] [--chain N]";
+                 [--lines N] [--chain N] [--program]";
     let chain_shown: usize =
         a.value("--chain").map_or(Ok(CHAIN_SHOWN), str::parse).map_err(|_| "--chain is a count of calls")?;
     let limit: u64 = a.value("--limit").map_or(Ok(10_000), str::parse).map_err(|_| "--limit is a count")?;
+    // Each access is held with its call chain, in Clockwork and here (D171).
+    if limit > MAX_LIMIT {
+        return Err(format!(
+            "--limit {limit}: a watch keeps at most {MAX_LIMIT} accesses, each held in memory with its call chain; \
+             narrow the range or the ticks, or leave out the host's copies (--program)"
+        ));
+    }
     let lines_shown: usize =
         a.value("--lines").map_or(Ok(ACCESSES_SHOWN), str::parse).map_err(|_| "--lines is a count")?;
     let [name, what] = a.positionals(2, 2, usage)? else { unreachable!() };
@@ -159,7 +169,9 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     clockwork.ask("calls", json!({"on": true}))?;
     let mut ms = to_tick(&mut clockwork, first, from.as_ref(), length_ms)?;
     let at = Places::new(repo, &session).address(&id.to_string())?;
-    clockwork.ask("watch", json!({"ranges": [{"at": at, "len": len}], "reads": a.has("--reads"), "limit": limit}))?;
+    let request = json!({"ranges": [{"at": at, "len": len}], "reads": a.has("--reads"), "limit": limit,
+                         "program": a.has("--program")});
+    clockwork.ask("watch", request)?;
     // Tick by tick, keeping where each ends.
     let mut ends = Vec::new();
     if syncs.is_empty() {
@@ -208,6 +220,10 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
             "none",
             &if a.has("--reads") { "nothing read or wrote it" } else { "nothing wrote it (--reads for reads too)" },
         );
+    }
+    let host = watched["host"].as_u64().unwrap_or(0);
+    if host > 0 {
+        say("host", &format!("{host} bytes written by host services and devices, not kept (--program)"));
     }
     let dropped = watched["dropped"].as_u64().unwrap_or(0);
     if dropped > 0 {

@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 16;
+pub const PROTOCOL: u64 = 17;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -551,8 +551,9 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 dos::watch::Watch::new(physical_ranges, reads)
             };
             if let Some(limit) = number(r, "limit")? {
-                watch.limit = limit as usize;
+                watch.limit = (limit as usize).min(dos::watch::MAX_LIMIT);
             }
+            watch.program_only = flag(r, "program")?.unwrap_or(false);
             m.start_watch(watch);
             Ok(json!({}))
         }
@@ -575,7 +576,7 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 return Ok(json!({ "bytes": bytes, "services": services, "ports": ports, "port_uses": port_uses }));
             }
             let hits: Vec<Value> = watch.hits.iter().map(|h| hit(h, &name, &name_physical)).collect();
-            Ok(json!({"hits": hits, "dropped": watch.dropped}))
+            Ok(json!({"hits": hits, "dropped": watch.dropped, "host": watch.host}))
         }
         "files" => {
             m.start_files();

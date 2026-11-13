@@ -3680,6 +3680,52 @@ fn a_watch_names_the_service_that_wrote() {
 }
 
 #[test]
+fn a_watch_of_the_program_only_counts_the_host_s_writes_and_keeps_a_bounded_number() {
+    // INT 21h AH=47h writes the buffer (the host's write), then the program writes it twice itself.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        offsets.borrow_mut().insert("buffer", a.addr("buffer") as u32);
+        a.mov(ah, 0x47)?;
+        a.mov(dl, 0)?;
+        let buffer = a.addr("buffer");
+        a.mov(si, buffer)?;
+        a.int(0x21)?;
+        a.mov(byte_ptr(buffer), 7)?;
+        a.mov(byte_ptr(buffer + 1), 8)?;
+        exit(a, 0)?;
+        a.here("buffer")?;
+        a.db(&[0xFF; 4])
+    });
+    let o = offsets.into_inner();
+    let run = |program_only: bool, limit: usize| {
+        let mut m = boot(&[("W.COM", &program)], "W.COM");
+        let buffer = (u32::from(m.dos.psp) << 4) + o["buffer"];
+        let mut watch = dos::watch::Watch::range(buffer..buffer + 4, false);
+        (watch.program_only, watch.limit) = (program_only, limit);
+        m.start_watch(watch);
+        assert_eq!(m.run(SECOND), Stop::Exited(0));
+        let watch = m.take_watch().unwrap();
+        let hits: Vec<_> = watch.hits.iter().map(|h| (h.address - buffer, h.value, h.by)).collect();
+        (hits, watch.host, watch.dropped)
+    };
+    // Every write: the service's first.
+    let (hits, host, _) = run(false, 10);
+    assert!(matches!(hits[..], [(0, 0, dos::watch::By::Service { .. }), (0, 7, _), (1, 8, _)]), "{hits:?}");
+    assert_eq!(host, 0);
+    // The program's only: the service's write counted, not kept.
+    let (hits, host, _) = run(true, 10);
+    assert!(
+        matches!(hits[..], [(0, 7, dos::watch::By::Instruction { .. }), (1, 8, dos::watch::By::Instruction { .. })]),
+        "{hits:?}"
+    );
+    assert_eq!(host, 1);
+    // A limit past the most a watch keeps is that most.
+    assert_eq!(dos::watch::MAX_LIMIT, 100_000);
+    let (hits, _, dropped) = run(false, 1);
+    assert_eq!((hits.len(), dropped), (1, 2));
+}
+
+#[test]
 fn a_watch_sees_an_interrupt_handler_and_reads() {
     // The timer handler counts ticks; the main program reads the count until it reaches 20.
     let offsets = std::cell::RefCell::new(BTreeMap::new());

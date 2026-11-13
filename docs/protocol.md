@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **16** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **17** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -88,11 +88,14 @@ is let go when it would have been (D118).
 with `"after": CYCLE` only that after the cycle, for a play followed in parts (D124); `lines` may be left out.
 It answers `queued`, how many.
 
-**Watches.** `watch` `{"ranges": [{"at", "len"}], "reads": false, "limit": 10000}` ... `watch_end`: each
-write (and read) of the watched bytes: `hits`, each `{"at", "kind", "value", "old", "cycle", "by", "chain"}`,
+**Watches.** `watch` `{"ranges": [{"at", "len"}], "reads": false, "limit": 10000, "program": false}` ...
+`watch_end`: each write (and read) of the watched bytes: `hits`, each `{"at", "kind", "value", "old", "cycle", "by",
+"chain"}`,
 where `by` is `{"instruction"}`, `{"service", "ax"}` or `{"device": true}` and `chain` the calls in progress,
 innermost first (`{"entry", "from", "interrupt"}`); a write that copied a byte the instruction read (`MOVS`,
-`PUSH` and `POP` of memory) has `from`, that byte's address (D85); `dropped` counts what went past the limit. With
+`PUSH` and `POP` of memory) has `from`, that byte's address (D85); `dropped` counts what went past the limit, which
+is at most 100000 whatever is asked (D171). With `"program": true` only the program's accesses (and edits) are kept:
+`host` counts the bytes host services and devices wrote instead. With
 `"summary": true`, who touched each byte instead, as runs of bytes touched alike (`bytes`: `{"at", "len",
 "read", "read_in_interrupt", "written", "interrupt_writer", "interrupt_write_by", "host"}`), with the services
 called (`services`) and ports read (`ports`) meanwhile, and each instruction's uses of each port
@@ -212,6 +215,7 @@ An IBM PC with DOS (Clockwork).
     sync point's hit are compared with what the source held then, and found with that `tick`.
 16. `uninit` takes `unwritten`, and `uninit_unwritten` writes it (D150): tracking goes on past a snapshot, whose memory was
     otherwise all "nothing wrote".
+17. `watch` takes `program`, and `watch_end` answers `host`; a watch keeps at most 100000 hits (D171).
 
 ## Changing the protocol
 

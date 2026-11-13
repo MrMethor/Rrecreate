@@ -106,7 +106,8 @@ named, its boundary values), which it has for DOS only. Operations:
 - **who wrote:** a watch on the bus (as MAME's are) reports each read or write of the watched bytes with its
   instruction, cycle and call chain; host services and devices that change them are named. The chain is a
   shadow stack kept from what instructions do to the stack; tracking calls from the start of a run gives a
-  watch started later the whole chain. Also the first read of memory nothing wrote;
+  watch started later the whole chain. A watch keeps a bounded number of accesses, and may keep the program's
+  alone, the host's copies counted (D171). Also the first read of memory nothing wrote;
 - coverage (which instructions ran, which calls were made), memory-access tracing over a range of code,
   bounds checks on declared data (an access past a named table's end is reported: a quirk candidate);
 - the loaded image: the program's memory after loading, unpacking or an extender's loader ran, with its
