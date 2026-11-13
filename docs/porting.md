@@ -673,7 +673,8 @@ and the sound that differ, and its notes; the census is in `.rrc/compare/SESSION
 at power-on is counted from there, the port started as it starts itself (its initial data, D135), not from a
 transplant at its first tick, which would leave out what its power-on sets up and nothing maps (D164). At a
 scenario's edit, the port's own values stay where the edit writes until its tick is drawn, as the pass left them
-(D166). It is the work
+(D166). A run whose port's code changed while it ran is refused (D167): while a long census runs, edit a copy of
+the port. It is the work
 list: take a difference, then `rrc compare SESSION --transplant T` with T the tick before its first, for who wrote
 the original's value.
 

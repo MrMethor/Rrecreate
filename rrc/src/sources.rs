@@ -185,6 +185,18 @@ pub fn fingerprint(root: &Path) -> String {
     crate::cache::sha256(&all)
 }
 
+/// `run` with the port's code held still: what it made is refused when the code changed while it ran (a build
+/// mid-run makes a run of neither version, which a fingerprint would name as one of them, D167).
+pub fn held_still<T>(root: &Path, run: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let before = fingerprint(root);
+    let made = run()?;
+    if fingerprint(root) != before {
+        return Err("the port's code changed while it ran: what it made is of neither version, run it again with the                     code as it is (to edit while a long census runs, edit a copy of the port)"
+            .into());
+    }
+    Ok(made)
+}
+
 /// The port's code files under `dir`, in path order, each given to `f` with its path from `root` (with `/`)
 /// until it says to stop; whether it did not.
 fn each_file(root: &Path, dir: &Path, f: &mut dyn FnMut(&str, &str) -> bool) -> bool {
@@ -257,6 +269,20 @@ fn names(line: &str, what: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_run_whose_code_changed_meanwhile_is_refused() {
+        let root = std::env::temp_dir().join(format!("rrc-held-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        assert_eq!(held_still(&root, || Ok(1)), Ok(1));
+        // Notes and the books aren't the code.
+        assert_eq!(held_still(&root, || std::fs::write(root.join("notes.md"), "x").map_err(|e| e.to_string())), Ok(()));
+        let edited =
+            held_still(&root, || std::fs::write(root.join("src/main.rs"), "fn main() { }").map_err(|e| e.to_string()));
+        assert!(edited.unwrap_err().contains("changed while it ran"));
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     #[test]
     fn a_bug_said_in_the_code_names_its_quirk() {

@@ -661,7 +661,8 @@ run --inputs FILE --out FILE [--transplant FILE | --resume FILE | --initial FILE
 ```
 
 and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is
-shown when it fails. Its environment has the person's copy of the game (D82): `RRC_GAME`, the game's folder,
+shown when it fails. A run whose code changed while it ran (the fingerprint before and after its build and run
+differ) is refused (D167). Its environment has the person's copy of the game (D82): `RRC_GAME`, the game's folder,
 and `RRC_PROGRAM`, the program as the analysis unpacked it (an MZ file; its load image is what IDs' offsets
 count in), for the static data the port reads (`rrc_runtime::original`); run without them (its own tests), the
 runtime finds both from the port repository it runs in (D91). `RRC_SAVES` is the run's saves folder, made

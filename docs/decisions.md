@@ -764,6 +764,15 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D167. A port run whose code changed while it ran is refused. Accepted 2026-11-13.
+rrc takes the port's fingerprint (D158) before it builds and runs the port, and again after; when they differ, the
+run's results are refused and nothing is kept of them: run it again with the code as it is.
+**Why:** a port's command is usually `cargo run`, which builds the code as it is when each run starts. A census of
+every session runs the port once a session for most of an hour, and an agent goes on working meanwhile: an edit to
+the port's code mid-census built a new version for the sessions after it, while the census was kept under the
+fingerprint taken at its start, a mix of two versions named as one. On Arena this was avoided by hand, by editing a
+copy of the port while a census ran; the toolkit now refuses the mix instead.
+
 ### D164. A lockstep census of a session from power-on starts the port from power-on. Accepted 2026-11-12.
 `rrc compare SESSION --lockstep` (and so `rrc work --run`) runs a session that starts at power-on (no `[from]`; a
 session from another's tick has the start-up's pass in its trace too, and starts from a transplant) from there:

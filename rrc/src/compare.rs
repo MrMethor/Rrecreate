@@ -1769,13 +1769,15 @@ fn run_port(repo: &Repo, args: &[String], saves: Option<&std::path::Path>) -> Re
         let tail: Vec<&str> = tail.into_iter().rev().collect();
         Err(format!("[port] {what} failed ({}):\n{}", output.status, tail.join("\n")))
     };
-    if !port.build.is_empty() {
-        run("build", &port.build, &[])?;
-    }
     if port.command.is_empty() {
         return Err("rrc.toml has no [port] command: the port's program, which rrc runs (docs/formats.md)".into());
     }
-    run("command", &port.command, args)
+    crate::sources::held_still(&repo.root, || {
+        if !port.build.is_empty() {
+            run("build", &port.build, &[])?;
+        }
+        run("command", &port.command, args)
+    })
 }
 
 /// The first divergence: the fields, the tick's late inputs, who wrote the original's value, and the
