@@ -1308,7 +1308,8 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
     // A session that starts at power-on is counted from there, as the port starts it, with the program's own initial
     // data (D135, D137): a transplant at its first tick would leave out what the port's power-on sets up that no
     // mapping carries (a menu's or a creation's own state, D164). Its first tick is fed too, as every pass is.
-    let from_power_on = trace.header.power_on.is_some();
+    // (A session from another's tick has the start-up's pass in its trace too, but starts where its base was: D118.)
+    let from_power_on = session.from.is_none() && trace.header.power_on.is_some();
     let after = 1;
     let fed_from = if from_power_on { 0 } else { after };
     let sets = edit_sets(repo, name, &trace, &mapped, &original, &k.types, after)?;

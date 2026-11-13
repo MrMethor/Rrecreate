@@ -1481,6 +1481,11 @@ ips 8000000
     assert!(followed.contains("part      hold/4: "), "{followed}");
     assert!(followed.contains("4 parts (sessions/hold/1 to 4)"), "{followed}");
     assert!(followed.contains("match     hold: every mapped field, frame and sound in all "), "{followed}");
+    // A part starts from the one before's tick: counted from a transplant there, though its trace has the
+    // start-up's pass too (D118, D164).
+    let counted = rrc.ok(&["compare", "hold/2", "--lockstep"]);
+    assert!(counted.contains("every mapped field, frame and sound in all"), "{counted}");
+    assert!(rrc.repo.join(".rrc/compare/hold/2/start.json").is_file(), "from a transplant: {counted}");
     let (taken, ok) = rrc.run(&args);
     assert!(!ok && taken.contains("there is a session hold already"), "{taken}");
     // The parts, one from the last tick of the one before, are the play recorded whole: no input lost or

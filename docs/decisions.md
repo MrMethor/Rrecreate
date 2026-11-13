@@ -754,7 +754,8 @@ drawing after it showed the edited state a frame early. Measured on Arena: the l
 the door at tick 2, and its frame there showed the compass already turned; the original's shows the angle before it.
 
 ### D164. A lockstep census of a session from power-on starts the port from power-on. Accepted 2026-11-12.
-`rrc compare SESSION --lockstep` (and so `rrc work --run`) runs a session whose trace starts at power-on from there:
+`rrc compare SESSION --lockstep` (and so `rrc work --run`) runs a session that starts at power-on (no `[from]`; a
+session from another's tick has the start-up's pass in its trace too, and starts from a transplant) from there:
 the port started from the program's own initial data (`--initial`, D135, D137), its first tick its own, and every
 pass after it fed the original's mapped state as before. Other sessions still start from a transplant at their first
 tick.
