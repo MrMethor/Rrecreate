@@ -737,6 +737,11 @@ is the port's code, checked by the comparison as the loaded data it makes (mappe
 The work loop on frames, the most ticks first, then on sound, a device at a time: the digitized sounds, then the
 music, which is a subsystem at its interrupt's rate (D22).
 
+Draw a frame from what the scene says its pass drew from, never from a copy the presentation kept of the frame before:
+a scenario's edit is set at the sync point after its tick is drawn (D165), so the next pass's place, or a table the
+logic builds for the drawing (Arena's floor and ceiling rows, built only when its logic asks), is the step's to record
+as the pass begins.
+
 Once the logic matches, the port draws and sounds (M6, D107, D108). Its simulation never draws: it shows a scene, what there is
 to draw at a tick as meaning (the map, the player, the picture shown: `rrc_runtime::present::Shows`), and a
 presentation draws it (`Presentation`: `start`, the screen at the first tick; `draw`, what a pass drew onto
