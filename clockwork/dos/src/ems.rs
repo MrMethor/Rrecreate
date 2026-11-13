@@ -267,6 +267,39 @@ fn reallocate(m: &mut Machine, id: u16, count: u16) -> u8 {
     status::OK
 }
 
+/// Where the byte at `offset` in `handle`'s logical pages (the page times 16 KB, and the byte) is now: in the
+/// frame (its physical address) while its page is mapped, the frame being then its only copy; else in its storage
+/// page (id, byte). None: no such handle or page.
+fn locate_byte(m: &Machine, handle: u16, offset: u32) -> Option<Result<u32, (u16, usize)>> {
+    let logical = u16::try_from(offset / PAGE_SIZE as u32).ok()?;
+    let byte = offset as usize % PAGE_SIZE;
+    let page = storage_page(m, handle, logical)?;
+    Some(match (0..PHYSICAL_PAGES).find(|&p| m.ems.mapped[p] == Some((handle, logical))) {
+        Some(physical) => Ok(frame_address(physical) + byte as u32),
+        None => Err((page, byte)),
+    })
+}
+
+/// The byte at `offset` in EMS handle `handle`'s logical pages, wherever the program has its page (D172): for
+/// tools, which name expanded memory by handle and offset (`EMS#<handle>+<offset>`). None: no such handle or page.
+pub fn peek(m: &Machine, handle: u16, offset: u32) -> Option<u8> {
+    Some(match locate_byte(m, handle, offset)? {
+        Ok(physical) => m.peek_u8(physical),
+        Err((page, byte)) => m.ems.storage.get(&page).map_or(0, |data| data[byte]),
+    })
+}
+
+/// Writes the byte at `offset` in EMS handle `handle`'s logical pages, as [`peek`] finds it. False: no such handle
+/// or page.
+pub fn poke(m: &mut Machine, handle: u16, offset: u32, value: u8) -> bool {
+    match locate_byte(m, handle, offset) {
+        Some(Ok(physical)) => m.write_u8(physical, value),
+        Some(Err((page, byte))) => m.ems.storage.entry(page).or_insert_with(|| vec![0; PAGE_SIZE])[byte] = value,
+        None => return false,
+    }
+    true
+}
+
 fn storage_page(m: &Machine, handle: u16, logical: u16) -> Option<u16> {
     m.ems.handles.get(&handle)?.pages.get(usize::from(logical)).copied()
 }

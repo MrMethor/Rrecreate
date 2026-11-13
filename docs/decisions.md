@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D172. Expanded memory is named by handle and offset: `EMS#<handle>+<offset>`. Accepted 2026-11-14.
+An ID's module `EMS` is expanded memory: its part the handle (`#n`), its offset into the handle's logical pages,
+the page times 4000h and the byte (`EMS#1+110000`: handle 1's page 44h). Clockwork's `read` and `write` take it
+(protocol revision 18) and find the byte wherever the program has its page: in the page frame while it is mapped,
+the frame being then its only copy, else in the page's storage. Named data there is traced, peeked and mapped as
+any other (`knowledge/data.tsv`); watches, bounds checks and edits don't take it.
+**Why:** Arena keeps the automap's record of the cells seen in EMS (handle 1, pages 44h to 47h, mapped through its
+context 11h): at a sync point another context is mapped, so no address of the machine holds it, and a port's
+automap could neither be compared field by field nor started from a transplant. The handle and logical page are
+how the program itself names that memory, and the same in every run (the allocations are), as an image offset is;
+a linear address isn't, since the frame shows whatever page is mapped. DOSBox-X's debugger lists EMS handles and
+pages; naming a byte by them is ours.
+
 ### D171. A watch keeps at most 100000 accesses, and may keep the program's alone. Accepted 2026-11-14.
 Clockwork's watch keeps at most 100000 hits whatever its limit asks (protocol revision 17), and `rrc watch` refuses a
 larger `--limit`. With `"program": true` (`rrc watch --program`) only the program's own accesses and the session's

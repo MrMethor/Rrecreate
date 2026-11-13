@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// The protocol's revision this implements (`docs/protocol.md`): it changes with every change to the
 /// protocol, and tools refuse an emulator whose revision isn't theirs.
-pub const PROTOCOL: u64 = 17;
+pub const PROTOCOL: u64 = 18;
 
 /// The machine this emulates: the protocol's core and the `dos-pc` extension.
 pub const PLATFORM: &str = "dos-pc";
@@ -385,10 +385,17 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let mut data = Vec::new();
             for spec in specs(r, "ranges")? {
                 let bytes: Option<Vec<u8>> = match spec {
-                    Spec::Memory(at, len) => {
-                        let linear = addr(m, &at)?;
-                        (0..len).map(|i| m.peek_linear_u8(linear.wrapping_add(i))).collect()
-                    }
+                    Spec::Memory(at, len) => match expanded(&at)? {
+                        Some((handle, offset)) => (0..len)
+                            .map(|i| dos::ems::peek(m, handle, offset.wrapping_add(i)))
+                            .collect::<Option<Vec<u8>>>()
+                            .map(Some)
+                            .ok_or_else(|| format!("{at}: no such EMS handle or page"))?,
+                        None => {
+                            let linear = addr(m, &at)?;
+                            (0..len).map(|i| m.peek_linear_u8(linear.wrapping_add(i))).collect()
+                        }
+                    },
                     Spec::Device(device) => Some(m.device_state(device)),
                 };
                 data.push(bytes.map_or(Value::Null, |b| json!(hex(&b))));
@@ -396,8 +403,16 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             Ok(json!({"data": data}))
         }
         "write" => {
-            let linear = addr(m, text(r, "at")?)?;
             let bytes = unhex(text(r, "hex")?)?;
+            if let Some((handle, offset)) = expanded(text(r, "at")?)? {
+                for (i, byte) in bytes.into_iter().enumerate() {
+                    if !dos::ems::poke(m, handle, offset.wrapping_add(i as u32), byte) {
+                        return Err(format!("{}: no such EMS handle or page", text(r, "at")?));
+                    }
+                }
+                return Ok(json!({}));
+            }
+            let linear = addr(m, text(r, "at")?)?;
             for (i, byte) in bytes.into_iter().enumerate() {
                 let physical = physical(m, linear.wrapping_add(i as u32))?;
                 m.write_u8(physical, byte);
@@ -814,6 +829,17 @@ fn address(m: &Machine, image: u32, s: &str) -> Result<u32, String> {
 /// `+OFF` in the program's image, `@LINEAR` elsewhere.
 fn describe(image: &Range<u32>, linear: u32) -> String {
     if image.contains(&linear) { format!("+{:05X}", linear - image.start) } else { format!("@{linear:X}") }
+}
+
+/// An address in expanded memory, `EMS#<handle>+<offset>` (the handle in decimal, the offset into its logical
+/// pages in hex, D172): the handle and offset. None for any other address.
+fn expanded(at: &str) -> Result<Option<(u16, u32)>, String> {
+    let Some(rest) = at.strip_prefix("EMS#") else { return Ok(None) };
+    let bad = || format!("{at:?}: an EMS address is EMS#<handle>+<offset in hex>");
+    let (handle, offset) = rest.split_once('+').ok_or_else(bad)?;
+    let handle = handle.parse().map_err(|_| bad())?;
+    let offset = u32::from_str_radix(offset, 16).map_err(|_| bad())?;
+    Ok(Some((handle, offset)))
 }
 
 fn physical(m: &Machine, linear: u32) -> Result<u32, String> {

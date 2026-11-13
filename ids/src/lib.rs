@@ -6,8 +6,10 @@
 //! the part, never a runtime `segment:offset`: load segments and where parts are placed vary between
 //! runs. The module `MEM` is memory outside any program's image (the interrupt vectors, the BIOS's
 //! data, other programs' memory), its offset the linear address: `MEM+0046C` is the BIOS's timer
-//! count (D53). Tested against `testdata/function_ids.tsv`, which every implementation of the
-//! format shares.
+//! count (D53). The module `EMS` is expanded memory, its part a handle and its offset into the
+//! handle's logical pages (the page times 4000h, and the byte): `EMS#1+110000` is handle 1's page
+//! 44h, wherever the program maps it (D172). Tested against `testdata/function_ids.tsv`, which every
+//! implementation of the format shares.
 
 use std::fmt;
 use std::str::FromStr;
@@ -19,6 +21,9 @@ const MODULE_PUNCTUATION: &str = "._-~!$%&()@^{}'";
 
 /// The module of memory outside any program's image, by linear address (D53).
 pub const MEMORY: &str = "MEM";
+
+/// The module of expanded memory: its part a handle, its offset into the handle's logical pages (D172).
+pub const EXPANDED: &str = "EMS";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id {
@@ -51,6 +56,9 @@ impl Id {
         if module == MEMORY && part.is_some() {
             return Err(ParseIdError { input: module, reason: "MEM has no parts" });
         }
+        if module == EXPANDED && part.is_none() {
+            return Err(ParseIdError { input: module, reason: "EMS needs its handle (#n)" });
+        }
         Ok(Self { module, part, offset })
     }
 
@@ -62,6 +70,16 @@ impl Id {
     /// Whether it names memory outside the programs' images.
     pub fn is_memory(&self) -> bool {
         self.module == MEMORY
+    }
+
+    /// The byte at `offset` in EMS handle `handle`'s logical pages (`EMS#<handle>+...`, D172).
+    pub fn expanded(handle: u16, offset: u32) -> Self {
+        Self { module: EXPANDED.into(), part: Some(handle), offset }
+    }
+
+    /// Whether it names expanded memory: its handle is [`Id::part`].
+    pub fn is_expanded(&self) -> bool {
+        self.module == EXPANDED
     }
 
     pub fn module(&self) -> &str {

@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **17** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **18** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -170,7 +170,9 @@ An IBM PC with DOS (Clockwork).
   `--input-file`, `--replay`. The image is the started program's load image (from its PSP's paragraph 10h);
   after `load_snapshot` too, though another program may run then. `load` also answers its PSP (`psp`).
 - **Addresses** also take `SEG:OFF` (as the CPU sees it now); physical memory a check reports while paging is
-  on is `%PHYS`, and memory a watch reports is named by the linear address it was watched at.
+  on is `%PHYS`, and memory a watch reports is named by the linear address it was watched at. `read` and `write`
+  also take `EMS#<handle>+<offset>`: expanded memory, the handle in decimal and the offset into its logical pages
+  in hex (the page times 4000h, and the byte), wherever the program has the page, mapped or not (D172).
 - **Sync points** take `program` (a file name): their hits count only while it runs or a program it started
   does (D56, D57).
 - **Devices** (`read`, gates): `mouse` (what INT 33h would report, 46 bytes) and `joystick` (the game port's
@@ -216,6 +218,7 @@ An IBM PC with DOS (Clockwork).
 16. `uninit` takes `unwritten`, and `uninit_unwritten` writes it (D150): tracking goes on past a snapshot, whose memory was
     otherwise all "nothing wrote".
 17. `watch` takes `program`, and `watch_end` answers `host`; a watch keeps at most 100000 hits (D171).
+18. `read` and `write` take `EMS#<handle>+<offset>`, expanded memory by handle (D172).
 
 ## Changing the protocol
 

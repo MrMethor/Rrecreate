@@ -221,6 +221,10 @@ fn address(module: &str, id: &Id, objects: Option<&[(u32, u32, u32)]>) -> Result
     if id.is_memory() {
         return Ok(Address::Linear(id.offset()).to_string());
     }
+    // Expanded memory, by handle and offset: Clockwork finds the page wherever the program has it (D172).
+    if id.is_expanded() {
+        return Ok(id.to_string());
+    }
     if id.module() != module {
         return Err(format!("{id}: not in {module}, the program traced"));
     }
@@ -260,6 +264,7 @@ mod tests {
         let at = |id: &str, objects: Option<&[(u32, u32, u32)]>| address("GAME.EXE", &id.parse().unwrap(), objects);
         assert_eq!(at("GAME.EXE+20002", None).unwrap(), "+20002");
         assert_eq!(at("MEM+0046C", None).unwrap(), "@46C");
+        assert_eq!(at("EMS#1+110000", None).unwrap(), "EMS#1+110000", "expanded memory, as Clockwork takes it");
         assert_eq!(at("GAME.EXE#2+00010", Some(&OBJECTS)).unwrap(), "@439010", "in object 2");
         assert!(at("GAME.EXE#1+03181", Some(&OBJECTS)).is_err(), "past its end");
         assert!(at("GAME.EXE#3+00010", Some(&OBJECTS)).is_err() && at("GAME.EXE#1+00010", None).is_err());

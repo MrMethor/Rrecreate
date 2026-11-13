@@ -1278,6 +1278,49 @@ fn expanded_memory_pages_and_moves() {
 }
 
 #[test]
+fn a_tool_reads_and_writes_expanded_memory_by_handle_wherever_its_page_is() {
+    // Two pages: 11h written through logical page 0, then 22h through logical page 1, both in physical page 0,
+    // so that page 0 ends unmapped (in storage) and page 1 mapped (in the frame).
+    let program = com(|a| {
+        let handle = a.addr("handle") as u32;
+        let map = |a: &mut Asm, logical: i32| -> Result<(), IcedError> {
+            a.mov(ax, 0x4400)?;
+            a.mov(bx, logical)?;
+            a.mov(dx, word_ptr(handle))?;
+            a.int(0x67)
+        };
+        let poke = |a: &mut Asm, value: i32| -> Result<(), IcedError> {
+            a.mov(ax, 0xE000)?;
+            a.mov(ds, ax)?;
+            a.mov(byte_ptr(0), value)?;
+            a.push(cs)?;
+            a.pop(ds)
+        };
+        a.mov(ah, 0x43)?;
+        a.mov(bx, 2)?;
+        a.int(0x67)?;
+        a.mov(word_ptr(handle), dx)?;
+        map(a, 0)?;
+        poke(a, 0x11)?;
+        map(a, 1)?;
+        poke(a, 0x22)?;
+        exit(a, 0)?;
+        a.here("handle")?;
+        a.dw(&[0])
+    });
+    let mut m = boot(&[("EMS.COM", &program)], "EMS.COM");
+    assert_eq!(m.run(SECOND), Stop::Exited(0));
+    let page = 0x4000;
+    assert_eq!(dos::ems::peek(&m, 1, 0), Some(0x11), "logical page 0, in storage");
+    assert_eq!(dos::ems::peek(&m, 1, page), Some(0x22), "logical page 1, in the frame");
+    assert_eq!((dos::ems::peek(&m, 1, 2 * page), dos::ems::peek(&m, 2, 0)), (None, None), "past its pages; no handle");
+    assert!(dos::ems::poke(&mut m, 1, 1, 0x33) && dos::ems::poke(&mut m, 1, page + 1, 0x44));
+    assert_eq!(dos::ems::peek(&m, 1, 1), Some(0x33));
+    assert_eq!(m.mem.read_u8(0xE0001), 0x44, "a mapped page's byte is written in the frame, its only copy");
+    assert!(!dos::ems::poke(&mut m, 1, 2 * page, 0));
+}
+
+#[test]
 fn service_trace_records_calls() {
     let program = com(|a| {
         load_dx(a, "name")?;

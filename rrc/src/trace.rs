@@ -633,7 +633,7 @@ pub(crate) fn items(repo: &Repo, k: &Knowledge, module: &str) -> Result<Items, S
     let state: Vec<Item> = k
         .data
         .iter()
-        .filter(|(id, d)| (id.module() == module || id.is_memory()) && d.size.is_some())
+        .filter(|(id, d)| (id.module() == module || id.is_memory() || id.is_expanded()) && d.size.is_some())
         .filter(|(id, d)| !is_input(&id.to_string(), d.size))
         .map(|(id, d)| Item {
             name: d.decision.name.clone(),

@@ -179,7 +179,9 @@ GAME.EXE+21C40	tick_elapsed	2	u16	human
 ```
 
 - **id:** `<MODULE>[#<n>]+<offset>` (D53), the offset in the loaded image, uppercase hex, 5 to 8 digits; or
-  `MEM+<linear address>` for memory outside the program's image (the BIOS's data, the interrupt vectors).
+  `MEM+<linear address>` for memory outside the program's image (the BIOS's data, the interrupt vectors); or
+  `EMS#<handle>+<offset>` for expanded memory, the offset into the handle's logical pages (the page times 4000h,
+  and the byte): data a program keeps in EMS, which the frame shows only while its page is mapped (D172).
 - **name:** letters, digits, `_`, and the `@` and `$` of compilers' runtime names, not starting with a digit;
   unique across both tables.
 - **size** (data): bytes, or empty when unknown. **type** (data): a type from `types.toml`, a number (`u8`,

@@ -346,8 +346,8 @@ impl Knowledge {
             if !is_name(&d.name) {
                 problems.push(format!("{id}: {:?} isn't a name", d.name));
             }
-            if id.module() != module && !id.is_memory() {
-                problems.push(format!("{id}: not in {module} (or MEM, outside it)"));
+            if id.module() != module && !id.is_memory() && !id.is_expanded() {
+                problems.push(format!("{id}: not in {module} (or MEM, outside it, or EMS, expanded memory)"));
             }
             if let Some(size) = image_size
                 && id.module() == module

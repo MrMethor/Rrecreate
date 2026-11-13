@@ -159,7 +159,8 @@ the session.
   music (XMIDI, as MIDI) with its audio module, which `rrc asset` decodes with too (D101, D105).
 - **IDs:** `<MODULE>[#<n>]+<offset>`, where `#n` is an overlay (MZ) or an object (LE/LX) and the offset is in
   the loaded image, uppercase hex, 5 to 8 digits. The same form names functions and data. The module `MEM`
-  is memory outside the programs' images, by linear address (`MEM+0046C`, the BIOS's timer count; D53).
+  is memory outside the programs' images, by linear address (`MEM+0046C`, the BIOS's timer count; D53); the
+  module `EMS` is expanded memory, by handle and offset into its logical pages (`EMS#1+110000`, D172).
 
 ## 6. The port
 
