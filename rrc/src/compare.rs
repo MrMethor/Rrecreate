@@ -1305,25 +1305,32 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
     let work = repo.state()?.join("compare").join(name);
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     let file = |f: &str| work.join(f).to_string_lossy().into_owned();
+    // A session that starts at power-on is counted from there, as the port starts it, with the program's own initial
+    // data (D135, D137): a transplant at its first tick would leave out what the port's power-on sets up that no
+    // mapping carries (a menu's or a creation's own state, D164). Its first tick is fed too, as every pass is.
+    let from_power_on = trace.header.power_on.is_some();
     let after = 1;
+    let fed_from = if from_power_on { 0 } else { after };
     let sets = edit_sets(repo, name, &trace, &mapped, &original, &k.types, after)?;
     let mut feeds = BTreeMap::new();
     for (m, values) in mapped.iter().zip(&original) {
-        feed_field(&mut feeds, m, values, after);
+        feed_field(&mut feeds, m, values, fed_from);
     }
     write_inputs(&trace, &sets, &feeds, &file("inputs.jsonl"))?;
-    let carried = read_given(repo, &session, &k, &mapping.resolve_carried(&k)?, after)?;
-    write_start(&trace.header.session, &mapped, &original, after, carried, &file("start.json"))?;
-    let mut port_args = vec![
-        "run".to_owned(),
-        "--inputs".into(),
-        file("inputs.jsonl"),
-        "--out".into(),
-        file("port.jsonl"),
-        "--transplant".into(),
-        file("start.json"),
-    ];
-    if !presented.is_empty() {
+    let mut port_args =
+        vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
+    if from_power_on {
+        let mut initial = mapped.clone();
+        initial.extend(mapping.resolve_carried(&k)?);
+        if write_initial(repo, &trace.header.session, &initial, &k, &file("initial.json"))? {
+            port_args.extend(["--initial".into(), file("initial.json")]);
+        }
+    } else {
+        let carried = read_given(repo, &session, &k, &mapping.resolve_carried(&k)?, after)?;
+        write_start(&trace.header.session, &mapped, &original, after, carried, &file("start.json"))?;
+        port_args.extend(["--transplant".into(), file("start.json")]);
+    }
+    if !presented.is_empty() && !from_power_on {
         write_presentation(
             repo,
             &session,
@@ -1341,13 +1348,13 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
             std::fs::remove_dir_all(&frames).map_err(|e| format!("{}: {e}", frames.display()))?;
         }
         port_args.extend(["--frames".into(), file("frames")]);
-        if let Some(hash) = &screens[(after - 1) as usize] {
+        if let Some(hash) = screens[(after - 1) as usize].as_ref().filter(|_| !from_power_on) {
             std::fs::write(file("screen.frm"), cache.get(hash)?).map_err(|e| e.to_string())?;
             port_args.extend(["--screen".into(), file("screen.frm")]);
         }
     }
     let saves = work.join("saves");
-    write_saves(repo, &session, &k, Some(after), &saves)?;
+    write_saves(repo, &session, &k, (!from_power_on).then_some(after), &saves)?;
     run_port(repo, &port_args, Some(&saves))?;
 
     let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;

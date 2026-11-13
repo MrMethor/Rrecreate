@@ -745,6 +745,17 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D164. A lockstep census of a session from power-on starts the port from power-on. Accepted 2026-11-12.
+`rrc compare SESSION --lockstep` (and so `rrc work --run`) runs a session whose trace starts at power-on from there:
+the port started from the program's own initial data (`--initial`, D135, D137), its first tick its own, and every
+pass after it fed the original's mapped state as before. Other sessions still start from a transplant at their first
+tick.
+**Why:** a transplant gives the port the original's mapped fields over its `start`, which is the game's default
+state; what the port's `power_on` sets up and no mapping carries (a menu's or a character's creation's own state)
+was missing, and the census of Arena's two sessions from power-on counted 83 and 90 fields that a comparison from
+power-on matches at every tick. Measured on Arena: the cell session's census from power-on finds no field and no
+frame differing in its 749 passes, its only difference the cinematic's sound before the dungeon.
+
 ### D163. The first rule is for bugs that change what the game does. Accepted 2026-11-12, with the person.
 Every bug of the original that changes the game's behaviour, its state and what follows from it, is reproduced in
 the port and has a switch, kept by default and fixed by it: registered the moment it is found, branched on, its switch

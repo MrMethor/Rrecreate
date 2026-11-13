@@ -805,6 +805,11 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(recorded.contains("trace     400 ticks"), "{recorded}");
     let compared = rrc.ok(&["compare", "play"]);
     assert!(compared.contains("match     every mapped field at all 400 ticks"), "{compared}");
+    // Counted in lockstep from power-on as well, as the port starts it, not from a transplant at its first tick (D164).
+    let counted = rrc.ok(&["compare", "play", "--lockstep"]);
+    assert!(counted.contains("every mapped field, frame and sound in all"), "{counted}");
+    let work = rrc.repo.join(".rrc/compare/play");
+    assert!(!work.join("start.json").exists() && !counted.contains("unset"), "from power-on: {counted}");
     // A quirk's switch reaches the port's run (D149): only a registered one, and it isn't kept as the port's progress.
     let (refused, ok) = rrc.run(&["compare", "play", "--fix", "nothing"]);
     assert!(!ok && refused.contains("no quirk nothing"), "{refused}");
