@@ -690,7 +690,8 @@ inputs and the trace are JSON lines.
   calls through them `hooks`, `[[0, [1472, 5]]]` (the hook's index, the registers' values), which
   `Inputs::calls(name)` gives the port. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
   mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
-  port sets in its state before writing the tick (D64). A tick has `fed`, of the same form, for fed fields (D84,
+  port sets in its state before writing the tick (D64), after drawing and sounding it (D165: the edit is written at
+  the tick's sync point, after its pass drew). A tick has `fed`, of the same form, for fed fields (D84,
   D124: `--feed`, `--lockstep`): their original values where they changed, each held until it changes and set at
   every tick from its first (version 2; version 1 has no `fed`, and versions before 3 no rounds, `spun` or
   inputs' `sync`). The last line is

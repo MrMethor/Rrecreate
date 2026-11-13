@@ -694,18 +694,22 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         if request.to.is_some_and(|to| line.tick > to) {
             break;
         }
-        // A scenario's edit at this tick (D64), or a fed field (D84): the original's values of the fields
-        // set, and the port's own where they differed (D114: the comparison judges them).
+        // A fed field (D84): the original's values of the fields, and the port's own where they differed (D114: the
+        // comparison judges them). A scenario's edit at this tick (D64) is set after the frame and the sound (D165).
         let mut overrode = serde_json::Map::new();
-        if !line.set.is_empty() || !feeding.is_empty() {
-            let mut value = serialize(&state)?;
-            for (path, v) in feeding.iter().chain(line.set.iter().map(|(p, v)| (p, v))) {
+        let mut set = |state: &mut S, fields: &mut dyn Iterator<Item = (&String, &Value)>| -> Result<(), String> {
+            let mut value = serialize(&*state)?;
+            for (path, v) in fields {
                 if let Some(own) = files::get_path(&value, path).filter(|own| *own != v) {
                     overrode.insert(path.clone(), own.clone());
                 }
                 files::set_path(&mut value, path, v.clone())?;
             }
-            state = S::transplant(value)?;
+            *state = S::transplant(value)?;
+            Ok(())
+        };
+        if !feeding.is_empty() {
+            set(&mut state, &mut feeding.iter())?;
         }
         let mut drawn = None;
         if drawing.is_some() || sounding {
@@ -727,6 +731,11 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         let mut sounds = present::Sounds::default();
         if sounding && (pass.is_some() || given.is_none()) {
             drawer.sound(pass.as_deref(), &state, &mut sounds);
+        }
+        // The edit is written at the tick's sync point, after its pass drew and sounded: the state is the edit's,
+        // the frame and the sound the pass's (D165).
+        if !line.set.is_empty() {
+            set(&mut state, &mut line.set.iter().map(|(p, v)| (p, v)))?;
         }
         let value = serialize(&state)?;
         out.tick(
@@ -997,6 +1006,16 @@ mod tests {
         }
     }
 
+    /// A presentation that draws the count it is shown.
+    #[derive(Default)]
+    struct Counting;
+
+    impl present::Presentation<Counter> for Counting {
+        fn draw(&mut self, _: &str, scene: &&Counter, frame: &mut present::Frame) {
+            frame.set(0, 0, scene.count as u8);
+        }
+    }
+
     /// The same without state of its own.
     #[derive(Default)]
     struct Plain;
@@ -1047,6 +1066,13 @@ mod tests {
             "set, then written, with the port's own values it changed (D114)"
         );
         assert_eq!(lines[3]["state"]["count"], 101, "and stepped from there");
+        // Its tick's frame is the pass's, drawn before the edit is written at the sync point (D165).
+        let drawn = Request { frames: Some(path("frames")), ..request };
+        run_drawn::<Counter>(&drawn, &mut present::Drawn(Counting)).unwrap();
+        let frame = |t: u64| {
+            present::Frame::decode(&std::fs::read(d.join("frames").join(format!("{t}.frm"))).unwrap()).unwrap()
+        };
+        assert_eq!((frame(2).pixels[0], frame(3).pixels[0]), (1, 101), "the pass's count, then the edit's on");
         let mut state = serde_json::json!({"a": [{"b": 1}]});
         assert!(files::set_path(&mut state, "a[1].b", serde_json::json!(2)).is_err(), "no such element");
         assert!(files::set_path(&mut state, "a[0]x", serde_json::json!(2)).is_err());

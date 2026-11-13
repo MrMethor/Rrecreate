@@ -745,6 +745,14 @@ level's map) filled the list, and the fields after it in the mapping (the flags,
 hidden behind it; a port made one fix at a time, or fed the array to see past it. A field a line, with its count,
 shows the whole divergence at once and keeps the output short.
 
+### D165. A scenario's edit is set after its tick's frame and sound. Accepted 2026-11-13.
+The runtime sets a tick's edits (`set`) in the port's state after the presentation drew and sounded the tick, and
+before the state is written: the frame and the sound are the pass's, the state the edit's. Fed fields (D84) are still
+set first, as they are the pass's result in the original.
+**Why:** an edit is written at its tick's sync point, after the pass that drew the tick's screen (docs/formats.md);
+drawing after it showed the edited state a frame early. Measured on Arena: the lock session's edit turns the player to
+the door at tick 2, and its frame there showed the compass already turned; the original's shows the angle before it.
+
 ### D164. A lockstep census of a session from power-on starts the port from power-on. Accepted 2026-11-12.
 `rrc compare SESSION --lockstep` (and so `rrc work --run`) runs a session whose trace starts at power-on from there:
 the port started from the program's own initial data (`--initial`, D135, D137), its first tick its own, and every
