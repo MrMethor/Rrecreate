@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D169. A played port's digitized sound goes through the Sound Blaster's output filter. Accepted 2026-11-13, with the person.
+The platform holds each digitized sample until the next, as a Sound Blaster's DAC does, and filters it as the card's
+analog output did: a 2nd-order low-pass at the model's cutoff, the values DOSBox Staging models each card with
+(3200 Hz for the Sound Blaster Pro, 3800 Hz for the 1.0, 4800 Hz for the 2.0). The Sound Blaster Pro's is the
+default; `PORT play --sb-filter none|sb1|sb2|sbpro` chooses, `none` the held samples as they are. The OPL's and the
+speaker's sound aren't filtered. The card's filter switch (its mixer's register 0Eh, bit 5) isn't modelled: the
+filter is on, as the card starts.
+**Why:** the person heard the port's sounds clearer than the original's in DOSBox and than the VOC files in VLC.
+The rates and the samples are the same (the original's render matches a footstep at exactly its file's rate); the
+difference is the held samples' steps, which no Sound Blaster sent to a speaker. Fidelity first (D39) makes the
+card's sound the default and the clearer one a choice; the established emulators' model of each card is adopted
+(rule 5). Arena's driver is the Sound Blaster Pro's (SBPDIG.ADV).
+
 ### D168. A played port's sound output buffers 41 ms halves, and a player can choose more. Accepted 2026-11-13.
 The platform asks the host's output for 2048 samples a channel at a time (about 41 ms at the OPL's rate), twice
 buffered, where it asked for 1024; `PORT play --sound-buffer FRAMES` (256 to 16384) sets another. A tick's sound

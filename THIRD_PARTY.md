@@ -9,6 +9,7 @@ Reference checkout: DOSBox Staging, commit `0fdf977d9c4e41908700d7eb2255142044f8
 
 | File | Origin | License | What |
 |---|---|---|---|
+| `platform/src/audio.rs` (`Filter`) | DOSBox Staging `src/hardware/audio/soundblaster.cpp` (`configure_sb_filter_for_model`) | Values only (the platform is MIT) | Each Sound Blaster model's output filter: a 2nd-order low-pass at 3800 Hz (SB 1.0), 4800 Hz (SB 2.0), 3200 Hz (SB Pro), after the DAC's held samples; the filter itself is a textbook Butterworth section written here (D169) |
 | `clockwork/dos/src/mouse.rs` | DOSBox Staging `src/hardware/input/mouseif_dos_driver.cpp` | GPL-2.0-or-later | Behavior reference for ranges, granularity and reset values; the list of ignored vendor INT 33h functions; graphics cursor drawing (`draw_cursor`, VGA register save/restore) |
 | `clockwork/dos/src/vga.rs` | DOSBox Staging `src/hardware/video/vga_memory.cpp`, `vga_gfx.cpp`, `vga_seq.cpp`, `vga_crtc.cpp`, `vga_attr.cpp`, `vga_s3.cpp`, `vga.cpp` (`VGA_DetermineMode`), `src/ints/int10_modes.cpp` (palettes) | GPL-2.0-or-later | Planar video memory, latches, write and read modes, chain-4 addressing, CRTC write protection, default palettes; the S3 Trio64's extended registers, banked and linear SVGA memory access |
 | `clockwork/dos/src/vga_draw.rs` | DOSBox Staging `src/hardware/video/vga_draw.cpp`, `vga.cpp` | GPL-2.0-or-later | Display mode decision, display addressing (start, offset, panning, line compare), text, CGA, EGA and 256-color drawing, SVGA widths and pixel formats |

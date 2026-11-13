@@ -32,6 +32,7 @@
 //! ```
 
 mod audio;
+pub use audio::Filter;
 mod controls;
 mod keys;
 
@@ -329,7 +330,8 @@ pub fn inputs(values: &[(&str, &[u8])]) -> Inputs {
     Inputs::new(values.iter().map(|(name, bytes)| ((*name).to_owned(), bytes.to_vec())).collect::<BTreeMap<_, _>>())
 }
 
-/// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--fix QUIRK]...`):
+/// A port's `main` played (`PORT play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--sb-filter MODEL]
+/// [--fix QUIRK]...`):
 /// the game's folder chosen,
 /// the port's start (`start`, from power-on, or the folder `rrc start` wrote, D120, of tick 0 from power-on
 /// with the program's initial data, D141: none for a port that starts from a folder alone), then [`play`]; none
@@ -347,7 +349,7 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
     if args.first().map(String::as_str) != Some("play") {
         return None;
     }
-    let mut sound = Some(audio::BUFFER);
+    let mut sound = Some(Sound::default());
     let mut from = None;
     if let Err(e) = rrc_runtime::actions::check(S::ACTIONS) {
         return Some(fail(&format!("the port's actions: {e}")));
@@ -379,13 +381,18 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
                 rrc_runtime::original::use_saves_dir(dir.join("saves"));
                 from = Some(dir);
             }
+            ("--sb-filter", Some(model)) => match audio::Filter::named(model) {
+                // The Sound Blaster's output filter (D169): sbpro by default, sb1, sb2, or none.
+                Some(filter) => sound = sound.map(|s| Sound { filter, ..s }),
+                None => return Some(fail(&format!("--sb-filter {model}: sbpro, sb1, sb2 or none"))),
+            },
             ("--no-sound", _) => {
                 sound = None;
                 continue;
             }
             ("--sound-buffer", Some(frames)) => match sound_buffer(frames) {
                 // The output's buffer, if the sound breaks up (D168).
-                Ok(frames) => sound = sound.map(|_| frames),
+                Ok(frames) => sound = sound.map(|s| Sound { frames, ..s }),
                 Err(e) => return Some(fail(&e)),
             },
             ("--fix", Some(quirk)) => {
@@ -397,8 +404,8 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
             }
             (other, _) => {
                 return Some(fail(&format!(
-                    "{other}: play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--fix QUIRK]... \
-                     [--controls FILE] [--actions]"
+                    "{other}: play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--sb-filter MODEL] \
+                     [--fix QUIRK]... [--controls FILE] [--actions]"
                 )));
             }
         }
@@ -444,13 +451,27 @@ fn fail(message: &str) -> std::process::ExitCode {
     std::process::ExitCode::from(1)
 }
 
+/// How a played port's sound is output: the output's buffer (samples a channel, twice buffered: D168) and the
+/// Sound Blaster's filter its digitized sound goes through (D169).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sound {
+    pub frames: usize,
+    pub filter: Filter,
+}
+
+impl Default for Sound {
+    fn default() -> Sound {
+        Sound { frames: audio::BUFFER, filter: Filter::default() }
+    }
+}
+
 /// Plays from `started` (the port's start, or where `rrc start` left the original) with its presentation `P` in
-/// a window titled `title`, with its sound if `sound` (the output's buffer: samples a channel), the host's keys
-/// given by `controls`, until the window is closed or the original's loop ends.
+/// a window titled `title`, with its sound if `sound`, the host's keys given by `controls`, until the window is
+/// closed or the original's loop ends.
 pub fn play<S: Live, P: Presentation<S>>(
     title: &str,
     started: Started<S>,
-    sound: Option<usize>,
+    sound: Option<Sound>,
     mut controls: Controls,
 ) -> Result<(), String> {
     let Started { mut state, presentation: own, screen, power_on } = started;
@@ -474,8 +495,8 @@ pub fn play<S: Live, P: Presentation<S>>(
     }
     let mut frame = screen.unwrap_or_else(|| Frame::new(WIDTH, HEIGHT));
     presentation.start(&state.scene(), &mut frame, given);
-    let audio = if let Some(frames) = sound.filter(|_| P::SOUNDS) {
-        match audio::Audio::start(frames) {
+    let audio = if let Some(sound) = sound.filter(|_| P::SOUNDS) {
+        match audio::Audio::start(sound.frames, sound.filter) {
             Ok(audio) => Some(audio),
             Err(e) => {
                 eprintln!("no sound: {e}");

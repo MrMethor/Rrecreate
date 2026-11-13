@@ -1,8 +1,8 @@
 //! The sound a presentation makes, played on the host's audio output: the OPL3's register writes synthesized
 //! by Nuked OPL3 (at the chip's own 49 716 Hz, the output's rate), the PC speaker's tone as a square wave of the
 //! timer's period and high time, and digitized sound at its rate, one at a time as a Sound Blaster's DMA plays
-//! it. Each tick's events are taken up when the output next asks for samples: within a buffer's time of when
-//! the tick ran.
+//! it, each sample held until the next as its DAC holds it, then through the card's output filter (D169). Each
+//! tick's events are taken up when the output next asks for samples: within a buffer's time of when the tick ran.
 
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +22,75 @@ const PCM: f32 = 64.0;
 /// interface a half was played before it was written, and the sound broke up as an audio buffer set too small does.
 pub(crate) const BUFFER: usize = 2048;
 
+/// The Sound Blaster's analog output filter its digitized sound went through (D169): a 2nd-order low-pass at the
+/// model's cutoff, as DOSBox Staging models each card (`soundblaster.cpp`, `configure_sb_filter_for_model`: the
+/// values; the filter here is a plain Butterworth section); or none, the samples as they are held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Filter {
+    None,
+    Sb1,
+    Sb2,
+    /// The Sound Blaster Pro's (1 and 2), which Arena's driver is for: the default.
+    #[default]
+    SbPro,
+}
+
+impl Filter {
+    /// By its name on the command line.
+    pub fn named(name: &str) -> Option<Filter> {
+        Some(match name {
+            "none" => Filter::None,
+            "sb1" => Filter::Sb1,
+            "sb2" => Filter::Sb2,
+            "sbpro" => Filter::SbPro,
+            _ => return None,
+        })
+    }
+
+    /// Its cutoff, in Hz.
+    fn cutoff(self) -> Option<f64> {
+        match self {
+            Filter::None => None,
+            Filter::Sb1 => Some(3800.0),
+            Filter::Sb2 => Some(4800.0),
+            Filter::SbPro => Some(3200.0),
+        }
+    }
+}
+
+/// A 2nd-order Butterworth low-pass at the output's rate (the bilinear transform's), run sample by sample.
+#[derive(Debug, Clone, Copy)]
+struct LowPass {
+    b: [f64; 3],
+    a: [f64; 2],
+    x: [f64; 2],
+    y: [f64; 2],
+}
+
+impl LowPass {
+    fn new(cutoff: f64) -> LowPass {
+        let k = (std::f64::consts::PI * cutoff / RATE as f64).tan();
+        let root2 = std::f64::consts::SQRT_2;
+        let norm = 1.0 / (1.0 + root2 * k + k * k);
+        let b0 = k * k * norm;
+        LowPass {
+            b: [b0, 2.0 * b0, b0],
+            a: [2.0 * (k * k - 1.0) * norm, (1.0 - root2 * k + k * k) * norm],
+            x: [0.0; 2],
+            y: [0.0; 2],
+        }
+    }
+
+    fn run(&mut self, x: f64) -> f64 {
+        let y = self.b[0] * x + self.b[1] * self.x[0] + self.b[2] * self.x[1]
+            - self.a[0] * self.y[0]
+            - self.a[1] * self.y[1];
+        self.x = [x, self.x[0]];
+        self.y = [y, self.y[0]];
+        y
+    }
+}
+
 /// The host's audio output, playing what [`Audio::play`] is given.
 pub(crate) struct Audio {
     mixer: Arc<Mutex<Mixer>>,
@@ -29,9 +98,9 @@ pub(crate) struct Audio {
 }
 
 impl Audio {
-    /// The output, asked for `frames` samples a channel at a time.
-    pub(crate) fn start(frames: usize) -> Result<Audio, String> {
-        let mixer = Arc::new(Mutex::new(Mixer::new()));
+    /// The output, asked for `frames` samples a channel at a time, its digitized sound through `filter`.
+    pub(crate) fn start(frames: usize, filter: Filter) -> Result<Audio, String> {
+        let mixer = Arc::new(Mutex::new(Mixer::with(filter)));
         let feeding = Arc::clone(&mixer);
         let params = OutputDeviceParameters { sample_rate: RATE, channels_count: 2, channel_sample_count: frames };
         let device = run_output_device(params, move |out| {
@@ -68,12 +137,26 @@ struct Mixer {
     /// The digitized sound playing: its samples (unsigned 8-bit; left and right when stereo), its rate,
     /// whether stereo, and where in it.
     pcm: Option<(Arc<Vec<u8>>, u32, bool, f64)>,
+    /// The card's output filter, which runs on whatever the DAC holds, silence too.
+    filter: Option<LowPass>,
     pending: Vec<Sounds>,
 }
 
 impl Mixer {
+    #[cfg(test)]
     fn new() -> Mixer {
-        Mixer { opl: Opl3Chip::new(RATE as u32), tone: None, phase: 0.0, pcm: None, pending: Vec::new() }
+        Mixer::with(Filter::None)
+    }
+
+    fn with(filter: Filter) -> Mixer {
+        Mixer {
+            opl: Opl3Chip::new(RATE as u32),
+            tone: None,
+            phase: 0.0,
+            pcm: None,
+            filter: filter.cutoff().map(LowPass::new),
+            pending: Vec::new(),
+        }
     }
 
     /// The pending ticks' events, then `out` (left, right, ...) filled.
@@ -84,7 +167,12 @@ impl Mixer {
         let mut sample = [0i16; 2];
         for frame in out.chunks_mut(2) {
             let _ = self.opl.generate(&mut sample);
-            let mono = self.speaker() + self.digitized();
+            let held = self.digitized();
+            let digitized = match &mut self.filter {
+                Some(filter) => filter.run(f64::from(held)) as f32,
+                None => held,
+            };
+            let mono = self.speaker() + digitized;
             for (o, s) in frame.iter_mut().zip(sample) {
                 *o = ((f32::from(s) + mono) / 32768.0).clamp(-1.0, 1.0);
             }
@@ -145,6 +233,24 @@ mod tests {
         assert!((3..=5).contains(&flips), "two cycles flip about four times: {flips}");
         mixer.take(&Sounds { speaker: vec![Speaker::Steady(false)], ..Sounds::default() });
         assert_eq!(mixer.speaker(), 0.0, "off");
+    }
+
+    /// The amplitude of a sine of `hz` through the SB Pro's filter, against its own.
+    fn gain(hz: f64) -> f64 {
+        let mut filter = LowPass::new(Filter::SbPro.cutoff().unwrap());
+        let wave = |i: usize| (2.0 * std::f64::consts::PI * hz * i as f64 / RATE as f64).sin();
+        (0..RATE).map(|i| filter.run(wave(i))).skip(RATE / 2).fold(0.0, |m: f64, y| m.max(y.abs()))
+    }
+
+    #[test]
+    fn the_sound_blaster_pro_s_filter_keeps_the_low_and_cuts_the_high() {
+        assert!((gain(500.0) - 1.0).abs() < 0.02, "500 Hz passes: {}", gain(500.0));
+        let at_cutoff = gain(3200.0);
+        assert!((at_cutoff - std::f64::consts::FRAC_1_SQRT_2).abs() < 0.02, "-3 dB at the cutoff: {at_cutoff}");
+        assert!(gain(11_000.0) < 0.1, "a held sample's steps above the band are cut: {}", gain(11_000.0));
+        assert_eq!(Filter::named("sbpro"), Some(Filter::SbPro));
+        assert_eq!(Filter::named("none").and_then(|f| f.cutoff()), None);
+        assert_eq!(Filter::named("sb16"), None, "not modelled");
     }
 
     #[test]

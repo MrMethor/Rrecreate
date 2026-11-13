@@ -799,8 +799,9 @@ fn main() -> ExitCode {
 }
 ```
 
-so `PORT play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--fix QUIRK]... [--controls FILE]` plays
-(a larger sound buffer if the sound breaks up on a host, D168) and anything else runs a
+so `PORT play [--game DIR] [--start DIR] [--no-sound | --sound-buffer FRAMES] [--sb-filter MODEL] [--fix QUIRK]...
+[--controls FILE]` plays (a larger sound buffer if the sound breaks up on a host, D168; the Sound Blaster's output
+filter, the SB Pro's by default, D169) and anything else runs a
 comparison as before. Declare the game's actions in `Live::ACTIONS` (D162: each the key or button the original takes
 for it, with what it does, as the analysis found its input code), and read keys in the simulation through them
 (`Action::held`) where the original reads a key-state array: a person binds them to other keys with a controls
