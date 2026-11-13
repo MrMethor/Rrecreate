@@ -134,6 +134,10 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         from: from.clone(),
         ..Session::default()
     };
+    // From power-on: the game's folder as it is now, which the play and its parts run on (D170).
+    if from.is_none() {
+        session.files = crate::folder::take(repo)?;
+    }
     // Where the play starts: the session's tick (its snapshot there), or power-on. Said first, and what takes
     // time before the window opens, so the terminal never sits silent.
     let start = match &from {
@@ -160,7 +164,8 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
         None => {
             let mut command = Command::new(crate::clockwork::find(&repo.local)?);
-            command.arg("play").args(crate::clockwork::argv(repo, &session.options)?);
+            let folder = crate::folder::of(repo, &session)?;
+            command.arg("play").args(crate::clockwork::argv_on(repo, &folder, &session.options));
             if let Some((hash, _)) = &based {
                 command.arg("--load-snapshot").arg(crate::cache::Cache::open(&repo.local)?.path(hash));
             }
@@ -205,7 +210,7 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 && (done || progress.ended || progress.at - last >= end_cycle(every, ips))
                 && !failed;
             if due {
-                match part(repo, name, &file, &from, &mut parts, (last, progress.at), ips) {
+                match part(repo, name, &file, (&from, &session.files), &mut parts, (last, progress.at), ips) {
                     Ok(Some(found)) => {
                         let p = parts.last().expect("a part");
                         let played = |cycle: u64| clock(seconds(cycle, ips) - start_ms as f64 / 1000.0);
@@ -279,7 +284,7 @@ fn part(
     repo: &Repo,
     name: &str,
     file: &str,
-    from: &Option<Base>,
+    (from, files): (&Option<Base>, &std::collections::BTreeMap<String, String>),
     parts: &mut Vec<Part>,
     (begin, end): (u64, u64),
     ips: u64,
@@ -290,11 +295,14 @@ fn part(
         Some(p) => Some(Base { session: p.name.clone(), tick: p.ticks, cycle: None }),
         None => from.clone(),
     };
+    // The first part of a play from power-on runs on the play's folder (D170); the others on their base's.
+    let files = if base.is_none() { files.clone() } else { Default::default() };
     let session = Session {
         description: format!("part {n} of the play {name} (rrc play)"),
         replay: Some(file.to_owned()),
         seconds: seconds(end, ips),
         from: base,
+        files,
         ..Session::default()
     };
     std::fs::create_dir_all(repo.sessions().join(name)).map_err(|e| e.to_string())?;

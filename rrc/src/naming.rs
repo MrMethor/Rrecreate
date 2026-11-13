@@ -78,13 +78,18 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
 }
 
 /// The size of the program's image, from Clockwork loading it (a 16-bit game a launcher starts: where
-/// the first session's run loads it).
+/// the first session whose run loads it does; a session runs on the folder it was recorded on, D170).
 fn image_size(repo: &Repo) -> Result<u32, String> {
     if crate::places::launched_16bit(repo) {
-        let first = crate::session::names(repo)?.into_iter().next();
-        let first = first.ok_or("the launcher's game is loaded by a session's run: no session yet")?;
-        let session = crate::session::Session::load(repo, &first)?;
-        return Ok(crate::places::placement(repo, &session)?.image.1);
+        let mut first = None;
+        for name in crate::session::names(repo)? {
+            let session = crate::session::Session::load(repo, &name)?;
+            match crate::places::placement(repo, &session) {
+                Ok(placement) => return Ok(placement.image.1),
+                Err(e) => first = first.or(Some(e)),
+            }
+        }
+        return Err(first.unwrap_or_else(|| "the launcher's game is loaded by a session's run: no session yet".into()));
     }
     let (_, loaded) = Clockwork::original(repo, &[])?;
     loaded

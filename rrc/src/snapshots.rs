@@ -42,10 +42,10 @@ struct Index {
 }
 
 /// What makes a session's run the same: Clockwork's sources (not its program's bytes, which any
-/// rebuild changes: D76), the game's files, the session's input and options (as a hash).
+/// rebuild changes: D76), the game's files it runs on (D170), the session's input and options (as a hash).
 pub fn run_identity(repo: &Repo, session: &Session) -> Result<String, String> {
     let exe = clockwork::source(&clockwork::find(&repo.local)?)?;
-    let files = crate::game::hash_folder(repo.game_dir()?, &repo.state()?)?;
+    let files = crate::folder::files(repo, session)?;
     let input = |name: &Option<String>| -> Result<String, String> {
         match name {
             Some(name) => sha256_file(&repo.sessions().join(name)),
@@ -142,7 +142,7 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     let cache = Cache::open(&repo.local)?;
     let mut clockwork = Clockwork::start(&clockwork::find(&repo.local)?)?;
     // The session's own options, but not its input: the snapshot has what is still to come.
-    let argv = clockwork::argv(repo, &session.options)?;
+    let argv = clockwork::argv_on(repo, &crate::folder::of(repo, session)?, &session.options);
     let file = cache.path(&taken.hash);
     let mut loaded = clockwork.ask("load_snapshot", json!({ "argv": argv, "file": file }))?;
     crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
@@ -235,7 +235,8 @@ pub fn start(repo: &Repo, session: &Session) -> Result<Option<Start>, String> {
             if at.1 != cycle {
                 return Err(format!(
                     "{}'s run has no tick at cycle {cycle} (its tick {} was there): its run changed (its input, the \
-                     game or Clockwork), not only its sync points",
+                     game or Clockwork), not only its sync points (rrc record SESSION --rebase starts it at the tick's \
+                     number)",
                     from.session, from.tick
                 ));
             }

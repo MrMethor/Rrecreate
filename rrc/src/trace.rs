@@ -429,10 +429,47 @@ fn carried(
 }
 
 pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &["--run"])?;
-    let [name] = a.positionals(1, 1, "record SESSION [--run]")? else { unreachable!() };
+    let a = Args::parse(args, &[], &["--run", "--folder", "--rebase"])?;
+    let [name] = a.positionals(1, 1, "record SESSION [--run] [--folder] [--rebase]")? else { unreachable!() };
     let mut session = Session::load(repo, name)?;
-    // A based session's base tick, by its cycle (D128): its number now.
+    // The game's folder it runs on (D170): kept at its first recording, and taken again when --folder asks.
+    match &session.from {
+        Some(from) if a.has("--folder") => {
+            let mut root = from.session.clone();
+            while let Some(base) = Session::load(repo, &root)?.from {
+                root = base.session;
+            }
+            return Err(format!(
+                "{name} runs on the folder of the session its bases start from: rrc record {root} --folder"
+            ));
+        }
+        Some(_) => {}
+        None if session.files.is_empty() || a.has("--folder") => {
+            session.files = crate::folder::take(repo)?;
+            let files = session.files.keys().filter(|p| !p.ends_with('/')).count();
+            say("folder", format!("the game's folder as it is now, kept ({files} files): every run of {name} sees it"));
+            session.save(repo, name)?;
+        }
+        None => {
+            if let Ok(changed) = crate::folder::differences(repo, &session.files)
+                && !changed.is_empty()
+            {
+                let more = if changed.len() > 3 { format!(" and {} more", changed.len() - 3) } else { String::new() };
+                say(
+                    "folder",
+                    format!(
+                        "as recorded; the game's folder differs now in {}{more}, which {name} doesn't see (--folder takes it as it is)",
+                        changed[..changed.len().min(3)].join(", ")
+                    ),
+                );
+            }
+        }
+    }
+    // A based session's base tick, by its cycle (D128): its number now; by its number when the base's run changed.
+    if a.has("--rebase") {
+        let from = session.from.as_mut().ok_or(format!("{name} isn't based on another session: nothing to rebase"))?;
+        from.cycle = None;
+    }
     if let Some(said) = crate::snapshots::settle(repo, &mut session)? {
         say("from", said);
         session.save(repo, name)?;

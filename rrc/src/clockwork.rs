@@ -74,8 +74,13 @@ impl Clockwork {
     /// port's own (`clockwork run` options); also returns what `load` answered (where the image is,
     /// its size).
     pub fn original(repo: &Repo, options: &[String]) -> Result<(Clockwork, Value), String> {
+        Clockwork::original_on(repo, repo.game_dir()?, options)
+    }
+
+    /// [`Clockwork::original`] on the game's folder `folder` (a session's, D170).
+    pub fn original_on(repo: &Repo, folder: &Path, options: &[String]) -> Result<(Clockwork, Value), String> {
         let mut clockwork = Clockwork::start(&find(&repo.local)?)?;
-        let loaded = clockwork.ask("load", json!({ "argv": argv(repo, options)? }))?;
+        let loaded = clockwork.ask("load", json!({ "argv": argv_on(repo, folder, options) }))?;
         Ok((clockwork, loaded))
     }
 
@@ -87,7 +92,8 @@ impl Clockwork {
         if let Some((hash, _)) = crate::snapshots::based(repo, session)? {
             let mut clockwork = Clockwork::start(&find(&repo.local)?)?;
             let file = crate::cache::Cache::open(&repo.local)?.path(&hash);
-            let request = json!({ "argv": argv(repo, &session.options)?, "file": file });
+            let folder = crate::folder::of(repo, session)?;
+            let request = json!({ "argv": argv_on(repo, &folder, &session.options), "file": file });
             let mut loaded = clockwork.ask("load_snapshot", request)?;
             match (&session.replay, &session.from) {
                 // Recorded play (D124): the same play going on from the part before has, still to come in the
@@ -118,7 +124,8 @@ impl Clockwork {
             crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
             return Ok((clockwork, loaded));
         }
-        let (mut clockwork, mut loaded) = Clockwork::original(repo, &session.options(repo))?;
+        let folder = crate::folder::of(repo, session)?;
+        let (mut clockwork, mut loaded) = Clockwork::original_on(repo, &folder, &session.options(repo))?;
         crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
         Ok((clockwork, loaded))
     }
@@ -193,11 +200,16 @@ impl std::fmt::Display for Address {
 /// What `load` and `load_snapshot` take: the game's folder, its program, the port's options, then
 /// `options` (`clockwork run` options).
 pub fn argv(repo: &Repo, options: &[String]) -> Result<Vec<String>, String> {
+    Ok(argv_on(repo, repo.game_dir()?, options))
+}
+
+/// [`argv`] with the game's folder `folder` (a session's, D170).
+pub fn argv_on(repo: &Repo, folder: &Path, options: &[String]) -> Vec<String> {
     let original = &repo.settings.original;
-    let mut argv = vec![repo.game_dir()?.to_string_lossy().into_owned(), original.program.clone()];
+    let mut argv = vec![folder.to_string_lossy().into_owned(), original.program.clone()];
     argv.extend(original.options.iter().cloned());
     argv.extend(options.iter().cloned());
-    Ok(argv)
+    argv
 }
 
 /// Whether an emulator that answered `hello` this way is one rrc can drive.

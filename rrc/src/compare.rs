@@ -209,7 +209,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         say("fixed", format!("{quirk}: a difference here is what its fix changes, not kept for rrc progress"));
         port_args.extend(["--fix".into(), quirk.to_owned()]);
     }
-    run_port(repo, &port_args, Some(&saves))?;
+    run_port(repo, &session, &port_args, Some(&saves))?;
 
     // Tick by tick, the port's state against the original's.
     let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
@@ -1356,7 +1356,7 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
     }
     let saves = work.join("saves");
     write_saves(repo, &session, &k, (!from_power_on).then_some(after), &saves)?;
-    run_port(repo, &port_args, Some(&saves))?;
+    run_port(repo, &session, &port_args, Some(&saves))?;
 
     let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
     let mut lines = port_trace.lines().filter(|l| !l.trim().is_empty());
@@ -1736,14 +1736,17 @@ pub(crate) fn build_port(repo: &Repo) -> Result<(), String> {
 }
 
 /// Builds the port if rrc.toml says how (`[port] build`), then runs it (`[port] command`) in the port
-/// repository.
-fn run_port(repo: &Repo, args: &[String], saves: Option<&std::path::Path>) -> Result<(), String> {
+/// repository, for `session`.
+fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std::path::Path>) -> Result<(), String> {
     let port = &repo.settings.port;
     // The person's copy of the game, for what the port loads from it (D82, `rrc_runtime::original`):
-    // its folder, and the program as the analysis unpacked it (its static data).
+    // the folder the session runs on (D170), and the program as the analysis unpacked it (its static data).
     let mut original: Vec<(&str, std::path::PathBuf)> = Vec::new();
-    if let Ok(dir) = repo.game_dir() {
-        original.push(("RRC_GAME", dir.to_path_buf()));
+    match crate::folder::of(repo, session) {
+        Ok(folder) => original.push(("RRC_GAME", folder)),
+        // No game's folder, and none recorded: a port that reads none of the game's files still runs.
+        Err(_) if repo.game_dir().is_err() && session.root(repo)?.files.is_empty() => {}
+        Err(e) => return Err(e),
     }
     if let Some(index) = crate::analysis::Index::load(repo)? {
         original.push(("RRC_PROGRAM", crate::cache::Cache::open(&repo.local)?.path(&index.program)));

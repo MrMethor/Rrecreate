@@ -545,7 +545,8 @@ session = "walk"                # its input replaces that session's from there; 
 tick = 1200
 cycle = 2419767066              # the cycle of that session's hit before the tick (D128): where it is found again
                                 # when sync points added to that session number its ticks otherwise (rrc sets it,
-                                # and the tick's number again when it moved)
+                                # and the tick's number again when it moved; rrc record --rebase forgets it, for a
+                                # base whose run changed)
 
 [trace]                         # written by rrc record
 hash = "6e7f…"                  # the trace, in the cache
@@ -565,6 +566,12 @@ value = { alive = 0 }           # a number, an array, some of a structure's fiel
 tick = 900
 port = "9d5f…"                  # the port's state at the tick (rrc-port-state), in the cache
 snapshot = "b9b3…"              # Clockwork's snapshot at the end of the tick, in the cache
+
+[folder]                        # written by rrc record (and rrc play) from power-on: the game's folder it runs on
+"GAME.EXE" = "4c1d…"            # (D170), every file by its `/`-separated path and SHA-256, the contents in the
+"DATA/LEVEL1.DAT" = "90aa…"     # cache; a folder without files is "PATH/" = "folder". Every run of the session
+"SAVE.64" = "e3b0…"             # and of those based on it sees these files and no others (rrc record --folder
+"SAVES/" = "folder"             # takes the folder as it is again). None: the folder as it is (recorded before)
 ```
 
 Recording a session again must give the same run (D44, D60), and with the same knowledge the same trace:

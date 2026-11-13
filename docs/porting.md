@@ -539,6 +539,12 @@ the trace differs and `rrc record` says the run is the same (`same run as before
 that differs is a Clockwork bug, or the session, the game or Clockwork changed: say so in the notes. Commit the
 session's file with the new hashes.
 
+A session's first recording keeps the game's folder it ran on (`[folder]`, D170): its every run, the original's and
+the port's, sees those files and no others, so playing the game outside the toolkit (its saves, the files it leaves
+behind) changes no session. `rrc record` says when the folder differs from the recorded one; `--folder` takes it as
+it is now, for a new version or a save the session needs. A session based on one whose run changed that way
+starts at the tick's number again with `rrc record SESSION --rebase`.
+
 `rrc record` also keeps a snapshot of the machine every 10 emulated seconds (on this machine, in the cache):
 `rrc watch` and `rrc inputs` then start from the last one before the tick they look at, in seconds instead of
 a run from power-on, with the whole call chains. Record a session before asking about its late ticks.

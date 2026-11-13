@@ -270,7 +270,8 @@ which bugs it met.
 ## 7. Comparison
 
 - **Sessions:** input scripts, recorded play (`clockwork play --record`), and the game's own demo recordings; a
-  session may start from another's tick, with its own input from there (D118).
+  session may start from another's tick, with its own input from there (D118). A session runs on the game's folder
+  as it was recorded, kept in the cache, whatever the person's folder holds since (D170).
 - **Sync points:** addresses in the original where a tick ends (one per loop: menus, play, demo playback),
   where the loop's wait is over and the pass hasn't read its inputs yet (D47); a session's timeline is its
   sequence of sync hits. A loop that polls as fast as the CPU runs, with no wait, has a gated sync point: a

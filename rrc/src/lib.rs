@@ -13,6 +13,7 @@ mod contracts;
 pub mod edits;
 mod entry;
 mod files;
+pub mod folder;
 pub mod formats;
 pub mod frames;
 pub mod game;

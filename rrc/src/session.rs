@@ -1,7 +1,8 @@
 //! Sessions (docs/design.md §7): what to reproduce. A session is a TOML file in `sessions/` naming its input
 //! (an input script, or play recorded by `clockwork play --record`, kept beside it), its length and the
 //! edits that set up its scenario (D59, D64), or the session and tick it starts from (D118); `rrc record`
-//! adds the hashes of its trace and its run (D44, D54), and `rrc compare --pair` its paired checkpoints (D63).
+//! adds the hashes of its trace and its run (D44, D54) and the game's folder it ran on (D170), and `rrc compare
+//! --pair` its paired checkpoints (D63).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -37,6 +38,11 @@ pub struct Session {
     /// The scenario's edits (D64), by tick.
     #[serde(default, rename = "edit", skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<Edit>,
+    /// The game's folder as the session was recorded (D170): its files by `/`-separated path, with their SHA-256,
+    /// kept in the cache. Every run of the session, the original's and the port's, sees these files and no
+    /// others; a session based on another runs on its root's. Empty: the folder as it is (recorded before D170).
+    #[serde(default, rename = "folder", skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub files: std::collections::BTreeMap<String, String>,
 }
 
 /// Where a session based on another starts: that session's tick, and the cycle it is at (D128), by which it is

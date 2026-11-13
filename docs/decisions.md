@@ -764,6 +764,24 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D170. A session runs on the game's folder as it was recorded. Accepted 2026-11-13.
+A session's first recording from power-on (`rrc record`, `rrc play`) keeps the game's folder it ran on: every file
+by its path and SHA-256 in the session file (`[folder]`; a folder without files as `PATH/`), their contents in the
+cache. Every run of the session is given that folder, built once in the cache from them (hard links to its objects,
+or copies), and sees no other file: the original's in Clockwork, a snapshot loaded, a play's window, and the port's
+(`RRC_GAME`). A session based on another runs on its root's; the run's identity (D123) counts the recorded files,
+not the folder's. `rrc record SESSION --folder` takes the folder as it is now again, and a recording says when the
+folder differs from the recorded one. A file the cache lost is taken from the game's folder where it still holds it
+as recorded; one it doesn't is named. A based session whose base's run changed starts at the tick's number again
+with `rrc record SESSION --rebase`, and D128's cycle is kept anew. A session recorded before has no `[folder]` and
+runs on the folder as it is, until it is recorded again.
+**Why:** on 2026-11-13 the person played their Steam copy, which left other running files in the folder (`*.64`,
+which Arena deletes at start-up before it copies its `.65` files): Arena's start-up took other cycles, so every
+recorded session's run differed from its recording and no question about any could be asked, and the files the
+recordings had seen were gone. What else the folder holds (saves, a play's leftovers, a launcher's files) is the
+run's input as much as its input script, and the person plays their copy; so a recording keeps its own. The
+contents go to the cache, never into the port's repository (D33); their hashes are text, as a version's (D30).
+
 ### D169. A played port's digitized sound goes through the Sound Blaster's output filter. Accepted 2026-11-13, with the person.
 The platform holds each digitized sample until the next, as a Sound Blaster's DAC does, and filters it as the card's
 analog output did: a 2nd-order low-pass at the model's cutoff, the values DOSBox Staging models each card with

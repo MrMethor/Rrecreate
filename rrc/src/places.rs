@@ -87,7 +87,8 @@ pub fn placement(repo: &Repo, session: &Session) -> Result<Placement, String> {
     if let Some(placement) = cache.recall("places", &key).as_deref().and_then(parse) {
         return Ok(placement);
     }
-    let (mut clockwork, _) = Clockwork::original(repo, &session.options(repo))?;
+    let folder = crate::folder::of(repo, session)?;
+    let (mut clockwork, _) = Clockwork::original_on(repo, &folder, &session.options(repo))?;
     let (module, le) = (repo.module(), is_le(repo));
     let length_ms = (session.seconds * 1000.0) as u64;
     let mut ms = 0;
@@ -198,7 +199,8 @@ impl<'a> Places<'a> {
                 placement(self.repo, self.session)?.image
             } else {
                 let root = self.session.root(self.repo)?;
-                let (_, loaded) = Clockwork::original(self.repo, &root.options(self.repo))?;
+                let folder = crate::folder::of(self.repo, &root)?;
+                let (_, loaded) = Clockwork::original_on(self.repo, &folder, &root.options(self.repo))?;
                 (clockwork::linear(&loaded, "image")?, clockwork::number(&loaded, "image_size")? as u32)
             };
             let _ = self.image.set(image);

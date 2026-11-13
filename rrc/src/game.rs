@@ -36,6 +36,31 @@ pub fn hash_folder(dir: &Path, state: &Path) -> Result<BTreeMap<String, String>,
     Ok(files)
 }
 
+/// The folders under `dir` that hold no file, in them or in their folders: by `/`-separated path, sorted.
+pub fn empty_folders(dir: &Path) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut pending = vec![(String::new(), dir.to_path_buf())];
+    while let Some((prefix, folder)) = pending.pop() {
+        let entries = std::fs::read_dir(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("{}: {e}", folder.display()))?;
+            if entry.file_type().map_err(|e| format!("{}: {e}", folder.display()))?.is_dir() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let path = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+                if walk(&entry.path())?.is_empty() {
+                    out.push(path.clone());
+                }
+                pending.push((path, entry.path()));
+            }
+        }
+    }
+    // A folder within an empty one is listed with it.
+    out.sort();
+    let kept: Vec<String> =
+        out.iter().filter(|p| !out.iter().any(|q| q.starts_with(&format!("{p}/")))).cloned().collect();
+    Ok(kept)
+}
+
 /// Every file under `dir`, sorted, as (`/`-separated path, full path).
 fn walk(dir: &Path) -> Result<Vec<(String, std::path::PathBuf)>, String> {
     let mut out = Vec::new();
