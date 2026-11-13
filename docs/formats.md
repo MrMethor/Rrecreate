@@ -693,7 +693,8 @@ inputs and the trace are JSON lines.
   port sets in its state before writing the tick (D64), after drawing and sounding it (D165: the edit is written at
   the tick's sync point, after its pass drew). A tick has `fed`, of the same form, for fed fields (D84,
   D124: `--feed`, `--lockstep`): their original values where they changed, each held until it changes and set at
-  every tick from its first (version 2; version 1 has no `fed`, and versions before 3 no rounds, `spun` or
+  every tick from its first, then the port's own values put back at a `set`'s places until the tick is drawn (D166)
+  (version 2; version 1 has no `fed`, and versions before 3 no rounds, `spun` or
   inputs' `sync`). The last line is
   `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):

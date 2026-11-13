@@ -709,7 +709,22 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             Ok(())
         };
         if !feeding.is_empty() {
+            // Where an edit sets a field at this tick, the original's value there has the edit in it, written after
+            // the frame (D165): the edit's places keep the port's own for the frame and the sound (D166).
+            let own: Vec<(&String, Value)> = if line.set.is_empty() {
+                Vec::new()
+            } else {
+                let value = serialize(&state)?;
+                line.set.iter().filter_map(|(p, _)| files::get_path(&value, p).map(|v| (p, v.clone()))).collect()
+            };
             set(&mut state, &mut feeding.iter())?;
+            if !own.is_empty() {
+                let mut value = serialize(&state)?;
+                for (path, v) in own {
+                    files::set_path(&mut value, path, v)?;
+                }
+                state = S::transplant(value)?;
+            }
         }
         let mut drawn = None;
         if drawing.is_some() || sounding {
@@ -1073,6 +1088,19 @@ mod tests {
             present::Frame::decode(&std::fs::read(d.join("frames").join(format!("{t}.frm"))).unwrap()).unwrap()
         };
         assert_eq!((frame(2).pixels[0], frame(3).pixels[0]), (1, 101), "the pass's count, then the edit's on");
+        // Fed the original's state, which has the edit in it (a lockstep's), the edit's places keep the port's own
+        // for the frame; the rest is fed, and the edit set after (D166).
+        let fed = INPUTS.replace(
+            r#"{"tick":2,"sync":"play","inputs":[[1,"0001"]]}"#,
+            r#"{"tick":2,"sync":"play","inputs":[[1,"0001"]],"fed":{"count":100,"keys":[7]},"set":{"count":100}}"#,
+        );
+        std::fs::write(d.join("inputs.jsonl"), fed).unwrap();
+        std::fs::remove_dir_all(d.join("frames")).ok();
+        run_drawn::<Counter>(&drawn, &mut present::Drawn(Counting)).unwrap();
+        assert_eq!(frame(2).pixels[0], 1, "the pass's count, not the edit's");
+        let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
+        let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines[2]["state"], serde_json::json!({"count": 100, "keys": [7]}), "fed, and the edit set");
         let mut state = serde_json::json!({"a": [{"b": 1}]});
         assert!(files::set_path(&mut state, "a[1].b", serde_json::json!(2)).is_err(), "no such element");
         assert!(files::set_path(&mut state, "a[0]x", serde_json::json!(2)).is_err());

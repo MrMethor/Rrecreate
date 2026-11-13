@@ -671,7 +671,9 @@ otherwise is counted with the first tick and what it was (`differs   player.posi
 at dungeon's tick 197 (player.position.x: original 2448, port 2432)`), with the fields it leaves unset, the frames
 and the sound that differ, and its notes; the census is in `.rrc/compare/SESSION/census.json`. A session that starts
 at power-on is counted from there, the port started as it starts itself (its initial data, D135), not from a
-transplant at its first tick, which would leave out what its power-on sets up and nothing maps (D164). It is the work
+transplant at its first tick, which would leave out what its power-on sets up and nothing maps (D164). At a
+scenario's edit, the port's own values stay where the edit writes until its tick is drawn, as the pass left them
+(D166). It is the work
 list: take a difference, then `rrc compare SESSION --transplant T` with T the tick before its first, for who wrote
 the original's value.
 

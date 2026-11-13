@@ -753,6 +753,17 @@ set first, as they are the pass's result in the original.
 drawing after it showed the edited state a frame early. Measured on Arena: the lock session's edit turns the player to
 the door at tick 2, and its frame there showed the compass already turned; the original's shows the angle before it.
 
+### D166. A fed tick's frame keeps the port's own values where an edit sets them. Accepted 2026-11-13.
+At a tick with a scenario's edit (`set`), the runtime feeds the fed fields (D84) and then puts back the port's own
+values at the edit's places before the frame and the sound; the edit is set after them, as before (D165).
+**Why:** a lockstep feeds the original's state at each tick before the port draws it (D124), and a tick's state in
+the trace is taken at its sync point, where the edit is written: the fed value brought the edit into the frame a
+tick early, the difference D165 removed from plain comparisons. Leaving the edited fields out of the tick's feed
+(the first try) set them to the value fed before, since a fed value is held until it changes, and lost the pass's own
+change of them: the toy's lockstep then differed after its edit. Measured on Arena: the lock and pass sessions'
+lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
+every field, frame and sound.
+
 ### D164. A lockstep census of a session from power-on starts the port from power-on. Accepted 2026-11-12.
 `rrc compare SESSION --lockstep` (and so `rrc work --run`) runs a session that starts at power-on (no `[from]`; a
 session from another's tick has the start-up's pass in its trace too, and starts from a transplant) from there:

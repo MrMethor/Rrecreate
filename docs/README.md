@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-13 (decisions to D165). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-13 (decisions to D166). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -177,8 +177,11 @@ the game does left the register, D163).
   them.
 - **Frames beyond the first session.** The first dungeon's session matches state, screen and digitized sound at all
   656 of its world's ticks, and its continuation now at all 775 (2026-11-12: the floor's and ceiling's tables kept
-  as the original's logic builds them, the pits' sides from inside a chasm, the splash into water). The menus' and
-  systems' screens aren't drawn yet.
+  as the original's logic builds them, the pits' sides from inside a chasm, the splash into water). All 58 sessions
+  match the original's state in a lockstep census. Since 2026-11-13 the logbook's screen, a wall dissolving
+  (Passwall), levitating, the rest's screens and a lockstep's scenario edits (D166) match too; what still differs in
+  frames or sound: the screens of the automap, the character sheet, the status and the main menu's load, a load's
+  pointer, and the cinematic's sound.
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
 **Next:** the Arena port taken through the workflow from where the toolkit puts it (its entry files, its sources
