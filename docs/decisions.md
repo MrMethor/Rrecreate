@@ -764,6 +764,14 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D179. A carried pointer may be read as an index. Accepted 2026-11-16.
+A `[[carry]]` item may take `into` as a `[[map]]` item does (D122, D178): at the transplant's or the start's tick it is
+the index of the element it points to, null where it points elsewhere. It is given, not compared.
+**Why:** AIL's FOR loops keep where each began (`FOR_ptrs`); a loop's pointer is read only while its loop runs, and
+the ones left from the last song point into its freed file, which a port can't know where the heap put. The port
+keeps the running loops' and needs them at a transplant (a song loops all through a level); comparing the stale
+ones would compare where the heap put the last song.
+
 ### D178. A pointer may be read as an index into a carried item, or as whether it is set. Accepted 2026-11-15.
 `into` (D122) may name a `[[carry]]` item found through a pointer, as well as a mapped one; an item that isn't an
 array counts as an array of one element (the pointer reads 0 where it points at it). The trace records the pointer

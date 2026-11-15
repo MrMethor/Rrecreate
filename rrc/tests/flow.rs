@@ -1566,35 +1566,41 @@ fn state_behind_pointers_is_mapped_through_them() {
     // Memory the port carries, found through a pointer (D177): the array's bytes at the start's tick.
     let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
     // A pointer as an index into a carried array, or into a carried item that isn't one (D178).
-    let carry = "
+    let carry = r#"
 [[carry]]
-field = \"carried.table\"
-via = \"table\"
-type = \"i16[8]\"
+field = "carried.table"
+via = "table"
+type = "i16[8]"
 
-                 [[carry]]
-field = \"carried.head\"
-via = \"actors\"
-type = \"actor\"
+[[carry]]
+field = "carried.head"
+via = "actors"
+type = "actor"
 
-                 [[map]]
-field = \"carried_current\"
-at = \"current\"
-type = \"far\"
-into = \"carried.table\"
+[[map]]
+field = "carried_current"
+at = "current"
+type = "far"
+into = "carried.table"
 
-                 [[map]]
-field = \"first\"
-at = \"actors\"
-type = \"far\"
-into = \"carried.head\"
+[[map]]
+field = "first"
+at = "actors"
+type = "far"
+into = "carried.head"
 
-                 [[map]]
-field = \"has_actors\"
-at = \"actors\"
-type = \"far\"
+[[map]]
+field = "has_actors"
+at = "actors"
+type = "far"
 set = true
-";
+
+[[carry]]
+field = "carried_index"
+at = "current"
+type = "far"
+into = "carried.table"
+"#;
     std::fs::write(rrc.repo.join("mapping.toml"), format!("{mapping}{carry}")).unwrap();
     rrc.ok(&["session", "add", "run", "--seconds", "2"]);
     let recorded = rrc.ok(&["record", "run"]);
@@ -1618,6 +1624,7 @@ set = true
     assert_eq!(ten["carried.table"], ten["table"], "the table, carried: {ten}");
     assert_eq!((ten["carried_current"].as_i64(), ten["first"].as_i64()), (Some(6), Some(0)), "{ten}");
     assert_eq!(ten["has_actors"], serde_json::json!(true), "the list's pointer is set: {ten}");
+    assert_eq!(ten["carried_index"].as_i64(), Some(6), "a carried pointer as an index (D179): {ten}");
     // At pass 50 the third left the list: three, the last now third.
     let sixty = state("60");
     assert_eq!(xs(&sixty), vec![60, 130, 260], "{sixty}");

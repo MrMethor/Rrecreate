@@ -435,7 +435,8 @@ type = "u8"                     # optional, as for [[map]]
 field = "saved.engine"          # parts of a saved game's blocks it doesn't model; in the transplant's and the
 at = "player_record"            # start's state at the tick, never traced nor compared (at as for [[present]],
 type = "u8[3663]"               # or via a pointer as for [[map]]: a file the program loaded on the heap, D177);
-                                # a range of memory: its type says how much, past the datum there if need be
+                                # a range of memory: its type says how much, past the datum there if need be; a
+                                # carried pointer may be read as an index (into, as for [[map]]: D179)
 
 [[ignore]]                      # the original's memory that may differ (padding, caches, driver internals)
 at = "mouse_buffer"             # a data name, or an ID

@@ -223,24 +223,16 @@ impl Mapping {
         }
         // An index into an array on the heap (D122): its field, mapped or carried (D178), through a pointer; an
         // item that isn't an array is an array of one.
-        let carried = if self.maps.iter().any(|m| !m.into.is_empty()) { self.resolve_carried(k)? } else { Vec::new() };
+        let carried = if self.maps.iter().any(|m| !m.into.is_empty()) {
+            given(k, &self.carries, "carry", "a carried item")?
+        } else {
+            Vec::new()
+        };
         for (i, m) in self.maps.iter().enumerate().filter(|(_, m)| !m.into.is_empty()) {
             let at = |e: String| format!("{MAPPING}: {}: {e}", m.field);
-            let array = mapped
-                .iter()
-                .chain(&carried)
-                .find(|a| a.field == m.into)
-                .ok_or_else(|| at(format!("into {}: no such field", m.into)))?;
-            let Some(via) = array.via.as_ref().filter(|v| v.then.is_empty() && v.next.is_none()) else {
-                return Err(at(format!("into {}: an array through one pointer (via, without then or next)", m.into)));
-            };
-            let (element, count) = values::array_of(&array.ty, &k.types).unwrap_or((&array.ty, 1));
-            let width = values::size(element, &k.types)?;
-            if PointerKind::of_type(&mapped[i].ty, &k.types).is_none() {
-                return Err(at(format!("into: {} isn't a pointer type", mapped[i].ty)));
-            }
-            let (base, pointer, offset) = (array.id.clone(), via.pointer.clone(), via.offset);
-            mapped[i].into = Some(Into { field: m.into.clone(), width, count, base, pointer, offset });
+            let targets: Vec<&Mapped> = mapped.iter().chain(&carried).collect();
+            let into = into(k, &mapped[i], &m.into, &targets).map_err(at)?;
+            mapped[i].into = Some(into);
         }
         Ok(mapped)
     }
@@ -251,10 +243,37 @@ impl Mapping {
         given(k, &self.presents, "present", "a presentation's item")
     }
 
-    /// The memory the port carries ([`Mapping::carries`], D126), resolved as the presentation's.
+    /// The memory the port carries ([`Mapping::carries`], D126), resolved as the presentation's; a carried pointer
+    /// may be read as an index (`into`, D179).
     pub fn resolve_carried(&self, k: &Knowledge) -> Result<Vec<Mapped>, String> {
-        given(k, &self.carries, "carry", "a carried item")
+        let mut carried = given(k, &self.carries, "carry", "a carried item")?;
+        if self.carries.iter().any(|m| !m.into.is_empty()) {
+            let mapped = self.resolve(k)?;
+            let plain = carried.clone();
+            for (i, m) in self.carries.iter().enumerate().filter(|(_, m)| !m.into.is_empty()) {
+                let at = |e: String| format!("{MAPPING}: carry {}: {e}", m.field);
+                let targets: Vec<&Mapped> = mapped.iter().chain(&plain).collect();
+                carried[i].into = Some(into(k, &carried[i], &m.into, &targets).map_err(at)?);
+            }
+        }
+        Ok(carried)
     }
+}
+
+/// What a pointer, `pointer`, is an index into (D122, D178): the array `field` among `targets`, found through one
+/// pointer; an item that isn't an array is an array of one.
+fn into(k: &Knowledge, pointer: &Mapped, field: &str, targets: &[&Mapped]) -> Result<Into, String> {
+    let array = targets.iter().find(|a| a.field == field).ok_or_else(|| format!("into {field}: no such field"))?;
+    let Some(via) = array.via.as_ref().filter(|v| v.then.is_empty() && v.next.is_none()) else {
+        return Err(format!("into {field}: an array through one pointer (via, without then or next)"));
+    };
+    let (element, count) = values::array_of(&array.ty, &k.types).unwrap_or((&array.ty, 1));
+    let width = values::size(element, &k.types)?;
+    if PointerKind::of_type(&pointer.ty, &k.types).is_none() || pointer.via.is_some() {
+        return Err(format!("into: {} isn't a pointer type at an ID", pointer.ty));
+    }
+    let (base, kind, offset) = (array.id.clone(), via.pointer.clone(), via.offset);
+    Ok(Into { field: field.to_owned(), width, count, base, pointer: kind, offset })
 }
 
 /// Items given at a start, not compared (`[[present]]`, `[[carry]]`): each at an ID or a name, a field once.

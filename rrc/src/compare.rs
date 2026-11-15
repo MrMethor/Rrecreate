@@ -880,7 +880,6 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
     // array's pointer points then.
     for (i, m) in mapped.iter().enumerate() {
         let Some(into) = &m.into else { continue };
-        let (width, count) = (&into.width, &into.count);
         let kind = crate::values::PointerKind::of_type(&m.ty, r.types)
             .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
         let column = |at: &str, size: u32| {
@@ -889,25 +888,31 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
         let lacks = || format!("the trace of {name} lacks {}'s pointers: rrc record {name}", m.field);
         let own = column(&m.id.to_string(), m.size).ok_or_else(lacks)?;
         let base = column(&into.base.to_string(), into.pointer.size()).ok_or_else(lacks)?;
-        let index = |p: &Option<String>, b: &Option<String>| -> Value {
-            let target = |hex: &Option<String>, kind: &crate::values::PointerKind, past: u32| {
-                hex.as_deref().and_then(|h| unhex(h).ok()).and_then(|bytes| kind.target(&bytes, past))
-            };
-            let apart = match (target(p, &kind, 0), target(b, &into.pointer, into.offset)) {
-                (Some(Target::Linear(p)), Some(Target::Linear(b))) => p.checked_sub(b),
-                (Some(Target::Id(p)), Some(Target::Id(b))) if p.module() == b.module() && p.part() == b.part() => {
-                    p.offset().checked_sub(b.offset())
-                }
-                _ => None,
-            };
-            match apart.filter(|d| d % width == 0 && d / width < *count) {
-                Some(d) => Value::from(d / width),
-                None => Value::Null,
-            }
-        };
-        all[i] = trace.values(own).iter().zip(&trace.values(base)).map(|(p, b)| index(p, b)).collect();
+        let bytes = |hex: &Option<String>| hex.as_deref().and_then(|h| unhex(h).ok()).unwrap_or_default();
+        all[i] = trace
+            .values(own)
+            .iter()
+            .zip(&trace.values(base))
+            .map(|(p, b)| pointer_index(&bytes(p), &kind, &bytes(b), into))
+            .collect();
     }
     Ok(all)
+}
+
+/// A pointer's bytes (`own`, of `kind`) read as the index of the element it points to in the array `into` names,
+/// whose pointer's bytes are `base`: null where either is null or it points elsewhere (D122, D178).
+fn pointer_index(own: &[u8], kind: &crate::values::PointerKind, base: &[u8], into: &crate::mapping::Into) -> Value {
+    let apart = match (kind.target(own, 0), into.pointer.target(base, into.offset)) {
+        (Some(Target::Linear(p)), Some(Target::Linear(b))) => p.checked_sub(b),
+        (Some(Target::Id(p)), Some(Target::Id(b))) if p.module() == b.module() && p.part() == b.part() => {
+            p.offset().checked_sub(b.offset())
+        }
+        _ => None,
+    };
+    match apart.filter(|d| d % into.width == 0 && d / into.width < into.count) {
+        Some(d) => Value::from(d / into.width),
+        None => Value::Null,
+    }
 }
 
 /// A field's value from its item's bytes: as its type reads them (its mask's bits), or a list's nodes, one
@@ -1673,19 +1678,32 @@ fn read_given(
     let length_ms = (session.seconds * 1000.0) as u64;
     let (mut clockwork, _, from) = crate::watch::open(repo, session, &crate::trace::sync_points(k)?, tick + 1)?;
     crate::watch::to_tick(&mut clockwork, tick + 1, from.as_ref(), length_ms)?;
-    // Each item's bytes, or the pointer's an item is found through (a carried one, D177).
-    let ranges = items
+    // Each item's bytes, or the pointer's an item is found through (a carried one, D177); then the pointers of the
+    // arrays carried pointers are indexes into (D179).
+    let mut ranges = items
         .iter()
         .map(|m| {
             let len = m.via.as_ref().map_or(m.size, |v| v.pointer.size());
             Ok(json!({"at": places.address(&m.id.to_string())?, "len": len}))
         })
         .collect::<Result<Vec<_>, String>>()?;
+    for into in items.iter().filter_map(|m| m.into.as_ref()) {
+        ranges.push(json!({"at": places.address(&into.base.to_string())?, "len": into.pointer.size()}));
+    }
     let read = clockwork.ask("read", json!({ "ranges": ranges }))?;
     let read: Vec<Option<String>> =
         read["data"].as_array().into_iter().flatten().map(|hex| hex.as_str().map(str::to_owned)).collect();
+    let (read, mut bases) = (read[..items.len().min(read.len())].to_vec(), read.into_iter().skip(items.len()));
     let r = crate::values::of(k);
     for (m, hex) in items.iter().zip(read) {
+        if let Some(into) = &m.into {
+            let kind = crate::values::PointerKind::of_type(&m.ty, r.types)
+                .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
+            let own = hex.as_deref().map(crate::trace::unhex).unwrap_or_default();
+            let base = bases.next().flatten().as_deref().map(crate::trace::unhex).unwrap_or_default();
+            state.insert(m.field.clone(), pointer_index(&own, &kind, &base, into));
+            continue;
+        }
         let bytes = match (&m.via, hex) {
             (None, Some(hex)) => unhex(&hex)?,
             (None, None) => return Err(format!("{} ({}) isn't in memory at tick {tick}", m.field, m.id)),
