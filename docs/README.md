@@ -176,8 +176,11 @@ the game does left the register, D163).
 
 **Open against M6's row** (measured on the Arena port, 2026-11-11):
 
-- **The music.** The port makes the digitized sounds only. The OPL's music, most of Arena's sound events, is neither
-  made nor compared on a real game; the chime test program alone tests that path (D108, D121).
+- **The music.** Since 2026-11-15 the port makes the OPL's music, most of Arena's sound events: Miles' AIL 2
+  XMIDI driver ported from its public-domain source, run where the game calls it and its services where the
+  interrupts made them (D174). From power-on every one of the first session's 69923 OPL writes matches at all 750
+  ticks, the intro's, the new game's, the creation's, the cinematic's and the dungeon's songs. Not yet compared
+  from a transplant: the driver's state in the original's memory isn't mapped.
 - **The actions seam** ([design](design.md) §6.1). Built (D162): a port declares its game's actions, each the PC
   input the original takes for it, and the platform's controls bind the host's keys to them, each still given to
   the port as the original's own input; tried on the vault, and Arena's world (21 actions) reads its keys through
@@ -194,9 +197,9 @@ the game does left the register, D163).
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
 **Next:** the music, under way since 2026-11-15 at the person's word, the last of M6's open points in their order
-(D161, the frames past the first session and the actions seam done): Miles' AIL 2 XMIDI driver's OPL writes made
-by the port, from the driver's public-domain source checked against the run, and compared tick by tick with the
-interrupts' services in order (D174); then M7.
+(D161, the frames past the first session and the actions seam done): the driver's state mapped, so that every
+session compares the music from its transplant; the songs of the towns and the outdoors; then the music played
+live; then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).
