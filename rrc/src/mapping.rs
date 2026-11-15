@@ -240,14 +240,21 @@ fn given(k: &Knowledge, items: &[Map], section: &str, what: &str) -> Result<Vec<
         if mapped.iter().any(|other| other.field == m.field) {
             return Err(at("mapped twice".into()));
         }
-        if !m.via.is_empty() || m.mask.is_some() {
+        // A carried item may be found through a pointer (D177): memory on the heap the port carries.
+        if (!m.via.is_empty() && section != "carry") || m.mask.is_some() {
             return Err(at(format!("{what} is at an ID or a name, not via a pointer or masked (yet)")));
         }
-        if m.at.is_empty() {
-            return Err(at("no at: the original's item".into()));
+        match (m.at.is_empty(), m.via.is_empty()) {
+            (true, true) => return Err(at("no at: the original's item (or, carried, via: a pointer to it)".into())),
+            (false, false) => return Err(at("at or via, not both".into())),
+            _ => {}
         }
         // A carried item is a range of memory: it may run past the datum it starts at.
-        let item = if section == "carry" { carried(k, m) } else { direct(k, m) };
+        let item = match section {
+            "carry" if !m.via.is_empty() => via(k, m),
+            "carry" => carried(k, m),
+            _ => direct(k, m),
+        };
         mapped.push(item.map_err(at)?);
     }
     Ok(mapped)

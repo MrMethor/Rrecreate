@@ -1189,7 +1189,7 @@ impl Pointers {
 /// list's nodes, each's next pointer `next` bytes into it, to a null one or `count`. None where a pointer is
 /// null (a list ends there) or memory isn't mapped.
 #[allow(clippy::too_many_arguments)]
-fn followed(
+pub(crate) fn followed(
     clockwork: &mut Clockwork,
     places: &Places,
     (pointer, first): (&PointerKind, Option<Target>),

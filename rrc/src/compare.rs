@@ -1667,13 +1667,39 @@ fn read_given(
         return Ok(state);
     }
     let places = Places::new(repo, session);
-    let ranges =
-        items.iter().map(|m| Ok((places.address(&m.id.to_string())?, m.size))).collect::<Result<Vec<_>, String>>()?;
-    let read = crate::peek::read_at(repo, session, &crate::trace::sync_points(k)?, tick, &ranges)?;
+    let length_ms = (session.seconds * 1000.0) as u64;
+    let (mut clockwork, _, from) = crate::watch::open(repo, session, &crate::trace::sync_points(k)?, tick + 1)?;
+    crate::watch::to_tick(&mut clockwork, tick + 1, from.as_ref(), length_ms)?;
+    // Each item's bytes, or the pointer's an item is found through (a carried one, D177).
+    let ranges = items
+        .iter()
+        .map(|m| {
+            let len = m.via.as_ref().map_or(m.size, |v| v.pointer.size());
+            Ok(json!({"at": places.address(&m.id.to_string())?, "len": len}))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let read = clockwork.ask("read", json!({ "ranges": ranges }))?;
+    let read: Vec<Option<String>> =
+        read["data"].as_array().into_iter().flatten().map(|hex| hex.as_str().map(str::to_owned)).collect();
     let r = crate::values::of(k);
     for (m, hex) in items.iter().zip(read) {
-        let hex = hex.ok_or_else(|| format!("{} ({}) isn't in memory at tick {tick}", m.field, m.id))?;
-        let value = decode(&unhex(&hex)?, &m.ty, &r).map_err(|e| format!("{}: {e}", m.field))?;
+        let bytes = match (&m.via, hex) {
+            (None, Some(hex)) => unhex(&hex)?,
+            (None, None) => return Err(format!("{} ({}) isn't in memory at tick {tick}", m.field, m.id)),
+            (Some(v), hex) => {
+                let pointer = hex.as_deref().map(crate::trace::unhex).unwrap_or_default();
+                let first = (&v.pointer, v.pointer.target(&pointer, 0));
+                match crate::trace::followed(&mut clockwork, &places, first, &v.then, v.offset, m.size, v.next)? {
+                    Some(bytes) => bytes,
+                    // A null pointer: nothing there.
+                    None => {
+                        state.insert(m.field.clone(), Value::Null);
+                        continue;
+                    }
+                }
+            }
+        };
+        let value = decode(&bytes, &m.ty, &r).map_err(|e| format!("{}: {e}", m.field))?;
         state.insert(m.field.clone(), value);
     }
     Ok(state)

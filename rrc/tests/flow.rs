@@ -1563,6 +1563,15 @@ fn state_behind_pointers_is_mapped_through_them() {
     )
     .unwrap();
     assert!(rrc.ok(&["check"]).contains("mapping   5 fields mapped"));
+    // Memory the port carries, found through a pointer (D177): the array's bytes at the start's tick.
+    let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
+    let carry = "
+[[carry]]
+field = \"carried.table\"
+via = \"table\"
+type = \"u8[16]\"
+";
+    std::fs::write(rrc.repo.join("mapping.toml"), format!("{mapping}{carry}")).unwrap();
     rrc.ok(&["session", "add", "run", "--seconds", "2"]);
     let recorded = rrc.ok(&["record", "run"]);
     assert!(recorded.contains("trace     100 ticks"), "{recorded}");
@@ -1582,6 +1591,8 @@ fn state_behind_pointers_is_mapped_through_them() {
     assert_eq!((ten["pass_count"].as_i64(), xs(&ten)), (Some(10), vec![10, 30, 50, 70]), "{ten}");
     assert_eq!(ten["table"], serde_json::json!([8, 9, 10, 3, 4, 5, 6, 7]), "{ten}");
     assert_eq!((ten["current"].as_i64(), ten["second_hits"].as_i64()), (Some(6), Some(1)), "{ten}");
+    let carried: Vec<u8> = (8..11).chain(3..8).flat_map(|v: i16| v.to_le_bytes()).collect();
+    assert_eq!(ten["carried.table"], serde_json::json!(carried), "the table's bytes, carried: {ten}");
     // At pass 50 the third left the list: three, the last now third.
     let sixty = state("60");
     assert_eq!(xs(&sixty), vec![60, 130, 260], "{sixty}");

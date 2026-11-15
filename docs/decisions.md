@@ -764,6 +764,14 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D177. A carried item may be found through a pointer. Accepted 2026-11-15.
+A `[[carry]]` item (D126) may be `via` a pointer, with `offset` and `then` as a `[[map]]` item's: at the
+transplant's or the start's tick it is the memory where the pointer points, as long as its type, null where the
+pointer is. It is still neither traced nor compared.
+**Why:** Arena's music plays a song from its XMIDI file, which the game loads on the heap: the driver's state (its
+sequence's pointers into the file) is mapped, but the file itself is data the port only reads, of the song's
+length, with the heap past it; a transplant needs its bytes, and comparing them would compare the heap after it.
+
 ### D176. In live play a port runs what keeps its own clock while the program waits. Accepted 2026-11-15.
 The platform's `Live` has `between`: each frame the program waits (no pass is due), the port is given the host's
 time and its devices, and what it runs then sounds as a pass's would. A live platform's calls through hooks are
