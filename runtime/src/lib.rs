@@ -155,6 +155,8 @@ pub struct Inputs {
     /// many of each the port took ([`Inputs::next_call`]).
     calls: BTreeMap<String, Vec<Call>>,
     taken: std::cell::RefCell<BTreeMap<String, usize>>,
+    /// The same calls of every hook, in the order the pass made them (D174).
+    runs: Vec<(String, Call)>,
 }
 
 /// The gates of a port's gated sync points (D48, D129): each one's sources' values at its last tick. The original's
@@ -480,6 +482,14 @@ impl Inputs {
         for (name, call) in calls {
             self.calls.entry(name.clone()).or_default().push(call.clone());
         }
+        self.runs = calls.to_vec();
+    }
+
+    /// The calls through every hook in the tick's pass, in the order it made them, each with its hook's name (D174):
+    /// where calls through two hooks interleave (a driver's service a timer interrupt calls, and the program's calls
+    /// into the driver), the port makes them in that order.
+    pub fn runs(&self) -> &[(String, Call)] {
+        &self.runs
     }
 }
 
@@ -1196,6 +1206,25 @@ mod tests {
         assert!(inputs.calls("wake").is_empty(), "a tick without calls");
         inputs.set_calls(&file.ticks[2].calls);
         assert_eq!(inputs.next_call("wake").map(|c| c.get("cl")), Some(5), "a new tick: none taken");
+    }
+
+    #[test]
+    fn two_hooks_calls_are_given_in_the_order_the_pass_made_them() {
+        let text = INPUTS
+            .replace(
+                r#"{"name":"keys","size":2}]}"#,
+                r#"{"name":"keys","size":2}],"hooks":[{"name":"service","registers":[],"interrupts":true},{"name":"call","registers":["ax"]}]}"#,
+            )
+            .replace(
+                r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]]}"#,
+                r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]],"hooks":[[0,[]],[1,[170]],[0,[]],[0,[]]]}"#,
+            );
+        let file = InputsFile::parse(&text).unwrap();
+        let mut inputs = Inputs::default();
+        inputs.set_calls(&file.ticks[2].calls);
+        let runs: Vec<(&str, u32)> = inputs.runs().iter().map(|(name, c)| (name.as_str(), c.get("ax"))).collect();
+        assert_eq!(runs, [("service", 0), ("call", 170), ("service", 0), ("service", 0)], "interleaved as made");
+        assert_eq!(inputs.calls("service").len(), 3);
     }
 
     #[test]

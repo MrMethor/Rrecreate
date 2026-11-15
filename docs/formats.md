@@ -272,6 +272,8 @@ name = "view_wakes"
 at = "GAME.EXE+25F11"           # the entry; each run of it in a pass, outside interrupt handlers
 part = "the 3D view"
 registers = ["ax", "bx", "cl", "di"]  # what it takes: 32-, 16- and 8-bit names, segments, flags
+interrupts = false              # optional: true, its runs from interrupt handlers count too (D174): a driver's
+                                # service a timer interrupt calls, in order with the pass's other hooks' runs
 ```
 
 `rrc sync` and `rrc input` write these. Each item may carry `provenance`, `confidence` and `evidence`, as the

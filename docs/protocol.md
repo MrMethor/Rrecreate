@@ -2,7 +2,7 @@
 
 How a tool drives an emulator: `rrc` drives Clockwork this way, and so will the runtime and the comparison
 (M3). It is a contract between programs, not a library: an emulator can be written in any language and under
-any licence, and a tool never links one (D58). Revision **18** (below, what each revision changed); Clockwork implements it in
+any licence, and a tool never links one (D58). Revision **19** (below, what each revision changed); Clockwork implements it in
 `clockwork/cli/src/serve.rs` (`clockwork serve`) for the `dos-pc` platform.
 
 The protocol has a **core**, which any machine can answer, and a **platform extension** per kind of machine
@@ -122,9 +122,10 @@ functions it was made in, innermost first, while `calls` is on) (D78).
 results, those every call kept, the bytes popped with the return, how it returned and the stack argument
 bytes read; `clockwork run --contracts` writes the same, `clockwork/dos/src/contracts.rs`). Real mode (D81).
 
-**Entries.** `entries` `{"at": [addr]}` ... `entries_end`: each run of those instructions (a function's entry)
-outside interrupt handlers, `{"entries": [{"cycle", "at", "regs": {"eax", ..., "es", "cs", "ss", "ds",
-"flags"}}], "dropped"}`, in order (D98; past a million, counted in `dropped`).
+**Entries.** `entries` `{"at": [addr], "interrupts": [addr]}` ... `entries_end`: each run of those instructions (a
+function's entry) outside interrupt handlers, and in them too for those `interrupts` lists (D174), `{"entries":
+[{"cycle", "at", "regs": {"eax", ..., "es", "cs", "ss", "ds", "flags"}}], "dropped"}`, in order (D98; past a
+million, counted in `dropped`).
 
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}], "unwritten": FILE}` ... `uninit_end`: reads of memory nothing wrote
@@ -219,6 +220,7 @@ An IBM PC with DOS (Clockwork).
     otherwise all "nothing wrote".
 17. `watch` takes `program`, and `watch_end` answers `host`; a watch keeps at most 100000 hits (D171).
 18. `read` and `write` take `EMS#<handle>+<offset>`, expanded memory by handle (D172).
+19. `entries` takes `interrupts`: entries whose runs from interrupt handlers are kept too (D174).
 
 ## Changing the protocol
 

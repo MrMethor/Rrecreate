@@ -764,6 +764,18 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D174. A hook may count its entry's runs from interrupt handlers, given the port in order with the rest. Accepted 2026-11-15.
+A hook (D98) with `interrupts = true` (`rrc hook ... --interrupts`) keeps its entry's runs from interrupt handlers
+too (Clockwork's `entries` takes `interrupts`, protocol revision 19). A tick's hooks were already kept in the order
+the pass made them across hooks; the runtime's `Inputs::runs()` now gives them so, each with its hook's name. The
+entries probe's code moves from `machine.rs` into `probe.rs`.
+**Why:** Arena's music is Miles' AIL 2 XMIDI driver: the RTC's periodic interrupt (256 Hz) runs AIL's timer,
+which calls the driver's service every 8333 µs, and the game calls the driver (start, stop, volume: AIL's
+function table, through ACD.EXE+10544) in its passes. The OPL writes a tick makes are those services and calls in
+the order they came, which D108 compares; nothing in memory says how many services fell before a call. The
+service is a part's entry like any hook's, but an interrupt calls it; hooks left those out because a renderer's
+calls aren't an interrupt's.
+
 ### D173. Clockwork's source hash leaves its analysis tools out. Accepted 2026-11-15.
 The hash runs and snapshots are kept by (D76, D127) leaves out the files of Clockwork's analysis tools, listed in
 its build script: watches, coverage, bounds checks, uninitialized reads, contract inference, service and file

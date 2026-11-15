@@ -4214,6 +4214,76 @@ fn an_entry_s_runs_are_kept_with_the_registers() {
 }
 
 #[test]
+fn an_entry_s_runs_from_an_interrupt_handler_are_kept_where_asked() {
+    // `step` counts its calls; the program calls it three times, then its timer handler (INT 08h, its own: it
+    // acknowledges the interrupt and returns) calls it until the count reaches 6.
+    let offsets = std::cell::RefCell::new(BTreeMap::new());
+    let program = com(|a| {
+        for name in ["step", "count"] {
+            offsets.borrow_mut().insert(name, a.addr(name) as u32);
+        }
+        let old = a.addr("old");
+        a.mov(ax, 0x3508)?;
+        a.int(0x21)?;
+        a.mov(word_ptr(old), bx)?;
+        a.mov(word_ptr(old + 2), es)?;
+        load_dx(a, "handler")?;
+        a.mov(ax, 0x2508)?;
+        a.int(0x21)?;
+        a.mov(cx, 3)?;
+        a.here("again")?;
+        let step = a.l("step");
+        a.call(step)?;
+        let again = a.l("again");
+        a.loop_(again)?;
+        a.here("wait")?;
+        let count = word_at(a, "count");
+        a.cmp(count, 6)?;
+        let wait = a.l("wait");
+        a.jb(wait)?;
+        a.cli()?;
+        a.push(ds)?;
+        a.mov(dx, word_ptr(old))?;
+        a.mov(ds, word_ptr(old + 2))?;
+        a.mov(ax, 0x2508)?;
+        a.int(0x21)?;
+        a.pop(ds)?;
+        a.sti()?;
+        exit(a, 0)?;
+        a.here("handler")?;
+        a.push(ax)?;
+        let step = a.l("step");
+        a.call(step)?;
+        a.mov(al, 0x20)?;
+        a.out(0x20, al)?;
+        a.pop(ax)?;
+        a.iret()?;
+        a.here("step")?;
+        let count = word_at(a, "count");
+        a.inc(count)?;
+        a.ret()?;
+        a.here("count")?;
+        a.dw(&[0])?;
+        a.here("old")?;
+        a.dw(&[0, 0])
+    });
+    let o = offsets.into_inner();
+    let run = |from_interrupts: bool| {
+        let mut m = boot(&[("I.COM", &program)], "I.COM");
+        let step = (u32::from(m.dos.psp) << 4) + o["step"];
+        m.track_calls(true);
+        m.start_entries(vec![step]);
+        if from_interrupts {
+            m.probes.entries.as_deref_mut().unwrap().interrupts = vec![step];
+        }
+        assert_eq!(m.run(SECOND), Stop::Exited(0));
+        m.take_entries().unwrap().hits.len()
+    };
+    assert_eq!(run(false), 3, "the program's own calls");
+    assert_eq!(run(true), 6, "and the handler's, in order with them");
+}
+
+#[test]
 fn a_run_stops_at_a_sync_point_s_hit() {
     let (program, o) = ten_steps();
     let mut m = boot(&[("S.COM", &program)], "S.COM");

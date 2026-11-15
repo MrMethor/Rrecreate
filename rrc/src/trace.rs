@@ -203,12 +203,15 @@ pub struct Header {
     pub power_on: Option<Box<Tick>>,
 }
 
-/// A hook a trace follows (D98): its name, its entry's ID and the registers it takes.
+/// A hook a trace follows (D98): its name, its entry's ID, the registers it takes, and whether its runs from
+/// interrupt handlers count too (D174).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HookItem {
     pub name: String,
     pub at: String,
     pub registers: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interrupts: bool,
 }
 
 /// A register's value in Clockwork's `entries_end` answer: `ax` is `eax`'s low word, `ah` its second byte.
@@ -497,7 +500,12 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .ticks
             .hooks
             .iter()
-            .map(|h| HookItem { name: h.name.clone(), at: h.at.clone(), registers: h.registers.clone() })
+            .map(|h| HookItem {
+                name: h.name.clone(),
+                at: h.at.clone(),
+                registers: h.registers.clone(),
+                interrupts: h.interrupts,
+            })
             .collect(),
         power_on: None,
     };
@@ -913,7 +921,9 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
     // Calls into ported code from a part not ported (D98).
     if !header.hooks.is_empty() {
         let at: Vec<String> = header.hooks.iter().map(|h| places.address(&h.at)).collect::<Result<_, _>>()?;
-        clockwork.ask("entries", json!({ "at": at }))?;
+        let interrupts: Vec<&String> =
+            header.hooks.iter().zip(&at).filter(|(h, _)| h.interrupts).map(|(_, a)| a).collect();
+        clockwork.ask("entries", json!({ "at": at, "interrupts": interrupts }))?;
     }
     // Each frame's picture, kept in the cache (D25).
     clockwork.ask("frame_images", json!({"on": true}))?;

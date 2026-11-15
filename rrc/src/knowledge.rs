@@ -122,6 +122,9 @@ pub struct Hook {
     pub evidence: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// Its runs from interrupt handlers count too (D174): a driver's service a timer interrupt calls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interrupts: bool,
 }
 
 /// The registers a hook takes: the general ones by their 32-, 16- and 8-bit names, the segments, flags.

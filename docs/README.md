@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-15 (decisions to D173). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-15 (decisions to D174). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -146,8 +146,9 @@ left it (D166), a port run refused when its code changed under it (D167), a play
 buffer Windows needs (D168) and the Sound Blaster's output filter (D169, with the person), and each session run on
 the game's folder as it was recorded, so that playing the game outside the toolkit changes no session (D170), and a
 watch's memory bounded after one took the person's machine down (D171), memory a game keeps in EMS named by its
-handle, so that it is traced and mapped like any other (D172), and a change to Clockwork's analysis tools no longer
-making every recording stale (D173).
+handle, so that it is traced and mapped like any other (D172), a change to Clockwork's analysis tools no longer
+making every recording stale (D173), and a hook's calls from interrupt handlers given in order with the rest, for
+Arena's music driver (D174).
 
 **The standard workflow, built before M6 goes on** (D154 to D159, 2026-11-12), at the person's word. The playbook is
 one workflow for every game: stages with gates, one work loop, where to look when the port differs, the best-known
@@ -192,10 +193,10 @@ the game does left the register, D163).
   cinematic isn't ported).
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
-**Next:** the Arena port taken through the workflow from where the toolkit puts it (its entry files, its sources
-recorded, its suspects judged, the top of its work list); then the open points above, which stay M6's, in the
-person's order (D161): the frames past the first session, the actions seam, then the music (the person is told
-before it starts); then M7.
+**Next:** the music, under way since 2026-11-15 at the person's word, the last of M6's open points in their order
+(D161, the frames past the first session and the actions seam done): Miles' AIL 2 XMIDI driver's OPL writes made
+by the port, from the driver's public-domain source checked against the run, and compared tick by tick with the
+interrupts' services in order (D174); then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).

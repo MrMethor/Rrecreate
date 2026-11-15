@@ -246,6 +246,17 @@ pub(crate) fn handle(
                 .map(|p| addr(m, p.as_str().ok_or("\"at\" lists addresses")?))
                 .collect::<Result<Vec<_>, _>>()?;
             m.start_entries(at);
+            // The entries whose runs from interrupt handlers count too (D174).
+            if let Some(list) = r.get("interrupts").and_then(Value::as_array) {
+                let mut interrupts = list
+                    .iter()
+                    .map(|p| addr(m, p.as_str().ok_or("\"interrupts\" lists addresses")?))
+                    .collect::<Result<Vec<_>, _>>()?;
+                interrupts.sort_unstable();
+                if let Some(entries) = m.probes.entries.as_deref_mut() {
+                    entries.interrupts = interrupts;
+                }
+            }
             Ok(json!({}))
         }
         "entries_end" => {

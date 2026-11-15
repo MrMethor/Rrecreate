@@ -757,7 +757,7 @@ impl Machine {
                 self.watch_exec();
             }
             if self.probes.entries.is_some() {
-                self.watch_entries();
+                crate::probe::watch_entries(self);
             }
             if self.probes.coverage.is_some() {
                 self.coverage_before();
@@ -968,21 +968,6 @@ impl Machine {
             regs: self.cpu.regs,
             stack,
         });
-    }
-
-    /// An entry of [`Machine::start_entries`] is about to run, outside an interrupt handler: kept.
-    fn watch_entries(&mut self) {
-        let linear = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-        let in_handler = self.probes.calls.as_deref().is_some_and(|c| c.in_hardware_interrupt());
-        let Some(entries) = self.probes.entries.as_deref_mut() else { return };
-        if in_handler || entries.at.binary_search(&linear).is_err() {
-            return;
-        }
-        if entries.hits.len() >= MAX_EXEC_HITS {
-            entries.dropped += 1;
-            return;
-        }
-        entries.hits.push(crate::probe::EntryHit { cycle: self.cpu.cycles, at: linear, regs: self.cpu.regs });
     }
 
     fn count_irq(&mut self, vector: u8) {
@@ -1267,7 +1252,8 @@ impl Machine {
     }
 
     /// Keeps each run of the entries at `at` (linear) with the registers (D98), outside interrupt
-    /// handlers (call tracking, when it is on, tells them apart).
+    /// handlers (call tracking, when it is on, tells them apart; [`crate::probe::Entries::interrupts`] counts some
+    /// in them too, D174).
     pub fn start_entries(&mut self, mut at: Vec<u32>) {
         at.sort_unstable();
         at.dedup();
