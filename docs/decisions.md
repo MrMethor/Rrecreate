@@ -764,6 +764,20 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D173. Clockwork's source hash leaves its analysis tools out. Accepted 2026-11-15.
+The hash runs and snapshots are kept by (D76, D127) leaves out the files of Clockwork's analysis tools, listed in
+its build script: watches, coverage, bounds checks, uninitialized reads, contract inference, service and file
+tracing, listings, hot spots, summaries, screenshots, the debugger stub, the play window's own files, and the
+server's tool operations, which move from `serve.rs` into `serve_tools.rs`. The machine, its devices, its records
+(frames, sound), its snapshots, call tracking (its stack is in snapshots), late inputs, and the operations that run
+the machine and read what a recording keeps stay in it; a file not listed counts.
+**Why:** on 2026-11-14 a watch's limit (D171) and EMS reads (D172) changed no run, yet each made all 58 of Arena's
+recordings stale: each was recorded again, an hour and a half a round, and the second round's runs were all the
+same as the first's. The tools look at a run and never change what the machine does (the CLAUDE.md rule that
+keeps Clockwork's analysis tools apart from its state); what decides a recording is the rest. A tool operation
+added later touches `serve_tools.rs` alone. `rrc record --run` still checks a run is the same.
+**Supersedes:** D127's "Clockwork's crates' sources" as a whole.
+
 ### D172. Expanded memory is named by handle and offset: `EMS#<handle>+<offset>`. Accepted 2026-11-14.
 An ID's module `EMS` is expanded memory: its part the handle (`#n`), its offset into the handle's logical pages,
 the page times 4000h and the byte (`EMS#1+110000`: handle 1's page 44h). Clockwork's `read` and `write` take it

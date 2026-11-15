@@ -3,13 +3,40 @@
 //! Clockwork's crates (`cli`, `dos`, `cpu`), of the workspace's manifest what they take from it (its
 //! `[workspace.package]`: the edition) and of its lock file the packages they depend on (D127: not the
 //! workspace's other crates and theirs, which change nothing here), and the compiler's version; line endings
-//! don't count. `clockwork --source` prints it.
+//! don't count. `clockwork --source` prints it. The analysis tools' own files ([`TOOLS`]) are left out (D173):
+//! they look at a run and never change what the machine does, so a change to one doesn't make every session's
+//! recording stale. A new file counts until it is listed there.
 
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 const CRATES: [&str; 3] = ["cli", "dos", "cpu"];
+
+/// The analysis tools' files, which the hash leaves out (D173), by path in `clockwork/`: what looks at a run (watches,
+/// coverage, bounds checks, uninitialized reads, contract inference, service and file tracing, the server's tool
+/// operations), shows it (listings, hot spots, summaries, screenshots, the debugger stub) or plays it live (the
+/// window, its sound and gamepads, which record new input but replay none). Not the machine, its devices, its records,
+/// its snapshots or the operations that run it and read what a recording keeps: those decide a recording.
+const TOOLS: &[&str] = &[
+    "cli/src/gamepads.rs",
+    "cli/src/gdb.rs",
+    "cli/src/hotspots.rs",
+    "cli/src/listing.rs",
+    "cli/src/live_audio.rs",
+    "cli/src/play.rs",
+    "cli/src/protocol.rs",
+    "cli/src/screenshot.rs",
+    "cli/src/serve_tools.rs",
+    "cli/src/summary.rs",
+    "cli/src/unpack.rs",
+    "dos/src/bounds.rs",
+    "dos/src/contracts.rs",
+    "dos/src/coverage.rs",
+    "dos/src/trace.rs",
+    "dos/src/uninit.rs",
+    "dos/src/watch.rs",
+];
 
 fn main() {
     let clockwork = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it")).join("..");
@@ -35,6 +62,9 @@ fn main() {
     hasher.update([0]);
     for file in files.iter().filter(|f| f.is_file()) {
         let name = file.strip_prefix(&workspace).unwrap_or(file).to_string_lossy().replace('\\', "/");
+        if TOOLS.iter().any(|tool| name.ends_with(&format!("/{tool}"))) {
+            continue;
+        }
         let bytes = std::fs::read(file).expect("a source file reads");
         hasher.update(name.as_bytes());
         hasher.update([0]);

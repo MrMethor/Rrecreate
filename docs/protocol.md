@@ -223,7 +223,7 @@ An IBM PC with DOS (Clockwork).
 ## Changing the protocol
 
 Any change to the protocol, an operation added or a field changed, is a new revision: the revision in
-`clockwork/cli/src/serve.rs` (`PROTOCOL`) and in `rrc/src/clockwork.rs` change together, with this document
+`clockwork/cli/src/protocol.rs` (`PROTOCOL`) and in `rrc/src/clockwork.rs` change together, with this document
 and its list of revisions.
 `rrc` refuses an emulator of another revision, so a tool and an emulator from different builds stop with a
 clear message instead of misreading each other.

@@ -332,7 +332,7 @@ which bugs it met.
   state may be one play can't reach (a count changed without its list): edits go through the game's
   structures, and a divergence right after one is suspected of the edit before the port.
 - **Session snapshots** (D51): `rrc record` keeps a snapshot every 10 emulated seconds in the cache, keyed by
-  what makes the run and its ticks the same; questions about a tick (`rrc watch`, `rrc inputs`) start from
+  what makes the run and its ticks the same (Clockwork's sources but its analysis tools', D173); questions about a tick (`rrc watch`, `rrc inputs`) start from
   the last one before it. Answers about a whole session (`rrc calls`, `rrc inputs`) are kept by the run and the
   knowledge they read.
 

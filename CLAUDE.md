@@ -51,8 +51,10 @@ What the hub leaves out because a person doesn't need it: commands, helpers and 
   `ids` crate parses and prints them; its cases are in `testdata/function_ids.tsv`.
 - `rrc` (MIT) drives Clockwork as a program (`clockwork serve`, `clockwork run`, `clockwork unpack`), never as a
   library. `clockwork serve` speaks the emulator protocol, `docs/protocol.md` (D58): a change to it is a new
-  revision (`PROTOCOL` in `serve.rs` and `rrc/src/clockwork.rs`) and goes into that document; keep what is
-  DOS's in the `dos-pc` extension. The files it reads and writes are documented in `docs/formats.md`: change the
+  revision (`PROTOCOL` in `protocol.rs` and `rrc/src/clockwork.rs`) and goes into that document; keep what is
+  DOS's in the `dos-pc` extension. An analysis tool's operation goes in `serve_tools.rs`, and a new tool's file in
+  the `TOOLS` of `clockwork/cli/build.rs`: Clockwork's source hash leaves them out, so changing a tool doesn't make
+  every session's recording stale (D173). The files it reads and writes are documented in `docs/formats.md`: change the
   two together, and `docs/porting.md` when a step of the workflow changes. `rrc/tests/flow.rs` runs the whole flow
   on a small program with the workspace's debug `clockwork`.
 - The hub is checked by `rrc/tests/hub.rs`: a new document needs its row there, and the state of the work is
