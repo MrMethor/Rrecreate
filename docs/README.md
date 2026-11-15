@@ -186,9 +186,10 @@ the game does left the register, D163).
   as the original's logic builds them, the pits' sides from inside a chasm, the splash into water). All 58 sessions
   match the original's state in a lockstep census. Since 2026-11-13 the logbook, the rest's screens, the status, the
   character sheet (both pages), a load (in the game and from the main menu), a wall dissolving (Passwall),
-  levitating and a lockstep's scenario edits (D166) match in frames and sound too: 56 of the 58 sessions match
-  in every field, frame and digitized sound. What still differs: the automap's screen (it needs the game's record of
-  the cells seen, not ported yet) and the cinematic's sound (the cinematic isn't ported).
+  levitating and a lockstep's scenario edits (D166) match in frames and sound too, and since 2026-11-15 the automap
+  (its record of the cells seen, kept in EMS and reached through D172, its file and its screen): 57 of the 58
+  sessions match in every field, frame and digitized sound. What still differs: the cinematic's sound (the
+  cinematic isn't ported).
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
 **Next:** the Arena port taken through the workflow from where the toolkit puts it (its entry files, its sources
