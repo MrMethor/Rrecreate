@@ -185,6 +185,13 @@ pub trait Live: Simulation + Shows {
         None
     }
 
+    /// While the program waits (no pass is due), the host's time passes: what the port runs on its own clock
+    /// meanwhile, as the PC's interrupts ran it whatever the program was doing (a music driver's service, D176), and
+    /// the sound that makes. Nothing by default.
+    fn between(&mut self, devices: &mut Self::Devices, host: &Host, sounds: &mut Sounds) {
+        let _ = (devices, host, sounds);
+    }
+
     /// What the pass wrote into its inputs itself (a keyboard queue it emptied: `Inputs::written`), taken into
     /// the handlers' state as the original's handlers would find it. Nothing by default.
     fn wrote(&self, devices: &mut Self::Devices, inputs: &Inputs) {
@@ -539,7 +546,14 @@ pub fn play<S: Live, P: Presentation<S>>(
         };
         for _ in 0..CATCH_UP {
             let (sync, inputs) = match state.next(&mut devices, &host) {
-                Next::Wait => break,
+                Next::Wait => {
+                    let mut sounds = Sounds::default();
+                    state.between(&mut devices, &host, &mut sounds);
+                    if let Some(audio) = &audio {
+                        audio.play(&sounds);
+                    }
+                    break;
+                }
                 Next::End => break 'play,
                 Next::Tick(sync, inputs) => (sync, inputs),
             };

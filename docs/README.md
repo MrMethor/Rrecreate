@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-15 (decisions to D175). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-15 (decisions to D176). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -179,8 +179,9 @@ the game does left the register, D163).
 - **The music.** Since 2026-11-15 the port makes the OPL's music, most of Arena's sound events: Miles' AIL 2
   XMIDI driver ported from its public-domain source, run where the game calls it and its services where the
   interrupts made them (D174). From power-on every one of the first session's 69923 OPL writes matches at all 750
-  ticks, the intro's, the new game's, the creation's, the cinematic's and the dungeon's songs. Not yet compared
-  from a transplant: the driver's state in the original's memory isn't mapped.
+  ticks, the intro's, the new game's, the creation's, the cinematic's and the dungeon's songs; it plays live too,
+  its service run on the host's clock while the game waits (D176). Not yet compared from a transplant: the
+  driver's state in the original's memory isn't mapped.
 - **The actions seam** ([design](design.md) §6.1). Built (D162): a port declares its game's actions, each the PC
   input the original takes for it, and the platform's controls bind the host's keys to them, each still given to
   the port as the original's own input; tried on the vault, and Arena's world (21 actions) reads its keys through

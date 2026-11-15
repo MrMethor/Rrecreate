@@ -764,6 +764,15 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D176. In live play a port runs what keeps its own clock while the program waits. Accepted 2026-11-15.
+The platform's `Live` has `between`: each frame the program waits (no pass is due), the port is given the host's
+time and its devices, and what it runs then sounds as a pass's would. A live platform's calls through hooks are
+the pass's runs too (`Inputs::with_calls`, D174).
+**Why:** the PC's interrupts ran a driver's service whatever the program was doing; a live port steps only when a
+pass is due, so at a screen that waits for a key (Arena's menus, the character's creation) the music, which AIL's
+timer serves every 8333 µs, would stop until the next key. A port's service run on the host's clock in the waits
+keeps it going; within a pass the order of the run's calls holds (D174).
+
 ### D175. The start-up's pass keeps its hooks' calls, on the power-on tick. Accepted 2026-11-15.
 A hook's runs before the first tick are the start-up's pass's: recording keeps them on the power-on tick (D134),
 the inputs file gives them with it, and the runtime gives them to `Simulation::power_on`. `rrc trace --tick 0`
