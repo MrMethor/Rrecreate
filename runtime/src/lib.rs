@@ -470,8 +470,11 @@ impl Inputs {
 
     /// This tick's calls through hooks, replacing the last tick's.
     /// With `calls` through hook `name` in the pass, in order (D98): what a live platform's input handling
-    /// answers where a comparison gives the original's (a driver's status, D121).
+    /// answers where a comparison gives the original's (a driver's status, D121). They are the pass's runs too
+    /// (`runs`, D174), after the other hooks' given before: a live platform makes them in that order.
     pub fn with_calls(mut self, name: &str, calls: Vec<Call>) -> Inputs {
+        self.runs.retain(|(hook, _)| hook != name);
+        self.runs.extend(calls.iter().map(|call| (name.to_owned(), call.clone())));
         self.calls.insert(name.to_owned(), calls);
         self
     }
@@ -1225,6 +1228,18 @@ mod tests {
         let runs: Vec<(&str, u32)> = inputs.runs().iter().map(|(name, c)| (name.as_str(), c.get("ax"))).collect();
         assert_eq!(runs, [("service", 0), ("call", 170), ("service", 0), ("service", 0)], "interleaved as made");
         assert_eq!(inputs.calls("service").len(), 3);
+    }
+
+    #[test]
+    fn a_live_platform_s_calls_are_the_pass_s_runs_in_the_order_given() {
+        let call = |ax| Call { registers: [("ax".to_owned(), ax)].into() };
+        let inputs = Inputs::default()
+            .with_calls("status", vec![call(2)])
+            .with_calls("service", vec![call(0), call(0)])
+            .with_calls("status", vec![call(1)]);
+        let runs: Vec<(&str, u32)> = inputs.runs().iter().map(|(name, c)| (name.as_str(), c.get("ax"))).collect();
+        assert_eq!(runs, [("service", 0), ("service", 0), ("status", 1)], "a hook's calls given again replace its own");
+        assert_eq!(inputs.calls("status").len(), 1);
     }
 
     #[test]
