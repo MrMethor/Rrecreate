@@ -571,9 +571,18 @@ pub fn at_leaf<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     Some(value)
 }
 
-/// The value at a dotted path (`player.x`) of a serialized state.
+/// The value at a dotted path (`player.x`, `slots[2].x`: a field's elements by `[index]`) of a serialized state.
 pub fn at_path<'a>(state: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(state, |v, part| v.get(part))
+    path.split('.').try_fold(state, |v, part| {
+        let (field, mut rest) = part.split_at(part.find('[').unwrap_or(part.len()));
+        let mut v = v.get(field)?;
+        while let Some(after) = rest.strip_prefix('[') {
+            let (index, tail) = after.split_once(']')?;
+            v = v.get(index.parse::<usize>().ok()?)?;
+            rest = tail;
+        }
+        Some(v)
+    })
 }
 
 #[cfg(test)]
@@ -601,6 +610,14 @@ mod tests {
             }],
             ..Types::default()
         }
+    }
+
+    #[test]
+    fn a_path_reaches_fields_and_their_elements() {
+        let state = serde_json::json!({"a": {"slots": [{"x": 1}, {"x": 2}], "b": 3}});
+        assert_eq!(at_path(&state, "a.b"), Some(&serde_json::json!(3)));
+        assert_eq!(at_path(&state, "a.slots[1].x"), Some(&serde_json::json!(2)));
+        assert_eq!((at_path(&state, "a.slots[2]"), at_path(&state, "a.slots[x]")), (None, None));
     }
 
     #[test]
