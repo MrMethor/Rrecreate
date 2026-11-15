@@ -879,9 +879,8 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
     // An index into an array on the heap (D122): where the field's pointer points, as an element of where the
     // array's pointer points then.
     for (i, m) in mapped.iter().enumerate() {
-        let Some((array, width, count)) = &m.into else { continue };
-        let a = mapped.iter().find(|a| a.field == *array).ok_or_else(|| format!("{}: into {array}", m.field))?;
-        let via = a.via.as_ref().ok_or_else(|| format!("{}: into {array}, not through a pointer", m.field))?;
+        let Some(into) = &m.into else { continue };
+        let (width, count) = (&into.width, &into.count);
         let kind = crate::values::PointerKind::of_type(&m.ty, r.types)
             .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
         let column = |at: &str, size: u32| {
@@ -889,12 +888,12 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
         };
         let lacks = || format!("the trace of {name} lacks {}'s pointers: rrc record {name}", m.field);
         let own = column(&m.id.to_string(), m.size).ok_or_else(lacks)?;
-        let base = column(&a.id.to_string(), via.pointer.size()).ok_or_else(lacks)?;
+        let base = column(&into.base.to_string(), into.pointer.size()).ok_or_else(lacks)?;
         let index = |p: &Option<String>, b: &Option<String>| -> Value {
             let target = |hex: &Option<String>, kind: &crate::values::PointerKind, past: u32| {
                 hex.as_deref().and_then(|h| unhex(h).ok()).and_then(|bytes| kind.target(&bytes, past))
             };
-            let apart = match (target(p, &kind, 0), target(b, &via.pointer, via.offset)) {
+            let apart = match (target(p, &kind, 0), target(b, &into.pointer, into.offset)) {
                 (Some(Target::Linear(p)), Some(Target::Linear(b))) => p.checked_sub(b),
                 (Some(Target::Id(p)), Some(Target::Id(b))) if p.module() == b.module() && p.part() == b.part() => {
                     p.offset().checked_sub(b.offset())
@@ -918,6 +917,10 @@ fn decoded(m: &Mapped, bytes: &[u8], r: &Reader) -> Result<Value, String> {
         let nodes =
             bytes.chunks_exact(m.size as usize).map(|node| decode(node, &m.ty, r)).collect::<Result<Vec<_>, _>>()?;
         return Ok(Value::Array(nodes));
+    }
+    // A pointer as whether it is set (D178).
+    if m.set {
+        return Ok(Value::Bool(bytes.iter().any(|&b| b != 0)));
     }
     Ok(m.masked(&decode(bytes, &m.ty, r)?))
 }
@@ -2157,6 +2160,7 @@ mod tests {
             size,
             via: None,
             mask: None,
+            set: false,
             into: None,
         };
         let image: Vec<u8> = (0..16).collect();
@@ -2195,6 +2199,7 @@ mod tests {
             size: 8,
             via: None,
             mask: None,
+            set: false,
             into: None,
         };
         let types = Types::default();
@@ -2294,6 +2299,7 @@ mod tests {
             size,
             via: None,
             mask: None,
+            set: false,
             into: None,
         };
         let m = mapped("enemies", "GAME.EXE+00100", "enemy[6]", 60);

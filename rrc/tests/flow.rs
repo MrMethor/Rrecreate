@@ -1565,11 +1565,35 @@ fn state_behind_pointers_is_mapped_through_them() {
     assert!(rrc.ok(&["check"]).contains("mapping   5 fields mapped"));
     // Memory the port carries, found through a pointer (D177): the array's bytes at the start's tick.
     let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
+    // A pointer as an index into a carried array, or into a carried item that isn't one (D178).
     let carry = "
 [[carry]]
 field = \"carried.table\"
 via = \"table\"
-type = \"u8[16]\"
+type = \"i16[8]\"
+
+                 [[carry]]
+field = \"carried.head\"
+via = \"actors\"
+type = \"actor\"
+
+                 [[map]]
+field = \"carried_current\"
+at = \"current\"
+type = \"far\"
+into = \"carried.table\"
+
+                 [[map]]
+field = \"first\"
+at = \"actors\"
+type = \"far\"
+into = \"carried.head\"
+
+                 [[map]]
+field = \"has_actors\"
+at = \"actors\"
+type = \"far\"
+set = true
 ";
     std::fs::write(rrc.repo.join("mapping.toml"), format!("{mapping}{carry}")).unwrap();
     rrc.ok(&["session", "add", "run", "--seconds", "2"]);
@@ -1591,8 +1615,9 @@ type = \"u8[16]\"
     assert_eq!((ten["pass_count"].as_i64(), xs(&ten)), (Some(10), vec![10, 30, 50, 70]), "{ten}");
     assert_eq!(ten["table"], serde_json::json!([8, 9, 10, 3, 4, 5, 6, 7]), "{ten}");
     assert_eq!((ten["current"].as_i64(), ten["second_hits"].as_i64()), (Some(6), Some(1)), "{ten}");
-    let carried: Vec<u8> = (8..11).chain(3..8).flat_map(|v: i16| v.to_le_bytes()).collect();
-    assert_eq!(ten["carried.table"], serde_json::json!(carried), "the table's bytes, carried: {ten}");
+    assert_eq!(ten["carried.table"], ten["table"], "the table, carried: {ten}");
+    assert_eq!((ten["carried_current"].as_i64(), ten["first"].as_i64()), (Some(6), Some(0)), "{ten}");
+    assert_eq!(ten["has_actors"], serde_json::json!(true), "the list's pointer is set: {ten}");
     // At pass 50 the third left the list: three, the last now third.
     let sixty = state("60");
     assert_eq!(xs(&sixty), vec![60, 130, 260], "{sixty}");

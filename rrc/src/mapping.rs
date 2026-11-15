@@ -54,6 +54,9 @@ pub struct Map {
     /// The bits of the item (an unsigned number) that are the field; none: all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<u64>,
+    /// The item, a pointer, read as whether it is set (not null: D178).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub set: bool,
     /// After `via`, the pointers found through it one after another (D122): each a pointer of type `pointer`,
     /// `offset` bytes past where the last points; the item is where the last of them points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -64,8 +67,8 @@ pub struct Map {
     pub next: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
-    /// The item, a pointer, read as the index of the element it points to in the mapped field `into` (an
-    /// array through a pointer): null where it points elsewhere (D122).
+    /// The item, a pointer, read as the index of the element it points to in the mapped or carried field `into`
+    /// (an array through a pointer; another item is an array of one: D178): null where it points elsewhere (D122).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub into: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -105,8 +108,22 @@ pub struct Mapped {
     pub via: Option<Via>,
     /// The bits that are the field ([`Map::mask`]).
     pub mask: Option<u64>,
-    /// The array it is an index into ([`Map::into`]): its field, its elements' size and how many.
-    pub into: Option<(String, u32, u32)>,
+    /// Read as whether the pointer is set ([`Map::set`]).
+    pub set: bool,
+    /// The array it is an index into ([`Map::into`]).
+    pub into: Option<Into>,
+}
+
+/// The array a pointer is read as an index into (D122, D178): its field, its elements' size and how many, and the
+/// pointer it is found through: its ID, how it points, and how far past where it points the array is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Into {
+    pub field: String,
+    pub width: u32,
+    pub count: u32,
+    pub base: Id,
+    pub pointer: PointerKind,
+    pub offset: u32,
 }
 
 /// How a mapped item is found through a pointer: the pointer as the mapping names it, how it points,
@@ -193,26 +210,37 @@ impl Mapping {
                 }
                 resolved.mask = Some(mask);
             }
+            if m.set {
+                if PointerKind::of_type(&resolved.ty, &k.types).is_none() || !m.into.is_empty() {
+                    return Err(at(format!(
+                        "set reads a pointer as set or null: {} isn't one, or it has into",
+                        resolved.ty
+                    )));
+                }
+                resolved.set = true;
+            }
             mapped.push(resolved);
         }
-        // An index into an array on the heap (D122): its field, through a pointer, an array.
+        // An index into an array on the heap (D122): its field, mapped or carried (D178), through a pointer; an
+        // item that isn't an array is an array of one.
+        let carried = if self.maps.iter().any(|m| !m.into.is_empty()) { self.resolve_carried(k)? } else { Vec::new() };
         for (i, m) in self.maps.iter().enumerate().filter(|(_, m)| !m.into.is_empty()) {
             let at = |e: String| format!("{MAPPING}: {}: {e}", m.field);
             let array = mapped
                 .iter()
+                .chain(&carried)
                 .find(|a| a.field == m.into)
                 .ok_or_else(|| at(format!("into {}: no such field", m.into)))?;
-            if array.via.as_ref().is_none_or(|v| !v.then.is_empty() || v.next.is_some()) {
+            let Some(via) = array.via.as_ref().filter(|v| v.then.is_empty() && v.next.is_none()) else {
                 return Err(at(format!("into {}: an array through one pointer (via, without then or next)", m.into)));
-            }
-            let Some((element, count)) = values::array_of(&array.ty, &k.types) else {
-                return Err(at(format!("into {}: its type {} isn't an array", m.into, array.ty)));
             };
+            let (element, count) = values::array_of(&array.ty, &k.types).unwrap_or((&array.ty, 1));
             let width = values::size(element, &k.types)?;
             if PointerKind::of_type(&mapped[i].ty, &k.types).is_none() {
                 return Err(at(format!("into: {} isn't a pointer type", mapped[i].ty)));
             }
-            mapped[i].into = Some((m.into.clone(), width, count));
+            let (base, pointer, offset) = (array.id.clone(), via.pointer.clone(), via.offset);
+            mapped[i].into = Some(Into { field: m.into.clone(), width, count, base, pointer, offset });
         }
         Ok(mapped)
     }
@@ -267,7 +295,7 @@ fn carried(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     }
     let id = item(k, &m.at)?;
     let size = values::size(&m.ty, &k.types)?;
-    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: None, mask: None, into: None })
+    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: None, mask: None, set: false, into: None })
 }
 
 impl Mapping {
@@ -315,7 +343,7 @@ fn direct(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     if !m.then.is_empty() || m.next.is_some() {
         return Err("then and next go with via: the pointers to follow".into());
     }
-    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None, mask: None, into: None })
+    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None, mask: None, set: false, into: None })
 }
 
 /// A field mapped to what a pointer points to (D72).
@@ -355,7 +383,16 @@ fn via(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
         _ => return Err("a list takes next (where a node points to the next) and count (how many at most)".into()),
     };
     let via = Via { name: m.via.clone(), pointer, offset: m.offset, then, next };
-    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: Some(via), mask: None, into: None })
+    Ok(Mapped {
+        field: m.field.clone(),
+        id,
+        ty: m.ty.clone(),
+        size,
+        via: Some(via),
+        mask: None,
+        set: false,
+        into: None,
+    })
 }
 
 /// The ID a mapping (or an edit) names: an ID, or a data name.

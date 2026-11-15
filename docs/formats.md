@@ -422,7 +422,9 @@ field = "current"
 at = "current"
 type = "far"
 into = "table"                  # read as the index of the element of the mapped `table` (through a pointer,
-                                # an array) it points to at each tick: null elsewhere (D122)
+                                # an array) it points to at each tick: null elsewhere (D122); `table` may be a
+                                # carried item, and one that isn't an array is an array of one (D178); or
+                                # `set = true`: a pointer read as whether it is set, true or false (D178)
 
 [[present]]                     # the presentation's own state (D110): what the drawing code keeps
 field = "drawn.blink"           # a path in what the presentation is given

@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D178. A pointer may be read as an index into a carried item, or as whether it is set. Accepted 2026-11-15.
+`into` (D122) may name a `[[carry]]` item found through a pointer, as well as a mapped one; an item that isn't an
+array counts as an array of one element (the pointer reads 0 where it points at it). The trace records the pointer
+the item is found through, so the index is the original's at every tick. A mapped pointer with `set = true` reads
+as whether it is set (not null).
+**Why:** a driver's pointers into a file it plays, AIL's into its song, are normalized as it moves (segment and
+offset both change) and point into the heap; only how far into the file they point is the driver's state, and
+the file is carried, not compared (D177). A handle's pointer is only ever the game's one state table or null:
+whether it is set is all the port has of it.
+
 ### D177. A carried item may be found through a pointer. Accepted 2026-11-15.
 A `[[carry]]` item (D126) may be `via` a pointer, with `offset` and `then` as a `[[map]]` item's: at the
 transplant's or the start's tick it is the memory where the pointer points, as long as its type, null where the

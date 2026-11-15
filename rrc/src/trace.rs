@@ -660,6 +660,13 @@ pub(crate) fn items(repo: &Repo, k: &Knowledge, module: &str) -> Result<Items, S
             state.push(Item { name, at, size, ..Item::default() });
         }
     }
+    // The pointer an array an item is an index into is found through (D178: a carried array's too).
+    for into in mapped.iter().filter_map(|m| m.into.as_ref()) {
+        let (at, size) = (into.base.to_string(), into.pointer.size());
+        if !state.iter().any(|item| item.at == at && item.size == size) {
+            state.push(Item { name: format!("{}'s pointer", into.field), at, size, ..Item::default() });
+        }
+    }
     for m in &mapped {
         if let Some(via) = &m.via {
             let (name, size) = (via.item_name(), m.size);
