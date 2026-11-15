@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-15 (decisions to D174). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-15 (decisions to D175). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -147,8 +147,8 @@ buffer Windows needs (D168) and the Sound Blaster's output filter (D169, with th
 the game's folder as it was recorded, so that playing the game outside the toolkit changes no session (D170), and a
 watch's memory bounded after one took the person's machine down (D171), memory a game keeps in EMS named by its
 handle, so that it is traced and mapped like any other (D172), a change to Clockwork's analysis tools no longer
-making every recording stale (D173), and a hook's calls from interrupt handlers given in order with the rest, for
-Arena's music driver (D174).
+making every recording stale (D173), and a hook's calls from interrupt handlers given in order with the rest, the
+start-up's among them, for Arena's music driver (D174, D175).
 
 **The standard workflow, built before M6 goes on** (D154 to D159, 2026-11-12), at the person's word. The playbook is
 one workflow for every game: stages with gates, one work loop, where to look when the port differs, the best-known

@@ -314,6 +314,15 @@ fn a_session_is_traced_tick_by_tick() {
     rrc.ok(&["record", "short"]);
     let tick = rrc.ok(&["trace", "short", "--tick", "2"]);
     assert!(tick.contains("hook      steps (T.COM+0000E): ax="), "the call in tick 2's pass: {tick}");
+    // A call before the first tick is the start-up's pass's, power-on's (D175): the loop's top runs once before it.
+    rrc.ok(&["hook", "T.COM+00000", "tops", "--part", "the loop", "--registers", "cx"]);
+    rrc.ok(&["record", "short"]);
+    let start_up = rrc.ok(&["trace", "short", "--tick", "0"]);
+    assert!(
+        start_up.contains("tick      0, power-on") && start_up.contains("hook      tops (T.COM+00000): cx="),
+        "{start_up}"
+    );
+    assert!(rrc.ok(&["hook", "tops", "--remove"]).contains("removed   tops"));
     assert!(rrc.ok(&["hook", "steps", "--remove"]).contains("removed   steps"));
     assert!(rrc.ok(&["input", "tally", "--remove"]).contains("removed   tally"));
     std::fs::remove_dir_all(&dir).ok();

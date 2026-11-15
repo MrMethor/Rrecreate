@@ -764,6 +764,14 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D175. The start-up's pass keeps its hooks' calls, on the power-on tick. Accepted 2026-11-15.
+A hook's runs before the first tick are the start-up's pass's: recording keeps them on the power-on tick (D134),
+the inputs file gives them with it, and the runtime gives them to `Simulation::power_on`. `rrc trace --tick 0`
+shows that tick.
+**Why:** a tick's hooks are the calls in the pass after its sync point; a call before the first had no tick and was
+dropped. Arena's start-up loads and starts its music driver and plays the intro's song: its calls into the driver
+and the driver's services from the interrupt (D174) are all before the first tick.
+
 ### D174. A hook may count its entry's runs from interrupt handlers, given the port in order with the rest. Accepted 2026-11-15.
 A hook (D98) with `interrupts = true` (`rrc hook ... --interrupts`) keeps its entry's runs from interrupt handlers
 too (Clockwork's `entries` takes `interrupts`, protocol revision 19). A tick's hooks were already kept in the order

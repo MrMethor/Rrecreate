@@ -1069,7 +1069,8 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
             tick.late.push(LateRead { input, at, value: read, read: n, bytes, round });
         }
     }
-    // Each hook's call in the pass of the tick before it: its registers.
+    // Each hook's call in the pass of the tick before it: its registers. The start-up's pass, before the first tick,
+    // is power-on's (D175).
     if !header.hooks.is_empty() {
         let found = clockwork.ask("entries_end", Value::Null)?;
         for entry in found["entries"].as_array().into_iter().flatten() {
@@ -1077,7 +1078,10 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
             let at = places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
             let Some(hook) = header.hooks.iter().position(|h| h.at == at) else { continue };
             let i = ticks.partition_point(|t| t.cycle <= cycle);
-            let Some(tick) = i.checked_sub(1).and_then(|i| ticks.get_mut(i)) else { continue };
+            let tick = match i.checked_sub(1) {
+                Some(i) => &mut ticks[i],
+                None => &mut start_up,
+            };
             let values =
                 header.hooks[hook].registers.iter().map(|r| register(&entry["regs"], r).unwrap_or(0)).collect();
             tick.hooks.push((hook, values));
@@ -1311,6 +1315,25 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     if let Some(n) = a.value("--tick") {
         let n: u64 = n.parse().map_err(|_| "--tick is a number")?;
+        // Tick 0: the start-up's pass, from power-on to the first tick (D134): its inputs as at power-on, its late
+        // reads and its hooks' calls (D175).
+        if n == 0 {
+            let tick = trace.header.power_on.as_deref().ok_or("no tick 0: a trace recorded before D134")?;
+            say("tick", "0, power-on: the start-up's pass to the first tick");
+            for (i, value) in &tick.inputs {
+                let item = &h.inputs[*i];
+                say("input", format!("{} = {}", item.name, value_text(value.as_deref(), &ty(item))));
+            }
+            for (i, values) in tick.hooks.iter().take(HOOK_CALLS) {
+                let hook = &h.hooks[*i];
+                let args: Vec<String> = hook.registers.iter().zip(values).map(|(r, v)| format!("{r}={v:X}h")).collect();
+                say("hook", format!("{} ({}): {}", hook.name, hook.at, args.join(", ")));
+            }
+            if tick.hooks.len() > HOOK_CALLS {
+                say("...", format!("{} more calls through hooks in this pass", tick.hooks.len() - HOOK_CALLS));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         let tick = trace
             .ticks
             .iter()
