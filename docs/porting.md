@@ -355,7 +355,9 @@ at a comparison's difference, on `rrc show`, when an item is taken, when a route
 difference, a card or a stuck route, it says `search`: look for it outside before reading on, and write what is
 found in the digest. `rrc sources WORD`
 searches them on demand. The survey's gate asks for a digest of each source kept, three lines of its own at least,
-and `rrc journal` counts how the sources were used: looked up, shown, cited.
+and `rrc journal` counts how the sources were used: looked up, shown, cited. A bug a source reports is a lead, written
+in its digest as such (a candidate quirk), and isn't refused there as an unregistered one: it is met where its
+subsystem is worked on, read in the code, and registered once the code and a run show it (the first rule).
 
 A source is expected, and not relied upon: evidence, named with its source (`prior-art:<name>`), that the original
 confirms or overrules. Reading a page is free; a download is asked of the person, once, as one list. Projects the

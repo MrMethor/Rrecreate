@@ -775,7 +775,9 @@ take` (the item and the card's question), and in a stuck signal whose untried ki
 line matches at a difference, a card or a stuck route, it says `search`, with words to search for, or names the
 sources whose tags cover it with no digest line yet; `rrc show` says only what matches, as it is run often. `rrc sources WORD` prints the matching lines too. The journal keeps how many lines each command printed;
 `rrc journal` says the sources' use as looked up, shown and cited (lines of the knowledge, quirks and notes that
-name `prior-art:` or a kept source). A port that reads no outside source (D46) is shown nothing.
+name `prior-art:` or a kept source). A port that reads no outside source (D46) is shown nothing. A bug a digest
+reports is a lead, written as a candidate quirk, and the notes' search for bugs not registered (D160) leaves the
+digests out: it is registered once the code and a run show it, as the rest are (found writing Arena's, 2026-11-16).
 **Why:** the person asked for this gap to be closed (2026-11-16) after the Arena port's journal showed it: 13 outside
 sources in its books, one `rrc sources` lookup in 2202 commands, 14 lines of its knowledge citing one, and 11 of the
 13 sources never cited. D156 kept sources as names, places and tags, and asked the agent to look them up; D159

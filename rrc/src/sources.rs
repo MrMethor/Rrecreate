@@ -110,6 +110,10 @@ pub fn unmarked_text(root: &Path, names: &[String]) -> Vec<(String, usize, Strin
     for dir in ["notes", "knowledge"] {
         files(&root.join(dir), &mut paths);
     }
+    // The sources' digests say what others report (D185): a bug there is a lead to read in the code, not one the
+    // port found; it is met where its subsystem is worked on, and registered once the code shows it.
+    let digests = root.join(crate::digests::DIGESTS);
+    paths.retain(|p| !p.starts_with(&digests));
     let mut found = Vec::new();
     for path in paths {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };

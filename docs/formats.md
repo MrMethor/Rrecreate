@@ -543,7 +543,8 @@ in a sweep's `none`; `rrc status` says which aren't. A port that reads none says
 Each source kept has a digest (D185): Markdown, what the source says in the agent's own words, a heading a subject
 and a line a fact, with where in the source it is. `rrc sources add` writes its head. Lines that are headings
 (`#`), comments (`<!--`) or empty aren't its own; a digest with three lines of its own at least is written, which
-the survey's gate asks of each kept source.
+the survey's gate asks of each kept source. A bug a digest reports is a lead, not the port's finding: `rrc check`'s
+search of the notes for bugs not registered (D160) leaves `notes/sources/` out.
 
 ```markdown
 # OpenTESArena

@@ -474,6 +474,10 @@ fn quirk_candidates_are_found_and_registered() {
     );
     std::fs::write(rrc.repo.join("notes/loops.md"), "The copy runs one past the table: quirk overrun.\n").unwrap();
     rrc.ok(&["check"]);
+    // A source's digest reports others' bugs: leads, not the port's findings (D185).
+    std::fs::create_dir_all(rrc.repo.join("notes/sources")).unwrap();
+    std::fs::write(rrc.repo.join("notes/sources/the-wiki.md"), "## Bugs\nA known bug: the table overflows.\n").unwrap();
+    rrc.ok(&["check"]);
     std::fs::write(rrc.repo.join("notes/loops.md"), "The table's end looked like a bug; not a bug: it is longer.\n")
         .unwrap();
     rrc.ok(&["check"]);
