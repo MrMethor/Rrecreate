@@ -627,6 +627,7 @@ fn report_sound(repo: &Repo, name: &str, trace: &Trace, t: u64, diff: &SoundDiff
              the device; a driver's answer the port needs: rrc hook (docs/porting.md, stage 6)"
         ),
     );
+    crate::digests::say_about(repo, &[diff.device, "sound"], 3, true);
     Ok(())
 }
 
@@ -958,6 +959,9 @@ fn report_screen(
              mapping.toml); the original's screen: rrc frame {name} --tick {t} --screen"
         ),
     );
+    let drew: Vec<String> =
+        writer.chain.iter().take(2).filter_map(|id| k.functions.get(id)).map(|d| d.name.clone()).collect();
+    crate::digests::say_about(repo, &drew, 3, true);
     Ok(())
 }
 
@@ -2091,6 +2095,10 @@ fn report(
             ),
         ),
     }
+    // What the outside sources say of it, here where the next move is chosen (D185).
+    let mut about = vec![path.clone()];
+    about.extend(writer.chain.iter().take(2).filter_map(|id| k.functions.get(id)).map(|d| d.name.clone()));
+    crate::digests::say_about(repo, &about, 3, true);
     Ok(())
 }
 

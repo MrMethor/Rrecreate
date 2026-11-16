@@ -2,7 +2,8 @@
 //! wrote about the game and the program's parts, what each covers and how far it is trusted, the ones the person
 //! keeps out, and the sweeps made for them. `rrc sources` keeps the file and says who wrote about a thing, so a
 //! source is met at the item it covers; a sweep's gate (docs/porting.md, stage 1) asks that each kind of source
-//! was found or looked for. (The port's own code is `sources.rs`'s.)
+//! was found or looked for, and that each source kept has its digest, what it says (`digests.rs`, D185). (The port's
+//! own code is `sources.rs`'s.)
 
 use std::process::ExitCode;
 
@@ -143,26 +144,26 @@ pub(crate) fn open(repo: &Repo) -> Result<Vec<String>, String> {
                 .to_owned(),
         ]);
     }
+    let mut open = Vec::new();
     let missing = sources.missing();
-    if missing.is_empty() {
-        return Ok(Vec::new());
+    if !missing.is_empty() {
+        open.push(format!(
+            "sources neither found nor looked for: {} (rrc sources add NAME --kind KIND, or rrc sources sweep --none KIND)",
+            missing.join(", ")
+        ));
     }
-    Ok(vec![format!(
-        "sources neither found nor looked for: {} (rrc sources add NAME --kind KIND, or rrc sources sweep --none KIND)",
-        missing.join(", ")
-    )])
-}
-
-/// One line about the sources that cover `words`, for a place or an item they are about; none if there are none.
-pub(crate) fn about(repo: &Repo, words: &[String]) -> Option<String> {
-    let sources = Sources::load(repo).ok()?;
-    let covering = sources.covering(words);
-    if covering.is_empty() {
-        return None;
+    // What a source says is what the work can find (D185): a source only named is one nobody reads again.
+    let unwritten = crate::digests::unwritten(&repo.root, &sources);
+    if !unwritten.is_empty() {
+        let kept = sources.sources.iter().filter(|s| s.excluded.is_empty()).count();
+        open.push(format!(
+            "{} of {kept} sources kept have no digest of what they say: {} (read each, and write it by subject in {}/NAME.md)",
+            unwritten.len(),
+            unwritten.join(", "),
+            crate::digests::DIGESTS
+        ));
     }
-    let names: Vec<String> = covering.iter().take(4).map(|s| format!("{} ({})", s.name, s.kind)).collect();
-    let more = if covering.len() > 4 { format!(", {} more", covering.len() - 4) } else { String::new() };
-    Some(format!("{}{more}: rrc sources {}", names.join(", "), words.first().map_or("", String::as_str)))
+    Ok(open)
 }
 
 const USAGE: &str = "sources [WORD...] | sources add NAME --kind KIND [--at WHERE] [--covers A,B] [--trust TEXT] \
@@ -194,6 +195,14 @@ pub(crate) fn sources(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             place(&mut sources, source)?;
             sources.save(repo)?;
             say("source", line(sources.sources.iter().find(|s| s.name == *name).expect("added")));
+            crate::digests::start(&repo.root, name)?;
+            say(
+                "digest",
+                format!(
+                    "{}/{name}.md: write what it says there, by subject, as you read it (D185)",
+                    crate::digests::DIGESTS
+                ),
+            );
         }
         [verb, name] if verb == "exclude" => {
             let source = Source {
@@ -251,7 +260,13 @@ pub(crate) fn sources(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             }
             for s in &sources.sources {
                 match s.excluded.is_empty() {
-                    true => say("source", line(s)),
+                    true => {
+                        let digest = match crate::digests::written(&repo.root, &s.name) {
+                            0 => "no digest".to_owned(),
+                            n => format!("digest {n} lines"),
+                        };
+                        say("source", format!("{}; {digest}", line(s)));
+                    }
                     false => say("excluded", format!("{}: {}", s.name, s.excluded)),
                 }
             }
@@ -268,11 +283,19 @@ pub(crate) fn sources(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             }
         }
         words => {
+            // What they say of it, from their digests (D185); then those whose tags cover it.
+            let found = crate::digests::lines(&repo.root, &sources, &crate::digests::words(words), 12);
+            for f in &found {
+                say(
+                    "says",
+                    format!("{}: {} ({}/{}.md:{})", f.source, f.text, crate::digests::DIGESTS, f.source, f.line),
+                );
+            }
             let covering = sources.covering(words);
             for s in &covering {
                 say("source", line(s));
             }
-            if covering.is_empty() {
+            if covering.is_empty() && found.is_empty() {
                 say(
                     "none",
                     format!(

@@ -41,7 +41,8 @@ const NOTES_TEXT: &str = "\
 What was learned about the game and why: one file a subject (a loop, a format, a subsystem), referred to from the
 knowledge's evidence (`rrc name ID NAME --evidence \"...; notes/loops.md\"`). A route found the hard way goes in
 `notes/recipes.md`, a table like the playbook's (`| Problem | Route | Cost |`), which `rrc how WORD` reads with the
-playbook's recipes.
+playbook's recipes. `notes/sources/NAME.md` holds what each outside source says (its digest, D185), which `rrc`
+searches and prints where the work is.
 
 Not the state of the work: `rrc status` says that, and a note that says it goes stale.
 ";

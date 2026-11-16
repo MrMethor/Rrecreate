@@ -122,8 +122,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 - `journal.jsonl`: each command `rrc` ran in the port (D157), a JSON object a line: `t` (seconds since 1970, the
   host's), `cmd`, `args`, `ok`, and for a comparison its `session` and `end` (`match`, or its first difference:
   `tick 194: enemies[1].hits`, `tick 102: the screen`, `tick 36: the sound`; a lockstep's `census: N things
-  differ`), with `stuck` on the one that ended there the third time running. Not kept: `init`, `rules`, `status`,
-  `doctor`, `journal`. Nothing the port is judged by.
+  differ`), with `stuck` on the one that ended there the third time running, and `sourced`, how many digest
+  lines it printed where a move was chosen (D185). Not kept: `init`, `rules`, `status`, `doctor`, `journal`.
+  Nothing the port is judged by.
 
 ## Ghidra's export
 
@@ -536,6 +537,25 @@ source has a place (`at`) or is `excluded`. `rrc sources WORD` lists the kept so
 note has the word (or is in it), whatever the case. The sweep is done when each kind but `other` has a source or is
 in a sweep's `none`; `rrc status` says which aren't. A port that reads none says so at the top (`none = "why"`,
 `rrc sources none --why TEXT`) and is asked for no sweep (D46).
+
+## `notes/sources/<name>.md`: what a source says
+
+Each source kept has a digest (D185): Markdown, what the source says in the agent's own words, a heading a subject
+and a line a fact, with where in the source it is. `rrc sources add` writes its head. Lines that are headings
+(`#`), comments (`<!--`) or empty aren't its own; a digest with three lines of its own at least is written, which
+the survey's gate asks of each kept source.
+
+```markdown
+# OpenTESArena
+
+## Flats
+A flat's animation steps by its own frame count, not the level's (src/Entities/EntityAnimation.cpp, around line 80).
+```
+
+`rrc` searches the lines by the words of a question (a field's path, a function's name, an item, a card's question):
+lowercase, split at what isn't a letter or a digit, three letters or more, without the most common words and
+addresses, plurals and `-ing`/`-ed` endings taken off. A line has its heading's words too. Lines with more of the
+words come first; where two or more are asked, lines with one only are left out while others have two.
 
 ## `sessions/<name>.toml`: a session
 

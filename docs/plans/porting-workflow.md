@@ -21,6 +21,7 @@
 | I: a comparison's difference ends with `next`, the moves for it, of more than one kind | D159 |
 | J: `rrc show` says what else is held about a place: sources, mapped fields, the port's code, quirks, suspects | D159 |
 | N: `rrc how WORD`, the recipes by a word, with the port's own (`notes/recipes.md`) | D159 |
+| K, again: what the sources say kept as digests (`notes/sources/NAME.md`), searched and printed at each difference, card and stuck route; the survey's gate asks for them; the journal counts their use | D185 |
 | O: an honest test bench reports `rrc journal` with its result | D157, D159 |
 | The first rule, the person's (2026-11-12): every bug of the original reproduced and switchable; said first by `rrc status`, `rrc check` and `rrc rules`; a fix required; its switch shown by a session; the notes read for bugs; `rrc work done --bugs` | D160 |
 

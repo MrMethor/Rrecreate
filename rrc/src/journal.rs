@@ -40,6 +40,9 @@ pub(crate) struct Entry {
     /// Whether this was the comparison that made its first difference a stuck one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stuck: bool,
+    /// The outside sources' digest lines it printed where the next move was chosen (D185).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub sourced: u32,
 }
 
 /// A kind of command: the comparison, the kinds of evidence (the sources' order of docs/porting.md), and the rest.
@@ -131,7 +134,8 @@ fn now() -> u64 {
 pub(crate) fn close(repo: &Repo, args: &[String], ok: bool) {
     let Some(cmd) = args.first().filter(|cmd| !UNKEPT.contains(&cmd.as_str())) else { return };
     let (session, end) = ENDED.take().unzip();
-    let mut entry = Entry { t: now(), cmd: cmd.clone(), args: args[1..].to_vec(), ok, session, end, stuck: false };
+    let mut entry =
+        Entry { t: now(), cmd: cmd.clone(), args: args[1..].to_vec(), ok, session, end, stuck: false, sourced: 0 };
     let before = load(repo);
     if let Some(run) = stuck_run(&before, &entry) {
         entry.stuck = run.len() + 1 == STUCK;
@@ -141,7 +145,13 @@ pub(crate) fn close(repo: &Repo, args: &[String], ok: bool) {
         let untried: Vec<&str> =
             Kind::EVIDENCE.iter().filter(|kind| !since.iter().any(|e| e.kind() == **kind)).map(|k| k.how()).collect();
         match untried.is_empty() {
-            false => say("untried", format!("since it first showed: {}", untried.join("; "))),
+            false => {
+                say("untried", format!("since it first showed: {}", untried.join("; ")));
+                // The sources untried are shown, not only named (D185): what they say of the difference.
+                if !since.iter().any(|e| e.kind() == Kind::Sources) {
+                    crate::digests::say_about(repo, &[end], 3, true);
+                }
+            }
             true => say(
                 "untried",
                 "nothing: every kind of source was looked at. Write the question without its history and get fresh \
@@ -152,6 +162,7 @@ pub(crate) fn close(repo: &Repo, args: &[String], ok: bool) {
     if entry.cmd == "compare" {
         crate::work::compared(repo, &before);
     }
+    entry.sourced = crate::digests::take_shown();
     // Kept whatever happens to the rest: a journal that can't be written doesn't fail the command.
     let Ok(line) = serde_json::to_string(&entry) else { return };
     let file = path(repo).and_then(|path| {
@@ -211,6 +222,18 @@ pub(crate) fn journal(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     say("mix", mix(&entries));
     let stuck = entries.iter().filter(|e| e.stuck).count();
     say("stuck", format!("{stuck} times a comparison ended at the same first difference {STUCK} times running"));
+    // How much the outside sources were used (D185): looked up, put in front of the agent, cited.
+    let looked = entries.iter().filter(|e| e.kind() == Kind::Sources).count();
+    let put: u32 = entries.iter().map(|e| e.sourced).sum();
+    let books = crate::prior::Sources::load(repo).unwrap_or_default();
+    let cited = crate::digests::citations(&repo.root, &books);
+    say(
+        "sources",
+        format!(
+            "{looked} looked up, {put} digest lines shown where a move was chosen, {cited} lines of the knowledge, \
+             quirks and notes cite one"
+        ),
+    );
     // Each item taken and closed (`rrc work`), with what it took.
     let closed = |e: &&Entry| e.cmd == "work" && e.args.first().is_some_and(|verb| verb == "done") && e.end.is_some();
     for e in entries.iter().filter(closed) {
@@ -220,6 +243,10 @@ pub(crate) fn journal(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         say("ran", e.line());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Minutes as hours and minutes.

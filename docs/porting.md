@@ -163,8 +163,10 @@ that nothing compared since (the fields alone before stage 6), so one command br
 1. **Take** the top item, with a card: `rrc work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]`.
    The question, the route chosen, one other route considered, and after how many comparisons (6 unless said) the
    route changes. Naming the other route is the point: it is the one moment "is there a better tool" costs nothing.
-2. **Plan and read**, in the sources' order: what is named already, the decompiled code, the disassembly where it is
-   in doubt, the outside sources on that subsystem (`rrc sources WORD`), the files it reads.
+2. **Plan and read**, in the sources' order: what is named already; what the outside sources say of it, which
+   `rrc work take` prints from their digests (D185), and where it prints `search`, a search before anything else;
+   the decompiled code; the disassembly where it is in doubt; the files it reads. What a source said that the work
+   used is cited (`prior-art:NAME`), and what was found on a search goes in that source's digest.
 3. **Name and map** everything the item touches, together; record once (rule 10).
 4. **Port** it: a function for each of the original's, its ID in the comment; each bug registered as it is met; each
    path left out noted where it would be (`rrc_runtime::note`).
@@ -177,7 +179,9 @@ that nothing compared since (the fields alone before stage 6), so one command br
 
 **When the port differs,** `rrc compare` ends what it found with `next`: the moves for that difference, always of
 more than one kind (its writer's code, the value over the pass, what is written of it), so the other tool is met
-where the choice is made (D159). The table is the same thing for reading:
+where the choice is made (D159). Then `source`: what the outside sources' digests say of the field and of the
+function that wrote it, the lines themselves, so what others found is read before the code is (D185); or `search`,
+where none says anything of it. The table is the same thing for reading:
 
 | What the comparison shows | Look first at |
 |---|---|
@@ -196,7 +200,8 @@ where the choice is made (D159). The table is the same thing for reading:
 paying (rule 5). `rrc` says so, since it can't be seen from inside (D157): it keeps the commands run in the port,
 and a comparison that ends at the same first difference a third time running says `stuck`, and `untried`: the kinds
 of evidence not looked at since that difference first showed (the code, an outside source, the game's files, the
-value over the run). Take one of those next, not a fourth try. When none is left, stop and write the question
+value over the run), with what the sources' digests say of it when no source was looked up. Take one of those next,
+not a fourth try. When none is left, stop and write the question
 without its history: what is asked, what is known (`rrc show` of the
 place), what was tried. Give that, not the transcript, to a fresh agent, and ask it for routes: it has no sunk
 cost. Where none can be started, or the port's `RULES.md` says not to, read `rrc rules` again and plan from the
@@ -325,7 +330,7 @@ file to the function that reads it, and a save routine's writes to which memory 
 ### Outside sources
 
 What others wrote is looked for before anything is worked out (D32, D77), and kept in the port's books
-(`sources.toml`, D156), so that a source is met again at the item it covers:
+(`sources.toml`, D156), with what each says (its digest, D185), so that it is met again where the work is:
 
 ```bash
 rrc sources add the-wiki --kind wiki --at https://example.org/wiki --covers spells,items --trust "names, not timings"
@@ -340,8 +345,17 @@ sessions), bug lists and speedrunners' glitch lists (each entry a candidate quir
 program's parts, as the analysis identified them (the library names `rrc analyze` gave, the strings in the image):
 the compiler's runtime library, the DOS extender, the sound driver, the compression. These are often documented or
 published, and what is published isn't reverse engineered. `rrc sources sweep` records what was searched for and
-the kinds looked for and not found; `rrc status` names the kinds neither found nor looked for. `rrc sources WORD`
-and `rrc show NAME` say which sources cover a thing: look there before working it out.
+the kinds looked for and not found; `rrc status` names the kinds neither found nor looked for.
+
+**Each source kept has a digest** (D185): `notes/sources/NAME.md` (`rrc sources add` starts it), what it says in your
+own words, a heading a subject and a line a fact, with where in the source it is (a page's section, a file and its
+line in a reimplementation's code). A name and an address are found by nobody; a digest's lines are. `rrc` searches
+them word by word, a fact under `## Flats` found by `flat`, and prints the lines that match where a move is chosen:
+at a comparison's difference, on `rrc show`, when an item is taken, when a route is stuck. Where none matches at a
+difference, a card or a stuck route, it says `search`: look for it outside before reading on, and write what is
+found in the digest. `rrc sources WORD`
+searches them on demand. The survey's gate asks for a digest of each source kept, three lines of its own at least,
+and `rrc journal` counts how the sources were used: looked up, shown, cited.
 
 A source is expected, and not relied upon: evidence, named with its source (`prior-art:<name>`), that the original
 confirms or overrules. Reading a page is free; a download is asked of the person, once, as one list. Projects the

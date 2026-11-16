@@ -344,12 +344,9 @@ fn take(repo: &Repo, a: &Args, item: &str) -> Result<ExitCode, String> {
     say("card", format!("{}: {}", card.item, card.question));
     say("route", format!("{}; the other considered: {}", card.route, card.other));
     say("budget", format!("{budget} comparisons, then the route changes"));
-    // What is known where the item is, so the plan starts from it: the sources that cover it.
-    let words: Vec<String> =
-        item.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() >= 4).map(str::to_owned).collect();
-    if let Some(sources) = crate::prior::about(repo, &words) {
-        say("sources", sources);
-    }
+    // What the outside sources say of the item and the question, so the plan starts from it (D185): read before
+    // the code.
+    crate::digests::say_about(repo, &[item, question], 4, true);
     Ok(ExitCode::SUCCESS)
 }
 

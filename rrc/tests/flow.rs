@@ -160,10 +160,10 @@ fn a_session_is_traced_tick_by_tick() {
         ["sources", "add", "the-wiki", "--kind", "wiki", "--at", "https://example.org/t", "--covers", "count,steps"];
     let added = rrc.ok(&wiki);
     assert!(added.contains("source    the-wiki (wiki): covers count, steps; at https://example.org/t"), "{added}");
+    assert!(added.contains("notes/sources/the-wiki.md: write what it says there"), "its digest started: {added}");
     rrc.ok(&["sources", "exclude", "its-source", "--why", "the person: it grades the toolkit"]);
     assert!(rrc.ok(&["sources", "Count"]).contains("source    the-wiki (wiki)"));
     assert!(rrc.ok(&["sources", "enemies"]).contains("none      no source listed covers enemies"));
-    assert!(rrc.ok(&["show", "count"]).contains("sources   the-wiki (wiki): rrc sources count"));
     let (refused, ok) = rrc.run(&["sources", "sweep"]);
     assert!(!ok && refused.contains("--searched says what was searched for"), "{refused}");
     let sweep =
@@ -174,6 +174,30 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(rrc.ok(&["status"]).contains("lacks     sources neither found nor looked for: reimplementation, "));
     let listed = rrc.ok(&["sources"]);
     assert!(listed.contains("excluded  its-source: the person: it grades the toolkit"), "{listed}");
+    // What a source says is its digest (D185): asked for by the survey's gate, searched word by word, and printed where
+    // a move is chosen; where none says anything of a thing, a search comes first.
+    assert!(listed.contains("at https://example.org/t; no digest"), "{listed}");
+    let gates = rrc.ok(&["status", "--all"]);
+    assert!(gates.contains("1 of 1 sources kept have no digest of what they say: the-wiki"), "{gates}");
+    let digest = "# the-wiki\n\n## Counting\nThe count goes up by one each pass of the loop (page 2).\nIt wraps at \
+                  65536.\n\n## Steps\nA step does nothing at all (page 3).\n";
+    std::fs::write(repo.join("notes/sources/the-wiki.md"), digest).unwrap();
+    assert!(rrc.ok(&["sources"]).contains("; digest 3 lines"));
+    assert!(!rrc.ok(&["status", "--all"]).contains("have no digest"));
+    let says = rrc.ok(&["sources", "counts"]);
+    let line =
+        "says      the-wiki: The count goes up by one each pass of the loop (page 2). (notes/sources/the-wiki.md:4)";
+    assert!(says.contains(line), "{says}");
+    assert!(says.contains("says      the-wiki: It wraps at 65536."), "under the heading Counting: {says}");
+    let shown = rrc.ok(&["show", "count"]);
+    assert!(shown.contains("source    the-wiki: The count goes up by one"), "{shown}");
+    assert!(rrc.ok(&["show", "step"]).contains("source    the-wiki: A step does nothing at all (page 3)."));
+    let card = ["work", "take", "enemies", "--question", "who moves them?", "--route", "code", "--other", "a watch"];
+    let taken = rrc.ok(&card);
+    assert!(taken.contains("search    no source says anything of enemies moves them: search for it"), "{taken}");
+    rrc.ok(&["work", "drop"]);
+    let journal = rrc.ok(&["journal"]);
+    assert!(journal.contains("sources   3 looked up, 3 digest lines shown where a move was chosen"), "{journal}");
     assert!(rrc.ok(&["check"]).contains("sources   1 outside sources, 1 kept out, 1 sweeps"));
     // A port that reads none says so (an honest test bench, D46), and is asked for no sweep (D159).
     assert!(rrc.ok(&["sources", "none", "--why", "a test bench"]).contains("none      no outside source is read"));

@@ -243,14 +243,10 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if let Some(offset) = analysis.as_ref().and_then(|a| a.ds_offset(&id)).filter(|_| !k.functions.contains_key(&id)) {
         say("address", format!("DS:{offset:04X}, in the data segment"));
     }
-    // The outside sources that cover it (D156), met where the question is: by its name and the words in it.
+    // What the outside sources say of it (D156, D185), met where the question is: by the words of its name.
     let named = k.functions.get(&id).map(|d| &d.name).or_else(|| k.data.get(&id).map(|d| &d.decision.name));
     if let Some(name) = named {
-        let parts = name.split('_').filter(|part| part.len() >= 4).map(str::to_owned);
-        let words: Vec<String> = std::iter::once(name.clone()).chain(parts).collect();
-        if let Some(sources) = crate::prior::about(repo, &words) {
-            say("sources", sources);
-        }
+        crate::digests::say_about(repo, &[name.as_str()], 3, false);
     }
     also(repo, &k, analysis.as_ref(), &id)?;
     let text = id.to_string();

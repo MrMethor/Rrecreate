@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-16 (decisions to D184). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-16 (decisions to D185). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -154,7 +154,9 @@ toolkit drives it: `rrc status` works out the stage a port is at and what its ga
 work list with a card for the item taken, a journal says when a route is stuck, and each difference ends with the
 next moves ([the plan](plans/porting-workflow.md) lists what was built). Above the playbook's rules stands the
 first rule (D160, D163, section 4): every bug of the original that changes what the game does is reproduced with a
-switch. Arena's port went through the gates to stage 4; 31 quirks are registered, and 15 of their switches are
+switch. The outside sources are used where the work is (D185, the person's request): Arena's journal showed 13
+sources in its books and one lookup in 2202 commands, so each source now keeps a digest of what it says, and `rrc`
+prints the lines that match at each difference, card and stuck route, or says to search first. Arena's port went through the gates to stage 4; 31 quirks are registered, and 15 of their switches are
 shown by a session.
 
 **Next: M6.5, proposed** (D184, open, [the plan](plans/live-comparison.md)), at the person's request. The person

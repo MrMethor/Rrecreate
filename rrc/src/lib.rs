@@ -10,6 +10,7 @@ mod calls;
 pub mod clockwork;
 mod compare;
 mod contracts;
+mod digests;
 pub mod edits;
 mod entry;
 mod files;

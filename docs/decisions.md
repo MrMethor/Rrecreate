@@ -764,6 +764,29 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D185. What the outside sources say is kept as digests and printed where a move is chosen. Accepted 2026-11-16, at the person's word.
+Each outside source kept has a digest, `notes/sources/NAME.md`: what it says in the agent's own words, a heading a
+subject and a line a fact, with where in the source; `rrc sources add` starts it, and the survey's gate (stage 1)
+asks for one of each kept source, three lines of its own at least. `rrc` searches the digests word by word (a line
+with its heading's words, plurals and endings taken off, common words and addresses left out) and prints the lines
+that match where the agent chooses its next move: at a comparison's difference (the field and the functions that
+wrote it), at a frame's (the drawing functions) and a sound's (the device), on `rrc show` (the name), on `rrc work
+take` (the item and the card's question), and in a stuck signal whose untried kinds include the sources. Where no
+line matches at a difference, a card or a stuck route, it says `search`, with words to search for, or names the
+sources whose tags cover it with no digest line yet; `rrc show` says only what matches, as it is run often. `rrc sources WORD` prints the matching lines too. The journal keeps how many lines each command printed;
+`rrc journal` says the sources' use as looked up, shown and cited (lines of the knowledge, quirks and notes that
+name `prior-art:` or a kept source). A port that reads no outside source (D46) is shown nothing.
+**Why:** the person asked for this gap to be closed (2026-11-16) after the Arena port's journal showed it: 13 outside
+sources in its books, one `rrc sources` lookup in 2202 commands, 14 lines of its knowledge citing one, and 11 of the
+13 sources never cited. D156 kept sources as names, places and tags, and asked the agent to look them up; D159
+put "rrc sources WORD" among the next moves. Neither changed the habit, for three reasons: what a source says
+wasn't anywhere the toolkit could search, so nothing could put it in front of the agent; matching the tags on
+words like `flat` or `moving_lights` found nothing; and a suggestion to run one more command is the one an agent
+in a hurry skips. The agent reads what `rrc` prints. So the sources' content is made local and searchable, and
+printed, not suggested, at the moments a route is chosen; the playbook's order puts what others wrote before the
+code.
+**Extends:** D32, D77, D156, D157, D159.
+
 ### D184. M6.5: the port compared live while the person plays the original. Open, proposed 2026-11-16; for the person.
 The plan is `docs/plans/live-comparison.md`. The person plays the original in Clockwork's window, as today. A second
 Clockwork, the follower, runs the same play as the window writes it, never past its last mark, and checks with state
