@@ -183,9 +183,8 @@ the game does left the register, D163).
   interrupts made them (D174); it plays live too, its service run on the host's clock while the game waits (D176).
   Since 2026-11-16 the driver's state is mapped from the original's memory (its song's file carried, its pointers
   into the file read as how far in they point: D177 to D179), so every session compares the music from its
-  transplant: 57 of the 58 match in every OPL write as in every field, frame and digitized sound, and the first
-  session from power-on in all 69923 of its OPL writes. Not yet made: the songs of the towns and the outdoors, the
-  game menu's music volume.
+  transplant, and the first from power-on: all 58 match in every OPL write. Not yet made: the songs of the towns and
+  the outdoors, the game menu's music volume.
 - **The actions seam** ([design](design.md) §6.1). Built (D162): a port declares its game's actions, each the PC
   input the original takes for it, and the platform's controls bind the host's keys to them, each still given to
   the port as the original's own input; tried on the vault, and Arena's world (21 actions) reads its keys through
@@ -196,13 +195,15 @@ the game does left the register, D163).
   match the original's state in a lockstep census. Since 2026-11-13 the logbook, the rest's screens, the status, the
   character sheet (both pages), a load (in the game and from the main menu), a wall dissolving (Passwall),
   levitating and a lockstep's scenario edits (D166) match in frames and sound too, and since 2026-11-15 the automap
-  (its record of the cells seen, kept in EMS and reached through D172, its file and its screen): 57 of the 58
-  sessions match in every field, frame and sound, the music included (2026-11-16). What still differs: the
-  cinematic's sound (the cinematic isn't ported).
-- **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
+  (its record of the cells seen, kept in EMS and reached through D172, its file and its screen), and since
+  2026-11-16 the music and the cinematic's narration, its speech started where the original started it: **all 58
+  sessions match in every field, frame and sound**, the first from power-on to its end. What the comparison doesn't
+  reach: the cinematic's pictures, which a pass shows between its sync points (frames are compared at the ticks),
+  and which the port doesn't draw yet.
 
 **Next:** M6's open points are done but the music of the places the first dungeon doesn't reach (towns, the
-outdoors: no session has them) and the cinematic; closing M6 is the person's call (below); then M7.
+outdoors: no session has them) and the cinematic's pictures (the frames a pass shows between its ticks, which
+neither the comparison nor the live platform takes yet); closing M6 is the person's call (below); then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).
