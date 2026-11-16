@@ -29,6 +29,7 @@ pub mod actions;
 pub mod audio;
 pub mod codecs;
 mod files;
+pub mod flc;
 pub mod mouse;
 pub mod original;
 pub mod present;
