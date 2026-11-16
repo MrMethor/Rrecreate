@@ -199,10 +199,12 @@ the game does left the register, D163).
   2026-11-16 the music and the cinematic's narration, its speech started where the original started it: **all 58
   sessions match in every field, frame and sound**, the first from power-on to its end, and since D180 the pictures
   a pass shows between its ticks where the port draws them: the cinematic's 298, its FLC as Arena's own player
-  decodes it and the narration's pages over it, are all among the original's, in order.
+  decodes it and the narration's pages over it, are all among the original's, in order. It plays live too, a
+  frame at each tick of a wait of its own, its narration paced by the sound.
 
 **Next:** M6's open points are done but the music of the places the first dungeon doesn't reach (towns, the
-outdoors: no session has them) and the cinematic in live play; closing M6 is the person's call (below); then M7.
+outdoors: no session has them) and the new game's story scroll before the creation (its FLCs, which D180 and the
+runtime's FLC now reach); closing M6 is the person's call (below); then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).
