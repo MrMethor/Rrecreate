@@ -741,9 +741,15 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             }
         }
         let mut drawn = None;
-        // The pictures the pass showed between sync points (D180), each one that changed: `<tick>-<n>.frm`.
+        // The pictures the pass showed between sync points (D180), each one that changed: `<tick>-<n>.frm`; from
+        // power-on, the start-up's pass's too (D182).
         let mut between = Vec::new();
-        if let (Some(dir), Some(pass)) = (drawing, &pass) {
+        let showing = match &pass {
+            Some(pass) => Some(pass.as_str()),
+            None if given.is_none() => Some("power-on"),
+            None => None,
+        };
+        if let (Some(dir), Some(pass)) = (drawing, showing) {
             let mut shown = Vec::new();
             drawer.between(pass, &state, &mut shown);
             let mut last: Option<present::Frame> = None;
@@ -1091,7 +1097,10 @@ mod tests {
         };
         run_drawn::<Counter>(&request, &mut present::Drawn(Animating)).unwrap();
         let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
-        let line = trace.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).find(|v| v["tick"] == 3).unwrap();
+        let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect();
+        let first = lines.iter().find(|v| v["tick"] == 1).unwrap();
+        assert!(first["between"].is_array(), "the start-up's pass's pictures too (D182): {first}");
+        let line = lines.iter().find(|v| v["tick"] == 3).unwrap();
         let names: Vec<&str> = line["between"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert_eq!(names.len(), 3, "the count's steps to 2, the repeat left out: {line}");
         let last = present::Frame::decode(&std::fs::read(d.join("frames").join(names[2])).unwrap()).unwrap();

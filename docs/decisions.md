@@ -764,6 +764,12 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D182. The start-up's pass's pictures are compared too. Accepted 2026-11-16.
+From power-on, the presentation is asked for the pictures the start-up's pass showed (its pass named `power-on`),
+before the first tick's screen, and the comparison takes them as D180 takes a pass's.
+**Why:** Arena's intro (its FLC, its title and quote, the scrolls) plays in the start-up's pass, before the main
+menu's first tick: its pictures were the only ones a port drawing them couldn't have compared.
+
 ### D181. A picture shown for less than a refresh may be missing from the original's. Accepted 2026-11-16.
 A presentation says a picture between ticks was shown for 0 refreshes where the next drawing follows it at once (an
 FLC's last frame before a dissolve begins); the runtime names it in the tick's `fleeting`, and the comparison passes

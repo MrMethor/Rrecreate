@@ -741,7 +741,8 @@ inputs and the trace are JSON lines.
   FILE` gives a port that starts from a transplant or a resumed state the original's screen then, a picture
   too. `rrc compare` asks for frames when the session's trace has screens, and compares each tick's frame with
   the original's screen pixel by pixel and colour by colour. The pictures the pass showed before the tick's, where
-  the presentation draws them (`Presentation::between`, D180), are `DIR/<tick>-<n>.frm`, each one that changed from
+  the presentation draws them (`Presentation::between`, D180; from power-on the start-up's pass's too, at the first
+  tick, D182), are `DIR/<tick>-<n>.frm`, each one that changed from
   the last, and the tick's line names them in order: `{"tick":95,…,"between":["95-0.frm","95-1.frm"]}`; each must be
   one of the original's pictures in that pass (its `frames`), in order, the others passed over. Those the
   presentation showed for less than a refresh (0 refreshes) are named again in `"fleeting"`: one the original's

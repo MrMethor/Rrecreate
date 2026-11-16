@@ -165,9 +165,9 @@ pub trait Presentation<S: Shows>: Default {
     }
 
     /// The pictures the pass that began at `pass` showed before the next tick's (D180): an animation it played
-    /// between sync points, each picture shown for some of the display's refreshes. Called before
-    /// [`Presentation::draw`]; none by default. The comparison takes each as one of the original's pictures in
-    /// that pass, in order.
+    /// between sync points, each picture shown for some of the display's refreshes; from power-on, `pass` is
+    /// `power-on` for the start-up's (D182). Called before [`Presentation::draw`] (or [`Presentation::start`]); none
+    /// by default. The comparison takes each as one of the original's pictures in that pass, in order.
     fn between(&mut self, pass: &str, scene: &S::Scene<'_>, shown: &mut Vec<Shown>) {
         let _ = (pass, scene, shown);
     }
