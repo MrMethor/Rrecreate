@@ -316,13 +316,15 @@ impl TraceWriter {
     }
 
     /// The tick's state, its frame's picture file when it changed (D107), and its sound (D108).
-    /// A tick's line: the state's changed fields, the frame, the sound, the port's own values of the fields a
+    /// A tick's line: the state's changed fields, the frame, the pictures between ticks (D180), the sound, the port's own values of the fields a
     /// set changed (`overrode`, D114), and what the port noted in the pass to it (`notes`, D115).
+    #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
         tick: u64,
         state: Value,
         frame: Option<&str>,
+        between: &[String],
         sound: Option<Value>,
         overrode: &Map<String, Value>,
         notes: &BTreeMap<String, u64>,
@@ -341,6 +343,9 @@ impl TraceWriter {
         let mut line = json!({"tick": tick, "state": changed});
         if let Some(frame) = frame {
             line["frame"] = json!(frame);
+        }
+        if !between.is_empty() {
+            line["between"] = json!(between);
         }
         if let Some(sound) = sound.filter(|s| s.as_object().is_some_and(|o| !o.is_empty())) {
             line["sound"] = sound;

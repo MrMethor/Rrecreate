@@ -227,6 +227,9 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     // The port's frame and the original's screen, decoded as they change.
     let mut seen = Screens::default();
     let mut drawn: Option<(u64, ScreenDiff)> = None;
+    // The pictures the port shows between ticks (D180), and the first not among the original's.
+    let mut between = Between::default();
+    let mut missed: Option<Missed> = None;
     // The port's sound, if it says it makes it (D108): every device's, or those it names (D121).
     let made: Vec<&str> = match &header["sound"] {
         Value::Bool(true) => SOUND_DEVICES.iter().map(|(d, _)| *d).collect(),
@@ -295,6 +298,16 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         {
             drawn = Some((t, diff));
             break;
+        }
+        if let Some(names) = v["between"].as_array().filter(|n| !n.is_empty()) {
+            let names: Vec<&str> = names.iter().filter_map(Value::as_str).collect();
+            if let Some(miss) =
+                between.check(t, &trace.ticks[(t - 1) as usize], &names, &work.join("frames"), &cache)?
+            {
+                drawn = Some((t, miss.diff.clone()));
+                missed = Some(miss);
+                break;
+            }
         }
         // From a transplant or a resume the pass to the first tick was the original's: its sound isn't compared.
         let own_pass = after == 0 || t > after;
@@ -413,6 +426,21 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             if *t > first {
                 say("match", format!("every mapped field at all {} ticks", t - first + 1));
             }
+            if let Some(miss) = &missed {
+                say(
+                    "diverges",
+                    format!(
+                        "at tick {t} ({}): the pictures its pass showed: the port's {} of {} isn't among the original's \
+                         from its {} of {} on; the nearest, its {}:",
+                        trace.ticks[(t - 1) as usize].sync,
+                        ordinal(miss.picture + 1),
+                        miss.pictures,
+                        ordinal(miss.from + 1),
+                        miss.shown,
+                        ordinal(miss.nearest + 1)
+                    ),
+                );
+            }
             report_screen(repo, name, &trace, &k, *t, diff, &file(&format!("screen-{t}.png")))?;
             ExitCode::from(1)
         }
@@ -426,6 +454,19 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                     "screen",
                     format!("the port's frames are the original's screen at all {} ticks", last - first + 1),
                 ),
+            }
+            if between.passes > 0 {
+                say(
+                    "between",
+                    format!(
+                        "the port's {} pictures between ticks, in {} pass{}, are among the original's there in order \
+                         (of its {})",
+                        between.pictures,
+                        between.passes,
+                        if between.passes == 1 { "" } else { "es" },
+                        between.shown
+                    ),
+                );
             }
             if sounding {
                 let unmade: Vec<&str> = SOUND_DEVICES.iter().map(|(d, _)| *d).filter(|d| !made.contains(d)).collect();
@@ -607,6 +648,104 @@ struct ScreenDiff {
     sizes: Option<((usize, usize), (usize, usize))>,
     original: Frame,
     port: Frame,
+}
+
+/// The pictures shown between ticks (D180): the port's, each one of the original's in the pass, in order. The
+/// original's are its display's refreshes (a torn copy, a palette's steps among them), the port's those it draws.
+#[derive(Default)]
+struct Between {
+    /// The original's pictures decoded, by their hash.
+    decoded: BTreeMap<String, Frame>,
+    passes: usize,
+    pictures: usize,
+    shown: usize,
+}
+
+/// A picture the port showed between ticks that isn't among the original's from where the last was: which (of how
+/// many), from which of the original's on (of how many it showed in the pass), the nearest one, and how they differ.
+struct Missed {
+    picture: usize,
+    pictures: usize,
+    from: usize,
+    shown: usize,
+    nearest: usize,
+    diff: ScreenDiff,
+}
+
+impl Between {
+    /// The port's pictures between the tick before and `t` (`names`, in `frames`) against the original's of the
+    /// tick's pass, each that changed from the last.
+    fn check(
+        &mut self,
+        t: u64,
+        tick: &crate::trace::Tick,
+        names: &[&str],
+        frames: &std::path::Path,
+        cache: &Cache,
+    ) -> Result<Option<Missed>, String> {
+        let mut originals: Vec<&str> = Vec::new();
+        for f in &tick.frames {
+            if let Some(hash) = f.get(4).and_then(Value::as_str)
+                && originals.last() != Some(&hash)
+            {
+                originals.push(hash);
+            }
+        }
+        let mut from = 0;
+        for (n, name) in names.iter().enumerate() {
+            let path = frames.join(name);
+            let bytes = std::fs::read(&path).map_err(|e| format!("the port's picture {}: {e}", path.display()))?;
+            let port = Frame::decode(&bytes).map_err(|e| format!("the port's picture {}: {e}", path.display()))?;
+            let mut found = None;
+            let mut nearest: Option<(usize, usize)> = None;
+            for (i, hash) in originals.iter().enumerate().skip(from) {
+                if !self.decoded.contains_key(*hash) {
+                    let frame = Frame::decode(&cache.get(hash)?).map_err(|e| {
+                        format!("the original's picture at tick {t}: {e} (only indexed modes are compared)")
+                    })?;
+                    self.decoded.insert((*hash).to_owned(), frame);
+                }
+                let original = &self.decoded[*hash];
+                if *original == port {
+                    found = Some(i);
+                    break;
+                }
+                let differ = original.pixels.iter().zip(&port.pixels).filter(|(a, b)| a != b).count()
+                    + usize::from(original.palette != port.palette);
+                if nearest.is_none_or(|(_, d)| differ < d) {
+                    nearest = Some((i, differ));
+                }
+            }
+            match found {
+                Some(i) => from = i + 1,
+                None => {
+                    let nearest = nearest.map_or(from.min(originals.len().saturating_sub(1)), |(i, _)| i);
+                    let original = originals.get(nearest).map(|h| self.decoded[*h].clone());
+                    let diff = original
+                        .and_then(|o| screen_differences(&o, &port))
+                        .ok_or_else(|| format!("tick {t}: the original showed no picture in its pass"))?;
+                    let (pictures, shown) = (names.len(), originals.len());
+                    return Ok(Some(Missed { picture: n, pictures, from, shown, nearest, diff }));
+                }
+            }
+        }
+        self.passes += 1;
+        self.pictures += names.len();
+        self.shown += originals.len();
+        Ok(None)
+    }
+}
+
+/// `n` as an ordinal: 1st, 2nd, 3rd, 4th...
+fn ordinal(n: usize) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
 }
 
 /// The two sides' pictures, decoded once each as they change.
@@ -2145,6 +2284,33 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_port_s_pictures_between_ticks_are_the_original_s_in_order() {
+        let dir = std::env::temp_dir().join(format!("rrc-between-{}", std::process::id()));
+        let cache = Cache::at(&dir.join("cache")).unwrap();
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).unwrap();
+        let picture = |v: u8| {
+            let mut f = Frame::new(2, 1);
+            f.set(0, 0, v);
+            f
+        };
+        // The original's refreshes: 1, 1, a torn 9, 2, 3; the port's pictures 1 and 3, then 2 after 3.
+        let hashes: Vec<String> = [1, 1, 9, 2, 3].iter().map(|&v| cache.put(&picture(v).encode()).unwrap()).collect();
+        let frames_json: Vec<Value> = hashes.iter().enumerate().map(|(i, h)| json!([i, i * 10, 19, "", h])).collect();
+        let tick: crate::trace::Tick =
+            serde_json::from_value(json!({"tick": 1, "sync": "play", "cycle": 0, "frames": frames_json})).unwrap();
+        for (name, v) in [("a.frm", 1), ("b.frm", 3), ("c.frm", 2)] {
+            std::fs::write(frames.join(name), picture(v).encode()).unwrap();
+        }
+        let mut between = Between::default();
+        assert!(between.check(1, &tick, &["a.frm", "b.frm"], &frames, &cache).unwrap().is_none());
+        assert_eq!((between.passes, between.pictures, between.shown), (1, 2, 4), "the repeat counted once");
+        let missed = between.check(1, &tick, &["b.frm", "c.frm"], &frames, &cache).unwrap().expect("2 after 3");
+        assert_eq!((missed.picture, missed.from, missed.shown), (1, 4, 4), "none left after the 3 it matched");
+        std::fs::remove_dir_all(&dir).ok();
+    }
     use crate::knowledge::{Field, Struct};
 
     #[test]

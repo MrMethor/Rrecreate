@@ -740,7 +740,10 @@ inputs and the trace are JSON lines.
   before, and the tick's line in the trace names it: `{"tick":102,"state":{…},"frame":"102.frm"}`. `--screen
   FILE` gives a port that starts from a transplant or a resumed state the original's screen then, a picture
   too. `rrc compare` asks for frames when the session's trace has screens, and compares each tick's frame with
-  the original's screen pixel by pixel and colour by colour.
+  the original's screen pixel by pixel and colour by colour. The pictures the pass showed before the tick's, where
+  the presentation draws them (`Presentation::between`, D180), are `DIR/<tick>-<n>.frm`, each one that changed from
+  the last, and the tick's line names them in order: `{"tick":95,…,"between":["95-0.frm","95-1.frm"]}`; each must be
+  one of the original's pictures in that pass (its `frames`), in order, the others passed over.
 - **Presentation's state** (`--presentation`, written by `rrc` at a transplant or a resume when `mapping.toml`
   has `[[present]]`, D110): `{"format":"rrc-presentation","version":1,"session":"play","tick":200,
   "state":{"drawn.blink":7}}`, each item's value at the tick (read from the session's snapshots, as `rrc peek`

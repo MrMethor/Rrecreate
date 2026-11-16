@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D180. The pictures a pass shows between its sync points are compared where the port draws them. Accepted 2026-11-16.
+A presentation may give the pictures a pass showed before its tick's (`Presentation::between`: each a frame and how
+many of the display's refreshes it stays). The runtime writes each that changed from the last; `rrc compare` takes
+each in turn as one of the original's pictures in that pass, its refreshes as the trace has them, the first from
+where the last was found on, and says how many it found among how many. One that isn't there is a difference,
+reported with the nearest of the original's. The runtime decodes FLI and FLC animations (the format's chunks, and
+each frame's chunks for a game's own player).
+**Why:** Arena's cinematic plays 3666 refreshes within one pass, between two sync points: only the tick's screen
+was compared, so its pictures, the text over them and the narration's pages went unchecked. The original's
+refreshes include pictures no port draws the same way (a copy the display caught halfway, a palette's steps), so
+the port's are found among them in order rather than matched one for one; where a port draws none, a pass is
+compared at its tick as before.
+
 ### D179. A carried pointer may be read as an index. Accepted 2026-11-16.
 A `[[carry]]` item may take `into` as a `[[map]]` item does (D122, D178): at the transplant's or the start's tick it is
 the index of the element it points to, null where it points elsewhere. It is given, not compared.

@@ -164,6 +164,14 @@ pub trait Presentation<S: Shows>: Default {
         let _ = (pass, scene, frame);
     }
 
+    /// The pictures the pass that began at `pass` showed before the next tick's (D180): an animation it played
+    /// between sync points, each picture shown for some of the display's refreshes. Called before
+    /// [`Presentation::draw`]; none by default. The comparison takes each as one of the original's pictures in
+    /// that pass, in order.
+    fn between(&mut self, pass: &str, scene: &S::Scene<'_>, shown: &mut Vec<Shown>) {
+        let _ = (pass, scene, shown);
+    }
+
     /// The sound made before the next tick's sync point: by the pass that began at a sync point named
     /// `pass`, or with none, by the start-up from power-on to the first tick; from the scene after it.
     fn sound(&mut self, pass: Option<&str>, scene: &S::Scene<'_>, sounds: &mut Sounds) {
@@ -171,11 +179,19 @@ pub trait Presentation<S: Shows>: Default {
     }
 }
 
+/// A picture a pass showed between sync points (D180), and for how many of the display's refreshes (70 a second).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shown {
+    pub frame: Frame,
+    pub refreshes: u32,
+}
+
 /// What a run draws and sounds with: nothing, or a simulation's presentation.
 pub(crate) trait Drawer<S> {
     fn given(&mut self, own: serde_json::Value) -> Result<(), String>;
     fn start(&mut self, state: &S, frame: &mut Frame, given: bool);
     fn draw(&mut self, pass: &str, state: &S, frame: &mut Frame);
+    fn between(&mut self, pass: &str, state: &S, shown: &mut Vec<Shown>);
     fn sound(&mut self, pass: Option<&str>, state: &S, sounds: &mut Sounds);
     /// Whether it draws, and whether it sounds, and with which devices.
     fn draws(&self) -> bool;
@@ -192,6 +208,7 @@ impl<S> Drawer<S> for Undrawn {
     }
     fn start(&mut self, _: &S, _: &mut Frame, _: bool) {}
     fn draw(&mut self, _: &str, _: &S, _: &mut Frame) {}
+    fn between(&mut self, _: &str, _: &S, _: &mut Vec<Shown>) {}
     fn sound(&mut self, _: Option<&str>, _: &S, _: &mut Sounds) {}
     fn draws(&self) -> bool {
         false
@@ -216,6 +233,9 @@ impl<S: Shows, P: Presentation<S>> Drawer<S> for Drawn<P> {
     }
     fn draw(&mut self, pass: &str, state: &S, frame: &mut Frame) {
         self.0.draw(pass, &state.scene(), frame);
+    }
+    fn between(&mut self, pass: &str, state: &S, shown: &mut Vec<Shown>) {
+        self.0.between(pass, &state.scene(), shown);
     }
     fn sound(&mut self, pass: Option<&str>, state: &S, sounds: &mut Sounds) {
         self.0.sound(pass, &state.scene(), sounds);

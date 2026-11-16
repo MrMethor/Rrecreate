@@ -311,6 +311,9 @@ which bugs it met.
   screen at the tick's sync point (its memory and palette, D107) as indexed pixels and palette, and sound as
   events per tick, not samples (in order, by device, without their times, D108). At the first frame that
   differs, its areas are listed (D113), and who drew its first differing pixel is found as who wrote a value is.
+  The pictures a pass shows between its sync points (an animation, a cinematic) are compared where the port draws
+  them: each of the port's must be one of the original's refreshes in that pass, in order, the others (a copy torn
+  by the display's refresh, a palette's steps) passed over (D180).
 - **Progress:** the share of the original's executed code exercised by sessions that match, and the share of
   its state the mapping covers (`rrc progress`, D117): the functions run in passes the port matches, and those
   of them its code names; the bytes of the data segment that change, mapped, ignored or neither.

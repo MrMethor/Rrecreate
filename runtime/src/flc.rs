@@ -27,14 +27,14 @@ fn u32_at(d: &[u8], at: usize) -> Option<usize> {
 }
 
 /// Chunks' types.
-const COLOR_256: usize = 4;
-const SS2: usize = 7;
-const COLOR_64: usize = 11;
-const LC: usize = 12;
-const BLACK: usize = 13;
-const BRUN: usize = 15;
-const COPY: usize = 16;
-const PSTAMP: usize = 18;
+pub const COLOR_256: usize = 4;
+pub const SS2: usize = 7;
+pub const COLOR_64: usize = 11;
+pub const LC: usize = 12;
+pub const BLACK: usize = 13;
+pub const BRUN: usize = 15;
+pub const COPY: usize = 16;
+pub const PSTAMP: usize = 18;
 /// A frame's chunk, and a prefix chunk (FLC's, which a player skips).
 const FRAME: usize = 0xF1FA;
 const PREFIX: usize = 0xF100;
@@ -71,19 +71,28 @@ impl Flc {
         Ok(Flc { data, width, height, frames, speed, fli, offsets })
     }
 
-    /// Frame `n`'s changes made to `pixels` (`width` × `height`, row by row) and `palette` (256 × R, G, B, the
-    /// DAC's 0 to 63): `n` from 0, the ring frame `frames`. Whether the palette changed.
-    pub fn apply(&self, n: usize, pixels: &mut [u8], palette: &mut [u8]) -> Result<bool, String> {
+    /// Frame `n`'s chunks, each its type and its body: for a game's own player, which decodes some its own way.
+    pub fn chunks(&self, n: usize) -> Result<Vec<(usize, &[u8])>, String> {
         let at = *self.offsets.get(n).ok_or_else(|| format!("an FLC has no frame {n}"))?;
         let d = &self.data;
         let wrong = || format!("an FLC's frame {n}: a chunk past its end");
-        let chunks = u16_at(d, at + 6).ok_or_else(wrong)?;
+        let count = u16_at(d, at + 6).ok_or_else(wrong)?;
         let mut c = at + 16;
-        let mut palette_changed = false;
-        for _ in 0..chunks {
+        let mut chunks = Vec::with_capacity(count);
+        for _ in 0..count {
             let size = u32_at(d, c).ok_or_else(wrong)?;
             let kind = u16_at(d, c + 4).ok_or_else(wrong)?;
-            let body = d.get(c + 6..c + size.max(6)).ok_or_else(wrong)?;
+            chunks.push((kind, d.get(c + 6..c + size.max(6)).ok_or_else(wrong)?));
+            c += size;
+        }
+        Ok(chunks)
+    }
+
+    /// Frame `n`'s changes made to `pixels` (`width` × `height`, row by row) and `palette` (256 × R, G, B, the
+    /// DAC's 0 to 63), as the format says: `n` from 0, the ring frame `frames`. Whether the palette changed.
+    pub fn apply(&self, n: usize, pixels: &mut [u8], palette: &mut [u8]) -> Result<bool, String> {
+        let mut palette_changed = false;
+        for (kind, body) in self.chunks(n)? {
             match kind {
                 COLOR_256 | COLOR_64 => {
                     colours(body, palette, kind == COLOR_256 && !self.fli);
@@ -100,14 +109,13 @@ impl Flc {
                 PSTAMP => {}
                 _ => return Err(format!("an FLC's frame {n}: a chunk of type {kind} not known")),
             }
-            c += size;
         }
         Ok(palette_changed)
     }
 
     /// BYTE_RUN: each line its packets (the count byte unused), a positive count a byte repeated, a negative one
     /// bytes copied, to the line's width.
-    fn byte_run(&self, body: &[u8], pixels: &mut [u8]) {
+    pub fn byte_run(&self, body: &[u8], pixels: &mut [u8]) {
         let mut at = 0;
         for y in 0..self.height {
             at += 1;
@@ -179,7 +187,7 @@ impl Flc {
 
     /// DELTA_FLI (LC): the lines to skip and the lines changed, then for each its packets: columns to skip, then a
     /// positive count of bytes copied, or a negative one of a byte repeated.
-    fn line_delta(&self, body: &[u8], pixels: &mut [u8]) {
+    pub fn line_delta(&self, body: &[u8], pixels: &mut [u8]) {
         let (Some(skip), Some(lines)) = (u16_at(body, 0), u16_at(body, 2)) else { return };
         let mut at = 4;
         for y in skip..skip + lines {
@@ -220,7 +228,7 @@ fn put(pixels: &mut [u8], width: usize, x: usize, y: usize, value: u8) {
 
 /// COLOR_256 or COLOR_64: packets of colours to skip and colours to set (a count of 0: 256), each R, G, B; an
 /// FLC's COLOR_256 of 0 to 255 (`eight`: the DAC takes the top six bits), the others' of 0 to 63.
-fn colours(body: &[u8], palette: &mut [u8], eight: bool) {
+pub fn colours(body: &[u8], palette: &mut [u8], eight: bool) {
     let Some(packets) = u16_at(body, 0) else { return };
     let mut at = 2;
     let mut colour = 0usize;

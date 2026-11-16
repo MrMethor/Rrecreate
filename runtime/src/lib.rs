@@ -741,6 +741,23 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             }
         }
         let mut drawn = None;
+        // The pictures the pass showed between sync points (D180), each one that changed: `<tick>-<n>.frm`.
+        let mut between = Vec::new();
+        if let (Some(dir), Some(pass)) = (drawing, &pass) {
+            let mut shown = Vec::new();
+            drawer.between(pass, &state, &mut shown);
+            let mut last: Option<present::Frame> = None;
+            for (n, s) in shown.into_iter().enumerate() {
+                if last.as_ref() == Some(&s.frame) {
+                    continue;
+                }
+                let name = format!("{}-{n}.frm", line.tick);
+                let path = std::path::Path::new(dir).join(&name);
+                std::fs::write(&path, s.frame.encode()).map_err(|e| format!("{}: {e}", path.display()))?;
+                between.push(name);
+                last = Some(s.frame);
+            }
+        }
         if drawing.is_some() || sounding {
             match &pass {
                 None => drawer.start(&state, &mut frame, given.is_some()),
@@ -771,6 +788,7 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             line.tick,
             value.clone(),
             drawn.as_deref(),
+            &between,
             sounding.then(|| sounds.to_json()),
             &overrode,
             &notes_made(),
@@ -1043,6 +1061,42 @@ mod tests {
         fn draw(&mut self, _: &str, scene: &&Counter, frame: &mut present::Frame) {
             frame.set(0, 0, scene.count as u8);
         }
+    }
+
+    /// One that shows the count's steps between ticks too, as an animation in a pass: each from 0 to the count, the
+    /// last twice (the same picture, written once).
+    #[derive(Default)]
+    struct Animating;
+
+    impl present::Presentation<Counter> for Animating {
+        fn between(&mut self, _: &str, scene: &&Counter, shown: &mut Vec<present::Shown>) {
+            for step in (0..=scene.count).chain([scene.count]) {
+                let mut frame = present::Frame::new(1, 1);
+                frame.set(0, 0, step as u8);
+                shown.push(present::Shown { frame, refreshes: 2 });
+            }
+        }
+    }
+
+    #[test]
+    fn a_pass_s_pictures_between_ticks_are_written_and_named() {
+        let d = dir("between");
+        std::fs::write(d.join("inputs.jsonl"), INPUTS).unwrap();
+        let path = |f: &str| d.join(f).to_string_lossy().into_owned();
+        let request = Request {
+            inputs: path("inputs.jsonl"),
+            out: path("port.jsonl"),
+            frames: Some(path("frames")),
+            ..Request::default()
+        };
+        run_drawn::<Counter>(&request, &mut present::Drawn(Animating)).unwrap();
+        let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
+        let line = trace.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).find(|v| v["tick"] == 3).unwrap();
+        let names: Vec<&str> = line["between"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert_eq!(names.len(), 3, "the count's steps to 2, the repeat left out: {line}");
+        let last = present::Frame::decode(&std::fs::read(d.join("frames").join(names[2])).unwrap()).unwrap();
+        assert_eq!(last.pixels[0], 2);
+        std::fs::remove_dir_all(&d).ok();
     }
 
     /// The same without state of its own.

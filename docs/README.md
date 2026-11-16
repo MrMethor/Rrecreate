@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-16 (decisions to D179). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-16 (decisions to D180). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -197,13 +197,12 @@ the game does left the register, D163).
   levitating and a lockstep's scenario edits (D166) match in frames and sound too, and since 2026-11-15 the automap
   (its record of the cells seen, kept in EMS and reached through D172, its file and its screen), and since
   2026-11-16 the music and the cinematic's narration, its speech started where the original started it: **all 58
-  sessions match in every field, frame and sound**, the first from power-on to its end. What the comparison doesn't
-  reach: the cinematic's pictures, which a pass shows between its sync points (frames are compared at the ticks),
-  and which the port doesn't draw yet.
+  sessions match in every field, frame and sound**, the first from power-on to its end, and since D180 the pictures
+  a pass shows between its ticks where the port draws them: the cinematic's 298, its FLC as Arena's own player
+  decodes it and the narration's pages over it, are all among the original's, in order.
 
 **Next:** M6's open points are done but the music of the places the first dungeon doesn't reach (towns, the
-outdoors: no session has them) and the cinematic's pictures (the frames a pass shows between its ticks, which
-neither the comparison nor the live platform takes yet); closing M6 is the person's call (below); then M7.
+outdoors: no session has them) and the cinematic in live play; closing M6 is the person's call (below); then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).
