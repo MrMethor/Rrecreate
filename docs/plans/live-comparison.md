@@ -1,9 +1,9 @@
 # Live comparison (M6.5): the plan
 
-> Proposed 2026-11-16 for the person (D184, open). The person plays the original; the port runs alongside, and
-> every difference is said within a second or two of the tick it happened at. Nothing here is built. Section 10
-> lists what is the person's to decide; once accepted, M6.5 joins the plan ([design](../design.md) §12) and the
-> hub, and each step below becomes a decision as it is built.
+> Accepted 2026-11-16 with the person (D184): M6.5, between M6 and M7 ([design](../design.md) §12). The person
+> plays the original; the port runs alongside, and every difference is said within a second or two of the tick it
+> happened at. Each step below becomes a decision as it is built, and what it found is written under it. Section 10
+> lists what is still the person's to decide.
 
 ## 1. What it is for
 
@@ -354,8 +354,9 @@ first dungeon, with the port alongside, and:
 
 ## 10. What is the person's to decide
 
-- **Accepting M6.5** as a milestone between M6 and M7, with section 8 as its done-when.
+Decided 2026-11-16: M6.5 accepted, with section 8 as its done-when, and the `Live` check (3.7, step 6) inside it.
+Waiting for step 0's numbers:
+
 - **The fallback** if step 0 finds the follower can't run twice as fast as play: the window instrumented (the
   person's play pays a little), or the lag accepted.
-- **The `Live` check** (3.7, step 6) inside M6.5, or after it: it is the half that tests the playable port.
-- **How much disk** a play may take (pitfalls 23 to 25), once step 0 has measured it.
+- **How much disk** a play may take (pitfalls 23 to 25).

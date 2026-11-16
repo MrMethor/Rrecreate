@@ -789,16 +789,17 @@ printed, not suggested, at the moments a route is chosen; the playbook's order p
 code.
 **Extends:** D32, D77, D156, D157, D159.
 
-### D184. M6.5: the port compared live while the person plays the original. Open, proposed 2026-11-16; for the person.
+### D184. M6.5: the port compared live while the person plays the original. Accepted 2026-11-16, with the person.
 The plan is `docs/plans/live-comparison.md`. The person plays the original in Clockwork's window, as today. A second
 Clockwork, the follower, runs the same play as the window writes it, never past its last mark, and checks with state
 hashes that its run is the window's. The port runs alongside in its comparison run, on its own state, and only the
 fields of a tick that differs are fed back. Recording, the port's run and the comparison become one streaming
 pipeline, which the offline tools use too. The port's own input handling (`Live`) is checked against the original's
 boundary values at virtual time. The plan lists thirty pitfalls and what keeps each away, the steps with their gates
-(measurement first) and M6.5's done-when. It waits for the person on four points: the milestone itself, the fallback
-if the follower can't run twice as fast as play, whether the `Live` check is part of M6.5, and how much disk a play
-may take.
+(measurement first) and M6.5's done-when. The person accepted M6.5 as a milestone between M6 and M7, with the
+plan's section 8 as its done-when, and had its first step started (2026-11-16). The `Live` check stays in it, as
+section 8 has it. Two points wait for step 0's numbers and then the person: the fallback if the follower can't run
+twice as fast as play, and how much disk a play may take.
 **Why:** the person asked for it when closing M6 (D183): a real-time comparison, the port running alongside the
 person's play. D124 compares a play in parts of a minute, each recorded again at about the speed of play: a
 difference is said minutes after it happened, and the follow-up can fall behind for good.

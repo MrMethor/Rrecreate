@@ -132,6 +132,7 @@ kept here and nowhere else.
 | M4 A real game's logic | done | Arena's first dungeon matches from a transplant to the session's end (D100) |
 | M5 The game's data: its assets and the whole program | done | The vault port matches from power-on; Arena's assets extracted equal what it loaded (D106) |
 | M6 Faithful and playable | done | Arena's port matches its 58 sessions in every field, frame and sound, and plays from power-on in a window with sound (D183) |
+| M6.5 Live comparison | under way | |
 | M7 Modern mode | ahead | |
 | M8 32-bit games | ahead | |
 | M9 Acceptance | ahead | |
@@ -159,15 +160,17 @@ sources in its books and one lookup in 2202 commands, so each source now keeps a
 prints the lines that match at each difference, card and stuck route, or says to search first. Arena's port went through the gates to stage 4; 31 quirks are registered, and 15 of their switches are
 shown by a session.
 
-**Next: M6.5, proposed** (D184, open, [the plan](plans/live-comparison.md)), at the person's request. The person
+**Under way: M6.5** (D184, accepted with the person, [the plan](plans/live-comparison.md)). The person
 plays the original and the port runs alongside, every difference said within a second or two of its tick. A second
 emulator follows the play and proves its run the window's. The port runs on its own state, corrected only where it
 differs. Recording, the port's run and the comparison become one streaming pipeline, used offline too, and the
 port's own input handling is checked against the original's. The plan lists the pitfalls and what keeps each
-away, and its first step is measuring whether a second emulator can follow the play fast enough. Then M7.
+away. Its first step is under way: measuring whether a second emulator can follow the play fast enough, what it
+costs the window, and what a play takes in memory and disk. Then M7.
 
-**The person's calls ahead:** accepting M6.5, with the plan's four open points (its section 10); the game M9 is run
-on, which stays out of the toolkit's development until then (D71).
+**The person's calls ahead:** M6.5's two points that wait for the measurement (the fallback if the follower is too
+slow, and how much disk a play may take; the plan's section 10); the game M9 is run on, which stays out of the
+toolkit's development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
 `notes/handoff.md` says how to pick it up).
@@ -207,7 +210,7 @@ what the person asked for. The ones that shape the project:
 | [`decisions.md`](decisions.md) | Every decision, its reason and status | Before changing anything a decision covers; to learn why |
 | [`porting.md`](porting.md) | The playbook: how an agent ports a game with `rrc`, its rules first | An agent porting a game; an agent changing a step of the workflow |
 | [`plans/porting-workflow.md`](plans/porting-workflow.md) | The plan being built (accepted, D154): the standard porting workflow and the toolkit changes that make it the toolkit's core, with what is built so far | The agent building it; the person, for what is left |
-| [`plans/live-comparison.md`](plans/live-comparison.md) | The plan proposed for M6.5 (D184, open): the port compared live while the person plays the original, its pitfalls and its steps | The person, to decide it; the agent building it once accepted |
+| [`plans/live-comparison.md`](plans/live-comparison.md) | The plan for M6.5 (D184, accepted): the port compared live while the person plays the original, its pitfalls, its steps and what each step found | The agent building it; the person, for the points left to decide |
 | [`formats.md`](formats.md) | The files `rrc` and a port read and write | An agent changing or reading them |
 | [`protocol.md`](protocol.md) | How tools drive an emulator | An agent changing Clockwork's control or `rrc`'s use of it |
 | [`../clockwork/README.md`](../clockwork/README.md) | Clockwork's manual: running, driving and investigating a program, validating the CPU | An agent working on or with the emulator |
