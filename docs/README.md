@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-16 (decisions to D182). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-16 (decisions to D184). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -131,84 +131,41 @@ kept here and nowhere else.
 | M3 Runtime and comparison | done | The toy port matches its session tick by tick |
 | M4 A real game's logic | done | Arena's first dungeon matches from a transplant to the session's end (D100) |
 | M5 The game's data: its assets and the whole program | done | The vault port matches from power-on; Arena's assets extracted equal what it loaded (D106) |
-| M6 Faithful and playable | under way | Frames and sound are compared and a difference located (D107, D108); a port plays in a window with sound (D119) |
+| M6 Faithful and playable | done | Arena's port matches its 58 sessions in every field, frame and sound, and plays from power-on in a window with sound (D183) |
 | M7 Modern mode | ahead | |
 | M8 32-bit games | ahead | |
 | M9 Acceptance | ahead | |
 
-**Now (M6):** the comparison of frames and sound, the platform layer and play from a session's tick or from power-on
-are built (D107 to D145). The work is widening what they are tested on: Arena's menus and systems (save and load,
-the character sheet, the automap, the logbook, rest, spells, items), their logic first and their screens after,
-compared in lockstep with the person's recorded play (D124). The latest gaps it turned into toolkit features:
-scenario edits in a lockstep (D146, D147), the quirk rule checked by `rrc check` and each quirk given a switch
-(D148, D149), what no session ran listed (D150 to D152), a scenario edit's tick drawn in a lockstep as the pass
-left it (D166), a port run refused when its code changed under it (D167), a played port's sound output given the
-buffer Windows needs (D168) and the Sound Blaster's output filter (D169, with the person), and each session run on
-the game's folder as it was recorded, so that playing the game outside the toolkit changes no session (D170), and a
-watch's memory bounded after one took the person's machine down (D171), memory a game keeps in EMS named by its
-handle, so that it is traced and mapped like any other (D172), a change to Clockwork's analysis tools no longer
-making every recording stale (D173), and a hook's calls from interrupt handlers given in order with the rest, the
-start-up's among them, for Arena's music driver (D174, D175), and for its music played and compared: a played port
-running what keeps its own clock while the game waits (D176), memory a port carries found through a pointer (D177),
-a pointer read as how far into a carried file it points or as whether it is set (D178), a carried one too (D179).
+**M6 closed** (D183, the person, 2026-11-16). The toolkit compares a port's frames, the pictures it shows
+between ticks and its sound with the original's, and locates a difference (D107, D108, D113, D180 to D182). The
+platform plays a port in a window with sound, its keys bound through the actions seam (D119, D162), from a
+session's tick or from power-on. On Arena, every one of its 58 sessions matches in every mapped field, frame and
+sound, the first from power-on to its end. The pictures between ticks match too: the intro's 137, the new game's
+story's 52 and the cinematic's 298. The port plays from power-on into the first dungeon, with the original's
+music driver (Miles' AIL 2, ported from its released source and mapped from the original's memory, D174 to
+D179). On the way, the gaps the work met became toolkit features (D146 to D182): scenario edits in a lockstep, the
+quirk rule checked, a watch's memory bounded after one took the person's machine down (D171), EMS named and
+mapped, hooks' calls from interrupt handlers, a played port's own clock while the game waits. Left out: the songs
+of the towns and the outdoors and the game menu's music volume, which no session reaches.
 
-**The standard workflow, built before M6 goes on** (D154 to D159, 2026-11-12), at the person's word. The playbook is
-one workflow for every game: stages with gates, one work loop, where to look when the port differs, the best-known
-routes. The toolkit drives it: a port is given its entry point when it is made; its books hold its scope and its
-outside sources; `rrc status` works out the stage the port is at and what its gate lacks; `rrc work` is the ranked
-work list, with a card for the item taken that names a second route; a journal says when a route is stuck; each
-difference ends with the next moves, of more than one kind. A test walks the toy port through the stages
-([the plan](plans/porting-workflow.md) lists what was built and what the trial changed). Above the playbook's rules
-stands the first rule (D160, section 4): the toolkit states it first in what an agent runs most, asks for each
-quirk's fix and for a session that shows its switch, and reads the notes for bugs left unregistered. Its scope is
-the bugs that change what the game does (D163, the person): the rest are ignored.
+**The standard workflow** (D154 to D159, 2026-11-12, at the person's word). The playbook is one workflow for
+every game: stages with gates, one work loop, where to look when the port differs, the best-known routes. The
+toolkit drives it: `rrc status` works out the stage a port is at and what its gate lacks, `rrc work` is the ranked
+work list with a card for the item taken, a journal says when a route is stuck, and each difference ends with the
+next moves ([the plan](plans/porting-workflow.md) lists what was built). Above the playbook's rules stands the
+first rule (D160, D163, section 4): every bug of the original that changes what the game does is reproduced with a
+switch. Arena's port went through the gates to stage 4; 31 quirks are registered, and 15 of their switches are
+shown by a session.
 
-Tried on the Arena port: the toolkit answers in about a second, and what the assessment below found by hand it says
-unasked. It puts the port at stage 1, because its outside sources aren't in its books; past that, the gates name
-eight named data nothing maps or ignores, two suspects not judged, the first session stopping from power-on at the
-cinematic's sound, and fourteen sessions whose frames or sound differ. Its 58 sessions counted again give a work
-list of 121 items. Its scope is all 58 (the person, 2026-11-12). The first rule's checks found two bugs of the
-original its notes named and its register didn't (both now registered, with switches), and three registered bugs
-whose kept path was still a note. Taken through the gates since (2026-11-12): its outside sources are swept and in
-its books (Arena's sound driver is Miles' AIL 2, whose source its author released), the named data are all mapped
-or set aside, and the toolkit puts it at stage 4. One of the three kept paths is reproduced; the other two read
-memory the port doesn't model (a buffer ten routines write their texts to; the renderer's state, for people in
-towns), which its notes say. 14 of its 30 quirks' switches are shown by a session (three that changed nothing
-the game does left the register, D163).
+**Next: M6.5, proposed** (D184, open, [the plan](plans/live-comparison.md)), at the person's request. The person
+plays the original and the port runs alongside, every difference said within a second or two of its tick. A second
+emulator follows the play and proves its run the window's. The port runs on its own state, corrected only where it
+differs. Recording, the port's run and the comparison become one streaming pipeline, used offline too, and the
+port's own input handling is checked against the original's. The plan lists the pitfalls and what keeps each
+away, and its first step is measuring whether a second emulator can follow the play fast enough. Then M7.
 
-**Open against M6's row** (measured on the Arena port, 2026-11-11):
-
-- **The music.** Since 2026-11-15 the port makes the OPL's music, most of Arena's sound events: Miles' AIL 2
-  XMIDI driver ported from its public-domain source, run where the game calls it and its services where the
-  interrupts made them (D174); it plays live too, its service run on the host's clock while the game waits (D176).
-  Since 2026-11-16 the driver's state is mapped from the original's memory (its song's file carried, its pointers
-  into the file read as how far in they point: D177 to D179), so every session compares the music from its
-  transplant, and the first from power-on: all 58 match in every OPL write. Not yet made: the songs of the towns and
-  the outdoors, the game menu's music volume.
-- **The actions seam** ([design](design.md) §6.1). Built (D162): a port declares its game's actions, each the PC
-  input the original takes for it, and the platform's controls bind the host's keys to them, each still given to
-  the port as the original's own input; tried on the vault, and Arena's world (21 actions) reads its keys through
-  them.
-- **Frames beyond the first session.** The first dungeon's session matches state, screen and digitized sound at all
-  656 of its world's ticks, and its continuation now at all 775 (2026-11-12: the floor's and ceiling's tables kept
-  as the original's logic builds them, the pits' sides from inside a chasm, the splash into water). All 58 sessions
-  match the original's state in a lockstep census. Since 2026-11-13 the logbook, the rest's screens, the status, the
-  character sheet (both pages), a load (in the game and from the main menu), a wall dissolving (Passwall),
-  levitating and a lockstep's scenario edits (D166) match in frames and sound too, and since 2026-11-15 the automap
-  (its record of the cells seen, kept in EMS and reached through D172, its file and its screen), and since
-  2026-11-16 the music and the cinematic's narration, its speech started where the original started it: **all 58
-  sessions match in every field, frame and sound**, the first from power-on to its end, and since D180 the pictures
-  a pass shows between its ticks where the port draws them: the cinematic's 298, its FLC as Arena's own player
-  decodes it and the narration's pages over it, are all among the original's, in order, and the new game's story's
-  52 before the creation (one shown for less than a refresh, D181), and since D182 the start-up's intro before the
-  main menu, its 137 pictures (two FLCs, the title, the quote, the scroll's pages) in the start-up's pass. All play
-  live too, at the ticks of waits of their own, the narration paced by the sound.
-
-**Next:** M6's open points are done but the music of the places the first dungeon doesn't reach (towns, the
-outdoors: no session has them); closing M6 is the person's call (below); then M7.
-
-**The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
-out of the toolkit's development until then (D71).
+**The person's calls ahead:** accepting M6.5, with the plan's four open points (its section 10); the game M9 is run
+on, which stays out of the toolkit's development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
 `notes/handoff.md` says how to pick it up).
@@ -248,6 +205,7 @@ what the person asked for. The ones that shape the project:
 | [`decisions.md`](decisions.md) | Every decision, its reason and status | Before changing anything a decision covers; to learn why |
 | [`porting.md`](porting.md) | The playbook: how an agent ports a game with `rrc`, its rules first | An agent porting a game; an agent changing a step of the workflow |
 | [`plans/porting-workflow.md`](plans/porting-workflow.md) | The plan being built (accepted, D154): the standard porting workflow and the toolkit changes that make it the toolkit's core, with what is built so far | The agent building it; the person, for what is left |
+| [`plans/live-comparison.md`](plans/live-comparison.md) | The plan proposed for M6.5 (D184, open): the port compared live while the person plays the original, its pitfalls and its steps | The person, to decide it; the agent building it once accepted |
 | [`formats.md`](formats.md) | The files `rrc` and a port read and write | An agent changing or reading them |
 | [`protocol.md`](protocol.md) | How tools drive an emulator | An agent changing Clockwork's control or `rrc`'s use of it |
 | [`../clockwork/README.md`](../clockwork/README.md) | Clockwork's manual: running, driving and investigating a program, validating the CPU | An agent working on or with the emulator |

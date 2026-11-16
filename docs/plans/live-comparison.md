@@ -1,0 +1,361 @@
+# Live comparison (M6.5): the plan
+
+> Proposed 2026-11-16 for the person (D184, open). The person plays the original; the port runs alongside, and
+> every difference is said within a second or two of the tick it happened at. Nothing here is built. Section 10
+> lists what is the person's to decide; once accepted, M6.5 joins the plan ([design](../design.md) §12) and the
+> hub, and each step below becomes a decision as it is built.
+
+## 1. What it is for
+
+"The sessions are identical" means: the person plays the original in Clockwork's window, and the port, given
+what the original read at each tick, does the same thing at every tick: every mapped field, the screen at each
+tick, the pictures between ticks and the sound. Today `rrc play` (D124) checks this after the fact:
+
+- each minute of play becomes a part, recorded again by a second run of the original at about the speed of play
+  (D124 measured 147 s for 157 s of the dungeon), then compared in lockstep: a difference is said two to four
+  minutes after it happened, when the person has long moved on and can't do it again on the spot;
+- a recording that only just keeps up falls behind for good on any slower stretch;
+- the parts are sessions of their own, each based on the one before, so one play is dozens of sessions.
+
+Live comparison closes those gaps, and adds a check nothing makes yet: the port's own input handling (`Live`,
+D119), which turns the host's keyboard, mouse and clock into what a pass reads, is compared with what the
+original's handlers made from the same keys at the same moments. Today that code is tried only by playing the
+port and looking.
+
+What it isn't: a way for the agent to explore by playing (D77 stands), a modern-mode check (modern mode differs
+on purpose), or a replacement for the comparison's tools: a difference found live is investigated afterwards with
+`rrc compare`, `rrc watch` and the rest, on the play's session.
+
+## 2. The shape
+
+```
+ the person
+     │ keys, mouse
+ ┌───▼──────────────┐  the play file: inputs at their cycles,      ┌──────────────────────────┐
+ │ the window        │  a mark every 100 ms ("all is in to here"),  │ the follower              │
+ │ clockwork play    ├─ a state hash every 30 s ───────────────────►│ clockwork serve, run by   │
+ │ (as today: never  │                                              │ rrc: the same run, never  │
+ │ slowed, never     │                                              │ past the last mark, at a  │
+ │ waited on)        │                                              │ tick reads what a         │
+ └──────────────────┘                                              │ recording reads           │
+                                                                    └────────────┬─────────────┘
+                                                                                 │ ticks, as they are made
+                       ┌──────────────────────────┐  inputs line by line  ┌─────▼──────────────┐
+                       │ the port                  │◄──────────────────────┤ the comparer (rrc) │
+                       │ its comparison run,       ├──────────────────────►│ one tick at a time,│
+                       │ reading and writing as    │  its tick's line,     │ said in the        │
+                       │ the lines come            │  frame, sound         │ terminal, kept in  │
+                       └──────────────────────────┘                       │ the session        │
+                       ┌──────────────────────────┐  devices at their     │                    │
+                       │ the port's Live           │◄─ virtual times ──────┤                    │
+                       │ (its input handling)      ├─ boundary values ────►│                    │
+                       └──────────────────────────┘                       └────────────────────┘
+```
+
+Four properties carry the design, each argued in section 3:
+
+1. **The window is the person's alone.** It runs as `clockwork play` does now; nothing the checking does can slow
+   it, pause it or change its run.
+2. **The follower's run is the window's run**, because Clockwork is deterministic (D9): the same snapshot, the
+   same inputs at the same cycles. The window writes its machine's state hash every so often, and the follower
+   checks its own against it, so this is proved as the play goes, not assumed.
+3. **One pipeline.** The live check and the offline comparison are the same code: recording, the port's run and
+   the comparison become streams, and the offline tools run them from files at full speed. Nothing compares
+   differently live, and the live mode is tested in CI by replaying recorded plays.
+4. **Everything is bounded:** the lag, the memory, the disk. When the checking can't keep up, it says so and falls
+   behind; it never makes the window wait, and never grows without bound.
+
+## 3. The decisions it rests on
+
+### 3.1 The person plays the original, not the port
+
+The original is the specification. Played, it reacts to the person, and the port is held to it. Played the other
+way round (the person plays the port, the original follows), the person reacts to the port's screen: at the port's
+first difference the person's next input means something else to the original (they turned because the port
+showed a wall the original doesn't have), and every tick after compares two different games. D124's reason holds:
+the port is compared with the play, not played. The port's playable side is still checked, by its `Live`
+(section 3.7), which is what playing the port exercises that a comparison doesn't.
+
+### 3.2 The checking runs in a second process: the follower
+
+The window could be instrumented itself (stop at each sync point, read the mapped state, stream it), with no second
+run. It isn't, because then the checking's cost is the person's: every stop, every read, every picture hashed
+comes out of the window's frame time, and a window that stutters changes how the person plays (Arena's combat is
+real time) and so the session. The follower costs a second emulator, which the machine has room for (8 logical
+cores; the window uses one and its sound thread). It must run faster than real time to keep up; step 0 measures
+whether it can, and the window instrumented is the fallback only if raw emulation can't (section 7, step 0).
+
+The follower is `clockwork serve` driven by rrc as a recording is now, given the play's inputs as the window
+writes them (the protocol's input at exact virtual times) and asked to run to the next tick, **never past the
+last mark**: input after it may still be coming, and a run past it would miss it and quietly become another game.
+That one rule is the follower's correctness; a test runs it against a play file written slowly, line by line.
+
+### 3.3 The follower proves it is the window's run
+
+Determinism makes the two runs the same; a bug in it (a device reading the host's clock, a window-only code path
+that touches the machine) would make every comparison after it meaningless while looking fine. So the window
+writes `# hash <cycle> <state hash>` every 30 s of play, and the follower, at that cycle, hashes its own and
+compares. A mismatch stops the check at once, says so plainly ("the follower's run left the window's at 4:30 of
+play: a Clockwork bug, D9"), and keeps the play file, which still replays (the window's run is the session). The
+state hash exists already (a trace's end line); its cost on the window is measured in step 0 and the period set
+so that no frame is late. At the end, the play's trace is the follower's, and re-recording the play
+(`rrc record --run`, D111) must give the same run hash: the final proof, run in CI on replays.
+
+### 3.4 One pipeline: streams everywhere
+
+Three things become streams, and the offline tools are rebuilt on them rather than beside them:
+
+- **Recording** (`trace::record`): ticks come out as they are made, to a sink (the trace file, the comparer or
+  both), and the input may be a play file still being written. A streamed recording of a finished session must
+  equal the batch one, byte for byte (its trace hash): the test of the change.
+- **The port's run** (`rrc_runtime`, `docs/formats.md`'s contract): the inputs file may be a pipe; the port reads a
+  tick's line when it needs it, and writes and flushes its own line, frame and sound for a tick before reading
+  further than the next tick's line (it needs that one: `Tick::next`, D143). rrc writes the inputs and reads the
+  port's lines on separate threads, so neither side's pipe filling up can deadlock the other. A port in another
+  language keeps working: reading a file to its end is reading a pipe that ends.
+- **The comparison** (`compare.rs`): one tick at a time, with its census kept as it goes (fields, screen, pictures
+  between ticks, sound, notes); `rrc compare` and `--lockstep` become this comparer fed from files. The test: all
+  58 of Arena's sessions, and every example's, give the same results as before the change.
+
+Two implementations (a live one and an offline one) would drift apart, and the live one, which runs only when the
+person plays, would be the one that is wrong. So there is one.
+
+### 3.5 The verdict is a free run, corrected where it differs
+
+Lockstep (D124) feeds the port the original's mapped state before every pass, so a difference in one pass doesn't
+spoil the next, and every difference is counted. A free run (the port on its own state, as it plays) is what
+"identical" means, and it alone tests what the mapping can't carry both ways exactly: pointers read as indexes
+(D72, D178), fields read as set or not (D178), unset fields (D102), and everything the port keeps that isn't
+mapped. Its weakness is the cascade: after the first difference, every tick differs.
+
+The live check does both in one: **the port runs free, and only where a tick differs are the differing fields fed
+back** to the original's values (D84's feed, for those fields from that tick on, until they match again by
+themselves). A play with no difference is then a pure free run, the strongest verdict; a play with differences
+counts each once where it arises, as lockstep would, without the cascade. A difference the feed can't correct
+(state that isn't mapped: the presentation's own, carried memory) recurs; it is said once with how many ticks it
+lasted, never once a tick. After a pass that took a path the port hasn't ported (its notes, D115), the whole
+mapped state is fed, since nothing the port holds is trusted then.
+
+This mode is new offline too (`rrc compare SESSION --corrected`), and its census must equal `--lockstep`'s on all
+58 sessions where the mapping is exact: a strong test of both.
+
+### 3.6 Bounded everything
+
+- **Lag:** the comparer shows how far behind it is. If the follower is slower than play, the lag grows and is
+  shown; the window is never waited on. When the play ends, the follower and the port finish what is left.
+- **Queues:** at most a few ticks between the follower and the comparer, and between the comparer and the port
+  (backpressure: a slow port slows the follower, never fills memory).
+- **Memory:** the follower keeps no snapshots in memory and runs no watches; the comparer holds the current tick
+  and the census; the port is the port. Step 0 measures the three processes and sets a ceiling (about 2 GB in
+  all on this 8 GB machine, D171's lesson); a test runs a long replay and checks that memory stays flat.
+- **Disk:** see section 4, "Storage".
+- **Priority:** the follower, the port and the comparer run below normal priority (on Windows,
+  `BELOW_NORMAL_PRIORITY_CLASS` when spawned), so the window keeps first call on the processor.
+
+### 3.7 The port's `Live` is checked at virtual time
+
+The port's input handling is a function from the devices and the clock to the boundary values a pass reads:
+the key states and queue its keyboard handler kept, the timer count its timer handler kept, the mouse its driver
+reported (D119, D133, D145). The check runs it on the play's own device events (the play file's keys and mouse at
+their cycles) and the virtual time of each of the original's sync points, and compares what it makes with what the
+original's pass read there. It needs the platform's clock to be a parameter (the host's when played, the
+play's when checked); with that, it is deterministic and runs offline too (`rrc compare SESSION --live`).
+
+What the pass itself wrote into its inputs (a key queue it emptied, D97) is given from the original's run, so the
+check tests the handlers alone, not the pass.
+
+A read in the middle of a pass (D93: Arena's FLC loop polls the key queue every frame) happens at a moment of the
+original's processor time, which the port doesn't model: a key that arrived between two of the original's reads
+may be seen one read earlier or later by the port. These are compared as the same events in the same order, not
+read by read, and a difference only in which read saw an event is said as "timing inside a pass", a class of its
+own, as a fleeting picture is (D181). Anything else (a key lost, doubled, the wrong timer count at a sync point) is
+a difference.
+
+## 4. The pitfalls, and what keeps each away
+
+Each with what would go wrong, what the design does, and how it is checked.
+
+**The runs**
+
+1. *The follower runs past input not yet written.* It would run without the person's next key and become another
+   game silently. → It never runs past the last `# at` mark (3.2). → A test writes a play file a line at a time
+   with pauses and checks the follower's trace equals the finished file's.
+2. *The window's and the follower's runs differ* (a nondeterminism bug, a window-only path touching the machine).
+   → State hashes every 30 s (3.3); the final re-recording's run hash. → CI replays; a test that makes a machine
+   differ on purpose and sees the check stop.
+3. *Different builds.* The window and the follower from different Clockwork builds would differ for no reason in
+   the game. → Both are the same executable, and the follower's `hello` source hash is checked against the
+   window's, written in the play file's header.
+4. *Different starts.* → Both load the same snapshot by its hash (or both start at power-on on the same folder,
+   D170); the play file names it.
+5. *Shared files between the runs.* If the window's saved games reached the follower's drive, the follower would
+   load a save the window made later. → The original's file writes are the machine's state (Clockwork's
+   `changed_files`, D131), so each run has its own; step 0 confirms it with a save made during a test play. The
+   person's game folder is never written: both runs use the session's folder from the cache (D170).
+6. *Input marks too coarse.* `# at` every emulated second puts the follower a second behind at best. → Every
+   100 ms of play (a setting); the file grows by a few lines a second.
+7. *A mark written before its inputs are flushed.* → The window writes and flushes the inputs, then the mark
+   (as it does now); the follower reads only complete lines up to the last mark. On Windows the file is shared
+   for reading while written (Rust's default sharing allows it), checked by the line-at-a-time test on Windows CI.
+
+**Speed and the machine**
+
+8. *The follower slower than play.* D124 measured recording at about real time on the dungeon: it would fall
+   behind for good. → Step 0 finds where the time goes (the per-tick protocol round trips, the data segment read
+   every tick, every refresh hashed and compressed, the call tracker) and makes the follower at least twice as
+   fast as play on the dungeon, the heaviest stretch, before anything else is built. If raw emulation can't reach
+   that, the fallback is the window instrumented (3.2), decided then with the person.
+9. *The checking makes the window stutter.* → Separate processes, lower priority (3.6); step 0 measures the
+   window's frame pacing with the checking running against without, and M6.5's gate holds it to the same.
+10. *Memory on an 8 GB machine.* → The ceiling and the flat-memory test (3.6). A watch or an analysis tool is never
+    run during a play.
+11. *A long pass.* A cinematic or the start-up is one pass of minutes; its tick, and so its comparison, comes at
+    its end. → The status line says the pass is going on ("in a pass: 1:10 so far"); nothing is late, there is no
+    tick yet.
+
+**The port**
+
+12. *The port panics.* → The comparer reports the panic with its tick and the port's message, starts the port
+    again from the original's state at the next tick (a transplant, made from the follower's machine: no snapshot
+    needed), and goes on. Counted in the census.
+13. *The port hangs* (a gated wait it goes round for ever, D143's case). → A time limit per tick (generous: ten
+    times the slowest tick seen); past it, as a panic.
+14. *The port's code changes during the play* (the agent builds while the person plays). → Built before the
+    window opens, as `rrc play` does; D167 refuses a run whose code changed under it.
+15. *The knowledge changes during the play* (the mapping, sync points, edited by the agent). → Read once at the
+    start; the play's session records the knowledge's hash, as a recording does.
+16. *Pipes deadlock.* → Writing inputs and reading the port's output on separate threads; bounded queues (3.4).
+
+**What is compared**
+
+17. *A cascade after the first difference* drowning everything after it. → The corrected free run (3.5).
+18. *A difference said every tick.* → Each is said once, when it starts, with how long it lasted when it ends;
+    the census counts the rest.
+19. *Play outside what the port covers* (towns, the outdoors: paths not ported). → Said once by what the port
+    noted ("towns: not ported, from 12:40"), not as differences; the state fed whole after each such pass (3.5).
+    At the start, the port's scope is said in a line.
+20. *Pictures between ticks and sound*: the same rules as offline (D180, D181, D108), since it is the same code.
+21. *Timing inside a pass* in the `Live` check: a class of its own (3.7), never mixed with real differences.
+22. *Quirks*: comparisons keep every quirk (§6.5); so does the live check. A switch is tried offline on the play's
+    session afterwards (`rrc compare NAME --fix`).
+
+**Storage**
+
+23. *Pictures fill the disk.* A recording keeps every picture the display showed that differs from the one before
+    (`cell`'s start-up pass alone: 456 of its 3616 refreshes), and a long play shows tens of thousands; step 0
+    measures how many an hour of the dungeon keeps. → A live play's trace keeps the
+    screens at sync points (each tick's, which the comparison needs) and, between ticks, the pictures' hashes
+    only; the pictures themselves are kept around a difference, for its report. Any other is made again on
+    demand by running from the nearest snapshot, which determinism allows. This changes what a trace promises,
+    so it is a decision of its own (step 1).
+24. *Snapshots fill the disk.* Every 10 emulated seconds (D51) is 180 for a half hour. → Every 60 s in a live
+    play (a setting), and one at the tick of each difference.
+25. *Not enough room to start.* → The free space is checked against step 0's measure per hour of play, and the
+    play refused with a plain message if it is short. (The cache is 3.1 GB today for Arena's 58 sessions.)
+26. *The trace held in memory.* → Written to a file as it grows, hashed and moved into the cache at the end.
+
+**Failure and recovery**
+
+27. *rrc dies, or the machine does, mid-play.* → The play file is the truth and is complete up to its last mark;
+    `rrc play NAME --resume` (or the offline comparison) does everything again from it at full speed, without
+    the window. Nothing the check made is needed to recover.
+28. *The person closes the window, or quits the game to DOS.* → The play ends at the program's end or the
+    window's close; the follower and the port finish what is left; the session is saved.
+
+**The person**
+
+29. *Too much to read while playing.* → One status line, rewritten every second, and a line per new difference
+    (section 5). No sound, no window of the check's own unless asked for.
+30. *Not knowing what a difference means.* → Each says its tick, the play's time ("at 4:12"), the field and both
+    values; the end report gives the next moves (D159), on the play's session.
+
+## 5. What the person sees
+
+```
+live      arena-walk: the original from power-on; the port follows (built), its scope: the menus, the
+          creation, the first dungeon
+window    play in it; close it to stop
+live      0:42 played · tick 85 · 0.4 s behind · all matching
+new       at 3:51 (tick 612): player.fatigue 140, the port 139: once, matching again at tick 613
+new       at 7:05 (tick 1190): the screen, 312 pixels in (64, 40)-(250, 120), 6 ticks
+live      12:40: a town, which the port doesn't port (what it noted): its differences counted, not said, until
+          the play is back in what the port covers
+play      arena-walk: 25:10 played, 3970 ticks, 2 differences, 0 panics, the runs the same (8 hashes)
+next      rrc compare arena-walk --transplant 611: player.fatigue at tick 612, with who wrote the original's value
+```
+
+`--show-port` opens the port's frames in a second window, silent, as the comparer reaches them (a little behind
+the play): to see a difference rather than read it. Off by default: it costs a core.
+
+The play is one session (`sessions/NAME`), its trace recorded by the follower, investigated like any other.
+
+## 6. Contracts that change
+
+- **The play file** (`clockwork play --record`, `docs/formats.md`): marks every 100 ms (a setting), `# hash
+  <cycle> <hash>` lines, and the header names the snapshot and Clockwork's source hash.
+- **The protocol** (`docs/protocol.md`): "run to the next tick, but not past cycle C", if the present requests
+  can't say it; and input given while a run is paused, which they can. A new revision if anything changes.
+- **A port's run** (`docs/formats.md`): the inputs may arrive line by line; a tick's line, frame and sound are
+  flushed before the port reads past the next tick's line; corrections (fed fields) may begin at any tick, as
+  `fed` values already do (rrc-inputs version 2).
+- **Traces:** pictures between ticks may be kept by hash alone (pitfall 23).
+- **The platform:** `Live`'s clock is a parameter (3.7).
+- **D124** is superseded: a play is followed continuously, as one session, instead of in parts.
+
+## 7. The steps
+
+Each ends with its test, and the next starts only when it holds.
+
+0. **Measure** (before any design detail is final). On Arena's dungeon and the cinematic: raw emulation speed
+   against play; where a recording's time goes; the window's frame pacing alone and with a second emulator
+   running; the state hash's cost; memory of each process; disk per hour of play. Gate: a plan to make the
+   follower at least twice as fast as play, or the fallback chosen with the person.
+1. **Make the follower fast**, by what step 0 found. Gate: twice play's speed on the dungeon; traces unchanged
+   (their hashes), or changed by a decision (pitfall 23).
+2. **Streaming recording** from a growing play file, never past its last mark, with state hash checks. Gate:
+   streamed equals batch on every session; the line-at-a-time test; the deliberate-nondeterminism test.
+3. **Streaming port runs** (runtime, contract). Gate: every example and Arena's sessions give the same port
+   traces through a pipe as from a file.
+4. **The streaming comparer**, with `rrc compare` rebuilt on it, then the corrected free run. Gate: all 58
+   sessions' results unchanged; `--corrected` equals `--lockstep` where the mapping is exact.
+5. **`rrc play` live:** the window, the follower, the port and the comparer together; priorities, bounded
+   queues, lag, panics and hangs, the status line, `--resume`. Gate: a flow test replays a recorded play of
+   the toy and the vault through the whole pipeline at full speed, and a test port with a planted bug is caught
+   at the right tick; memory stays flat over a long replay.
+6. **The `Live` check** (3.7): the platform's clock a parameter, `--live` offline, then live. Gate: the
+   examples' `Live` against their originals; Arena's against `cell` and the dungeon session, with every
+   difference either fixed in the port or classed as timing inside a pass.
+7. **The person plays** (section 8).
+
+## 8. Done when
+
+The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the
+first dungeon, with the port alongside, and:
+
+- every difference is said within two seconds of its tick (the lag never above two seconds on the dungeon);
+- the window's frame pacing is the same as without the check;
+- the runs are proved the same throughout (every state hash, and the re-recording's run hash);
+- the live census equals the offline comparison's of the same session;
+- the port's `Live` makes the original's boundary values at every tick, but for differences classed as timing
+  inside a pass;
+- and the same pipeline, replaying recorded plays, passes in CI.
+
+## 9. Considered and not chosen
+
+- **The person plays the port, the original follows** (3.1): the comparison stops meaning anything at the first
+  difference.
+- **The window instrumented** (3.2): the person pays for the checking. The fallback if step 0 says the follower
+  can't keep up.
+- **Shorter parts** (D124 with `--every 5`): still a recording per part and a lockstep per part, a snapshot each,
+  and every part a session; the seams and the overhead remain, the lag only shrinks.
+- **Lockstep alone** (3.5): never says "identical" for the free run the person actually plays.
+- **Comparing live in the port's process** (the port reading the original's trace itself): the port would carry
+  the comparison, which belongs to the toolkit, and a port in another language would need it too.
+
+## 10. What is the person's to decide
+
+- **Accepting M6.5** as a milestone between M6 and M7, with section 8 as its done-when.
+- **The fallback** if step 0 finds the follower can't run twice as fast as play: the window instrumented (the
+  person's play pays a little), or the lag accepted.
+- **The `Live` check** (3.7, step 6) inside M6.5, or after it: it is the half that tests the playable port.
+- **How much disk** a play may take (pitfalls 23 to 25), once step 0 has measured it.

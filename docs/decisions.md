@@ -764,6 +764,36 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D184. M6.5: the port compared live while the person plays the original. Open, proposed 2026-11-16; for the person.
+The plan is `docs/plans/live-comparison.md`. The person plays the original in Clockwork's window, as today. A second
+Clockwork, the follower, runs the same play as the window writes it, never past its last mark, and checks with state
+hashes that its run is the window's. The port runs alongside in its comparison run, on its own state, and only the
+fields of a tick that differs are fed back. Recording, the port's run and the comparison become one streaming
+pipeline, which the offline tools use too. The port's own input handling (`Live`) is checked against the original's
+boundary values at virtual time. The plan lists thirty pitfalls and what keeps each away, the steps with their gates
+(measurement first) and M6.5's done-when. It waits for the person on four points: the milestone itself, the fallback
+if the follower can't run twice as fast as play, whether the `Live` check is part of M6.5, and how much disk a play
+may take.
+**Why:** the person asked for it when closing M6 (D183): a real-time comparison, the port running alongside the
+person's play. D124 compares a play in parts of a minute, each recorded again at about the speed of play: a
+difference is said minutes after it happened, and the follow-up can fall behind for good.
+
+### D183. M6 is done: Arena's port faithful and playable, its 58 sessions matching in every field, frame and sound. Accepted 2026-11-16, with the person.
+M6 closes, as the person said, with its test passing and its open points done but two that no session reaches:
+- The toolkit compares frames and sound and locates a difference (D107, D108, D113), and compares the pictures
+  between ticks (D180 to D182). It has the presentation's seams and the actions seam (D162), and a platform that
+  plays a port in a window with sound (D119, D168, D169), from a start folder or from power-on (D120, D141).
+- Arena's port matches all 58 sessions in every mapped field, frame and sound (digitized and OPL), the first from
+  power-on to its end. The pictures between ticks match too: the intro's 137, the story's 52 and the cinematic's
+  298. It plays live from power-on, through the intro, the menus, the creation and the cinematic, into the first
+  dungeon, with the original's music driver (Miles' AIL 2, D174 to D179).
+
+Left out: the songs of the towns and the outdoors, and the game menu's music volume. No session reaches them, and
+each is made when one does.
+**Why:** this meets docs/design.md §12's M6 row (a port's frames and sound events compared with the original's,
+a difference located; Arena's dungeon port playing in a window with sound, its frames matching through the
+session) and D161's music and actions seam. The person closed M6 and asked for a live comparison next (D184).
+
 ### D182. The start-up's pass's pictures are compared too. Accepted 2026-11-16.
 From power-on, the presentation is asked for the pictures the start-up's pass showed (its pass named `power-on`),
 before the first tick's screen, and the comparison takes them as D180 takes a pass's.
