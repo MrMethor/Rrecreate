@@ -200,12 +200,12 @@ the game does left the register, D163).
   sessions match in every field, frame and sound**, the first from power-on to its end, and since D180 the pictures
   a pass shows between its ticks where the port draws them: the cinematic's 298, its FLC as Arena's own player
   decodes it and the narration's pages over it, are all among the original's, in order, and the new game's story's
-  52 before the creation (one shown for less than a refresh, D181). Both play live too, at the ticks of waits of
-  their own, the narration paced by the sound.
+  52 before the creation (one shown for less than a refresh, D181), and since D182 the start-up's intro before the
+  main menu, its 137 pictures (two FLCs, the title, the quote, the scroll's pages) in the start-up's pass. All play
+  live too, at the ticks of waits of their own, the narration paced by the sound.
 
 **Next:** M6's open points are done but the music of the places the first dungeon doesn't reach (towns, the
-outdoors: no session has them) and the start-up's intro before the main menu, whose pictures fall in the start-up's
-pass, which the pictures between ticks don't reach yet; closing M6 is the person's call (below); then M7.
+outdoors: no session has them); closing M6 is the person's call (below); then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).
