@@ -764,6 +764,26 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D186. M6.5's step 0: emulation keeps twice the pace of play; what a recording tracks is made cheap, not the window instrumented. Accepted 2026-11-16.
+Measured on Arena (`docs/plans/live-comparison.md`, "What step 0 found"): Clockwork's emulation alone runs the
+first dungeon at 2.2x the pace of play (2.15x at its slowest stretch) and the stretch from power-on at 2.95x; a
+recording's run, 0.93x and 1.01x, and `rrc record` as a whole 0.74x and 0.93x. The difference is what a recording
+tracks, and most of it is cost, not need: the hooks' check asks the expensive question first, the late reads'
+watch checks one wide range, the call tracker works at every instruction, and a recording's snapshot brings its
+call tracker into any run from it, the window's included (8.8 ms a frame with it, 6.6 without, of 14.3). Step 1
+makes the follower fast by those six changes, in the plan's order; the interpreter's own speed comes after, if the
+follower is still under 2x. The window keeps its budget with a follower beside it (7.0 ms a frame, 0.3% of frames
+over). A play takes about 0.6 GB of disk an hour at most with the live settings. Two measuring aids stay: rrc
+writes each request to Clockwork and its time to the file `RRC_PROTOCOL_LOG` names, and `clockwork/tools/speed/`
+replays such a log with what is tracked left out, times the window's frames, samples Clockwork's own time, and
+counts what a trace keeps on disk.
+**Why:** the plan's step 0 gate (a plan to make the follower twice as fast as play, or a fallback chosen with the
+person). The numbers say no fallback is needed yet: the gap is in what tracking costs, which step 1 removes, and
+every recording gains from it too (Arena's 58 sessions take about 1.5 hours to record). The window instrumented
+was the fallback (section 3.2); step 0 found a third (section 10), which the person chooses between only if step 1
+falls short.
+**Extends:** D184.
+
 ### D185. What the outside sources say is kept as digests and printed where a move is chosen. Accepted 2026-11-16, at the person's word.
 Each outside source kept has a digest, `notes/sources/NAME.md`: what it says in the agent's own words, a heading a
 subject and a line a fact, with where in the source; `rrc sources add` starts it, and the survey's gate (stage 1)

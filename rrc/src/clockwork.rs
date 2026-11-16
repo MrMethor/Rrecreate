@@ -22,6 +22,9 @@ pub struct Clockwork {
     input: ChildStdin,
     output: BufReader<ChildStdout>,
     next_id: u64,
+    /// `RRC_PROTOCOL_LOG`: each request, how long its answer took and how long the answer was, a JSON line each,
+    /// appended; to measure where a run's time goes and to replay its requests (M6.5's step 0).
+    log: Option<std::fs::File>,
 }
 
 impl Clockwork {
@@ -37,7 +40,12 @@ impl Clockwork {
             .map_err(|e| format!("{}: {e}", exe.display()))?;
         let input = child.stdin.take().expect("a piped input");
         let output = BufReader::new(child.stdout.take().expect("a piped output"));
-        let mut clockwork = Clockwork { child, input, output, next_id: 1 };
+        let log = std::env::var_os("RRC_PROTOCOL_LOG")
+            .filter(|path| !path.is_empty())
+            .map(|path| std::fs::OpenOptions::new().create(true).append(true).open(&path))
+            .transpose()
+            .map_err(|e| format!("RRC_PROTOCOL_LOG: {e}"))?;
+        let mut clockwork = Clockwork { child, input, output, next_id: 1, log };
         let hello = clockwork.hello().map_err(|e| format!("{}: {e}", exe.display()))?;
         compatible(&hello).map_err(|e| format!("{}: {e}", exe.display()))?;
         Ok(clockwork)
@@ -57,11 +65,17 @@ impl Clockwork {
         request["op"] = json!(op);
         request["id"] = json!(self.next_id);
         self.next_id += 1;
+        let asked = std::time::Instant::now();
         writeln!(self.input, "{request}").and_then(|()| self.input.flush()).map_err(|e| format!("clockwork: {e}"))?;
         let mut line = String::new();
         let n = self.output.read_line(&mut line).map_err(|e| format!("clockwork: {e}"))?;
         if n == 0 {
             return Err(format!("clockwork stopped during {op}"));
+        }
+        if let Some(log) = &mut self.log {
+            let ms = asked.elapsed().as_secs_f64() * 1000.0;
+            let entry = json!({ "ms": ms, "answer": n, "request": request });
+            writeln!(log, "{entry}").map_err(|e| format!("RRC_PROTOCOL_LOG: {e}"))?;
         }
         let answer: Value = serde_json::from_str(&line).map_err(|e| format!("clockwork answered {line:?}: {e}"))?;
         match answer.get("error").and_then(Value::as_str) {

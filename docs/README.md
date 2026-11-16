@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-16 (decisions to D185). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-16 (decisions to D186). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -165,12 +165,14 @@ plays the original and the port runs alongside, every difference said within a s
 emulator follows the play and proves its run the window's. The port runs on its own state, corrected only where it
 differs. Recording, the port's run and the comparison become one streaming pipeline, used offline too, and the
 port's own input handling is checked against the original's. The plan lists the pitfalls and what keeps each
-away. Its first step is under way: measuring whether a second emulator can follow the play fast enough, what it
-costs the window, and what a play takes in memory and disk. Then M7.
+away. Its first step measured it (D186): Clockwork's emulation alone runs Arena at more than twice the pace of
+play, and what a recording tracks brings it under, mostly by cost rather than need; the window keeps its frame budget
+with a second emulator beside it; a play takes about 0.6 GB of disk an hour at most. Next, step 1: tracking made
+cheap (six changes, every recording gaining from them), then measured again. Then M7.
 
-**The person's calls ahead:** M6.5's two points that wait for the measurement (the fallback if the follower is too
-slow, and how much disk a play may take; the plan's section 10); the game M9 is run on, which stays out of the
-toolkit's development until then (D71).
+**The person's calls ahead:** M6.5's fallback, only if step 1 leaves the follower under twice the pace of play,
+and the disk a play may take (the plan's section 10); the game M9 is run on, which stays out of the toolkit's
+development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
 `notes/handoff.md` says how to pick it up).

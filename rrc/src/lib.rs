@@ -281,7 +281,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
 Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/, mapping.toml,
 quirks.toml, sources.toml, RULES.md (docs/formats.md).
 Environment: RRC_CLOCKWORK (the clockwork program), RRC_CACHE (the cache folder), GHIDRA_INSTALL_DIR and
-JAVA_HOME (for analysis).";
+JAVA_HOME (for analysis), RRC_PROTOCOL_LOG (a file each request to Clockwork is appended to, with how long its
+answer took).";
 
 /// The command line.
 pub fn main() -> ExitCode {

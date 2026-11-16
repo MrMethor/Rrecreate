@@ -327,6 +327,70 @@ Each ends with its test, and the next starts only when it holds.
    difference either fixed in the port or classed as timing inside a pass.
 7. **The person plays** (section 8).
 
+### What step 0 found (2026-11-16, D186)
+
+Measured on the person's machine (Intel i5-8300H: 4 cores, 8 threads; 8 GB) with two of Arena's sessions:
+`dungeon`, 157 s of play in the first dungeon (the heaviest stretch), and `cell`, 465 s from power-on (the intro,
+the menus, the creation, the new game's story, the cinematic, the first minutes in the dungeon). The method:
+`RRC_PROTOCOL_LOG` writes each request rrc makes to Clockwork, with how long its answer took, while a session is
+recorded; the log is then replayed against `clockwork serve` with each thing a recording tracks left out, the
+window's emulation is timed frame by frame, and a sampling profiler says where Clockwork's own time goes. The
+scripts are in `clockwork/tools/speed/` (Clockwork's manual, "Measuring speed").
+
+**Speed, against play:**
+
+| | `dungeon` | `cell`, from power-on |
+|---|---|---|
+| `rrc record`, all of it | 0.74x (213 s for 157 s) | 0.93x (501 s for 465 s) |
+| Clockwork as a recording runs it | 0.93x on its first 64 s; its slowest 10 s 0.78x | 1.01x; the new game's story 0.71x, the cinematic 1.03x |
+| Clockwork, emulation alone | 2.2x on its first 64 s | 2.95x; its slowest 10 s (in the dungeon) 2.15x; the story 2.36x, the cinematic 3.3x, the intro 6.2x |
+
+**Where a recording's time goes** (the dungeon's first 64 s of play: 68.7 s as recorded, 28.9 s emulation alone):
+the late reads' watch 13.9 s, the hooks' entries 9.0 s, the reads of the state 7.7 s, the pictures between ticks
+5.4 s, the call tracker 4.6 s and more; the screen at each tick and the data segment little. They overlap: all
+together cost 40 s. The profile says why. The hooks' check asks at every instruction whether it runs in an interrupt
+handler before it asks whether the instruction is a hook's; the late reads' watch sends every access between its
+lowest source and its highest down the slow path; the call tracker works at every instruction; a recording's snapshot
+brings its call tracker along (for watches from it), so a run from one tracks calls with nothing asking. Of emulation
+alone, the instruction interpreter is about 60%, and EMS page mapping 7.5% (a 16 KB page copied out and in, byte by
+byte, at each mapping). rrc's own work is 28 s of the dungeon's 213: the answers' 365 MB parsed (most of it the data
+segment kept at every tick, D92) and the pictures written. Whole-program optimisation (LTO, one codegen unit) gains
+nothing.
+
+**The window** (each 70 Hz frame's emulation against its 14.3 ms, in the dungeon): from a recording's snapshot, as
+`rrc play --from` starts it, 8.8 ms on average, 13.0 at the 99th percentile, 0.3% of frames over; that is the call
+tracker the snapshot brought: without it 6.6 ms, 10.5, none over. With a follower running beside it, 7.0 ms, 12.8,
+0.3% over (with the tracker, 9.4 ms and 2.3%). Below-normal priority changes nothing: what the follower takes is the
+shared processor (its turbo, its caches), not the window's time. A state hash takes 9 ms: once every 30 s on the
+window, one frame in 2100 a few milliseconds late.
+
+**Memory:** Clockwork 180 MB recording the dungeon, 394 MB recording from power-on (a long pass's pictures are held
+until its tick); rrc 131 and 259 MB. Three processes stay well under the 2 GB of section 3.6.
+
+**Disk:** as recordings keep a run today, about 0.9 GB an hour of the dungeon (snapshots 380 MB, pictures 370, the
+trace 160) and 1.1 GB of the start-up's stretch (its pictures between ticks 750 MB: the story, the cinematic). With
+section 4's live settings (a snapshot every 60 s, pictures between ticks by their hash): about 0.6 GB an hour of the
+dungeon, whose pictures are nearly all its ticks' screens, and 0.3 GB of the start-up's. Twenty minutes of play: 0.2
+to 0.35 GB. The disk has 37 GB free.
+
+**The plan for step 1.** Emulation alone keeps more than twice the pace of play (2.15x at its slowest); what a
+recording tracks brings it under, and most of that is cost, not need. In the order of what it gains:
+
+1. The hooks' entries: the address first; the handler question only at a hook.
+2. The late reads: each source's own spans (a map of the pages they are on), not one range from the lowest to the
+   highest.
+3. The call tracker: its work only where the stack pointer moved; off in the follower where nothing it runs needs
+   it; and the window without the one a snapshot brings.
+4. EMS: a page mapped by copying it whole.
+5. The reads through pointers in the tick's own request; no data segment kept by the follower (D92 is for
+   recordings, so items can be added later without a run).
+6. Pictures between ticks by hash in a live play (pitfall 23).
+
+Estimated, the follower then runs the dungeon at about 1.7x. The rest of the way to 2x is the interpreter's (its
+checks at each instruction, its decoding), measured again after 1 to 6. A change to the machine's code, as opposed
+to an analysis tool's file (D173), changes Clockwork's source hash: step 1 ends with every session recorded again,
+each trace's hash unchanged, which is its gate.
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the
@@ -355,8 +419,12 @@ first dungeon, with the port alongside, and:
 ## 10. What is the person's to decide
 
 Decided 2026-11-16: M6.5 accepted, with section 8 as its done-when, and the `Live` check (3.7, step 6) inside it.
-Waiting for step 0's numbers:
+Step 0 measured the rest (section 7, "What step 0 found"):
 
-- **The fallback** if step 0 finds the follower can't run twice as fast as play: the window instrumented (the
-  person's play pays a little), or the lag accepted.
-- **How much disk** a play may take (pitfalls 23 to 25).
+- **The fallback**, only if step 1 leaves the follower under twice the pace of play: the window instrumented (the
+  person's play pays a little), the lag accepted, or a third way step 0 opened: since emulation alone runs at more
+  than twice the pace, one plain follower keeps up with the window and saves a snapshot every 20 s or so, and the
+  tracking runs from those snapshots on the processor's other cores, a stretch each; the window stays untouched,
+  and the lag is at most what a stretch falls behind (about 1.5 s at today's 0.93x).
+- **How much disk** a play may take: about 0.6 GB an hour at the most with the live settings, 0.2 to 0.35 GB for the
+  twenty minutes of section 8. Proposed: a play is refused when less than an hour's worth is free.
