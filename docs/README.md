@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-16 (decisions to D180). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-16 (decisions to D181). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |

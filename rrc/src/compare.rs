@@ -301,9 +301,10 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         }
         if let Some(names) = v["between"].as_array().filter(|n| !n.is_empty()) {
             let names: Vec<&str> = names.iter().filter_map(Value::as_str).collect();
-            if let Some(miss) =
-                between.check(t, &trace.ticks[(t - 1) as usize], &names, &work.join("frames"), &cache)?
-            {
+            let fleeting: Vec<&str> =
+                v["fleeting"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let tick = &trace.ticks[(t - 1) as usize];
+            if let Some(miss) = between.check(t, tick, &names, &fleeting, &work.join("frames"), &cache)? {
                 drawn = Some((t, miss.diff.clone()));
                 missed = Some(miss);
                 break;
@@ -467,6 +468,15 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                         between.shown
                     ),
                 );
+                if between.unseen > 0 {
+                    say(
+                        "between",
+                        format!(
+                            "{} of them shown for less than a refresh, which the display didn't show",
+                            between.unseen
+                        ),
+                    );
+                }
             }
             if sounding {
                 let unmade: Vec<&str> = SOUND_DEVICES.iter().map(|(d, _)| *d).filter(|d| !made.contains(d)).collect();
@@ -659,6 +669,8 @@ struct Between {
     passes: usize,
     pictures: usize,
     shown: usize,
+    /// The port's pictures shown for less than a refresh that the display didn't show (D181).
+    unseen: usize,
 }
 
 /// A picture the port showed between ticks that isn't among the original's from where the last was: which (of how
@@ -680,6 +692,7 @@ impl Between {
         t: u64,
         tick: &crate::trace::Tick,
         names: &[&str],
+        fleeting: &[&str],
         frames: &std::path::Path,
         cache: &Cache,
     ) -> Result<Option<Missed>, String> {
@@ -718,6 +731,8 @@ impl Between {
             }
             match found {
                 Some(i) => from = i + 1,
+                // Shown for less than a refresh (D181): the display may have shown none of it.
+                None if fleeting.contains(name) => self.unseen += 1,
                 None => {
                     let nearest = nearest.map_or(from.min(originals.len().saturating_sub(1)), |(i, _)| i);
                     let original = originals.get(nearest).map(|h| self.decoded[*h].clone());
@@ -2305,9 +2320,14 @@ mod tests {
             std::fs::write(frames.join(name), picture(v).encode()).unwrap();
         }
         let mut between = Between::default();
-        assert!(between.check(1, &tick, &["a.frm", "b.frm"], &frames, &cache).unwrap().is_none());
+        assert!(between.check(1, &tick, &["a.frm", "b.frm"], &[], &frames, &cache).unwrap().is_none());
         assert_eq!((between.passes, between.pictures, between.shown), (1, 2, 4), "the repeat counted once");
-        let missed = between.check(1, &tick, &["b.frm", "c.frm"], &frames, &cache).unwrap().expect("2 after 3");
+        // One shown for less than a refresh may be missing (D181).
+        assert!(between.check(1, &tick, &["a.frm", "c.frm", "b.frm"], &["c.frm"], &frames, &cache).unwrap().is_none());
+        assert_eq!(between.unseen, 0, "2 is there, after 1");
+        assert!(between.check(1, &tick, &["b.frm", "c.frm"], &["c.frm"], &frames, &cache).unwrap().is_none());
+        assert_eq!(between.unseen, 1, "2 after 3: fleeting, passed over");
+        let missed = between.check(1, &tick, &["b.frm", "c.frm"], &[], &frames, &cache).unwrap().expect("2 after 3");
         assert_eq!((missed.picture, missed.from, missed.shown), (1, 4, 4), "none left after the 3 it matched");
         std::fs::remove_dir_all(&dir).ok();
     }

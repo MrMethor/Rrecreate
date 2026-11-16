@@ -754,7 +754,7 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
                 let name = format!("{}-{n}.frm", line.tick);
                 let path = std::path::Path::new(dir).join(&name);
                 std::fs::write(&path, s.frame.encode()).map_err(|e| format!("{}: {e}", path.display()))?;
-                between.push(name);
+                between.push((name, s.refreshes));
                 last = Some(s.frame);
             }
         }

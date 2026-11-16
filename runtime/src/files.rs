@@ -324,7 +324,7 @@ impl TraceWriter {
         tick: u64,
         state: Value,
         frame: Option<&str>,
-        between: &[String],
+        between: &[(String, u32)],
         sound: Option<Value>,
         overrode: &Map<String, Value>,
         notes: &BTreeMap<String, u64>,
@@ -345,7 +345,12 @@ impl TraceWriter {
             line["frame"] = json!(frame);
         }
         if !between.is_empty() {
-            line["between"] = json!(between);
+            line["between"] = json!(between.iter().map(|(name, _)| name).collect::<Vec<_>>());
+            // Those shown for less than a refresh (D181).
+            let fleeting: Vec<&String> = between.iter().filter(|(_, r)| *r == 0).map(|(name, _)| name).collect();
+            if !fleeting.is_empty() {
+                line["fleeting"] = json!(fleeting);
+            }
         }
         if let Some(sound) = sound.filter(|s| s.as_object().is_some_and(|o| !o.is_empty())) {
             line["sound"] = sound;

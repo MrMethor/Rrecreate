@@ -179,7 +179,8 @@ pub trait Presentation<S: Shows>: Default {
     }
 }
 
-/// A picture a pass showed between sync points (D180), and for how many of the display's refreshes (70 a second).
+/// A picture a pass showed between sync points (D180), and for how many of the display's refreshes (70 a second): 0,
+/// less than one (the next drawn straight after it), which the display may never show (D181).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
     pub frame: Frame,

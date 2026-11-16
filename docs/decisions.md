@@ -764,6 +764,14 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D181. A picture shown for less than a refresh may be missing from the original's. Accepted 2026-11-16.
+A presentation says a picture between ticks was shown for 0 refreshes where the next drawing follows it at once (an
+FLC's last frame before a dissolve begins); the runtime names it in the tick's `fleeting`, and the comparison passes
+over such a picture when none of the original's pictures is it, and says how many it passed over.
+**Why:** the original's pictures are its display's refreshes: one drawn and overwritten within a refresh is never
+among them (Arena's story: `scroll.flc`'s last frame, then `intro01.img` dissolving over it from the next instant).
+Only the port knows a picture's time; it says so, and every other picture must still be found.
+
 ### D180. The pictures a pass shows between its sync points are compared where the port draws them. Accepted 2026-11-16.
 A presentation may give the pictures a pass showed before its tick's (`Presentation::between`: each a frame and how
 many of the display's refreshes it stays). The runtime writes each that changed from the last; `rrc compare` takes

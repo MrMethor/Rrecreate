@@ -743,7 +743,9 @@ inputs and the trace are JSON lines.
   the original's screen pixel by pixel and colour by colour. The pictures the pass showed before the tick's, where
   the presentation draws them (`Presentation::between`, D180), are `DIR/<tick>-<n>.frm`, each one that changed from
   the last, and the tick's line names them in order: `{"tick":95,…,"between":["95-0.frm","95-1.frm"]}`; each must be
-  one of the original's pictures in that pass (its `frames`), in order, the others passed over.
+  one of the original's pictures in that pass (its `frames`), in order, the others passed over. Those the
+  presentation showed for less than a refresh (0 refreshes) are named again in `"fleeting"`: one the original's
+  display never showed is passed over (D181).
 - **Presentation's state** (`--presentation`, written by `rrc` at a transplant or a resume when `mapping.toml`
   has `[[present]]`, D110): `{"format":"rrc-presentation","version":1,"session":"play","tick":200,
   "state":{"drawn.blink":7}}`, each item's value at the tick (read from the session's snapshots, as `rrc peek`
