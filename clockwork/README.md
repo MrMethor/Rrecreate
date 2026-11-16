@@ -153,7 +153,9 @@ recording tracks left out, one thing at a time; `stretches.py` gives the speed o
 slowest; `pacing.py` times the window's emulation frame by frame, alone or with a follower beside it; `sampler.py`
 samples where Clockwork's own time goes (Windows, no admin; a build with
 `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` gives source lines); `logsum.py` sums a log by request, and
-`disk.py` counts what a recorded trace keeps on disk. Each script's head says how to run it.
+`disk.py` counts what a recorded trace keeps on disk; `rerecord.py` records every session of a port again, each
+after its base, and says whether each trace came out the same (after a change to Clockwork that should change nothing
+it records). Each script's head says how to run it.
 
 ## The test games
 

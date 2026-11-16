@@ -558,6 +558,22 @@ impl Bus for PcBus<'_> {
     }
 }
 
+/// An input device's state as bytes ([`Machine::device_bytes`]): in a buffer of the largest device's size, the first
+/// `len` its.
+#[derive(Clone, Copy)]
+pub(crate) struct DeviceBytes {
+    bytes: [u8; crate::mouse::STATE_SIZE],
+    len: usize,
+}
+
+impl std::ops::Deref for DeviceBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Machine {
     pub cpu: Cpu,
@@ -685,12 +701,16 @@ impl Machine {
         self.cpu.flush_code_cache();
         // Analyses are set up between runs: whether any is on is decided once.
         let syncs = !self.syncs.is_empty();
+        // The probes that look at each access go through the probing bus; the call tracker alone looks at the
+        // instruction before and after, and runs on the plain bus (M6.5's step 1, D187).
         let probes = self.probes.contracts.is_some()
             || self.probes.watch.is_some()
             || self.probes.bounds.is_some()
-            || self.probes.uninit.is_some()
-            || self.probes.late.is_some()
-            || self.probes.calls.is_some();
+            || self.probes.uninit.is_some();
+        // Late reads alone (a recording's case) have a bus of their own.
+        let late_only = !probes && self.probes.late.is_some();
+        let probes = probes || self.probes.late.is_some();
+        let entries = self.probes.entries.as_deref().map_or(0, |e| e.mask);
         loop {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
@@ -756,8 +776,11 @@ impl Machine {
             if self.probes.exec_watch.is_some() {
                 self.watch_exec();
             }
-            if self.probes.entries.is_some() {
-                crate::probe::watch_entries(self);
+            if entries != 0 {
+                let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+                if entries & crate::probe::entry_bit(at) != 0 {
+                    crate::probe::watch_entries(self, at);
+                }
             }
             if self.probes.coverage.is_some() {
                 self.coverage_before();
@@ -769,7 +792,21 @@ impl Machine {
                 contracts.before(&self.cpu.regs, &self.mem, linear);
             }
             let now = self.cpu.cycles;
-            let result = if probes {
+            let result = if late_only {
+                let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
+                if let Some(calls) = self.probes.calls.as_deref_mut() {
+                    calls.before(&self.cpu);
+                }
+                let late = self.probes.late.as_deref_mut().expect("late reads are looked for");
+                let mut bus = crate::probe::LateBus {
+                    inner: PcBus { mem: &mut self.mem, dev: &mut self.devices, now },
+                    late,
+                    calls: self.probes.calls.as_deref(),
+                    at,
+                    now,
+                };
+                self.cpu.step(&mut bus)
+            } else if probes {
                 let tracing = self.probes.contracts.as_deref().is_some_and(|c| c.tracing());
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
                 if let Some(calls) = self.probes.calls.as_deref_mut() {
@@ -791,6 +828,9 @@ impl Machine {
                 };
                 self.cpu.step(&mut bus)
             } else {
+                if let Some(calls) = self.probes.calls.as_deref_mut() {
+                    calls.before(&self.cpu);
+                }
                 let (cpu, mut bus) = self.split();
                 cpu.step(&mut bus)
             };
@@ -1184,10 +1224,25 @@ impl Machine {
 
     /// An input device's state now, as bytes ([`Device`]).
     pub fn device_state(&self, device: Device) -> Vec<u8> {
-        match device {
-            Device::Mouse => self.mouse.reported_state().to_vec(),
-            Device::Joystick => self.devices.game_port.reported_state().to_vec(),
-        }
+        self.device_bytes(device).to_vec()
+    }
+
+    /// [`Machine::device_state`] with nothing on the heap: the late reads and the sync points' gates ask for it at each
+    /// of the driver's calls, which a polling loop makes thousands of times a second (M6.5's step 1, D187).
+    pub(crate) fn device_bytes(&self, device: Device) -> DeviceBytes {
+        const _: () = assert!(crate::joystick::STATE_SIZE <= crate::mouse::STATE_SIZE);
+        let mut bytes = [0; crate::mouse::STATE_SIZE];
+        let len = match device {
+            Device::Mouse => {
+                bytes = self.mouse.reported_state();
+                crate::mouse::STATE_SIZE
+            }
+            Device::Joystick => {
+                bytes[..crate::joystick::STATE_SIZE].copy_from_slice(&self.devices.game_port.reported_state());
+                crate::joystick::STATE_SIZE
+            }
+        };
+        DeviceBytes { bytes, len }
     }
 
     /// What a sync point's gate compares, now ([`crate::sync`]).
@@ -1198,7 +1253,9 @@ impl Machine {
                 crate::sync::Source::Memory { at, len } => {
                     state.extend((0..len).map(|i| self.peek_linear_u8(at.wrapping_add(i))));
                 }
-                crate::sync::Source::Device(device) => state.extend(self.device_state(device).into_iter().map(Some)),
+                crate::sync::Source::Device(device) => {
+                    state.extend(self.device_bytes(device).iter().copied().map(Some))
+                }
             }
         }
         state
@@ -1257,7 +1314,8 @@ impl Machine {
     pub fn start_entries(&mut self, mut at: Vec<u32>) {
         at.sort_unstable();
         at.dedup();
-        self.probes.entries = Some(Box::new(crate::probe::Entries { at, ..Default::default() }));
+        let mask = at.iter().fold(0, |mask, &entry| mask | crate::probe::entry_bit(entry));
+        self.probes.entries = Some(Box::new(crate::probe::Entries { at, mask, ..Default::default() }));
     }
 
     pub fn take_entries(&mut self) -> Option<crate::probe::Entries> {
@@ -1313,7 +1371,7 @@ impl Machine {
             at: calls.frame(0).map_or(0, |f| f.from),
             call: calls.frame(1),
         };
-        let state = self.device_state(device);
+        let state = self.device_bytes(device);
         self.probes.late.as_deref_mut().expect("checked").device_read(device, &state, read);
     }
 
@@ -1423,8 +1481,8 @@ impl Machine {
 
     /// `device`'s state before a service call, when late reads are followed (for
     /// [`Machine::late_device_written`]).
-    fn late_device_before(&self, device: Device) -> Option<Vec<u8>> {
-        self.probes.late.is_some().then(|| self.device_state(device))
+    fn late_device_before(&self, device: Device) -> Option<DeviceBytes> {
+        self.probes.late.is_some().then(|| self.device_bytes(device))
     }
 
     /// The program called `device`'s driver, which held `before`: what the call changed (a position
@@ -1434,7 +1492,7 @@ impl Machine {
         if calls.in_hardware_interrupt() {
             return;
         }
-        let after = self.device_state(device);
+        let after = self.device_bytes(device);
         self.probes.late.as_deref_mut().expect("checked").device_written(device, before, &after);
     }
 

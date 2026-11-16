@@ -75,7 +75,10 @@ pub fn load(
     flate2::read::DeflateDecoder::new(input).read_to_end(&mut state).map_err(io)?;
     let (mut m, calls): (Machine, Option<crate::calls::Calls>) =
         postcard::from_bytes(&state).map_err(|e| format!("snapshot: {e}"))?;
-    m.probes.calls = calls.map(Box::new);
+    m.probes.calls = calls.map(|mut calls| {
+        calls.recount();
+        Box::new(calls)
+    });
     m.drive = std::mem::take(&mut m.drive).over(drive);
     m.cd_image = cd_image;
     m.restart_records();

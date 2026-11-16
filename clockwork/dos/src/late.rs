@@ -149,11 +149,56 @@ impl Reader {
     }
 }
 
+/// The physical bytes the sources are at, to pass over every other access quickly: a bit a 4 KB page, then, for the
+/// pages that have one, a bit a byte. A read or write of the program goes through this at every access while late
+/// reads are looked for; a range from the lowest source to the highest sent most of the data segment's accesses down
+/// the slow path (M6.5's step 0).
+#[derive(Debug, Clone, Default)]
+struct Watched {
+    pages: Vec<u64>,
+    bytes: Vec<(u32, Box<[u64; 64]>)>,
+}
+
+impl Watched {
+    fn of<'a>(spans: impl Iterator<Item = &'a Range<u32>>) -> Watched {
+        let mut watched = Watched::default();
+        for addr in spans.flat_map(Clone::clone) {
+            let (page, offset) = (addr >> 12, addr & 0xFFF);
+            let word = (page / 64) as usize;
+            if watched.pages.len() <= word {
+                watched.pages.resize(word + 1, 0);
+            }
+            watched.pages[word] |= 1 << (page % 64);
+            let i = match watched.bytes.iter().position(|(p, _)| *p == page) {
+                Some(i) => i,
+                None => {
+                    watched.bytes.push((page, Box::new([0; 64])));
+                    watched.bytes.len() - 1
+                }
+            };
+            watched.bytes[i].1[(offset / 64) as usize] |= 1 << (offset % 64);
+        }
+        watched
+    }
+
+    #[inline]
+    fn contains(&self, addr: u32) -> bool {
+        let (page, offset) = (addr >> 12, addr & 0xFFF);
+        if self.pages.get((page / 64) as usize).is_none_or(|word| word >> (page % 64) & 1 == 0) {
+            return false;
+        }
+        self.bytes
+            .iter()
+            .find(|(p, _)| *p == page)
+            .is_some_and(|(_, bits)| bits[(offset / 64) as usize] >> (offset % 64) & 1 != 0)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LateInputs {
     sources: Vec<Source>,
-    /// Every watched physical byte's bounds, to pass over other accesses quickly.
-    bounds: Range<u32>,
+    /// Every watched physical byte ([`Watched`]).
+    watched: Watched,
     pub findings: Vec<Late>,
     /// Findings past [`MAX_FINDINGS`].
     pub dropped: u64,
@@ -236,14 +281,13 @@ impl LateInputs {
         let s = &mut self.sources[source];
         (s.spans, s.expected, s.tick, s.readers, s.found) = (spans, values, Some(cycle), Vec::new(), false);
         s.rounds = 0;
-        let spans = || self.sources.iter().flat_map(|s| &s.spans);
-        self.bounds = spans().map(|s| s.start).min().unwrap_or(0)..spans().map(|s| s.end).max().unwrap_or(0);
+        self.watched = Watched::of(self.sources.iter().flat_map(|s| &s.spans));
     }
 
-    /// Whether physical address `addr` may be a source's (cheap: a bounds check).
+    /// Whether physical address `addr` is a source's (cheap: two bit tests).
     #[inline]
     pub(crate) fn watches(&self, addr: u32) -> bool {
-        self.bounds.contains(&addr)
+        self.watched.contains(addr)
     }
 
     /// The program read `value` at physical address `addr`.
@@ -384,6 +428,18 @@ impl Source {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_watched_bytes_are_the_sources_and_only_theirs() {
+        // Spans on pages far apart, one across a page's end and one at a word's last bit: the filter says yes exactly
+        // where a span is, as the sources' own spans would.
+        let spans = [0x46C..0x470, 0x2_3FFE..0x2_4003, 0x9_003F..0x9_0041, 0xFFFF_FFF0..0xFFFF_FFF2];
+        let watched = Watched::of(spans.iter());
+        for addr in (0..0x10_0000).chain(0xFFFF_FF00..=0xFFFF_FFFF) {
+            assert_eq!(watched.contains(addr), spans.iter().any(|s| s.contains(&addr)), "{addr:#X}");
+        }
+        assert!(!Watched::default().contains(0x46C));
+    }
 
     #[test]
     fn each_read_that_saw_otherwise_than_the_one_before_is_kept() {

@@ -764,6 +764,22 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D187. M6.5's step 1, its first part: what a recording tracks made cheap; recordings twice as fast, their traces the same. Accepted 2026-11-17.
+Seven changes to Clockwork, each doing what the code did before, faster (`docs/plans/live-comparison.md`, "What step
+1 did"): the hooks' entries tested against a mask first, and the handler question asked only at an entry; whether a
+hardware interrupt's handler runs counted as frames open and close; the call tracker doing nothing more at an
+instruction that leaves the stack as it was, and running on the plain bus; the late reads given a bus of their own,
+which tests each access against the sources' own bytes; EMS pages and memory below 1 MB copied whole; no heap
+allocation in the mouse driver's state, the device states and the tick answers' hex; and the window run from a
+snapshot without the call tracker the snapshot brought. A recording's run of Arena's first dungeon went from 0.90x
+the pace of play to 1.83x, from power-on from 1.01x to 2.18x; recording Arena's 58 sessions from about 1.5 hours to
+18 minutes. All 58 recorded again: every trace the same by its hash. `clockwork/tools/speed/rerecord.py` does that
+check for any port.
+**Why:** D186's plan for step 1, in its order; the trace hashes are the step's gate, so that nothing a recording keeps
+changed. The follower is not yet at twice the pace of play on the dungeon: what is left is the call tracker's work
+where the stack moves, the late reads' work in polling loops, and the interpreter, step 1's next part.
+**Extends:** D186.
+
 ### D186. M6.5's step 0: emulation keeps twice the pace of play; what a recording tracks is made cheap, not the window instrumented. Accepted 2026-11-16.
 Measured on Arena (`docs/plans/live-comparison.md`, "What step 0 found"): Clockwork's emulation alone runs the
 first dungeon at 2.2x the pace of play (2.15x at its slowest stretch) and the stretch from power-on at 2.95x; a

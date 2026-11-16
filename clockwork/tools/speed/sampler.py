@@ -3,7 +3,7 @@ child, samples the instruction pointer of its busiest thread for SECONDS, and pr
 it was in. SYMBOLS is the folder of clockwork.pdb (a build with `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` gives
 the lines). dbghelp is the Windows Kits' (the system's is too old for Rust's PDBs), else `DBGHELP`.
 
-usage: sampler.py CLOCKWORK LOG VARIANT SECONDS SYMBOLS
+usage: [SAMPLE_AFTER=SECONDS] sampler.py CLOCKWORK LOG VARIANT SECONDS SYMBOLS
 """
 import collections
 import ctypes
@@ -88,7 +88,7 @@ for _ in range(100):
         break
 if pid is None:
     sys.exit("no clockwork child")
-time.sleep(3)
+time.sleep(float(os.environ.get("SAMPLE_AFTER", "3")))  # into the run: a stretch of it
 # The busiest thread: the most user time over a second.
 handles = {t: k32.OpenThread(0x0002 | 0x0008 | 0x0040, False, t) for t in threads(pid)}  # SUSPEND|GET_CONTEXT|QUERY
 before = {t: cpu_time(h) for t, h in handles.items()}

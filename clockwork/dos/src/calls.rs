@@ -94,6 +94,18 @@ pub struct Calls {
     /// When logging: the calls and interrupts made since, in order (not kept by snapshots).
     #[serde(skip)]
     log: Option<Log>,
+    /// How many of the frames are hardware interrupts': kept as frames open and close, so that whether a handler
+    /// runs is known without a look through the chain, which the hooks and the late reads ask at every instruction
+    /// and access (counted again from the chain when a snapshot is loaded, [`Calls::recount`]).
+    #[serde(skip)]
+    hardware: usize,
+    /// The chain's changes so far (a frame opened or closed), and the stack as it was when it was last unwound with
+    /// the chain as it was then: an instruction that leaves the stack as it was has nothing to open or close, and
+    /// unwinding it again would close nothing ([`Calls::after`]'s quick way).
+    #[serde(skip)]
+    changes: u64,
+    #[serde(skip)]
+    unwound: Option<(u32, u32, bool, u64)>,
 }
 
 impl Calls {
@@ -139,8 +151,28 @@ impl Calls {
     }
 
     /// Whether an interrupt handler runs for a hardware interrupt now ([`Calls::interrupt_entry`]).
+    #[inline]
     pub fn in_hardware_interrupt(&self) -> bool {
-        self.stack.iter().any(|f| f.hardware)
+        self.hardware > 0
+    }
+
+    /// Counts the hardware interrupts' frames again, from the chain: after a snapshot is loaded.
+    pub(crate) fn recount(&mut self) {
+        self.hardware = self.stack.iter().filter(|f| f.hardware).count();
+    }
+
+    /// Closes the frames from the `i`-th on.
+    fn truncate(&mut self, i: usize) {
+        self.hardware -= self.stack[i.min(self.stack.len())..].iter().filter(|f| f.hardware).count();
+        self.stack.truncate(i);
+        self.changes += 1;
+    }
+
+    /// Opens a frame.
+    fn open(&mut self, frame: Frame) {
+        self.hardware += usize::from(frame.hardware);
+        self.stack.push(frame);
+        self.changes += 1;
     }
 
     /// Before an instruction runs.
@@ -160,6 +192,16 @@ impl Calls {
         let c = self.context;
         let (stack_base, top) = (cpu.segment_base(seg::SS), stack_top(cpu));
         let stack32 = cpu.stack32();
+        // The quick way, most instructions': the stack as it was, so no call or interrupt pushed a return address;
+        // the newest frame on this stack, so none on another ends here; and unwound as it is, with the chain as it is.
+        // What follows would change nothing (M6.5's step 1, D187).
+        if stack_base == c.stack_base
+            && top == c.top
+            && self.unwound == Some((stack_base, top, stack32, self.changes))
+            && self.stack.last().is_none_or(|f| f.stack_base == stack_base)
+        {
+            return;
+        }
         let linear_ip = cpu.segment_base(seg::CS).wrapping_add(cpu.regs.ip);
         let fell = fell(c.top, top, stack32);
         if stack_base == c.stack_base && fell > 0 {
@@ -192,14 +234,7 @@ impl Calls {
                         let site = c.code_base.wrapping_add(c.ip);
                         log.push(Logged { depth, site, entry: linear_ip, interrupt, hardware: false });
                     }
-                    self.stack.push(Frame {
-                        entry: linear_ip,
-                        from,
-                        interrupt,
-                        hardware: false,
-                        slot: top,
-                        stack_base,
-                    });
+                    self.open(Frame { entry: linear_ip, from, interrupt, hardware: false, slot: top, stack_base });
                     if let Some(counts) = self.counts.as_mut().filter(|_| !interrupt) {
                         *counts.entry(linear_ip).or_default() += 1;
                     }
@@ -212,12 +247,13 @@ impl Calls {
             && frame.stack_base != stack_base
             && frame.from == linear_ip
         {
-            self.stack.pop();
+            self.truncate(self.stack.len() - 1);
         }
         // Just after SS changed, SP may still be the old stack's (`mov ss` then `mov sp`): the next
         // instruction unwinds.
         if stack_base == c.stack_base {
             self.unwind(stack_base, top, stack32);
+            self.unwound = Some((stack_base, top, stack32, self.changes));
         }
     }
 
@@ -229,7 +265,7 @@ impl Calls {
             let depth = self.stack.len() as u32;
             log.push(Logged { depth, site: from, entry, interrupt: true, hardware: true });
         }
-        self.stack.push(Frame { entry, from, interrupt: true, hardware: true, slot: stack_top(cpu), stack_base });
+        self.open(Frame { entry, from, interrupt: true, hardware: true, slot: stack_top(cpu), stack_base });
     }
 
     /// Frames whose return address the stack has risen above are gone, and every frame opened after
@@ -241,7 +277,7 @@ impl Calls {
         loop {
             let newest = self.stack.iter().enumerate().rev().take(PASSED).find(|(_, f)| f.stack_base == stack_base);
             match newest {
-                Some((i, frame)) if fell(frame.slot, top, stack32) < 0 => self.stack.truncate(i),
+                Some((i, frame)) if fell(frame.slot, top, stack32) < 0 => self.truncate(i),
                 _ => break,
             }
         }

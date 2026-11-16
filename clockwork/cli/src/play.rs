@@ -26,6 +26,9 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
         Some(_) => {
             let (mut m, program, ips) = crate::run::prepare(o)?;
             m.replace_input();
+            // A recording's snapshot brings its call tracker (for watches from it); the window needs none, and it
+            // cost a third of each frame's emulation (M6.5's step 0, D186).
+            m.track_calls(false);
             (m, program, ips)
         }
         None => {

@@ -56,6 +56,8 @@ pub struct Probes {
 pub struct Entries {
     /// The entries (linear), sorted.
     pub at: Vec<u32>,
+    /// Each entry's [`entry_bit`]: an instruction whose bit isn't set is no entry, which is all a run asks of most.
+    pub mask: u64,
     /// The entries whose runs in interrupt handlers count too (linear), sorted.
     pub interrupts: Vec<u32>,
     pub hits: Vec<EntryHit>,
@@ -72,12 +74,21 @@ pub struct EntryHit {
 
 /// An entry of [`crate::Machine::start_entries`] is about to run: kept, but in an interrupt handler (call tracking,
 /// when it is on, tells them apart) unless the entry is one of `interrupts` (D174).
-pub(crate) fn watch_entries(m: &mut crate::Machine) {
-    let linear = m.cpu.segment_base(cpu::seg::CS).wrapping_add(m.cpu.regs.ip);
+/// An address's bit in [`Entries::mask`], one of 64, its bits mixed so that aligned entries spread.
+#[inline]
+pub(crate) fn entry_bit(at: u32) -> u64 {
+    1 << (at.wrapping_mul(0x9E37_79B1) >> 26)
+}
+
+/// The instruction at `linear` is about to run: kept if it is an entry's (M6.5's step 1, D187: the address first, the
+/// question whether a handler runs only at an entry).
+pub(crate) fn watch_entries(m: &mut crate::Machine, linear: u32) {
+    if m.probes.entries.as_deref().is_none_or(|e| e.at.binary_search(&linear).is_err()) {
+        return;
+    }
     let in_handler = m.probes.calls.as_deref().is_some_and(|c| c.in_hardware_interrupt());
     let Some(entries) = m.probes.entries.as_deref_mut() else { return };
-    if entries.at.binary_search(&linear).is_err() || (in_handler && entries.interrupts.binary_search(&linear).is_err())
-    {
+    if in_handler && entries.interrupts.binary_search(&linear).is_err() {
         return;
     }
     if entries.hits.len() >= crate::machine::MAX_EXEC_HITS {
@@ -147,7 +158,52 @@ pub(crate) struct ProbeBus<'a, 'b> {
     pub(crate) now: u64,
 }
 
+impl ProbeBus<'_, '_> {
+    /// Whether no probe looks at the `len` bytes at `addr`: then a word's access is the plain bus's, which does what
+    /// the bytes' accesses in order would (`Bus::read_u16`), in one (M6.5's step 1, D187).
+    #[inline]
+    fn unwatched(&self, addr: u32, len: u32) -> bool {
+        self.log.is_none()
+            && self.watch.is_none()
+            && self.bounds.is_none()
+            && self.uninit.is_none()
+            && self.late.as_deref().is_none_or(|late| (0..len).all(|i| !late.watches(addr.wrapping_add(i))))
+    }
+}
+
 impl Bus for ProbeBus<'_, '_> {
+    fn read_u16(&mut self, addr: u32) -> u16 {
+        if self.unwatched(addr, 2) {
+            return self.inner.read_u16(addr);
+        }
+        u16::from_le_bytes([self.read_u8(addr), self.read_u8(addr.wrapping_add(1))])
+    }
+
+    fn read_u32(&mut self, addr: u32) -> u32 {
+        if self.unwatched(addr, 4) {
+            return self.inner.read_u32(addr);
+        }
+        u32::from_le_bytes(std::array::from_fn(|i| self.read_u8(addr.wrapping_add(i as u32))))
+    }
+
+    fn write_u16(&mut self, addr: u32, value: u16) {
+        if self.unwatched(addr, 2) {
+            return self.inner.write_u16(addr, value);
+        }
+        let [lo, hi] = value.to_le_bytes();
+        self.write_u8(addr, lo);
+        self.write_u8(addr.wrapping_add(1), hi);
+    }
+
+    fn write_u32(&mut self, addr: u32, value: u32) {
+        if self.unwatched(addr, 4) {
+            return self.inner.write_u32(addr, value);
+        }
+        for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write_u8(addr.wrapping_add(i as u32), byte);
+        }
+    }
+
     fn read_u8(&mut self, addr: u32) -> u8 {
         if let Some(uninit) = self.uninit.as_deref_mut()
             && !self.inner.was_written(addr)
@@ -228,6 +284,119 @@ impl Bus for ProbeBus<'_, '_> {
         if let Some(watch) = self.watch.as_deref_mut() {
             watch.port_used(port, self.at, true, self.calls);
         }
+        self.inner.port_out_u8(port, value);
+    }
+}
+
+/// The bus while late reads are looked for (D60) and no other probe looks at each access, a recording's case: the
+/// plain bus, with each access's address checked against the sources' bytes (two bit tests) and the late reads' work
+/// out of line where it is one. It does what [`ProbeBus`] does with only `late` (and the call tracker) on, and the
+/// interpreter compiled for it keeps the plain bus's speed (M6.5's step 1, D187).
+pub(crate) struct LateBus<'a, 'b> {
+    pub(crate) inner: PcBus<'a>,
+    pub(crate) late: &'b mut LateInputs,
+    pub(crate) calls: Option<&'b Calls>,
+    /// The instruction running (linear), and when.
+    pub(crate) at: u32,
+    pub(crate) now: u64,
+}
+
+impl LateBus<'_, '_> {
+    #[inline(always)]
+    fn unwatched(&self, addr: u32, len: u32) -> bool {
+        (0..len).all(|i| !self.late.watches(addr.wrapping_add(i)))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn read_late(&mut self, addr: u32, value: u8) {
+        if !self.calls.is_some_and(Calls::in_hardware_interrupt) {
+            self.late.memory_read(addr, value, late_read(self.now, self.at, self.calls));
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write_late(&mut self, addr: u32, value: u8) {
+        if !self.calls.is_some_and(Calls::in_hardware_interrupt) {
+            self.late.memory_written(addr, value);
+        }
+    }
+}
+
+impl Bus for LateBus<'_, '_> {
+    #[inline(always)]
+    fn read_u8(&mut self, addr: u32) -> u8 {
+        let value = self.inner.read_u8(addr);
+        if self.late.watches(addr) {
+            self.read_late(addr, value);
+        }
+        value
+    }
+
+    #[inline(always)]
+    fn write_u8(&mut self, addr: u32, value: u8) {
+        if self.late.watches(addr) {
+            self.write_late(addr, value);
+        }
+        self.inner.write_u8(addr, value);
+    }
+
+    #[inline(always)]
+    fn fetch_u8(&mut self, addr: u32) -> u8 {
+        self.inner.read_u8(addr)
+    }
+
+    #[inline(always)]
+    fn read_u16(&mut self, addr: u32) -> u16 {
+        if self.unwatched(addr, 2) {
+            return self.inner.read_u16(addr);
+        }
+        u16::from_le_bytes([self.read_u8(addr), self.read_u8(addr.wrapping_add(1))])
+    }
+
+    #[inline(always)]
+    fn read_u32(&mut self, addr: u32) -> u32 {
+        if self.unwatched(addr, 4) {
+            return self.inner.read_u32(addr);
+        }
+        u32::from_le_bytes(std::array::from_fn(|i| self.read_u8(addr.wrapping_add(i as u32))))
+    }
+
+    #[inline(always)]
+    fn write_u16(&mut self, addr: u32, value: u16) {
+        if self.unwatched(addr, 2) {
+            return self.inner.write_u16(addr, value);
+        }
+        let [lo, hi] = value.to_le_bytes();
+        self.write_u8(addr, lo);
+        self.write_u8(addr.wrapping_add(1), hi);
+    }
+
+    #[inline(always)]
+    fn write_u32(&mut self, addr: u32, value: u32) {
+        if self.unwatched(addr, 4) {
+            return self.inner.write_u32(addr, value);
+        }
+        for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write_u8(addr.wrapping_add(i as u32), byte);
+        }
+    }
+
+    #[inline(always)]
+    fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
+        self.inner.code_window(addr)
+    }
+
+    fn port_in_u8(&mut self, port: u16) -> u8 {
+        if port == crate::joystick::PORT && !self.calls.is_some_and(Calls::in_hardware_interrupt) {
+            let read = late_read(self.now, self.at, self.calls);
+            self.late.device_read(crate::Device::Joystick, &self.inner.joystick_state(), read);
+        }
+        self.inner.port_in_u8(port)
+    }
+
+    fn port_out_u8(&mut self, port: u16, value: u8) {
         self.inner.port_out_u8(port, value);
     }
 }

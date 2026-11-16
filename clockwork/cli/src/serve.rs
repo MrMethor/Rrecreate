@@ -772,7 +772,14 @@ pub(crate) fn ranges(r: &Value, key: &str, size: &str) -> Result<Vec<(String, u3
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect()
+    // Two digits a byte into one string: a tick's answer carries tens of kilobytes so (not a string a byte).
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        text.push(char::from(DIGITS[usize::from(b >> 4)]));
+        text.push(char::from(DIGITS[usize::from(b & 15)]));
+    }
+    text
 }
 
 fn unhex(s: &str) -> Result<Vec<u8>, String> {

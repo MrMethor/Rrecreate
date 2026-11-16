@@ -131,16 +131,21 @@ impl Mouse {
     /// the position of the last press as 05h would return them, and the same for releases (06h).
     pub fn reported_state(&self) -> [u8; STATE_SIZE] {
         let at = |x: i32, y: i32| [x as u16 & self.granularity.0, y as u16 & self.granularity.1];
-        let mut words = vec![u16::from(self.buttons)];
-        words.extend(at(self.x, self.y));
-        words.extend([self.mickeys.0 as u16, self.mickeys.1 as u16]);
-        for &(count, x, y) in self.presses.iter().chain(&self.releases) {
-            words.push(count);
-            words.extend(at(x, y));
-        }
+        // Word by word into the bytes, with nothing on the heap: the late reads ask at every call of the driver.
         let mut bytes = [0; STATE_SIZE];
-        for (chunk, word) in bytes.chunks_exact_mut(2).zip(words) {
-            chunk.copy_from_slice(&word.to_le_bytes());
+        let mut chunks = bytes.chunks_exact_mut(2);
+        let mut put = |word: u16| {
+            if let Some(chunk) = chunks.next() {
+                chunk.copy_from_slice(&word.to_le_bytes());
+            }
+        };
+        put(u16::from(self.buttons));
+        at(self.x, self.y).into_iter().for_each(&mut put);
+        put(self.mickeys.0 as u16);
+        put(self.mickeys.1 as u16);
+        for &(count, x, y) in self.presses.iter().chain(&self.releases) {
+            put(count);
+            at(x, y).into_iter().for_each(&mut put);
         }
         bytes
     }

@@ -357,11 +357,22 @@ impl Memory {
 
     /// Copies `len` bytes starting at `addr` (wrapping like CPU accesses do).
     pub fn read_bytes(&self, addr: u32, len: usize) -> Vec<u8> {
+        // Below 1 MB the gate changes nothing and the bytes are one run: copied whole (EMS maps 16 KB pages so).
+        let start = addr as usize;
+        if start + len <= CONVENTIONAL_SPACE {
+            return self.bytes[start..start + len].to_vec();
+        }
         (0..len).map(|i| self.read_u8(addr + i as u32)).collect()
     }
 
     /// A host write: also reaches the ROM area. Used for loading programs and building the BIOS.
     pub fn load(&mut self, addr: u32, data: &[u8]) {
+        // Below 1 MB, with no writes tracked: one copy, as the loop below would leave it.
+        let start = addr as usize;
+        if start + data.len() <= CONVENTIONAL_SPACE && self.written.is_none() && self.log.is_none() {
+            self.bytes[start..start + data.len()].copy_from_slice(data);
+            return;
+        }
         for (i, &b) in data.iter().enumerate() {
             let at = self.index(addr + i as u32);
             self.mark(at as u32);

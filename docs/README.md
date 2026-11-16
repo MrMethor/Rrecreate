@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-16 (decisions to D186). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-17 (decisions to D187). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -167,8 +167,10 @@ differs. Recording, the port's run and the comparison become one streaming pipel
 port's own input handling is checked against the original's. The plan lists the pitfalls and what keeps each
 away. Its first step measured it (D186): Clockwork's emulation alone runs Arena at more than twice the pace of
 play, and what a recording tracks brings it under, mostly by cost rather than need; the window keeps its frame budget
-with a second emulator beside it; a play takes about 0.6 GB of disk an hour at most. Next, step 1: tracking made
-cheap (six changes, every recording gaining from them), then measured again. Then M7.
+with a second emulator beside it; a play takes about 0.6 GB of disk an hour at most. Step 1's first part made
+tracking cheap (D187): a recording's run of the first dungeon went from 0.90x the pace of play to 1.83x, and
+recording Arena's 58 sessions from about 1.5 hours to 18 minutes, every trace the same. Next, the rest of the way to
+twice the pace: the call tracker's work, the late reads' in polling loops, the interpreter. Then M7.
 
 **The person's calls ahead:** M6.5's fallback, only if step 1 leaves the follower under twice the pace of play,
 and the disk a play may take (the plan's section 10); the game M9 is run on, which stays out of the toolkit's

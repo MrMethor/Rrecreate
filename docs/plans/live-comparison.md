@@ -391,6 +391,44 @@ checks at each instruction, its decoding), measured again after 1 to 6. A change
 to an analysis tool's file (D173), changes Clockwork's source hash: step 1 ends with every session recorded again,
 each trace's hash unchanged, which is its gate.
 
+### What step 1 did, its first part (2026-11-17, D187)
+
+Each change does what the code did before, faster; the measure is step 0's (the same logs, replayed).
+
+1. The hooks' entries: an instruction's address is tested against a 64-bit mask of the entries' (their bits mixed)
+   before the entries themselves, and whether a handler runs is asked only at an entry.
+2. Whether a hardware interrupt's handler runs: counted as frames open and close (again when a snapshot is loaded),
+   not looked for through the chain at every instruction and access.
+3. The call tracker: an instruction that leaves the stack as it was, with the newest frame on this stack and the
+   stack already unwound as it is, does nothing more; and the tracker alone runs on the plain bus, as it looks at
+   instructions, not accesses.
+4. The late reads: a bus of their own when no other probe looks at each access (a recording's case), the plain bus
+   with each access's address tested against the sources' own bytes (a bit a page, then a bit a byte), not one range.
+5. EMS pages, and memory read or loaded below 1 MB, copied whole.
+6. No heap allocation where a polling loop meets one: the mouse driver's state, the device states the late reads and
+   the gates compare, the tick answers' hex (it was a string a byte).
+7. The window run from a snapshot drops the call tracker the snapshot brought.
+
+| Against play | before | after |
+|---|---|---|
+| A recording's run of the dungeon, all of it | 0.90x | 1.83x (slowest 10 s 1.79x) |
+| Its first 64 s | 0.93x | 1.92x |
+| From power-on, all of it | 1.01x | 2.18x |
+| The new game's story / the cinematic | 0.71x / 1.03x | 1.44x / 1.61x |
+| Emulation alone, the dungeon's first 64 s | 2.2x | 2.45x |
+| `rrc record`: the dungeon / from power-on | 213 s / 501 s | 109 s / 241 s |
+| Arena's 58 sessions recorded | about 1.5 h | 18 min |
+| The window's emulation per frame, from a snapshot | 8.8 ms | 6.6 ms |
+
+All 58 of Arena's sessions were recorded again with the changed Clockwork (`clockwork/tools/speed/rerecord.py`):
+every trace the same, by its hash; only each session's run identity changed, which names Clockwork's source. The
+test games' walkthroughs end in the same state.
+
+What is left before twice the pace of play on the dungeon (1.83x): the call tracker's work at each instruction that
+moves the stack, about 5 s of the dungeon's first 64 s of play; in polling loops (the story), the late reads' work at
+each device read; and the interpreter itself (51 ns an instruction, emulation alone). rrc's own work is now a fifth
+of a recording (23 s of the dungeon's 109), which step 2's streaming runs beside Clockwork's instead of after it.
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the
