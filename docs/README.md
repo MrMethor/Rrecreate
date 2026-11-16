@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-15 (decisions to D179). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-16 (decisions to D179). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -148,7 +148,9 @@ the game's folder as it was recorded, so that playing the game outside the toolk
 watch's memory bounded after one took the person's machine down (D171), memory a game keeps in EMS named by its
 handle, so that it is traced and mapped like any other (D172), a change to Clockwork's analysis tools no longer
 making every recording stale (D173), and a hook's calls from interrupt handlers given in order with the rest, the
-start-up's among them, for Arena's music driver (D174, D175).
+start-up's among them, for Arena's music driver (D174, D175), and for its music played and compared: a played port
+running what keeps its own clock while the game waits (D176), memory a port carries found through a pointer (D177),
+a pointer read as how far into a carried file it points or as whether it is set (D178), a carried one too (D179).
 
 **The standard workflow, built before M6 goes on** (D154 to D159, 2026-11-12), at the person's word. The playbook is
 one workflow for every game: stages with gates, one work loop, where to look when the port differs, the best-known
@@ -178,11 +180,12 @@ the game does left the register, D163).
 
 - **The music.** Since 2026-11-15 the port makes the OPL's music, most of Arena's sound events: Miles' AIL 2
   XMIDI driver ported from its public-domain source, run where the game calls it and its services where the
-  interrupts made them (D174). From power-on every one of the first session's 69923 OPL writes matches at all 750
-  ticks, the intro's, the new game's, the creation's, the cinematic's and the dungeon's songs; it plays live too,
-  its service run on the host's clock while the game waits (D176). Not yet compared from a transplant: the
-  driver's state in the original's memory is being mapped, the song's file on the heap carried with it (D177), its pointers read as
-  how far into the file they point (D178), a loop's only given (D179).
+  interrupts made them (D174); it plays live too, its service run on the host's clock while the game waits (D176).
+  Since 2026-11-16 the driver's state is mapped from the original's memory (its song's file carried, its pointers
+  into the file read as how far in they point: D177 to D179), so every session compares the music from its
+  transplant: 57 of the 58 match in every OPL write as in every field, frame and digitized sound, and the first
+  session from power-on in all 69923 of its OPL writes. Not yet made: the songs of the towns and the outdoors, the
+  game menu's music volume.
 - **The actions seam** ([design](design.md) §6.1). Built (D162): a port declares its game's actions, each the PC
   input the original takes for it, and the platform's controls bind the host's keys to them, each still given to
   the port as the original's own input; tried on the vault, and Arena's world (21 actions) reads its keys through
@@ -194,14 +197,12 @@ the game does left the register, D163).
   character sheet (both pages), a load (in the game and from the main menu), a wall dissolving (Passwall),
   levitating and a lockstep's scenario edits (D166) match in frames and sound too, and since 2026-11-15 the automap
   (its record of the cells seen, kept in EMS and reached through D172, its file and its screen): 57 of the 58
-  sessions match in every field, frame and digitized sound. What still differs: the cinematic's sound (the
-  cinematic isn't ported).
+  sessions match in every field, frame and sound, the music included (2026-11-16). What still differs: the
+  cinematic's sound (the cinematic isn't ported).
 - **From power-on** the comparison stops at the sound of the cinematic before the dungeon, which isn't ported.
 
-**Next:** the music, under way since 2026-11-15 at the person's word, the last of M6's open points in their order
-(D161, the frames past the first session and the actions seam done): the driver's state mapped, so that every
-session compares the music from its transplant; the songs of the towns and the outdoors; then the music played
-live; then M7.
+**Next:** M6's open points are done but the music of the places the first dungeon doesn't reach (towns, the
+outdoors: no session has them) and the cinematic; closing M6 is the person's call (below); then M7.
 
 **The person's calls ahead:** closing M6, as M4 and M5 were closed (D100, D106); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).
