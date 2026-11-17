@@ -847,6 +847,18 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(counted.contains("every mapped field, frame and sound in all"), "{counted}");
     let work = rrc.repo.join(".rrc/compare/play");
     assert!(!work.join("start.json").exists() && !counted.contains("unset"), "from power-on: {counted}");
+    // Fed a tick at a time (D190), from power-on with its frames and the game's files: the same trace and frames.
+    let piped = std::fs::read_to_string(work.join("port.jsonl")).unwrap();
+    let frames = |dir: &Path| {
+        let mut names: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        names.sort();
+        names.into_iter().map(|n| std::fs::read(dir.join(n)).unwrap()).collect::<Vec<_>>()
+    };
+    let drawn = frames(&work.join("frames"));
+    let streamed = rrc.ok(&["compare", "play", "--lockstep", "--streamed"]);
+    assert!(streamed.contains("every mapped field, frame and sound in all"), "{streamed}");
+    assert_eq!(std::fs::read_to_string(work.join("port.jsonl")).unwrap(), piped);
+    assert!(!drawn.is_empty() && frames(&work.join("frames")) == drawn);
     // A quirk's switch reaches the port's run (D149): only a registered one, and it isn't kept as the port's progress.
     let (refused, ok) = rrc.run(&["compare", "play", "--fix", "nothing"]);
     assert!(!ok && refused.contains("no quirk nothing"), "{refused}");
@@ -978,6 +990,12 @@ fn a_port_s_sound_is_the_original_s() {
     assert!(compared.contains("match     every mapped field at all 182 ticks"), "{compared}");
     assert!(compared.contains("sound     the port's sound is the original's at all 182 ticks"), "{compared}");
     assert!(compared.contains("screen    not compared: the port draws no frames"), "{compared}");
+    // Its inputs come through a pipe (D190); fed a tick at a time, each once it wrote the one before, as the live
+    // comparison feeds it, the port's trace is the same.
+    let piped = std::fs::read_to_string(rrc.repo.join(".rrc/compare/play/port.jsonl")).unwrap();
+    let streamed = rrc.ok(&["compare", "play", "--streamed"]);
+    assert!(streamed.contains("sound     the port's sound is the original's at all 182 ticks"), "{streamed}");
+    assert_eq!(std::fs::read_to_string(rrc.repo.join(".rrc/compare/play/port.jsonl")).unwrap(), piped);
     // A note keyed an octave low: its key on differs, and who wrote the OPL's ports is named.
     rrc.env.push(("CHIME_BUG", "block"));
     let (heard, ok) = rrc.run(&["compare", "play"]);

@@ -53,25 +53,62 @@ pub struct LateRead {
 
 impl InputsFile {
     pub fn read(path: &str) -> Result<InputsFile, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        InputsFile::parse(&text).map_err(|e| format!("{path}: {e}"))
+        InputsReader::open(path)?.whole()
     }
 
     pub fn parse(text: &str) -> Result<InputsFile, String> {
-        let mut lines = text.lines().filter(|l| !l.trim().is_empty());
-        let header: Value = serde_json::from_str(lines.next().ok_or("empty")?).map_err(|e| e.to_string())?;
+        InputsReader::from(Box::new(std::io::Cursor::new(text.as_bytes().to_vec())), "the inputs")?.whole()
+    }
+}
+
+/// The session's inputs read a line at a time, from a file or a pipe (`-`: the standard input), so that a port runs
+/// alongside the original as its ticks come (D190): the run takes a tick's line when it needs it.
+pub struct InputsReader {
+    lines: Box<dyn std::io::BufRead>,
+    path: String,
+    names: Vec<String>,
+    hooks: Vec<(String, Vec<String>)>,
+    pub session: String,
+    /// The inputs whose ticks only some sync points' hits start, with those points (none here: every point's).
+    pub syncs: BTreeMap<String, Vec<String>>,
+}
+
+impl InputsReader {
+    /// The inputs in `path`, or on the standard input for `-`: their header read.
+    pub fn open(path: &str) -> Result<InputsReader, String> {
+        if path == "-" {
+            return InputsReader::from(Box::new(std::io::BufReader::new(std::io::stdin())), "the standard input");
+        }
+        let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+        InputsReader::from(Box::new(std::io::BufReader::new(file)), path)
+    }
+
+    fn from(lines: Box<dyn std::io::BufRead>, path: &str) -> Result<InputsReader, String> {
+        let mut reader = InputsReader {
+            lines,
+            path: path.to_owned(),
+            names: Vec::new(),
+            hooks: Vec::new(),
+            session: String::new(),
+            syncs: BTreeMap::new(),
+        };
+        let header = reader.text_line()?.ok_or_else(|| format!("{path}: empty"))?;
+        let header: Value = serde_json::from_str(&header).map_err(|e| format!("{path}: {e}"))?;
         // Version 2 adds `fed` (D124); 3 a late read's round, a tick's `spun` and an input's `sync` (D130); 4 the
         // start-up's pass, tick 0 (D134).
         if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=4)) {
-            return Err(format!("not an inputs file this runtime reads ({} {})", header["format"], header["version"]));
+            return Err(format!(
+                "{path}: not an inputs file this runtime reads ({} {})",
+                header["format"], header["version"]
+            ));
         }
-        let names: Vec<String> = header["inputs"]
+        reader.names = header["inputs"]
             .as_array()
             .into_iter()
             .flatten()
             .map(|i| i["name"].as_str().unwrap_or_default().to_owned())
             .collect();
-        let hooks: Vec<(String, Vec<String>)> = header["hooks"]
+        reader.hooks = header["hooks"]
             .as_array()
             .into_iter()
             .flatten()
@@ -81,7 +118,7 @@ impl InputsFile {
                 (h["name"].as_str().unwrap_or_default().to_owned(), registers)
             })
             .collect();
-        let syncs = header["inputs"]
+        reader.syncs = header["inputs"]
             .as_array()
             .into_iter()
             .flatten()
@@ -91,57 +128,91 @@ impl InputsFile {
                 Some((i["name"].as_str()?.to_owned(), points))
             })
             .collect();
-        let mut file =
-            InputsFile { session: header["session"].as_str().unwrap_or_default().to_owned(), ticks: vec![], syncs };
-        for line in lines {
-            let v: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
-            let Some(tick) = v["tick"].as_u64() else { continue };
-            let mut inputs = Vec::new();
-            for pair in v["inputs"].as_array().into_iter().flatten() {
-                let i = pair[0].as_u64().ok_or("an input's index")? as usize;
-                let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
-                inputs.push((name.clone(), unhex(pair[1].as_str().unwrap_or_default())?));
+        reader.session = header["session"].as_str().unwrap_or_default().to_owned();
+        Ok(reader)
+    }
+
+    /// The next line that isn't blank; none at the end.
+    fn text_line(&mut self) -> Result<Option<String>, String> {
+        loop {
+            let mut line = String::new();
+            let n = self.lines.read_line(&mut line).map_err(|e| format!("{}: {e}", self.path))?;
+            if n == 0 {
+                return Ok(None);
             }
-            let mut late = Vec::new();
-            for read in v["late"].as_array().into_iter().flatten() {
-                let i = read[0].as_u64().ok_or("a late read's input")? as usize;
-                let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
-                let site = read[1].as_str().unwrap_or_default().to_owned();
-                // An instruction's first read where the file doesn't say (before D93).
-                let n = read.get(3).map_or(Some(1), Value::as_u64).ok_or("a late read's number")? as u32;
-                let bytes = match read.get(4).filter(|list| !list.is_null()) {
-                    Some(list) => Some(
-                        list.as_array()
-                            .into_iter()
-                            .flatten()
-                            .map(|pair| match (pair[0].as_u64(), pair[1].as_u64()) {
-                                (Some(offset), Some(value)) => Ok((offset as usize, value as u8)),
-                                _ => Err("a late read's bytes are [offset, value]"),
-                            })
-                            .collect::<Result<Vec<_>, _>>()?,
-                    ),
-                    None => None,
-                };
-                let value = unhex(read[2].as_str().unwrap_or_default())?;
-                let round = read.get(5).map_or(Some(0), Value::as_u64).ok_or("a late read's round")? as u32;
-                late.push(LateRead { name: name.clone(), site, read: n, value, bytes, round });
+            if !line.trim().is_empty() {
+                return Ok(Some(line));
             }
-            let mut calls = Vec::new();
-            for call in v["hooks"].as_array().into_iter().flatten() {
-                let i = call[0].as_u64().ok_or("a hook's call: its hook")? as usize;
-                let (name, registers) = hooks.get(i).ok_or_else(|| format!("tick {tick}: no hook {i}"))?;
-                let values = call[1].as_array().into_iter().flatten().map(|v| v.as_u64().unwrap_or(0) as u32);
-                calls.push((name.clone(), crate::Call { registers: registers.iter().cloned().zip(values).collect() }));
-            }
-            let paths = |key: &str| -> Vec<(String, Value)> {
-                v[key].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect()
-            };
-            let (set, fed) = (paths("set"), paths("fed"));
-            let sync = v["sync"].as_str().unwrap_or_default().to_owned();
-            let spun = v["spun"].as_u64();
-            file.ticks.push(InputsLine { tick, sync, inputs, late, calls, set, fed, spun });
         }
-        Ok(file)
+    }
+
+    /// The next tick's line; none at the end (the last line, `end`, isn't a tick's).
+    pub fn next_tick(&mut self) -> Result<Option<InputsLine>, String> {
+        while let Some(line) = self.text_line()? {
+            if let Some(tick) = self.parse(&line).map_err(|e| format!("{}: {e}", self.path))? {
+                return Ok(Some(tick));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Every tick's line, to the end.
+    fn whole(mut self) -> Result<InputsFile, String> {
+        let mut ticks = Vec::new();
+        while let Some(tick) = self.next_tick()? {
+            ticks.push(tick);
+        }
+        Ok(InputsFile { session: self.session, ticks, syncs: self.syncs })
+    }
+
+    fn parse(&self, line: &str) -> Result<Option<InputsLine>, String> {
+        let (names, hooks) = (&self.names, &self.hooks);
+        let v: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let Some(tick) = v["tick"].as_u64() else { return Ok(None) };
+        let mut inputs = Vec::new();
+        for pair in v["inputs"].as_array().into_iter().flatten() {
+            let i = pair[0].as_u64().ok_or("an input's index")? as usize;
+            let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
+            inputs.push((name.clone(), unhex(pair[1].as_str().unwrap_or_default())?));
+        }
+        let mut late = Vec::new();
+        for read in v["late"].as_array().into_iter().flatten() {
+            let i = read[0].as_u64().ok_or("a late read's input")? as usize;
+            let name = names.get(i).ok_or_else(|| format!("tick {tick}: no input {i}"))?;
+            let site = read[1].as_str().unwrap_or_default().to_owned();
+            // An instruction's first read where the file doesn't say (before D93).
+            let n = read.get(3).map_or(Some(1), Value::as_u64).ok_or("a late read's number")? as u32;
+            let bytes = match read.get(4).filter(|list| !list.is_null()) {
+                Some(list) => Some(
+                    list.as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|pair| match (pair[0].as_u64(), pair[1].as_u64()) {
+                            (Some(offset), Some(value)) => Ok((offset as usize, value as u8)),
+                            _ => Err("a late read's bytes are [offset, value]"),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+                None => None,
+            };
+            let value = unhex(read[2].as_str().unwrap_or_default())?;
+            let round = read.get(5).map_or(Some(0), Value::as_u64).ok_or("a late read's round")? as u32;
+            late.push(LateRead { name: name.clone(), site, read: n, value, bytes, round });
+        }
+        let mut calls = Vec::new();
+        for call in v["hooks"].as_array().into_iter().flatten() {
+            let i = call[0].as_u64().ok_or("a hook's call: its hook")? as usize;
+            let (name, registers) = hooks.get(i).ok_or_else(|| format!("tick {tick}: no hook {i}"))?;
+            let values = call[1].as_array().into_iter().flatten().map(|v| v.as_u64().unwrap_or(0) as u32);
+            calls.push((name.clone(), crate::Call { registers: registers.iter().cloned().zip(values).collect() }));
+        }
+        let paths = |key: &str| -> Vec<(String, Value)> {
+            v[key].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect()
+        };
+        let (set, fed) = (paths("set"), paths("fed"));
+        let sync = v["sync"].as_str().unwrap_or_default().to_owned();
+        let spun = v["spun"].as_u64();
+        Ok(Some(InputsLine { tick, sync, inputs, late, calls, set, fed, spun }))
     }
 }
 
@@ -312,7 +383,13 @@ impl TraceWriter {
             header["sound"] = json!(devices);
         }
         writer.line(&header)?;
+        writer.flush()?;
         Ok(writer)
+    }
+
+    /// What is written so far, out of the buffer: a tick's line before the run reads past the next tick's (D190).
+    pub fn flush(&mut self) -> Result<(), String> {
+        self.file.flush().map_err(|e| format!("{}: {e}", self.path))
     }
 
     /// The tick's state, its frame's picture file when it changed (D107), and its sound (D108).

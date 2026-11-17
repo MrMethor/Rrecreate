@@ -57,10 +57,12 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let a = Args::parse(
         args,
         &["--transplant", "--resume", "--to", "--pair", "--feed", "--fix"],
-        &["--notes", "--lockstep", "--fields"],
+        &["--notes", "--lockstep", "--fields", "--streamed"],
     )?;
     let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] \
-                 [--fields] [--notes] [--fix QUIRK] | compare SESSION --lockstep";
+                 [--fields] [--notes] [--fix QUIRK] [--streamed] | compare SESSION --lockstep [--streamed]";
+    // The port fed a tick at a time, each once it wrote the one before, as the live comparison feeds it (D190).
+    STREAMED.store(a.has("--streamed"), std::sync::atomic::Ordering::Relaxed);
     // The mapped fields alone (D136): a stretch whose screens or sound the port doesn't make yet.
     let fields_only = a.has("--fields");
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
@@ -1940,6 +1942,63 @@ pub(crate) fn build_port(repo: &Repo) -> Result<(), String> {
     ))
 }
 
+/// Whether the port is fed a tick at a time (`rrc compare --streamed`, D190).
+static STREAMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long a streamed port may take to write a tick's line before rrc gives up on it.
+const STREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Writes the inputs file at `path` to the port's standard input (D190). With `trace`, the port's trace, a tick's
+/// line goes only once the port wrote the tick before (from the trace's `from` on), as the live comparison feeds it:
+/// a port that doesn't write and flush a tick before reading on is stopped here, not left waiting.
+fn feed_inputs(mut stdin: std::process::ChildStdin, path: &str, trace: Option<&std::path::Path>) -> Result<(), String> {
+    use std::io::Write as _;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut written: Option<u64> = None;
+    let (mut seen, mut read, mut from, mut ended) = (None::<u64>, 0usize, None::<u64>, false);
+    for line in text.lines() {
+        let tick = serde_json::from_str::<serde_json::Value>(line).ok().and_then(|v| v["tick"].as_u64());
+        if let (Some(trace), Some(_), Some(before)) = (trace, tick, written) {
+            let started = std::time::Instant::now();
+            // The port's trace as it grows: its `from`, the last tick it wrote, whether it ended.
+            loop {
+                if let Ok(bytes) = std::fs::read(trace)
+                    && bytes.len() > read
+                {
+                    let new = String::from_utf8_lossy(&bytes[read..]).into_owned();
+                    let whole = new.rfind('\n').map_or(0, |i| i + 1);
+                    for l in new[..whole].lines() {
+                        let v: serde_json::Value = serde_json::from_str(l).unwrap_or_default();
+                        from = from.or(v["from"].as_u64());
+                        seen = v["tick"].as_u64().or(seen);
+                        ended |= v.get("end").is_some();
+                    }
+                    read += whole;
+                }
+                if ended {
+                    return Ok(());
+                }
+                if from.is_some_and(|from| before < from) || seen.is_some_and(|seen| seen >= before) {
+                    break;
+                }
+                if started.elapsed() > STREAM_WAIT {
+                    return Err(format!(
+                        "the port didn't write tick {before}'s line before asking for more: it writes and flushes \
+                         each tick before reading past the next tick's inputs (docs/formats.md)"
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+        // A port that stopped reading (it ran to --to) has what it wanted.
+        if writeln!(stdin, "{line}").and_then(|()| stdin.flush()).is_err() {
+            return Ok(());
+        }
+        written = tick.or(written);
+    }
+    Ok(())
+}
+
 /// Builds the port if rrc.toml says how (`[port] build`), then runs it (`[port] command`) in the port
 /// repository, for `session`.
 fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std::path::Path>) -> Result<(), String> {
@@ -1962,20 +2021,46 @@ fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std:
     }
     let run = |what: &str, command: &[String], args: &[String]| -> Result<(), String> {
         let (program, rest) = command.split_first().ok_or(format!("[port] {what} is empty"))?;
-        let output = Command::new(program)
+        // The inputs through a pipe (D190): the port reads them from its standard input as it needs them.
+        let value = |flag: &str| args.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone());
+        let (inputs, out) = (value("--inputs"), value("--out"));
+        let args: Vec<String> =
+            args.iter().map(|a| if Some(a) == inputs.as_ref() { "-".to_owned() } else { a.clone() }).collect();
+        let paced = STREAMED.load(std::sync::atomic::Ordering::Relaxed);
+        if let Some(out) = out.as_ref().filter(|_| paced) {
+            let _ = std::fs::remove_file(out);
+        }
+        let mut child = Command::new(program)
             .args(rest)
-            .args(args)
+            .args(&args)
             .envs(original.iter().cloned())
             .current_dir(&repo.root)
-            .output()
+            .stdin(if inputs.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() })
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| format!("[port] {what} ({program}): {e}"))?;
-        if output.status.success() {
-            return Ok(());
+        let writer = match (child.stdin.take(), inputs) {
+            (Some(stdin), Some(inputs)) => {
+                let trace = out.filter(|_| paced).map(std::path::PathBuf::from);
+                Some(std::thread::spawn(move || feed_inputs(stdin, &inputs, trace.as_deref())))
+            }
+            _ => None,
+        };
+        let mut stderr = Vec::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            std::io::Read::read_to_end(&mut pipe, &mut stderr).map_err(|e| format!("[port] {what}: {e}"))?;
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let status = child.wait().map_err(|e| format!("[port] {what} ({program}): {e}"))?;
+        let fed =
+            writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err("feeding the port's inputs panicked".into())));
+        if status.success() {
+            return fed;
+        }
+        let stderr = String::from_utf8_lossy(&stderr);
         let tail: Vec<&str> = stderr.lines().rev().take(8).collect();
         let tail: Vec<&str> = tail.into_iter().rev().collect();
-        Err(format!("[port] {what} failed ({}):\n{}", output.status, tail.join("\n")))
+        Err(format!("[port] {what} failed ({status}):\n{}", tail.join("\n")))
     };
     if port.command.is_empty() {
         return Err("rrc.toml has no [port] command: the port's program, which rrc runs (docs/formats.md)".into());

@@ -42,7 +42,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-pub use files::{InputsFile, PortState, StartState};
+pub use files::{InputsFile, InputsReader, PortState, StartState};
 /// The knowledge's types and the original's memory read and written as their values: what a port reads and
 /// writes the original's memory images with (its saved games, D126).
 pub use rrc_types as types;
@@ -645,7 +645,9 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
     for quirk in &request.fixes {
         fix(quirk);
     }
-    let inputs = InputsFile::read(&request.inputs)?;
+    // A line at a time, from a file or a pipe (D190): the run writes and flushes a tick's line before it reads the
+    // next tick's, which its step needs (the next sync point, D143), so a port fed as the original runs keeps up.
+    let mut inputs = files::InputsReader::open(&request.inputs)?;
     let (mut state, first) = match (&request.transplant, &request.resume) {
         (Some(file), _) => {
             let start = StartState::read(file)?;
@@ -687,9 +689,9 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
     // The fed fields' values, each as it last changed (D124).
     let mut feeding: BTreeMap<String, Value> = BTreeMap::new();
     let mut last = 0;
-    for (i, line) in inputs.ticks.iter().enumerate() {
-        // Where the pass ends: the next tick's sync point (D143).
-        let next = inputs.ticks.get(i + 1).map(|l| l.sync.as_str());
+    let mut reading = inputs.next_tick()?;
+    while let Some(line) = reading.take() {
+        let line = &line;
         for (name, bytes) in &line.inputs {
             current.set(name, bytes.clone());
         }
@@ -698,11 +700,14 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         }
         current.set_late(&line.late);
         current.set_calls(&line.calls);
-        // The start-up's pass, from power-on to the first tick (D134): the port's `power_on` takes what it read.
-        if line.tick == 0 && first == 1 && request.transplant.is_none() && request.resume.is_none() {
-            state.power_on(&Tick { number: 0, sync: &line.sync, inputs: &current, spun: line.spun, next });
-        }
         if line.tick < first {
+            let following = inputs.next_tick()?;
+            // The start-up's pass, from power-on to the first tick (D134): the port's `power_on` takes what it read.
+            if line.tick == 0 && first == 1 && request.transplant.is_none() && request.resume.is_none() {
+                let next = following.as_ref().map(|l| l.sync.as_str());
+                state.power_on(&Tick { number: 0, sync: &line.sync, inputs: &current, spun: line.spun, next });
+            }
+            reading = following;
             continue;
         }
         if request.to.is_some_and(|to| line.tick > to) {
@@ -799,14 +804,19 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             &overrode,
             &notes_made(),
         )?;
+        out.flush()?;
         if let Some((at, file)) = &request.save
             && *at == line.tick
         {
             PortState { tick: line.tick, state: value }.write(file)?;
         }
+        // Where the pass ends: the next tick's sync point (D143), read once this tick is written.
+        let following = inputs.next_tick()?;
+        let next = following.as_ref().map(|l| l.sync.as_str());
         state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun, next });
         pass = Some(line.sync.clone());
         last = line.tick;
+        reading = following;
     }
     out.end(last)
 }
