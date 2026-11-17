@@ -581,8 +581,16 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     /// live play sees a pass on, leaves nothing behind (the port's next pass, fed the original's inputs, wouldn't take
     /// it from the handlers).
     fn stepped(&mut self, state: &S, inputs: &Inputs) {
-        let host = Host { ms: self.last.unwrap_or(0), ..Host::default() };
-        state.given(&mut self.devices, inputs, &host);
+        let ms = self.last.unwrap_or(0);
+        // What came by the sync point is in the original's state there: given with it, not again.
+        while self.keys.front().is_some_and(|(at, _)| *at <= ms) {
+            self.keys.pop_front();
+        }
+        while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= ms) {
+            (self.mouse, self.buttons) = (Some((x, y)), buttons);
+            self.moves.pop_front();
+        }
+        state.given(&mut self.devices, inputs, &Host { ms, ..Host::default() });
         state.wrote(&mut self.devices, inputs);
     }
 }
