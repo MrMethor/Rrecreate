@@ -438,8 +438,34 @@ instruction loop for the late reads' bus (a tenth of the time), and a byte at a 
 memory without paging. That is a project of its own, with the CPU suites run after it.
 
 Where it stands against the gate: every stretch measured runs faster than play (the slowest, the new game's story,
-at 1.44x), so a follower doesn't fall behind; the margin on the dungeon is 1.83x, not 2x. Whether that margin is
-enough, or the interpreter is worked on first, is the person's (section 10).
+at 1.44x), so a follower doesn't fall behind; the margin on the dungeon is 1.83x, not 2x. The person took that margin
+(D188): step 1 is done, and the interpreter waits.
+
+### What step 2 did (2026-11-17, D189)
+
+- **The window** (`clockwork play --record`) writes a mark every 100 ms of play (it was every second), its
+  Clockwork's source hash after the header, and the machine's state hash when the play starts and every 30 s
+  (`--hash-every`), taken at a frame's start, before that frame's input.
+- **The protocol** (revision 20): `run` and `tick` take `until_cycle`, a cycle they don't run past; `input` takes
+  `events`, a play's lines as they are read from its file, refused at a cycle the machine has passed.
+- **The follower**, `rrc record SESSION --follow`: it reads the play file's whole lines up to its last mark (a line
+  after it may be half written), gives Clockwork the input up to there, and holds the run at the mark until more is
+  written. At each state hash's cycle it compares its state with the window's and stops, saying where the runs
+  parted, if they differ. The input at a hash's cycle and after is given only once that hash is checked: input
+  queued ahead changes when Clockwork next services its devices, which the state hash covers, so a follower that
+  queued it would differ from the window for no fault of the machine's. A play by another Clockwork is refused.
+- **A window without a window**, `clockwork play --headless FILE`: the window's loop, a play's input given frame by
+  frame at the frame's cycle, as a person's is, as fast as the machine runs. The tests use it in place of a person.
+
+Tested (`rrc/tests/flow.rs`): a play file written a line at a time, a third of its lines in two halves, gives the
+trace its finished file gives, and the window's state hash at its end is the follower's; a headless window's play
+of the toy with a state hash every 0.25 s and its input at frames' cycles is followed with every hash the same, and
+recorded whole gives the same trace; a hash that isn't the follower's stops it at its cycle ("left the window's at
+0:01.5 of play"); another Clockwork's play is refused. Every one of Arena's sessions recorded again with this
+Clockwork gives the same trace.
+
+Left for step 4, where the comparer takes them: the ticks still go to the trace when the recording ends, not to a
+sink as they are made.
 
 ## 8. Done when
 

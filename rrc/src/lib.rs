@@ -15,6 +15,7 @@ pub mod edits;
 mod entry;
 mod files;
 pub mod folder;
+mod follow;
 pub mod formats;
 pub mod frames;
 pub mod game;
@@ -139,9 +140,12 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          the sessions the port is to reproduce, as the person said (rrc.toml, [port] scope),
                          or those set (names, * and ? as wildcards): what the workflow's gates are measured
                          over; every session while none is set
-  record SESSION         run the session through Clockwork and trace it: at each tick (a sync point
+  record SESSION [--follow]
+                         run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound;
-                         keeps snapshots for rrc watch and rrc inputs to start from
+                         keeps snapshots for rrc watch and rrc inputs to start from; --follow: its
+                         recorded play as it is written, never past its last mark, each state hash
+                         the window wrote checked (D189)
   calls SESSION [ID|NAME] [--min N] [--top N]
                          how often the session calls each function, grouped by count (at least N,
                          default 100), in phases (before the first tick, each run of ticks at one

@@ -135,7 +135,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 19, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 20, dos-pc ("), "{doctor}");
     assert!(doctor.contains("rules     RULES.md: 5 questions for the person not answered yet"), "{doctor}");
     // The stage the port is at, and what its gate lacks (D158): the person's answers, in place of the questions.
     let asking = rrc.ok(&["status"]);
@@ -1552,6 +1552,151 @@ ips 8000000
     );
     assert!(bugged.contains("next      rrc compare bugged/"), "{bugged}");
     rrc.env.pop();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_play_is_followed_as_it_is_written() {
+    // D189: a play from power-on, its file written a line at a time (some lines in two halves) while rrc records it,
+    // never past its last mark; its trace is the one recorded from the finished file, and the window's state hash
+    // at the end is checked. A state hash that isn't the follower's stops it, and so does another Clockwork's play.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, rrc) = setup_file("follow", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
+    let port = built("toy-port", "toy-port", true);
+    let files = [
+        "mapping.toml",
+        "knowledge/functions.tsv",
+        "knowledge/data.tsv",
+        "knowledge/types.toml",
+        "knowledge/ticks.toml",
+    ];
+    example_repository(&rrc, "toy", &port, &files);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap()]);
+    let c = |ms: u64| ms * 8000;
+    // Marks every 100 ms; right held from 1.2 s to 1.6 s; the play ends at 2 s.
+    let play = |hash: Option<(u64, &str)>, source: Option<&str>| {
+        let mut lines = vec!["# clockwork session v1".to_owned(), "program TOY.EXE".into(), "args ".into()];
+        lines.push("ips 8000000".into());
+        lines.extend(source.map(|s| format!("# clockwork {s}")));
+        for ms in (0..2000).step_by(100) {
+            if ms == 1200 {
+                lines.extend([format!("{} K E0", c(ms)), format!("{} K 4D", c(ms))]);
+            }
+            if ms == 1600 {
+                lines.extend([format!("{} K E0", c(ms)), format!("{} K CD", c(ms))]);
+            }
+            lines.push(format!("# at {}", c(ms)));
+        }
+        lines.extend(hash.map(|(ms, h)| format!("# hash {} {h}", c(ms))));
+        lines.push(format!("# end {}", c(2000)));
+        lines.into_iter().map(|l| l + "\n").collect::<Vec<_>>()
+    };
+    let file = dir.join("live.session");
+    std::fs::write(&file, play(None, None).concat()).unwrap();
+    rrc.ok(&["session", "add", "live", "--replay", file.to_str().unwrap(), "--seconds", "2"]);
+    let whole = rrc.ok(&["record", "live"]);
+    let trace = std::fs::read_to_string(rrc.ok(&["trace", "live", "--path"]).trim()).unwrap();
+    let end = trace.lines().last().unwrap();
+    let hash =
+        end.split("\"state_hash\":\"").nth(1).and_then(|s| s.split('"').next()).unwrap_or_else(|| panic!("{end}"));
+    let written = rrc.repo.join("sessions/live.session");
+    // Written as a window would: a line at a time, some in two halves, the run following.
+    let write = |lines: Vec<String>| {
+        let written = written.clone();
+        std::fs::write(&written, "").unwrap();
+        std::thread::spawn(move || {
+            use std::io::Write as _;
+            let mut out = std::fs::OpenOptions::new().append(true).open(&written).unwrap();
+            for (n, line) in lines.iter().enumerate() {
+                if n % 3 == 0 {
+                    let (a, b) = line.split_at(line.len() / 2);
+                    out.write_all(a.as_bytes()).unwrap();
+                    out.flush().unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                    out.write_all(b.as_bytes()).unwrap();
+                } else {
+                    out.write_all(line.as_bytes()).unwrap();
+                }
+                out.flush().unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })
+    };
+    let writer = write(play(Some((2000, hash)), None));
+    let followed = rrc.ok(&["record", "live", "--follow"]);
+    writer.join().unwrap();
+    assert!(followed.contains("follows   sessions/live.session as it is written"), "{followed}");
+    assert!(followed.contains("same      as the trace recorded before"), "streamed equals batch: {followed}\n{whole}");
+    let said = "followed  the play as it was written, to its 20 marks; 1 state hash of the window's, each the same";
+    assert!(followed.contains(said), "{followed}");
+    // A state hash the follower's run doesn't have: it stops there, and says so.
+    let writer = write(play(Some((1500, "0000000000000000")), None));
+    let (left, ok) = rrc.run(&["record", "live", "--follow"]);
+    writer.join().unwrap();
+    assert!(!ok && left.contains("the follower's run left the window's at 0:01.5 of play (cycle 12000000)"), "{left}");
+    // Another Clockwork's play isn't followed.
+    std::fs::write(&written, play(None, Some("0123")).concat()).unwrap();
+    let (other, ok) = rrc.run(&["record", "live", "--follow"]);
+    assert!(!ok && other.contains("the play was played by another Clockwork (source 0123)"), "{other}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_window_s_play_is_followed_and_its_run_proved_the_same() {
+    // D189: Clockwork's window without a window (`play --headless`) plays the toy, its input given frame by frame as
+    // a person's is, and records the play with a state hash every 0.25 s; rrc follows the file as it is written, and
+    // its run's state is the window's at every hash. The finished play recorded whole gives the same trace.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (dir, rrc) = setup_file("window", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
+    let port = built("toy-port", "toy-port", true);
+    let files = [
+        "mapping.toml",
+        "knowledge/functions.tsv",
+        "knowledge/data.tsv",
+        "knowledge/types.toml",
+        "knowledge/ticks.toml",
+    ];
+    example_repository(&rrc, "toy", &port, &files);
+    rrc.ok(&["game", dir.join("game").to_str().unwrap()]);
+    // The person's input: right held from 0.73 s to 1.21 s, and again from 1.5 s, at no frame's cycle.
+    let mut input = "# clockwork session v1\nprogram TOY.EXE\nargs \nips 8000000\n".to_owned();
+    for (cycle, key) in [(5_840_123, "E0"), (5_840_123, "4D"), (9_680_007, "E0"), (9_680_007, "CD"), (12_000_001, "E0")]
+    {
+        input.push_str(&format!("{cycle} K {key}\n"));
+    }
+    input.push_str("12000001 K 4D\n");
+    let source = dir.join("person.session");
+    std::fs::write(&source, &input).unwrap();
+    rrc.ok(&["session", "add", "live", "--replay", source.to_str().unwrap(), "--seconds", "2"]);
+    let written = rrc.repo.join("sessions/live.session");
+    std::fs::write(&written, "").unwrap();
+    let mut window = Command::new(&rrc.clockwork)
+        .args(["play", dir.join("game").to_str().unwrap(), "TOY.EXE", "--headless", source.to_str().unwrap()])
+        .args(["--record", written.to_str().unwrap(), "--seconds", "2", "--hash-every", "0.25", "--no-audio"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let followed = rrc.ok(&["record", "live", "--follow"]);
+    assert!(window.wait().unwrap().success());
+    let hashes: u64 = followed
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("followed  the play as it was written, to its ")?
+                .split("; ")
+                .nth(1)?
+                .split(' ')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap_or_else(|| panic!("{followed}"));
+    assert!(hashes >= 8, "the start and every 0.25 s: {followed}");
+    assert!(followed.contains("state hashes of the window's, each the same"), "{followed}");
+    let text = std::fs::read_to_string(&written).unwrap();
+    assert_eq!(text.lines().filter(|l| l.ends_with(" K 4D")).count(), 2, "the input, at frames' cycles: {text}");
+    let whole = rrc.ok(&["record", "live", "--run"]);
+    assert!(whole.contains("same      as the trace recorded before"), "{whole}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

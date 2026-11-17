@@ -764,6 +764,25 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D189. M6.5's step 2: a recording follows a play file as it is written, and proves its run the window's. Accepted 2026-11-17.
+The window (`clockwork play --record`) writes a mark every 100 ms of play, its Clockwork's source hash after the
+header, and the machine's state hash when the play starts and every 30 s (`--hash-every`), taken at a frame's start
+before that frame's input. `rrc record SESSION --follow` records a session whose play is still being written: it
+reads the file's whole lines up to its last mark, gives Clockwork the input up to there (protocol revision 20:
+`input`'s `events`), never lets the run past the mark (`run`'s and `tick`'s `until_cycle`), and at each state hash's
+cycle compares the follower's state with the window's, stopping with where the runs parted if they differ. The input
+at a hash's cycle and after is given only once that hash is checked, because input queued ahead changes when
+Clockwork next services its devices, which the state hash covers. A play by another Clockwork is refused.
+`clockwork play --headless FILE` is the window's loop without a window, a play's input given frame by frame as a
+person's is: the tests play with it. Tested: a play file written a line at a time gives the trace its finished file
+gives; a headless window's play with a state hash every 0.25 s is followed with every hash the same; a hash that
+isn't the follower's stops it at its cycle; Arena's sessions recorded again give the same traces.
+**Why:** the plan's step 2 (D184), the live pipeline's first piece: the follower must never run ahead of what the
+person did, and a fault in determinism must show where it happens, not as differences later. The marks bound how far
+behind the window the follower is held; a state hash costs the window 9 ms (D186), once every 30 s. The ticks go to
+the trace when the recording ends; streaming them to the comparer as they are made comes with it (step 4).
+**Extends:** D124, D184.
+
 ### D188. M6.5's step 1 is done at 1.83x the pace of play on the dungeon; step 2 goes on with that margin. Accepted 2026-11-17, with the person.
 D184's plan asked the follower to run the first dungeon at twice the pace of play before step 2 starts. After D187 it
 runs it at 1.83x (its slowest 10 s at 1.79x), and every stretch measured runs faster than play, the slowest being the

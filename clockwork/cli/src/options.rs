@@ -74,7 +74,11 @@ options:
   --disasm SEG:OFF   run: afterwards, show registers and disassemble 40 instructions there
                      (or: here, for the current CS:IP)
   --record FILE      play: record the keyboard, mouse and joystick input as a session, written as
-                     it is played (# at CYCLE each emulated second: the input up to there is in)
+                     it is played (# at CYCLE every 100 ms: the input up to there is in; # hash
+                     CYCLE HASH at the start and every 30 s: the machine's state there)
+  --hash-every S     play: --record's state hashes every S emulated seconds (default 30)
+  --headless FILE    play: no window; the input of the play in FILE (a session) given as the
+                     window gives the person's, frame by frame, as fast as the machine runs
   --no-audio         play: no sound and no MIDI output
   --midi-out NAME    play: send MIDI to the host MIDI output whose name contains NAME (default:
                      the first one, e.g. Microsoft GS Wavetable Synth; none: no MIDI)
@@ -124,6 +128,8 @@ pub(crate) struct Options {
     pub(crate) sound_blaster: Option<Option<dos::sblaster::SbConfig>>,
     pub(crate) json: bool,
     pub(crate) record: Option<PathBuf>,
+    pub(crate) hash_every: Option<f64>,
+    pub(crate) headless: Option<PathBuf>,
     pub(crate) no_audio: bool,
     pub(crate) midi_out: Option<String>,
     pub(crate) scale: usize,
@@ -190,6 +196,14 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
             "--dump" => options.dump = Some(value(arg)?),
             "--hotspots" => options.hotspots = value(arg)?.parse().map_err(|_| "--hotspots needs a count")?,
             "--record" => options.record = Some(value(arg)?.into()),
+            "--hash-every" => {
+                let seconds: f64 = value(arg)?.parse().map_err(|_| "--hash-every needs seconds")?;
+                if !seconds.is_finite() || seconds <= 0.0 {
+                    return Err("--hash-every must be positive".into());
+                }
+                options.hash_every = Some(seconds);
+            }
+            "--headless" => options.headless = Some(value(arg)?.into()),
             "--no-audio" => options.no_audio = true,
             "--midi-out" => options.midi_out = Some(value(arg)?),
             "--scale" => options.scale = value(arg)?.parse().map_err(|_| "--scale needs a whole number")?,

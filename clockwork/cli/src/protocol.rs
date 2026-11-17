@@ -4,4 +4,4 @@
 
 /// The protocol's revision: it changes with every change to the protocol, and tools refuse an emulator whose
 /// revision isn't theirs.
-pub const PROTOCOL: u64 = 19;
+pub const PROTOCOL: u64 = 20;

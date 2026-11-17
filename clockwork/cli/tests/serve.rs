@@ -183,3 +183,43 @@ fn every_operation_is_known_with_or_without_a_machine() {
     }
     assert_eq!(serve(&[json!({"op": "frobnicate"})])[0]["error"], "unknown op \"frobnicate\"", "without a machine");
 }
+
+#[test]
+fn a_tick_held_at_a_cycle_goes_on_as_if_it_had_not_been() {
+    // A follower runs never past the last mark of a play still being written (D189): a tick stopped there and
+    // asked again reaches the same sync point's hit, at the same cycle, in the same state.
+    let dir = std::env::temp_dir().join(format!("clockwork-held-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("T.COM"), TICKS).unwrap();
+    let dir = dir.to_string_lossy().into_owned();
+    // One sync point at the loop's head: a tick is its three instructions (call, ret, jmp).
+    let start = [
+        json!({"id": 1, "op": "load", "argv": [dir, "T.COM"]}),
+        json!({"id": 2, "op": "sync", "at": "+00012"}),
+        json!({"id": 3, "op": "sync", "at": "+00012"}),
+        json!({"id": 4, "op": "run", "sync": "next", "n": 3}),
+    ];
+    let mut whole = start.to_vec();
+    whole.extend([json!({"id": 5, "op": "tick", "from": 0}), json!({"id": 6, "op": "hash"})]);
+    let whole = serve(&whole);
+    let (tick, hash) = (&whole[4], &whole[5]);
+    let (from, to) = (whole[3]["cycles"].as_u64().unwrap(), tick["cycles"].as_u64().unwrap());
+    assert!(to > from + 1, "a tick of more than one instruction: {from} to {to}");
+    let held = from + (to - from) / 2;
+    let mut parts = start.to_vec();
+    parts.extend([
+        json!({"id": 5, "op": "tick", "from": 0, "until_cycle": held}),
+        json!({"id": 6, "op": "input", "events": ["5 K 1E"]}),
+        json!({"id": 7, "op": "input", "events": [format!("{} K 1E", u64::MAX)]}),
+        json!({"id": 8, "op": "tick", "from": 0}),
+        json!({"id": 9, "op": "hash"}),
+    ]);
+    let parts = serve(&parts);
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(parts[4].get("sync").is_none(), "held short of the sync point: {}", parts[4]);
+    assert_eq!(parts[4]["cycles"], json!(held));
+    assert!(parts[5]["error"].as_str().unwrap().contains("has passed"), "{}", parts[5]);
+    assert_eq!(parts[6]["queued"], json!(1), "{}", parts[6]);
+    assert_eq!((&parts[7]["sync"], &parts[7]["cycles"]), (&tick["sync"], &tick["cycles"]), "{parts:#?}");
+    assert_eq!(parts[8]["state_hash"], hash["state_hash"]);
+}

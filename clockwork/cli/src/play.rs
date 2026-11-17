@@ -7,7 +7,12 @@
 //! From a snapshot (`--load-snapshot`, a session's tick), the input it still had to come is dropped but the
 //! releases of keys held then, as for a session started there (D118): the person's play takes its place.
 //! `--record` writes the play as it goes ([`Recording`]), so a tool can follow it.
+//!
+//! `--headless FILE` is the same loop without a window (D189), for tests and tools: a recorded play's input given
+//! as the window gives what the person does, at the first frame that reaches its cycle and at that frame's cycle,
+//! recorded as the window records it, as fast as the machine runs.
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use dos::{Input, Machine, Stop};
@@ -38,7 +43,46 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
         }
     };
     m.stop_on_input_wait = false;
+    let mut recording = match &o.record {
+        Some(path) => {
+            let source = env!("CLOCKWORK_SOURCE");
+            let mut recording = Recording::create(path, &program, &o.args, ips, m.cpu.cycles, source)?;
+            if let Some(seconds) = o.hash_every {
+                recording.hash_every((seconds * ips as f64) as u64);
+            }
+            Some(recording)
+        }
+        None => None,
+    };
+    let limit = o.seconds.map(|s| (s * ips as f64) as u64);
+    let stop = match &o.headless {
+        Some(source) => headless(&mut m, source, &mut recording, ips, limit)?,
+        None => windowed(o, &mut m, &program, ips, &mut recording, limit)?,
+    };
 
+    match &stop {
+        Some(stop) => eprintln!("clockwork: program stopped: {stop:?}"),
+        None => eprintln!("clockwork: stopped after {} ms of emulated time", m.elapsed_ms()),
+    }
+    for issue in &m.diagnostics {
+        eprintln!("clockwork: issue: {issue}");
+    }
+    if let (Some(recording), Some(path)) = (recording, &o.record) {
+        let inputs = recording.end(m.cpu.cycles)?;
+        eprintln!("clockwork: recorded {inputs} input events to {}", path.display());
+    }
+    Ok(if matches!(stop, Some(Stop::Fault(_))) { ExitCode::from(2) } else { ExitCode::SUCCESS })
+}
+
+/// The window's loop, till it closes, the time limit or the program stops (that stop).
+fn windowed(
+    o: &Options,
+    m: &mut Machine,
+    program: &str,
+    ips: u64,
+    recording: &mut Option<Recording>,
+    limit: Option<u64>,
+) -> Result<Option<Stop>, String> {
     let scale = match o.scale {
         0..=2 => Scale::X1,
         3..=4 => Scale::X2,
@@ -54,69 +98,86 @@ pub fn run(o: &Options) -> Result<ExitCode, String> {
     let mut audio = (!o.no_audio).then(|| LiveAudio::start(o.midi_out.clone()));
     let mut gamepads = (o.joysticks > 0).then(|| Gamepads::start(o.joysticks)).flatten();
     let mut buffer = vec![0u32; WIDTH * HEIGHT];
-    let mut recording = match &o.record {
-        Some(path) => Some(Recording::create(path, &program, &o.args, ips, m.cpu.cycles)?),
-        None => None,
-    };
     let record = |recording: &mut Option<Recording>, cycle: u64, input: Input| -> Result<(), String> {
         recording.as_mut().map_or(Ok(()), |r| r.input(cycle, &input))
     };
     let mut last_mouse = None;
-    let mut stop = None;
-
-    let limit = o.seconds.map(|s| (s * ips as f64) as u64);
     while window.is_open() && limit.is_none_or(|limit| m.cpu.cycles < limit) {
         let now = m.cpu.cycles;
+        // The machine's state now, before this frame's input, for a follower to prove its run this one (D189).
+        if let Some(recording) = recording.as_mut().filter(|r| r.hash_due(now)) {
+            recording.hash(now, m.state_hash())?;
+        }
         let pressed = window.get_keys_pressed(KeyRepeat::No).into_iter().filter_map(|k| scancodes(k, true));
         let released = window.get_keys_released().into_iter().filter_map(|k| scancodes(k, false));
         for codes in pressed.chain(released) {
             m.queue_scancodes(now, &codes);
             for &code in &codes {
-                record(&mut recording, now, Input::Key(code))?;
+                record(recording, now, Input::Key(code))?;
             }
         }
-        if let Some(mouse) = mouse_input(&window, &m)
+        if let Some(mouse) = mouse_input(&window, m)
             && Some(mouse) != last_mouse
         {
             m.queue_input(now, mouse);
-            record(&mut recording, now, mouse)?;
+            record(recording, now, mouse)?;
             last_mouse = Some(mouse);
         }
         for input in gamepads.iter_mut().flat_map(Gamepads::changes) {
             m.queue_input(now, input);
-            record(&mut recording, now, input)?;
+            record(recording, now, input)?;
         }
         // Every input up to now is written.
-        if let Some(recording) = &mut recording {
+        if let Some(recording) = recording.as_mut() {
             recording.at(now)?;
         }
         let cycles = audio.as_ref().map_or(cycles_per_frame, |a| a.frame_cycles(cycles_per_frame));
         match m.run(cycles) {
             Stop::CycleLimit | Stop::WaitingForInput => {}
-            other => {
-                stop = Some(other);
-                break;
-            }
+            other => return Ok(Some(other)),
         }
         if let Some(audio) = &mut audio {
-            audio.update(&m);
+            audio.update(m);
         }
-        render(&m, &mut buffer);
+        render(m, &mut buffer);
         window.update_with_buffer(&buffer, WIDTH, HEIGHT).map_err(|e| e.to_string())?;
     }
+    Ok(None)
+}
 
-    match &stop {
-        Some(stop) => eprintln!("clockwork: program stopped: {stop:?}"),
-        None => eprintln!("clockwork: stopped after {} ms of emulated time", m.elapsed_ms()),
+/// `--headless FILE`: the window's loop without a window, the input of the play in `FILE` given as the window gives
+/// the person's (module docs); till the time limit or the program stops (that stop).
+fn headless(
+    m: &mut Machine,
+    source: &Path,
+    recording: &mut Option<Recording>,
+    ips: u64,
+    limit: Option<u64>,
+) -> Result<Option<Stop>, String> {
+    let events = crate::session::Session::load(source)?.inputs;
+    let mut next = 0;
+    let cycles_per_frame = (ips / 70).max(1);
+    while limit.is_none_or(|limit| m.cpu.cycles < limit) {
+        let now = m.cpu.cycles;
+        if let Some(recording) = recording.as_mut().filter(|r| r.hash_due(now)) {
+            recording.hash(now, m.state_hash())?;
+        }
+        while let Some(&(_, input)) = events.get(next).filter(|&&(cycle, _)| cycle <= now) {
+            m.queue_input(now, input);
+            if let Some(recording) = recording.as_mut() {
+                recording.input(now, &input)?;
+            }
+            next += 1;
+        }
+        if let Some(recording) = recording.as_mut() {
+            recording.at(now)?;
+        }
+        match m.run(cycles_per_frame) {
+            Stop::CycleLimit | Stop::WaitingForInput => {}
+            other => return Ok(Some(other)),
+        }
     }
-    for issue in &m.diagnostics {
-        eprintln!("clockwork: issue: {issue}");
-    }
-    if let (Some(recording), Some(path)) = (recording, &o.record) {
-        let inputs = recording.end(m.cpu.cycles)?;
-        eprintln!("clockwork: recorded {inputs} input events to {}", path.display());
-    }
-    Ok(if matches!(stop, Some(Stop::Fault(_))) { ExitCode::from(2) } else { ExitCode::SUCCESS })
+    Ok(None)
 }
 
 /// The window's mouse, mapped onto the driver's coordinate range.

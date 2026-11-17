@@ -16,9 +16,12 @@
 //! <x> <y> <buttons>` (joystick 0 or 1; position -32767..=32767; buttons: bit 0 button 1, bit 1
 //! button 2). The older form `<cycle> <scancode>` is still read as a key.
 //!
-//! Written as it is played (`play --record`, [`Recording`]), the file has `# at <cycle>` every emulated
-//! second: every input up to that cycle is in the file above it; and `# end <cycle>` when the play
-//! stopped. Both are comments to a reader of the session.
+//! Written as it is played (`play --record`, [`Recording`]), the file has `# at <cycle>` every 100 ms of
+//! emulated time: every input up to that cycle is in the file above it; `# end <cycle>` when the play
+//! stopped; `# clockwork <source>` after the header, the source hash of the Clockwork that played it; and
+//! `# hash <cycle> <state hash>` when the play starts and every 30 s of emulated time after, the machine's
+//! state at that cycle before the input at it, so that a tool following the play proves its run the
+//! window's (M6.5, D189). All are comments to a reader of the session.
 
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -63,11 +66,7 @@ impl Session {
                 "ips" => {
                     session.instructions_per_second = value.parse().map_err(|_| format!("line {number}: bad ips"))?
                 }
-                cycle => {
-                    let cycle = cycle.parse().map_err(|_| format!("line {number}: expected '<cycle> K|M ...'"))?;
-                    let input = parse_input(value).ok_or_else(|| format!("line {number}: bad input {value:?}"))?;
-                    session.inputs.push((cycle, input));
-                }
+                _ => session.inputs.push(event(line).map_err(|e| format!("line {number}: {e}"))?),
             }
         }
         if session.program.is_empty() || session.instructions_per_second == 0 {
@@ -80,6 +79,14 @@ impl Session {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
+}
+
+/// One input line of a session, `<cycle> K|M|R|J ...`: when, and what.
+pub fn event(line: &str) -> Result<(u64, Input), String> {
+    let (cycle, value) = line.trim().split_once(' ').unwrap_or((line, ""));
+    let cycle = cycle.parse().map_err(|_| format!("expected '<cycle> K|M ...', not {line:?}"))?;
+    let input = parse_input(value).ok_or_else(|| format!("bad input {value:?}"))?;
+    Ok((cycle, input))
 }
 
 /// The file's first lines: the magic line, the program, its arguments and the speed.
@@ -100,25 +107,61 @@ fn line(cycle: u64, input: &Input) -> String {
     out
 }
 
-/// A session written while it is played, so that a tool can follow it: its inputs as they come, and
-/// `# at <cycle>` each emulated second once every input up to that cycle is written (flushed then).
+/// Emulated time between `# at` marks: how far behind the window a follower may be held (M6.5, D189).
+pub const MARK_MS: u64 = 100;
+
+/// Emulated time between `# hash` lines: a state hash costs the window about 9 ms (M6.5's step 0).
+pub const HASH_SECONDS: u64 = 30;
+
+/// A session written while it is played, so that a tool can follow it: its inputs as they come,
+/// `# at <cycle>` every [`MARK_MS`] once every input up to that cycle is written (flushed then), and
+/// `# hash <cycle> <state hash>` at the start and every [`HASH_SECONDS`].
 pub struct Recording {
     file: std::io::BufWriter<std::fs::File>,
     path: PathBuf,
-    /// Cycles between marks, and the cycle the next is due at.
+    /// Cycles between marks, and the cycle the next is due at; the same for state hashes.
     every: u64,
     next: u64,
+    hash_every: u64,
+    next_hash: u64,
     inputs: usize,
 }
 
 impl Recording {
-    /// Starts the file at `path` for a play at `ips` from cycle `now`.
-    pub fn create(path: &Path, program: &str, args: &str, ips: u64, now: u64) -> Result<Recording, String> {
+    /// Starts the file at `path` for a play at `ips` from cycle `now`, by the Clockwork whose source hash is
+    /// `source`.
+    pub fn create(
+        path: &Path,
+        program: &str,
+        args: &str,
+        ips: u64,
+        now: u64,
+        source: &str,
+    ) -> Result<Recording, String> {
         let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let file = std::io::BufWriter::new(file);
-        let mut recording = Recording { file, path: path.to_owned(), every: ips.max(1), next: now, inputs: 0 };
+        let (every, hash_every) = ((ips * MARK_MS / 1000).max(1), (ips * HASH_SECONDS).max(1));
+        let mut recording =
+            Recording { file, path: path.to_owned(), every, next: now, hash_every, next_hash: now, inputs: 0 };
         recording.write(&header(program, args, ips))?;
+        recording.write(&format!("# clockwork {source}\n"))?;
         Ok(recording)
+    }
+
+    /// State hashes every `cycles` instead of every [`HASH_SECONDS`] (`play --hash-every`).
+    pub fn hash_every(&mut self, cycles: u64) {
+        self.hash_every = cycles.max(1);
+    }
+
+    /// Whether a state hash is due at `cycle`: then [`Recording::hash`] the machine's, before the input at it.
+    pub fn hash_due(&self, cycle: u64) -> bool {
+        cycle >= self.next_hash
+    }
+
+    /// The machine's state hash at `cycle`, before the input at it.
+    pub fn hash(&mut self, cycle: u64, state: u64) -> Result<(), String> {
+        self.next_hash = cycle + self.hash_every;
+        self.write(&format!("# hash {cycle} {state:016x}\n"))
     }
 
     /// An input given at `cycle`.
@@ -192,21 +235,30 @@ mod tests {
     #[test]
     fn a_recording_is_a_session_with_its_marks() {
         let path = std::env::temp_dir().join(format!("clockwork-recording-{}.txt", std::process::id()));
-        let mut recording = Recording::create(&path, "GAME.EXE", "", 1000, 5000).unwrap();
+        let mut recording = Recording::create(&path, "GAME.EXE", "", 1000, 5000, "abc").unwrap();
+        assert!(recording.hash_due(5000), "a hash when the play starts");
+        recording.hash(5000, 0x1234).unwrap();
         recording.at(5000).unwrap();
-        recording.input(5200, &Input::Key(0x1E)).unwrap();
-        recording.at(5200).unwrap();
+        recording.input(5050, &Input::Key(0x1E)).unwrap();
+        recording.at(5050).unwrap();
+        recording.input(5100, &Input::Key(0x9E)).unwrap();
+        recording.at(5100).unwrap();
+        assert!(!recording.hash_due(34_999) && recording.hash_due(35_000), "then every 30 s");
         recording.input(6100, &Input::Mouse { x: 3, y: 4, buttons: 1 }).unwrap();
         recording.at(6100).unwrap();
         // Read while it is played: up to the last mark.
         let text = std::fs::read_to_string(&path).unwrap();
         let marks: Vec<&str> = text.lines().filter(|l| l.starts_with("# at")).collect();
-        assert_eq!(marks, ["# at 5000", "# at 6100"], "one a second (1000 cycles here)");
-        assert_eq!(recording.end(6150).unwrap(), 2);
+        assert_eq!(marks, ["# at 5000", "# at 5100", "# at 6100"], "one every 100 ms (100 cycles here)");
+        assert!(text.contains("ips 1000\n# clockwork abc\n# hash 5000 0000000000001234\n# at 5000\n"), "{text}");
+        assert_eq!(recording.end(6150).unwrap(), 3);
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.ends_with("6100 M 3 4 1\n# at 6100\n# end 6150\n"), "{text}");
         let session = Session::load(&path).unwrap();
-        assert_eq!(session.inputs, vec![(5200, Input::Key(0x1E)), (6100, Input::Mouse { x: 3, y: 4, buttons: 1 })]);
+        let mouse = Input::Mouse { x: 3, y: 4, buttons: 1 };
+        assert_eq!(session.inputs, vec![(5050, Input::Key(0x1E)), (5100, Input::Key(0x9E)), (6100, mouse)]);
+        assert_eq!(event("6100 M 3 4 1"), Ok((6100, mouse)));
+        assert!(event("6100 Q").is_err() && event("# at 5").is_err());
         std::fs::remove_file(&path).ok();
     }
 

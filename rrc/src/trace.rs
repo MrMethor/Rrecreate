@@ -432,8 +432,9 @@ fn carried(
 }
 
 pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &["--run", "--folder", "--rebase"])?;
-    let [name] = a.positionals(1, 1, "record SESSION [--run] [--folder] [--rebase]")? else { unreachable!() };
+    let a = Args::parse(args, &[], &["--run", "--folder", "--rebase", "--follow"])?;
+    let usage = "record SESSION [--run] [--folder] [--rebase] [--follow]";
+    let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     let mut session = Session::load(repo, name)?;
     // The game's folder it runs on (D170): kept at its first recording, and taken again when --folder asks.
     match &session.from {
@@ -485,6 +486,11 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let (syncs, inputs, state) = items(repo, &k, &module)?;
     let edits = crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?);
     let exe = clockwork::find(&repo.local)?;
+    // A play still being written, followed (D189): from its first mark, by the Clockwork that played it.
+    let mut follow = match a.has("--follow") {
+        true => Some(follow_play(repo, &session, &exe)?),
+        false => None,
+    };
     let header = Header {
         format: FORMAT.into(),
         version: VERSION,
@@ -509,11 +515,17 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .collect(),
         power_on: None,
     };
-    // The run asked for: the last recording's only if its input, options and length are the same (D123).
-    let identity = crate::cache::sha256(
-        format!("{}\n{}", crate::snapshots::run_identity(repo, &session)?, session.seconds).as_bytes(),
-    );
-    let same_run = session.trace.as_ref().is_some_and(|t| t.identity == identity);
+    // The run asked for: the last recording's only if its input, options and length are the same (D123); a
+    // followed play's once it is written.
+    let identity = |session: &Session| -> Result<String, String> {
+        let run = crate::snapshots::run_identity(repo, session)?;
+        Ok(crate::cache::sha256(format!("{run}\n{}", session.seconds).as_bytes()))
+    };
+    let asked = match follow {
+        Some(_) => String::new(),
+        None => identity(&session)?,
+    };
+    let same_run = follow.is_none() && session.trace.as_ref().is_some_and(|t| t.identity == asked);
     // Nothing to add: the trace recorded before has every item (D111); `--run` runs it again as a check.
     if !a.has("--run")
         && same_run
@@ -530,7 +542,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     // Only items added since the last recording, all in its kept memory: no run (D92).
-    let kept = if a.has("--run") {
+    let kept = if a.has("--run") || follow.is_some() {
         Err(String::new())
     } else if let Some(before) = session.trace.as_ref().filter(|_| !same_run) {
         Err(match before.identity.is_empty() {
@@ -546,7 +558,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             if !why.is_empty() {
                 say("runs", format!("the session: {why}"));
             }
-            let (trace, snapshots, memory) = run(repo, &session, header)?;
+            let (trace, snapshots, memory) = run(repo, &session, header, follow.as_mut())?;
             (trace, Some(snapshots), memory)
         }
     };
@@ -557,6 +569,10 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let run = trace.run_hash();
     let ticks = trace.ticks.len() as u64;
     let clockwork = trace.header.clockwork.clone();
+    let identity = match follow {
+        Some(_) => identity(&session)?,
+        None => asked,
+    };
     let recorded = Recorded { hash: hash.clone(), run: run.clone(), ticks, clockwork, memory, identity };
     let before = session.trace.replace(recorded);
     // Paired checkpoints are of the run they were taken in (D63).
@@ -566,6 +582,16 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     session.save(repo, name)?;
     say("trace", format!("{ticks} ticks, {} KB: {}", text.len() / 1024, trace.end.end));
+    if let Some(f) = &follow {
+        let hashes = match f.checked {
+            1 => "1 state hash".to_owned(),
+            n => format!("{n} state hashes"),
+        };
+        say(
+            "followed",
+            format!("the play as it was written, to its {} marks; {hashes} of the window's, each the same", f.marks),
+        );
+    }
     if !session.edits.is_empty() {
         say("edits", format!("{}, the scenario's (rrc trace {name} lists them)", session.edits.len()));
     }
@@ -896,10 +922,46 @@ fn data_ranges(
     }])
 }
 
+/// A followed play's start (D189): the session's play file once it has its first mark, refused if another
+/// Clockwork played it or if it is a part of a play (D124's, recorded whole).
+fn follow_play(repo: &Repo, session: &Session, exe: &std::path::Path) -> Result<crate::follow::Follow, String> {
+    let replay = session.replay.as_ref().ok_or("--follow follows a recorded play: the session has no replay")?;
+    if let Some(from) = &session.from
+        && Session::load(repo, &from.session)?.replay.as_ref() == Some(replay)
+    {
+        return Err("a part of a play goes on from the part before's input: it is recorded whole, not followed".into());
+    }
+    let mut follow = crate::follow::Follow::new(&repo.sessions().join(replay), 0);
+    say("follows", format!("sessions/{replay} as it is written"));
+    follow.start()?;
+    let ours = clockwork::source(exe)?;
+    let ours = ours.strip_prefix("source ").unwrap_or(&ours);
+    if let Some(theirs) = follow.source.as_ref().filter(|theirs| *theirs != ours) {
+        return Err(format!(
+            "the play was played by another Clockwork (source {theirs}), this one is {ours}: follow it with the same build"
+        ));
+    }
+    Ok(follow)
+}
+
 /// The session run to its end, a tick at each sync point hit; how many snapshots it kept; and the hash
-/// of the data segment kept at every tick (D92), unless that was more than the cache keeps.
-fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, Option<String>), String> {
-    let (mut clockwork, loaded, syncs) = begin(repo, session, &header.syncs)?;
+/// of the data segment kept at every tick (D92), unless that was more than the cache keeps. A followed play
+/// (D189) gives its input as it is written, and the run is held at its last mark.
+fn run(
+    repo: &Repo,
+    session: &Session,
+    header: Header,
+    mut follow: Option<&mut crate::follow::Follow>,
+) -> Result<(Trace, usize, Option<String>), String> {
+    // A followed play's input comes as it is written, not from its file at the start; its speed is the play's.
+    let mut started = session.clone();
+    if let Some(f) = &follow {
+        started.replay = None;
+        if f.ips != 8_000_000 && !started.options.iter().any(|o| o == "--ips") {
+            started.options.extend(["--ips".to_owned(), f.ips.to_string()]);
+        }
+    }
+    let (mut clockwork, loaded, syncs) = begin(repo, &started, &header.syncs)?;
     let places = Places::new(repo, session);
     let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
     // Tracked from power-on, so the snapshots give a watch from them whole call chains.
@@ -943,6 +1005,10 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
     }
     let pointers = Pointers::new(&header.state)?;
     let items = ranges.len();
+    if let Some(f) = follow.as_mut() {
+        f.starting_at(start);
+    }
+    let mut now = start;
     // The data segment at each tick, from the first on (D92).
     let mut data: Vec<(String, u32)> = Vec::new();
     let mut memory: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
@@ -959,10 +1025,23 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
         if keeping {
             asked.extend(data.iter().map(|(at, len)| json!({"at": at, "len": len})));
         }
-        let request = json!({"from": last_cycle, "ranges": asked, "until_ms": length_ms, "screen": true});
+        let mut request = json!({"from": last_cycle, "ranges": asked, "until_ms": length_ms, "screen": true});
+        // A followed play: not past its last mark, nor a state hash of the window's not checked yet.
+        let mut held = None;
+        if let Some(f) = follow.as_mut()
+            && let crate::follow::Next::To(bound) = f.next(&mut clockwork, now)?
+        {
+            request["until_cycle"] = json!(bound);
+            held = Some(bound);
+        }
         let ran = clockwork.ask("tick", request)?;
         let cycle = clockwork::number(&ran, "cycles")?;
+        now = cycle;
         let Some(at) = ran["sync"]["at"].as_str() else {
+            // Held where the play is written to, short of the session's end: on once more is written.
+            if held == Some(cycle) && clockwork::number(&ran, "ms")? < length_ms {
+                continue;
+            }
             break (ran["stop"].as_str().unwrap_or("?").to_owned(), cycle);
         };
         let sync = syncs.get(at).cloned().unwrap_or_else(|| at.to_owned());
@@ -1021,6 +1100,10 @@ fn run(repo: &Repo, session: &Session, header: Header) -> Result<(Trace, usize, 
         saver.tick(&mut clockwork, ticks.len() as u64, cycle, clockwork::number(&ran, "ms")?)?;
         last_cycle = cycle;
     };
+    // A followed play: the window's state hash where the session ends, if it took one there.
+    if let Some(f) = follow.as_mut() {
+        f.check(&mut clockwork, stop.1)?;
+    }
     // The start-up's pass (D134): tick 0, every input as it was at power-on.
     let mut start_up = Tick {
         tick: 0,

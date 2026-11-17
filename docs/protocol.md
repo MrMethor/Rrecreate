@@ -60,8 +60,10 @@ image is (`image`, `@LINEAR`), `image_size` and `cycles`. `load_snapshot` `{"arg
 **Running.** `run` runs on and says why it stopped (`stop`), with `cycles` and `ms`; it takes one of:
 `{"ms"}` or `{"cycles"}` (that much more), `{"until_ms"}` (to that time from power-on), `{"sync": addr, "n":
 1}` (to the n-th next hit of that sync point) or `{"sync": "next", "n": 1}` (to the n-th next hit of any: the
-next tick); `max_ms` (default 60000) bounds a run to a sync point. A stop at a sync point says `sync`: `{"at",
-"hit"}` (and `skipped`, at a gated one). `tick` `{"from", "ranges", "max_ms"}` is a tick in one request: runs
+next tick); `max_ms` (default 60000) bounds a run to a sync point. `until_cycle` bounds any of them: the run
+stops there at the latest, and alone it runs to there (a follower held at the last mark of a play still being
+written, D189). A stop at a sync point says `sync`: `{"at",
+"hit"}` (and `skipped`, at a gated one). `tick` `{"from", "ranges", "max_ms", "until_cycle"}` is a tick in one request: runs
 to the next tick, then answers as `read` (`data`), `frames` and `sound` since cycle `from` would, and with
 the pictures recorded meanwhile (`images`); with `"screen": true`, `screen` too, the screen at the sync point as
 `screen` answers it, when it differs from the last a `tick` handed over (D107).
@@ -86,7 +88,8 @@ true`, the input still to come is dropped first (a snapshot's), but the releases
 is let go when it would have been (D118).
 `"replay": FILE` queues a recorded play's input (`clockwork play --record`, a session file): from now on, or
 with `"after": CYCLE` only that after the cycle, for a play followed in parts (D124); `lines` may be left out.
-It answers `queued`, how many.
+It answers `queued`, how many. `"events": ["CYCLE K 1E", ...]` queues a recorded play's input lines as a follower
+reads them from the file being written (D189); one at a cycle the machine has passed is refused.
 
 **Watches.** `watch` `{"ranges": [{"at", "len"}], "reads": false, "limit": 10000, "program": false}` ...
 `watch_end`: each write (and read) of the watched bytes: `hits`, each `{"at", "kind", "value", "old", "cycle", "by",
@@ -221,6 +224,8 @@ An IBM PC with DOS (Clockwork).
 17. `watch` takes `program`, and `watch_end` answers `host`; a watch keeps at most 100000 hits (D171).
 18. `read` and `write` take `EMS#<handle>+<offset>`, expanded memory by handle (D172).
 19. `entries` takes `interrupts`: entries whose runs from interrupt handlers are kept too (D174).
+20. `run` and `tick` take `until_cycle`, a cycle they don't run past; `input` takes `events`, a recorded play's
+    lines (D189).
 
 ## Changing the protocol
 

@@ -308,10 +308,13 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         "run" => {
             let ips = m.config.instructions_per_second;
             let until_ms = number(r, "until_ms")?;
-            let max = match until_ms {
+            // A cycle it doesn't run past: a follower's, at the last mark of a play still being written (D189).
+            let bound = number(r, "until_cycle")?.map(|cycle| cycle.saturating_sub(m.cpu.cycles));
+            let cap = |cycles: u64| bound.map_or(cycles, |bound| cycles.min(bound));
+            let max = cap(match until_ms {
                 Some(ms) => m.cycle_at_ms(ms).saturating_sub(m.cpu.cycles),
                 None => number(r, "max_ms")?.unwrap_or(60_000) * ips / 1000,
-            };
+            });
             let sync = optional(r, "sync", Value::as_str, "an address or \"next\"")?;
             let n = number(r, "n")?.unwrap_or(1);
             let stop = if sync == Some("next") {
@@ -328,13 +331,13 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
                 let at = addr(m, at)?;
                 m.run_to_sync(at, n, max)
             } else if let Some(ms) = number(r, "ms")? {
-                m.run(ms * ips / 1000)
+                m.run(cap(ms * ips / 1000))
             } else if let Some(cycles) = number(r, "cycles")? {
-                m.run(cycles)
-            } else if until_ms.is_some() {
+                m.run(cap(cycles))
+            } else if until_ms.is_some() || bound.is_some() {
                 m.run(max)
             } else {
-                return Err("run needs ms, cycles, until_ms or sync".into());
+                return Err("run needs ms, cycles, until_ms, until_cycle or sync".into());
             };
             let mut reply =
                 json!({"stop": crate::summary::stop_text(&stop), "cycles": m.cpu.cycles, "ms": m.elapsed_ms()});
@@ -463,6 +466,21 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
             let scripts = lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty() && !l.starts_with('#'));
             for script in scripts.map(crate::input_script::Script::parse).collect::<Result<Vec<_>, _>>()? {
                 script.schedule(m)?;
+            }
+            // A recorded play's input lines as they are written (D189): each at its cycle, none already passed.
+            if r.get("events").is_some() {
+                let events = strings(r, "events")?;
+                let events = events.iter().map(|line| crate::session::event(line)).collect::<Result<Vec<_>, _>>()?;
+                if let Some(&(cycle, _)) = events.iter().find(|&&(cycle, _)| cycle < m.cpu.cycles) {
+                    return Err(format!(
+                        "an event at cycle {cycle}, which has passed (the machine is at {})",
+                        m.cpu.cycles
+                    ));
+                }
+                for &(cycle, input) in &events {
+                    m.queue_input(cycle, input);
+                }
+                return Ok(json!({ "queued": events.len() }));
             }
             // A recorded play (`play --record`): its input from now on, or after a cycle (D124: a play
             // followed in parts, the part before having had it up to there).

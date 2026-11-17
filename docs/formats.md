@@ -565,7 +565,10 @@ description = "the first level, up the main corridor"
 inputs = "walk.inputs"          # an input script (clockwork run --input-file), beside it (rrc session add
                                 # copies it here: edit this copy); or
 # replay = "play.session"       # play recorded by clockwork play --record (rrc play writes it as it is played:
-                                # `# at CYCLE` each emulated second, the input up to there in; `# end CYCLE`)
+                                # `# at CYCLE` every 100 ms, the input up to there in; `# hash CYCLE HASH`, the
+                                # machine's state there before its input, at the start and every 30 s;
+                                # `# clockwork SOURCE`; `# end CYCLE`); rrc record --follow records it
+                                # as it is written (D189)
 seconds = 86.0                  # emulated seconds it runs (from power-on, for a session from another's tick too)
 options = []                    # optional: more `clockwork run` options (rrc session --clockwork)
 
