@@ -192,11 +192,11 @@ pub trait Live: Simulation + Shows {
         let _ = (devices, host, sounds);
     }
 
-    /// The original's boundary values where a check of the handlers starts (`inputs`, D194: `rrc compare --live`'s
-    /// first tick), what its handlers held (the keys down, a queue, the timer's count), taken into the handlers' state.
-    /// Nothing by default.
-    fn given(&self, devices: &mut Self::Devices, inputs: &Inputs) {
-        let _ = (devices, inputs);
+    /// The original's boundary values at a sync point (`inputs`, at `host.ms`: D194, `rrc compare --live`, which starts
+    /// each pass's handling from the original's), what its handlers held there (the keys down, a queue, the timer's
+    /// count), taken into the handlers' state. Nothing by default.
+    fn given(&self, devices: &mut Self::Devices, inputs: &Inputs, host: &Host) {
+        let _ = (devices, inputs, host);
     }
 
     /// What the pass wrote into its inputs itself (a keyboard queue it emptied: `Inputs::written`), taken into
@@ -504,8 +504,8 @@ struct Checked<S: Live> {
     moves: std::collections::VecDeque<(u64, i32, i32, u8)>,
     mouse: Option<(i32, i32)>,
     buttons: u8,
-    /// The handlers' state was given at this tick: its keys and moves are in it already.
-    given: bool,
+    /// The handlers' state to give at the next tick, the first's: its keys and moves are in it already.
+    given: Option<Inputs>,
     /// The original's last sync point (ms): its pass began there, where the port's is.
     last: Option<u64>,
 }
@@ -519,7 +519,7 @@ impl<S: Live> Default for Checked<S> {
             moves: Default::default(),
             mouse: None,
             buttons: 0,
-            given: false,
+            given: None,
             last: None,
         }
     }
@@ -530,9 +530,12 @@ const FRAMES_HZ: u64 = 70;
 
 impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
-        if !std::mem::take(&mut self.given) {
-            self.keys.extend(played.keys.iter().copied());
-            self.moves.extend(played.mouse.iter().copied());
+        match self.given.take() {
+            Some(inputs) => state.given(&mut self.devices, &inputs, &Host { ms: played.ms, ..Host::default() }),
+            None => {
+                self.keys.extend(played.keys.iter().copied());
+                self.moves.extend(played.mouse.iter().copied());
+            }
         }
         // Frames from the original's last sync point, where its pass began and the port's is, to its next (or a frame
         // past this one at the last): the port's waits run from its pass as when played, and a pass of the original's
@@ -569,9 +572,8 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
         }
     }
 
-    fn given(&mut self, state: &S, inputs: &Inputs) {
-        state.given(&mut self.devices, inputs);
-        self.given = true;
+    fn given(&mut self, _: &S, inputs: &Inputs) {
+        self.given = Some(inputs.clone());
     }
 
     /// After each pass the handlers start again from the original's state at its sync point, then take what the pass
@@ -579,7 +581,8 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     /// live play sees a pass on, leaves nothing behind (the port's next pass, fed the original's inputs, wouldn't take
     /// it from the handlers).
     fn stepped(&mut self, state: &S, inputs: &Inputs) {
-        state.given(&mut self.devices, inputs);
+        let host = Host { ms: self.last.unwrap_or(0), ..Host::default() };
+        state.given(&mut self.devices, inputs, &host);
         state.wrote(&mut self.devices, inputs);
     }
 }
