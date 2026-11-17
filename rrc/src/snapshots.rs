@@ -90,6 +90,8 @@ pub struct Saver {
     key: String,
     taken: Vec<Taken>,
     next_ms: u64,
+    /// How far apart they are taken, in ms of play.
+    spacing: u64,
     file: std::path::PathBuf,
 }
 
@@ -102,8 +104,14 @@ impl Saver {
             key: key(repo, session, syncs)?,
             taken: Vec::new(),
             next_ms: spacing_ms(),
+            spacing: spacing_ms(),
             file,
         })
+    }
+
+    /// Snapshots `ms` of play apart (a play followed live, D196: fewer, its disk kept small).
+    pub fn every(&mut self, ms: u64) {
+        (self.spacing, self.next_ms) = (ms, ms);
     }
 
     /// At the stop of tick `tick`: a snapshot, if the time since the last one has come.
@@ -111,7 +119,7 @@ impl Saver {
         if ms < self.next_ms {
             return Ok(());
         }
-        let spacing = spacing_ms();
+        let spacing = self.spacing;
         self.next_ms = (ms / spacing + 1) * spacing;
         clockwork.ask("save", json!({ "file": self.file }))?;
         let bytes = std::fs::read(&self.file).map_err(|e| format!("{}: {e}", self.file.display()))?;

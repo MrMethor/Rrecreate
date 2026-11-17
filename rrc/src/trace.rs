@@ -1010,6 +1010,9 @@ pub(crate) struct Recorder<'a> {
     /// A play followed to its end (`rrc play`, D192): the session as long as the play once its end is written, and
     /// how far the play and the run are.
     to_end: Option<std::sync::Arc<crate::live::Progress>>,
+    /// The pictures between ticks kept in the cache, or their hashes alone (a play followed live, D196: the live
+    /// comparison needs only the screens at sync points, and a recording of the session makes the rest again).
+    pictures: bool,
 }
 
 /// A tick made and not final yet: each input's value at it (what a late read of one is read against), and its late
@@ -1131,6 +1134,7 @@ impl<'a> Recorder<'a> {
             dropped: 0,
             stop: None,
             to_end: None,
+            pictures: true,
             header,
         })
     }
@@ -1140,6 +1144,10 @@ impl<'a> Recorder<'a> {
     /// far the play and the run are.
     pub(crate) fn until_play_ends(&mut self, progress: std::sync::Arc<crate::live::Progress>) {
         self.length_ms = u64::MAX / 2;
+        // Its disk kept small (D196, the person's call): the pictures between ticks by their hashes alone, a snapshot a
+        // minute of play.
+        self.pictures = false;
+        self.saver.every(60_000);
         // Nothing kept that grows with the play (D193): the data segment at every tick (D92) isn't, which a long play
         // would take to its limit only to drop.
         self.keeping = false;
@@ -1283,7 +1291,7 @@ impl<'a> Recorder<'a> {
             .map(|(i, v)| (i, v.clone()))
             .collect();
         self.previous = state;
-        let frames = pictures(&self.writer, &ran["frames"], &ran["images"], &mut self.picture);
+        let frames = pictures(self.pictures.then_some(&self.writer), &ran["frames"], &ran["images"], &mut self.picture);
         let sound = sound_events(&ran["sound"]);
         let skipped = ran["sync"]["skipped"].as_u64();
         // The screen at the sync point, when it changed (D107).
@@ -1445,7 +1453,8 @@ impl<'a> Recorder<'a> {
         let span = json!({ "from": self.last_cycle });
         let shown = self.clockwork.ask("frames", span.clone())?;
         let taken = self.clockwork.ask("take_frame_images", Value::Null)?;
-        let frames = pictures(&self.writer, &shown["frames"], &taken["images"], &mut self.picture);
+        let writer = self.pictures.then_some(&self.writer);
+        let frames = pictures(writer, &shown["frames"], &taken["images"], &mut self.picture);
         self.writer.finish()?;
         let sound = sound_events(&self.clockwork.ask("sound", span)?);
         let state_hash = self.clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
@@ -1835,13 +1844,18 @@ pub(crate) fn unhex(hex: &str) -> Vec<u8> {
 /// Clockwork's frames (`[number, cycle, mode, fingerprint]`) with their pictures' hashes: `images`,
 /// the pictures rendered for some of them (`[[number, hex]]`), go into the cache; a frame without one
 /// shows the picture before it (`last`).
-fn pictures(cache: &crate::cache::Writer, frames: &Value, images: &Value, last: &mut Value) -> Vec<Value> {
+fn pictures(cache: Option<&crate::cache::Writer>, frames: &Value, images: &Value, last: &mut Value) -> Vec<Value> {
     let mut rendered = BTreeMap::new();
     for image in images.as_array().into_iter().flatten() {
         let (Some(number), Some(hex)) = (image[0].as_u64(), image[1].as_str()) else { continue };
         let bytes: Vec<u8> =
             (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect();
-        rendered.insert(number, cache.put(bytes));
+        // Kept, or named by its hash alone (D196).
+        let hash = match cache {
+            Some(cache) => cache.put(bytes),
+            None => crate::cache::sha256(&bytes),
+        };
+        rendered.insert(number, hash);
     }
     let mut out = Vec::new();
     for frame in frames.as_array().into_iter().flatten() {

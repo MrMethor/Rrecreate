@@ -83,7 +83,12 @@ impl Cache {
 
     pub fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
         let path = self.path(hash);
-        std::fs::read(&path).map_err(|_| format!("{hash} isn't in the cache ({})", self.dir.display()))
+        std::fs::read(&path).map_err(|_| {
+            format!(
+                "{hash} isn't in the cache ({}): a picture between ticks of a play followed live isn't kept (D196),                  rrc record SESSION --run makes them again",
+                self.dir.display()
+            )
+        })
     }
 
     pub fn has(&self, hash: &str) -> bool {
