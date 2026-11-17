@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D188. M6.5's step 1 is done at 1.83x the pace of play on the dungeon; step 2 goes on with that margin. Accepted 2026-11-17, with the person.
+D184's plan asked the follower to run the first dungeon at twice the pace of play before step 2 starts. After D187 it
+runs it at 1.83x (its slowest 10 s at 1.79x), and every stretch measured runs faster than play, the slowest being the
+new game's story at 1.44x: a follower doesn't fall behind, it has less to spare than the plan asked for. The rest of
+the way is the interpreter's, a project of its own (`docs/plans/live-comparison.md`, "What step 1 did"). The person
+chose to go on to step 2 with that margin; the interpreter waits, and the window instrumented and the parallel
+followers (the plan's section 10) aren't needed.
+**Why:** the person's call between the margin and the interpreter first, asked when step 1 ended.
+**Amends:** D184 (step 1's gate).
+
 ### D187. M6.5's step 1, its first part: what a recording tracks made cheap; recordings twice as fast, their traces the same. Accepted 2026-11-17.
 Seven changes to Clockwork, each doing what the code did before, faster (`docs/plans/live-comparison.md`, "What step
 1 did"): the hooks' entries tested against a mask first, and the handler question asked only at an entry; whether a

@@ -469,14 +469,8 @@ first dungeon, with the port alongside, and:
 ## 10. What is the person's to decide
 
 Decided 2026-11-16: M6.5 accepted, with section 8 as its done-when, and the `Live` check (3.7, step 6) inside it.
-Step 0 measured the rest (section 7, "What step 0 found"):
+Decided 2026-11-17 (D188): step 1 is done with the follower at 1.83x on the dungeon, every stretch faster than play;
+the interpreter's speed waits, and no fallback is needed. Still the person's:
 
-- **The margin:** step 1 leaves the follower at 1.83x on the dungeon, every stretch faster than play (section 7,
-  "What step 1 did"): go on with that margin, or work on the interpreter first for the rest to 2x.
-- **The fallback**, only if step 1 leaves the follower under twice the pace of play and the margin isn't enough: the window instrumented (the
-  person's play pays a little), the lag accepted, or a third way step 0 opened: since emulation alone runs at more
-  than twice the pace, one plain follower keeps up with the window and saves a snapshot every 20 s or so, and the
-  tracking runs from those snapshots on the processor's other cores, a stretch each; the window stays untouched,
-  and the lag is at most what a stretch falls behind (about 1.5 s at today's 0.93x).
 - **How much disk** a play may take: about 0.6 GB an hour at the most with the live settings, 0.2 to 0.35 GB for the
   twenty minutes of section 8. Proposed: a play is refused when less than an hour's worth is free.

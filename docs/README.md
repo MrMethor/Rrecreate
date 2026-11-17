@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-17 (decisions to D187). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-17 (decisions to D188). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -169,12 +169,13 @@ away. Its first step measured it (D186): Clockwork's emulation alone runs Arena 
 play, and what a recording tracks brings it under, mostly by cost rather than need; the window keeps its frame budget
 with a second emulator beside it; a play takes about 0.6 GB of disk an hour at most. Step 1's first part made
 tracking cheap (D187): a recording's run of the first dungeon went from 0.90x the pace of play to 1.83x, and
-recording Arena's 58 sessions from about 1.5 hours to 18 minutes, every trace the same. Next, the rest of the way to
-twice the pace: the call tracker's work, the late reads' in polling loops, the interpreter. Then M7.
+recording Arena's 58 sessions from about 1.5 hours to 18 minutes, every trace the same. The person took that
+margin (D188: 1.83x on the dungeon, every stretch faster than play; the interpreter waits). Under way: step 2, a
+recording that follows a play file as it is written, never past what it holds, its run checked against the window's.
+Then M7.
 
-**The person's calls ahead:** M6.5's margin, the follower at 1.83x the pace of play on the dungeon and every
-stretch faster than play: go on to step 2 with it, or work on the interpreter first; and the disk a play may take
-(the plan's section 10); the game M9 is run on, which stays out of the toolkit's development until then (D71).
+**The person's calls ahead:** the disk a play may take (the plan's section 10); the game M9 is run on, which stays
+out of the toolkit's development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
 `notes/handoff.md` says how to pick it up).
