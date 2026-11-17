@@ -563,6 +563,18 @@ path in the workspace now, and the build stops if one isn't in it.
 - **Next, its second part:** Arena's `Live` against `cell` and the dungeon session; then the check live, beside
   `rrc play`.
 
+### What step 6 did, its second part (2026-11-18, D194, D195)
+
+- **The check, a pass at a time:** `Live`'s frames for each tick start at the original's sync point before it (where
+  the port's pass is), and where the port's `Live` takes it, its handlers start each pass from the original's state
+  there (`Live::given`): each pass judged on its own. Timing now also takes a value the original's pass before read
+  in its middle; a pass skipped (none by the original's next sync point) is a difference.
+- **Arena:** five things fixed in its `Live` and its port (the driver's counts and motion, the swing's motion reads,
+  the timer's interrupts, each wait's own snapshot, `given`); its censuses unchanged. The dungeon: timing only.
+  `cell`: timing, and four ticks left (D195): a timer's interrupt in the sync point's millisecond (2), a placed
+  mouse's motion counted from the host's cursor (1), a pass skipped where a wait's snapshot is the port's own (1).
+- **Left:** those four; then the check beside a live play (`rrc play`).
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the

@@ -106,8 +106,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   (D191), which a play followed as it goes keeps too (`.rrc/play/NAME/census.json`, D192), with `panics`, where the
   port stopped and was started again (D193). `live.json` (`rrc compare --live`, D194) is what the port's input
   handling made: `ticks` checked, `same` as the original's handlers made them, and by input the ticks it made
-  otherwise (`differs`) or a pass early or late (`timing`), each with its first tick and byte; `waits` (its loop still
-  waited where the original's took a pass), `syncs` (a pass from another sync point), `ends` (its loop ended). The workflow's gates read these. What was
+  otherwise (`differs`) or a moment apart (`timing`), each with its first tick and byte; `waits` (its loop still
+  waited, the original's next pass within two frames), `skips` (no pass by the original's next sync point), `syncs`
+  (a pass from another sync point), `ends` (its loop ended). The workflow's gates read these. What was
   kept before them counts as other code's (stale): an `outcome.json` alone as a comparison of the fields, a census
   without `recorded` as one of the recording there is.
 - `work/card.json`: the item taken with `rrc work take` (D158): `item`, `question`, `route`, `other`, `budget`
@@ -756,7 +757,7 @@ ends is read as a file is; one that can't read its standard input is given the f
   "next": 21857, "keys": [[21840, 77], [21841, 205]], "mouse": [[21842, 160, 100, 1]]}`: its time and the next
   tick's in ms from power-on, the keyboard controller's bytes since the tick before and the mouse's moves (in the
   screen's pixels: mode 13h's driver counts two across one, with its buttons), each with its time; a played port's
-  `Live` is given them at its frames. The last line is `{"end":"the session's end","ticks":1400}`.
+  `Live` is given them at its frames, from the tick before's sync point. The last line is `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each
   mapped field's value at the tick by its path. The runtime sets each over the port's start state's
@@ -778,7 +779,7 @@ ends is read as a file is; one that can't read its standard input is given the f
   […]}}` (D114). What the port noted (`rrc_runtime::note`) in the pass to a tick is in `"notes"`, with how many
   times: `{"tick":194,"state":{…},"notes":{"a bounce not counted (TOY.EXE+002FF)":1}}` (D115). A run with `--live`
   (D194) has on each tick with `devices` what the port's `Live` made of them, asked at its frames (70 a second) from
-  the last up to the next tick's time: `"live": {"sync":"play","inputs":{"timer_count":"0500",…},"ms":21843,
+  the tick before's sync point up to the next tick's: `"live": {"sync":"play","inputs":{"timer_count":"0500",…},"ms":21843,
   "due":21843}`, each input's bytes in hex, with the frame's time and the original's sync point's; or
   `{"wait":true}` (its loop still waited at the next tick's time) or `{"end":true}` (it ended).
 - **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the

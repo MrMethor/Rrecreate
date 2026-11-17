@@ -764,27 +764,50 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D195. M6.5's step 6, its second part: Arena's input handling checked; what it found. Accepted 2026-11-18.
+`rrc compare --live` on Arena's `cell` (from power-on: the menus, the creation, the story, into the dungeon) and
+`dungeon` sessions found five things in Arena's `Live` and its port, fixed there: the mouse driver's counts and motion
+were cleared at every pass (the program clears them only where it calls 05h, 06h and 0Bh); the swing's reads of the
+motion (0Bh at `+03A93`, `+03A9F`, `+03AC5`, `+03CAE`) didn't clear it (now `rrc_runtime::mouse::read_motion`); the
+timer counted the time elapsed since a frame, not the PIT's boundaries crossed (a count behind where an interrupt
+came between the pass and the frame); one snapshot of the keys and the mouse served every gated wait (each keeps its
+own, D48, so a screen's first wait is a pass); and its handlers can now be given the original's state at a sync
+point (`Live::given`). Its lockstep censuses are unchanged. What the check says now: the dungeon, nothing but timing
+(the port's passes come about 200 ms before the original's: a pass of the original's takes that long on its
+processor, drawing the world, and the port's doesn't); `cell`, timing, and four ticks left: a timer's count one
+apart where its interrupt and the sync point fall in the same millisecond (2), the motion of a placed mouse counted
+from the host's cursor where the original's driver counts it from its pointer (1: the platform keeps the two together
+when played, D145, the check doesn't), and a pass skipped where a wait's snapshot was taken at the port's own earlier
+pass, not at the original's (1).
+**Why:** the plan's step 6 (D184): Arena's `Live` against `cell` and the dungeon session.
+**Extends:** D133, D145, D184, D194.
+
 ### D194. M6.5's step 6, its first part: a played port's own input handling checked at virtual time. Accepted 2026-11-17.
 `rrc compare SESSION --live` runs the port in lockstep and checks its own input handling beside it (the platform's
-`Live`, D119), played as the platform plays it at virtual time: `Live::next` is asked at each of the platform's frames
-(70 a second) with the play's time as its clock (the host's when played, the play's when checked: `Host::ms`), each key
-and mouse move given at the first frame after it came, until it takes a pass for the original's next (the original's
-next sync point at the latest), and what the pass wrote into its inputs is given back to it (`Live::wrote`) as when
-played; the start-up's writes too. The platform's mouse driver starts where a reset puts it (the middle). The devices
-are the session's input as the machine has it once the session is loaded (Clockwork's `queued`, protocol 22: a
-script's events, a play's, from a snapshot on), given on each tick's inputs line (`devices`, inputs version 6: the
-time in ms from power-on, the keyboard controller's bytes since the tick before, the mouse in the screen's pixels).
-The port writes what `Live` made on the tick's line (`live`); rrc judges it against what the original's pass read:
-the same; a moment apart (timing: a byte the original had a pass before or after, or at a tick within a frame of
-the port's pass; or any, where the port's pass came more than a frame from the original's, as after a long pass of
-the original's, a level's load, which the port's doesn't take); its loop still waiting at the original's next sync
-point (timing); or otherwise, a difference (by input, with its first tick and byte), a pass from another sync point,
-or the loop ending where the original's went on. `.rrc/compare/SESSION/live.json` keeps it; differences exit 1. The
-platform's `main` answers a run with `--live` (`rrc_runtime::run_checked`, a `Check` beside the comparison).
+`Live`, D119), played as the platform plays it at virtual time, a pass at a time: from each of the original's sync
+points, where the original's pass and the port's begin, `Live::next` is asked at the platform's frames (70 a second)
+with the play's time as its clock (the host's when played, the play's when checked: `Host::ms`), each key and mouse
+move given at the first frame after it came, until it takes a pass for the original's next sync point (that point at
+the latest); then what the port's pass wrote into its inputs is given back to it (`Live::wrote`), as when played.
+Where the port's `Live` takes it (`Live::given`), its handlers start each pass from the original's state at the sync
+point, so each pass is judged on its own: a difference in one doesn't carry into the next, as it would where the
+port's passes, fed the original's inputs, never take back what its handlers hold. The devices are the session's input
+as the machine has it once the session is loaded (Clockwork's `queued`, protocol 22: a script's events, a play's,
+from a snapshot on), given on each tick's inputs line (`devices`, inputs version 6: each event's time in ms from
+power-on, the tick's and the next's). The platform's mouse driver starts where a reset puts it (the middle). The port
+writes what `Live` made on the tick's line (`live`, with its frame's time); rrc judges it against what the original's
+pass read: the same; a moment apart (timing: a byte the original had a pass before or after, at a tick within a
+frame of the port's pass, or read in the middle of the pass before (its late reads); or any, where the port's pass
+came more than a frame from the original's, as after a long pass of the original's, a level's load, a story, which
+the port's doesn't take); its loop still waiting where the original's next pass came within two frames (timing);
+or otherwise, a difference: by input, with its first tick and byte, a pass from another sync point, the loop ending
+where the original's went on, or a pass skipped (no pass by the original's next sync point).
+`.rrc/compare/SESSION/live.json` keeps it; differences exit 1. The platform's `main` answers a run with `--live`
+(`rrc_runtime::run_checked`, a `Check` beside the comparison).
 The examples, checked: the chime's loop ended at Escape before the original's last pass (the originals read Escape at
 the loop's top, right after a pass, not while waiting): fixed in the chime's and the vault's `Live` (`wrote` reads
-it). What is left is timing: the timers' phase (the originals' count at most one ahead of the play's clock), and
-after a level's load the vault's next passes a frame before the original's (237 of its 400 ticks as the original's).
+it). What is left is timing: the timers' phase, and after a level's load the vault's next passes a frame before the
+original's.
 **Why:** the plan's step 6 (D184, section 3.7): what playing the port exercises that a comparison doesn't, its input
 handling, is checked against the original's from the same devices at the same moments, deterministically and
 offline; a port's handlers made otherwise than the original's show as differences, a moment's phase as timing.
