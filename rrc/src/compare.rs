@@ -1784,9 +1784,15 @@ impl Lived {
 /// each tick of `trace` (`played`: each tick's devices, its time among them).
 fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Lived, String> {
     let due = |t: u64| played.get(&t).and_then(|d| d["ms"].as_u64());
-    // The inputs each pass read in its middle (late reads, D60): an event there the port's live play sees a pass on.
+    // The inputs each pass read in its middle (late reads, D60), and what it read: an event there the port's live play
+    // sees a pass on, and the values the original's handlers held in the pass, a moment from its sync points.
     let read_late: BTreeMap<u64, std::collections::BTreeSet<usize>> =
         trace.ticks.iter().map(|t| (t.tick, t.late.iter().map(|l| l.input).collect())).collect();
+    let late_values = |t: u64, input: usize| -> Vec<String> {
+        trace.ticks.get((t as usize).wrapping_sub(1)).map_or_else(Vec::new, |tick| {
+            tick.late.iter().filter(|l| l.input == input).filter_map(|l| l.value.clone()).collect()
+        })
+    };
     let names: BTreeMap<&str, usize> =
         trace.header.inputs.iter().enumerate().map(|(i, item)| (item.name.as_str(), i)).collect();
     let values: Vec<Vec<Option<String>>> = (0..trace.header.inputs.len()).map(|i| trace.input_values(i)).collect();
@@ -1841,13 +1847,14 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
             // The original's values a pass before and after, and at the ticks within a frame of when the port's pass
             // came: what the time there gave the original's handlers.
             let when = live["ms"].as_u64();
-            let others: Vec<String> = (t.saturating_sub(8)..=t + 8)
+            let mut others: Vec<String> = (t.saturating_sub(8)..=t + 8)
                 .filter(|&u| u != t)
                 .filter(|&u| {
                     u.abs_diff(t) == 1 || when.zip(due(u)).is_some_and(|(ms, at)| ms.abs_diff(at) <= 1000 / 70 + 1)
                 })
                 .filter_map(at)
                 .collect();
+            others.extend(late_values(t.wrapping_sub(1), i));
             let near = |k: usize, mine: &str| others.iter().any(|v| byte(v, k) == mine);
             let bytes = theirs.len().max(made.len()) / 2;
             let apart_bytes: Vec<usize> = (0..bytes).filter(|&k| byte(&theirs, k) != byte(made, k)).collect();
