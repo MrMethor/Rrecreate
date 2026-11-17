@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-17 (decisions to D189). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-17 (decisions to D190). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -172,8 +172,9 @@ tracking cheap (D187): a recording's run of the first dungeon went from 0.90x th
 recording Arena's 58 sessions from about 1.5 hours to 18 minutes, every trace the same. The person took that
 margin (D188: 1.83x on the dungeon, every stretch faster than play; the interpreter waits). Step 2 is done
 (D189): a recording follows a play file as it is written, never past what it holds, and proves its run the
-window's by the state hashes the window writes; a window without a window plays for the tests. Next, step 3: the
-port's run fed and read through pipes. Then M7.
+window's by the state hashes the window writes; a window without a window plays for the tests. Step 3 is done
+(D190): a port's run is fed through a pipe, a tick at a time when asked, and gives the same traces as from files,
+Arena's 58 sessions included. Next, step 4: the comparison a tick at a time, rebuilt on that pipeline. Then M7.
 
 **The person's calls ahead:** the disk a play may take (the plan's section 10); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).

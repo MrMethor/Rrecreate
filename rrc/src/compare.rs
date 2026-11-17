@@ -2021,9 +2021,11 @@ fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std:
     }
     let run = |what: &str, command: &[String], args: &[String]| -> Result<(), String> {
         let (program, rest) = command.split_first().ok_or(format!("[port] {what} is empty"))?;
-        // The inputs through a pipe (D190): the port reads them from its standard input as it needs them.
+        // The inputs through a pipe (D190): the port reads them from its standard input as it needs them; from the
+        // file itself with RRC_PORT_INPUTS=file (a port that reads only files, or to compare the two).
         let value = |flag: &str| args.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone());
-        let (inputs, out) = (value("--inputs"), value("--out"));
+        let piped = std::env::var("RRC_PORT_INPUTS").map_or(true, |v| v != "file");
+        let (inputs, out) = (value("--inputs").filter(|_| piped), value("--out"));
         let args: Vec<String> =
             args.iter().map(|a| if Some(a) == inputs.as_ref() { "-".to_owned() } else { a.clone() }).collect();
         let paced = STREAMED.load(std::sync::atomic::Ordering::Relaxed);

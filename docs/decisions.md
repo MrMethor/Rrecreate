@@ -764,6 +764,22 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D190. M6.5's step 3: a port's run fed through a pipe, a tick at a time. Accepted 2026-11-17.
+The runtime reads the inputs a line at a time, from a file or from the standard input (`--inputs -`), and writes
+and flushes each tick's line, with its frame and sound, before it reads the next tick's line (which its step needs,
+D143). rrc gives every port run its inputs through the port's standard input from a thread of its own, and keeps
+the port's trace a file it reads: the port's output never waits on rrc, so the two can't hold each other up, which
+pipes both ways would risk. `rrc compare --streamed` (and `--lockstep --streamed`) gives a tick's line only once the
+port wrote the tick before, as the live comparison will, and stops a port that doesn't. Tested on the examples
+(their comparisons all through the pipe; the chime and the vault, from power-on with frames, the same trace fed a
+tick at a time as whole) and on Arena's 58 sessions (counted from the inputs file and through the pipe: the same port
+traces byte for byte, frames and censuses). `RRC_PORT_INPUTS=file` gives a port that can't read its standard input
+the file.
+**Why:** the plan's step 3 (D184): the port runs alongside the follower, fed as the original's ticks come. A trace
+file read as it grows, as the follower reads the window's play file (D189), keeps the contract one a port in any
+language meets, and the deadlock section 3.4 warns of can't happen.
+**Extends:** D61, D143, D184.
+
 ### D189. M6.5's step 2: a recording follows a play file as it is written, and proves its run the window's. Accepted 2026-11-17.
 The window (`clockwork play --record`) writes a mark every 100 ms of play, its Clockwork's source hash after the
 header, and the machine's state hash when the play starts and every 30 s (`--hash-every`), taken at a frame's start

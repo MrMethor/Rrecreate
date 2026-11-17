@@ -472,6 +472,19 @@ the workspace through `..`, so the same sources hashed differently in every chec
 worktree's build named a Clockwork the main checkout's build of the same commit isn't. It names each file by its
 path in the workspace now, and the build stops if one isn't in it.
 
+### What step 3 did (2026-11-17, D190)
+
+- **The runtime** reads the inputs a line at a time, from a file or from the standard input (`--inputs -`), and
+  writes and flushes each tick's line, frame and sound before it reads the next tick's line, which its step needs.
+- **rrc** gives every port run its inputs through a pipe, written by a thread of its own, and reads the trace as a
+  file: the port's output never waits on rrc, so neither side can hold the other up. `rrc compare --streamed`
+  gives a tick's line only once the port wrote the tick before, as the live comparison will, and says so when a
+  port doesn't keep to that.
+- **Tested:** every example's comparisons run through the pipe; the chime's sound and the vault's from power-on,
+  with its frames and the game's files, fed a tick at a time give the same trace and frames as fed whole. Each of
+  Arena's 58 sessions counted in lockstep with its port given the inputs file (`RRC_PORT_INPUTS=file`) and then
+  through the pipe gives the same port trace byte for byte, the same frames and the same census.
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the

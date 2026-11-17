@@ -717,7 +717,7 @@ gives them. The port reads a tick's line when it needs it and writes and flushes
 the tick's frame and sound, before it reads further than the next tick's line (its step needs that one's sync
 point, D143), so a port fed a tick at a time as the original runs keeps up; `rrc compare --streamed` feeds it so.
 A port in another language that reads its inputs to their end before it starts still works offline: a pipe that
-ends is read as a file is.
+ends is read as a file is; one that can't read its standard input is given the file with `RRC_PORT_INPUTS=file`.
 
 - **Inputs** (`--inputs`, written by `rrc`): the header
   `{"format":"rrc-inputs","version":4,"session":"play","inputs":[{"name":"timer_count","size":2},{"name":"mouse","size":46,"device":"mouse"}]}`

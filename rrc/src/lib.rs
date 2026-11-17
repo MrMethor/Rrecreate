@@ -286,7 +286,7 @@ Files: rrc.toml (the port), rrc.local.toml (this machine), knowledge/, sessions/
 quirks.toml, sources.toml, RULES.md (docs/formats.md).
 Environment: RRC_CLOCKWORK (the clockwork program), RRC_CACHE (the cache folder), GHIDRA_INSTALL_DIR and
 JAVA_HOME (for analysis), RRC_PROTOCOL_LOG (a file each request to Clockwork is appended to, with how long its
-answer took).";
+answer took), RRC_PORT_INPUTS=file (the port reads its inputs from the file, not through a pipe).";
 
 /// The command line.
 pub fn main() -> ExitCode {
