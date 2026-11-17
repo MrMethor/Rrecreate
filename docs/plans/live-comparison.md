@@ -485,6 +485,29 @@ path in the workspace now, and the build stops if one isn't in it.
   Arena's 58 sessions counted in lockstep with its port given the inputs file (`RRC_PORT_INPUTS=file`) and then
   through the pipe gives the same port trace byte for byte, the same frames and the same census.
 
+### What step 4 did (2026-11-17, D191)
+
+- **The comparer** takes the port's trace a line at a time and keeps the census as it goes: lockstep's census is
+  counted so now, whether the lines are read from the finished trace or as the port writes them.
+- **The corrected free run** (`rrc compare SESSION --corrected`, section 3.5): the port runs on its own state, fed
+  through the pipe a tick at a time, and the inputs line of the tick after one it left otherwise carries `correct`,
+  the original's values of the fields that differed or were unset, which the runtime sets over its state before
+  that tick's step. After a pass the port noted (D115), every field that isn't exactly the original's is set. Its
+  census is saved beside lockstep's; it says at how many ticks it corrected which fields, and apart from those, at
+  how many ticks it set the state after a noted pass.
+- **Tested:** the toy with its planted bug gives the same census corrected as in lockstep, byte for byte, the
+  bounce it notes included; without the bug, nothing is corrected. Each of Arena's 58 sessions gives the census it
+  gave before the comparer was rebuilt, and the same census corrected as in lockstep. Arena's free run differed
+  nowhere; but 4744 of its 5076 passes were noted (a flat in the floor's walk, a path of the port's drawing not
+  ported, noted in almost every pass), so the run was free in 332.
+- **Found on the way:** the corrected run first set every field after a noted pass, the whole mapped state written
+  into each such tick's line and read back by the port: on Arena it took 3.8 times lockstep's time (68 minutes
+  for the 58 sessions to lockstep's 18). Only the fields that aren't the original's already are set now, and the
+  free run's state is no longer copied at every tick: 15.2 minutes to lockstep's 14.7.
+- **Left for step 5:** the original's ticks still come from the finished recording, not from the follower as it
+  makes them (left from step 2); the first-difference comparison (`rrc compare` alone, with `--feed` or `--fix`)
+  keeps its own loop, which the live check doesn't use.
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the

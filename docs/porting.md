@@ -707,6 +707,12 @@ the port. It is the work
 list: take a difference, then `rrc compare SESSION --transplant T` with T the tick before its first, for who wrote
 the original's value.
 
+`rrc compare SESSION --corrected` runs the port free, on its own state, and sets the original's values over only
+the fields a tick left otherwise, before the next tick's step; after a pass the port noted, every field (D191). Each
+difference is counted where it arises, as in lockstep, and the census (`.rrc/compare/SESSION/corrected.json`) is
+lockstep's where the mapping carries the state both ways exactly; where it isn't, the difference is what the mapping
+can't carry (a pointer read as an index, state the port keeps and nothing maps).
+
 `rrc progress` says how far the port is, as the sessions show it (D117): of the program's functions the
 original ran in the sessions, those it ran in passes the port matches (as each session's last `rrc compare`
 left it), and how many of those the port's code names by ID (a bare `+0A2F0` names the program's own); then

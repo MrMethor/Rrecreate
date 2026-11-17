@@ -1564,10 +1564,10 @@ fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> 
         after,
         free: correcting,
         made: Vec::new(),
-        own: serde_json::Map::new(),
+        own: Value::Object(serde_json::Map::new()),
         screens_seen: Screens::default(),
         census,
-        corrected: (0, BTreeMap::new()),
+        corrected: Corrections::default(),
     };
     if correcting {
         let mut on_line = |v: &Value| counting.line(v);
@@ -1581,11 +1581,18 @@ fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> 
         }
     }
     if correcting {
-        let (ticks, fields) = &counting.corrected;
-        let most: Vec<String> = fields.iter().map(|(f, n)| format!("{f} ({n})")).take(5).collect();
-        match ticks {
-            0 => say("corrected", "nothing: the port's free run is the original's at every tick"),
-            n => say("corrected", format!("at {n} ticks: {}", most.join(", "))),
+        let c = &counting.corrected;
+        let most: Vec<String> = c.fields.iter().map(|(f, n)| format!("{f} ({n})")).take(5).collect();
+        match (c.ticks, c.noted) {
+            (0, 0) => say("corrected", "nothing: the port's free run is the original's at every tick"),
+            (0, _) => say("corrected", "nothing it differed in: the port's free run is the original's"),
+            (n, _) => say("corrected", format!("at {n} ticks: {}", most.join(", "))),
+        }
+        if c.noted > 0 {
+            say(
+                "noted",
+                format!("at {} ticks: every field set to the original's after a pass the port noted", c.noted),
+            );
         }
     }
     Ok(counting.census)
@@ -1609,11 +1616,20 @@ struct Counting<'a> {
     free: bool,
     made: Vec<String>,
     /// A free run's state as its lines leave it (each gives the top-level fields that changed).
-    own: serde_json::Map<String, Value>,
+    own: Value,
     screens_seen: Screens,
     census: Census,
-    /// The ticks corrected, and how many times each field was.
-    corrected: (u64, BTreeMap<String, u64>),
+    corrected: Corrections,
+}
+
+/// What a corrected run set (D191).
+#[derive(Default)]
+struct Corrections {
+    /// The ticks some field differed or was unset at, and how many times each was.
+    ticks: u64,
+    fields: BTreeMap<String, u64>,
+    /// The ticks after a pass the port noted (D115): its state there isn't its own, so every field is set.
+    noted: u64,
 }
 
 impl Counting<'_> {
@@ -1640,8 +1656,10 @@ impl Counting<'_> {
         if t == 0 || t > ticks {
             return Err(format!("the port's trace has tick {t}; the session has 1 to {ticks}"));
         }
-        for (key, value) in v["state"].as_object().into_iter().flatten() {
-            self.own.insert(key.clone(), value.clone());
+        if let (Some(changed), Value::Object(own)) = (v["state"].as_object(), &mut self.own) {
+            for (key, value) in changed {
+                own.insert(key.clone(), value.clone());
+            }
         }
         let (name, census) = (self.name, &mut self.census);
         let seen_at = |t: u64, what: String| Seen { ticks: 1, session: name.to_owned(), tick: t, what };
@@ -1663,11 +1681,9 @@ impl Counting<'_> {
         }
         census.passes += 1;
         // Each field's own value: what the feed overrode (lockstep: a field not there matched), or the state's.
-        let own: Vec<(usize, Value)> = if self.free {
-            let state = Value::Object(self.own.clone());
-            (0..self.mapped.len())
-                .map(|i| (i, at_path(&state, &self.mapped[i].field).cloned().unwrap_or(Value::Null)))
-                .collect()
+        static NONE: Value = Value::Null;
+        let own: Vec<(usize, &Value)> = if self.free {
+            (0..self.mapped.len()).map(|i| (i, at_path(&self.own, &self.mapped[i].field).unwrap_or(&NONE))).collect()
         } else {
             let fields: BTreeMap<&str, usize> =
                 self.mapped.iter().enumerate().map(|(i, m)| (m.field.as_str(), i)).collect();
@@ -1675,9 +1691,10 @@ impl Counting<'_> {
                 .as_object()
                 .into_iter()
                 .flatten()
-                .filter_map(|(path, own)| fields.get(path.as_str()).map(|&i| (i, own.clone())))
+                .filter_map(|(path, own)| fields.get(path.as_str()).map(|&i| (i, own)))
                 .collect()
         };
+        let mut fixed: Vec<String> = Vec::new();
         for (i, own) in own {
             let (m, theirs) = (&self.mapped[i], &self.original[i][(t - 1) as usize]);
             if own.is_null() {
@@ -1687,16 +1704,28 @@ impl Counting<'_> {
                 }
                 count(&mut census.unset, &m.field, t, String::new());
                 correct.insert(m.field.clone(), theirs.clone());
+                fixed.push(m.field.clone());
                 continue;
             }
             // What a scenario's edit wrote at this tick isn't the pass's doing (D146).
             let edited = self.sets.get(&t);
             let mut differ = Vec::new();
-            differences(&m.field, theirs, &m.masked(&own), edited.map_or(1, |_| usize::MAX), &mut differ);
+            let masked = m.mask.map(|_| m.masked(own));
+            differences(
+                &m.field,
+                theirs,
+                masked.as_ref().unwrap_or(own),
+                edited.map_or(1, |_| usize::MAX),
+                &mut differ,
+            );
             if let Some((at, o, p)) = differ.iter().find(|(at, ..)| !edited.is_some_and(|s| edit_wrote(s, at))) {
                 count(&mut census.fields, &m.field, t, format!("{at}: original {o}, port {p}"));
             }
-            if !differ.is_empty() || noted {
+            if !differ.is_empty() {
+                fixed.push(m.field.clone());
+            }
+            // After a noted pass every field is the original's: those that aren't already, unmasked.
+            if !differ.is_empty() || (noted && own != theirs) {
                 correct.insert(m.field.clone(), theirs.clone());
             }
         }
@@ -1738,17 +1767,19 @@ impl Counting<'_> {
             return Ok(serde_json::Map::new());
         }
         // A free run's own values carry on from the corrected ones.
-        if !correct.is_empty() {
-            self.corrected.0 += 1;
-            let mut state = Value::Object(std::mem::take(&mut self.own));
-            for (path, value) in &correct {
-                *self.corrected.1.entry(path.clone()).or_default() += 1;
-                rrc_runtime::set_path(&mut state, path, value.clone())?;
+        if !fixed.is_empty() {
+            self.corrected.ticks += 1;
+            for field in fixed {
+                *self.corrected.fields.entry(field).or_default() += 1;
             }
-            self.own = match state {
-                Value::Object(map) => map,
-                _ => serde_json::Map::new(),
-            };
+        }
+        if noted {
+            self.corrected.noted += 1;
+        }
+        if !correct.is_empty() {
+            for (path, value) in &correct {
+                rrc_runtime::set_path(&mut self.own, path, value.clone())?;
+            }
         }
         Ok(correct)
     }

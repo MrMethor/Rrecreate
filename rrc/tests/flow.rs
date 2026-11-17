@@ -1157,6 +1157,8 @@ fn a_port_matches_the_original_tick_by_tick() {
     let census_of = |file: &str| std::fs::read_to_string(work.join(file)).unwrap();
     let (corrected, ok) = rrc.run(&["compare", "play", "--corrected"]);
     assert!(!ok && corrected.contains("corrected at ") && corrected.contains("enemies ("), "{corrected}");
+    // The bounce the port noted (D115): every field set there, apart from what differed.
+    assert!(corrected.contains("noted     at ") && corrected.contains("after a pass the port noted"), "{corrected}");
     assert_eq!(census_of("corrected.json"), census_of("census.json"), "{corrected}");
     rrc.env.pop();
     let matched = rrc.ok(&["compare", "play", "--lockstep"]);
