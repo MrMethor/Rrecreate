@@ -232,7 +232,7 @@ impl KeyStates {
 /// words): the buttons, the position in the driver's coordinates, the motion in mickeys, and each button's
 /// presses and releases (left, right, middle: how many, and where the last was); and what it keeps besides, the
 /// ranges a position is kept in and its video mode's granularity, which the program's own calls set (D133).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MouseDriver {
     pub buttons: u16,
     pub x: i32,
@@ -243,6 +243,23 @@ pub struct MouseDriver {
     pub ranges: MouseRanges,
     /// The host's mouse at its last move, in the driver's coordinates.
     host: Option<(i32, i32)>,
+}
+
+impl Default for MouseDriver {
+    /// As a reset leaves it (INT 33h's 00h): in the middle of mode 13h's ranges, nothing held or counted.
+    fn default() -> MouseDriver {
+        let ranges = MouseRanges::default();
+        MouseDriver {
+            buttons: 0,
+            x: (ranges.x.1 + 1) / 2,
+            y: (ranges.y.1 + 1) / 2,
+            mickeys: (0, 0),
+            presses: Default::default(),
+            releases: Default::default(),
+            ranges,
+            host: None,
+        }
+    }
 }
 
 impl MouseDriver {
@@ -452,41 +469,71 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
     })
 }
 
-/// The port's own input handling checked against the original's (D194, `rrc compare --live`): at each of the
-/// original's sync points, [`Live::next`] given the devices as the original's run had them there, the play's time its
-/// clock, and what the pass wrote taken back ([`Live::wrote`]) as it is when played.
+/// The port's own input handling checked against the original's (D194, `rrc compare --live`), played as the platform
+/// plays it at virtual time: [`Live::next`] asked at each of its frames (70 a second), each key and mouse move given at
+/// the first frame after it came, until it takes a pass, at the original's next sync point at the latest; what the pass
+/// wrote is taken back ([`Live::wrote`]) as when played.
 struct Checked<S: Live> {
     devices: S::Devices,
+    /// The frames asked so far; the keys and moves not given yet; the mouse as it last moved.
+    frames: u64,
+    keys: std::collections::VecDeque<(u64, u8)>,
+    moves: std::collections::VecDeque<(u64, i32, i32, u8)>,
     mouse: Option<(i32, i32)>,
     buttons: u8,
 }
 
 impl<S: Live> Default for Checked<S> {
     fn default() -> Checked<S> {
-        Checked { devices: S::Devices::default(), mouse: None, buttons: 0 }
+        Checked {
+            devices: S::Devices::default(),
+            frames: 0,
+            keys: Default::default(),
+            moves: Default::default(),
+            mouse: None,
+            buttons: 0,
+        }
     }
 }
 
+/// The platform's frames a second (its window's), the check's too.
+const FRAMES_HZ: u64 = 70;
+
 impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
-        if let Some((x, y, buttons)) = played.mouse {
-            (self.mouse, self.buttons) = (Some((x, y)), buttons);
+        self.keys.extend(played.keys.iter().copied());
+        self.moves.extend(played.mouse.iter().copied());
+        // Frames from the last one asked, to the original's next sync point (or one frame past this one at the last);
+        // the first from the original's first sync point: its start-up's pass took the time to there.
+        if self.frames == 0 {
+            self.frames = played.ms * FRAMES_HZ / 1000;
         }
-        let host = Host {
-            ms: played.ms,
-            scancodes: played.keys.clone(),
-            mouse: self.mouse,
-            buttons: self.buttons,
-            ..Host::default()
-        };
-        match state.next(&mut self.devices, &host) {
-            Next::Wait => serde_json::json!({"wait": true}),
-            Next::End => serde_json::json!({"end": true}),
-            Next::Tick(sync, inputs) => {
-                let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
-                let values: serde_json::Map<String, serde_json::Value> =
-                    inputs.values().map(|(name, bytes)| (name.to_owned(), serde_json::json!(hex(bytes)))).collect();
-                serde_json::json!({"sync": sync, "inputs": values})
+        let until = played.next.unwrap_or(played.ms + 1000 / FRAMES_HZ);
+        loop {
+            let ms = (self.frames + 1) * 1000 / FRAMES_HZ;
+            if ms > until.max(played.ms) {
+                return serde_json::json!({"wait": true});
+            }
+            self.frames += 1;
+            let mut scancodes = Vec::new();
+            while let Some(&(_, code)) = self.keys.front().filter(|(at, _)| *at <= ms) {
+                scancodes.push(code);
+                self.keys.pop_front();
+            }
+            while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= ms) {
+                (self.mouse, self.buttons) = (Some((x, y)), buttons);
+                self.moves.pop_front();
+            }
+            let host = Host { ms, scancodes, mouse: self.mouse, buttons: self.buttons, ..Host::default() };
+            match state.next(&mut self.devices, &host) {
+                Next::Wait => continue,
+                Next::End => return serde_json::json!({"end": true, "ms": ms, "due": played.ms}),
+                Next::Tick(sync, inputs) => {
+                    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+                    let values: serde_json::Map<String, serde_json::Value> =
+                        inputs.values().map(|(name, bytes)| (name.to_owned(), serde_json::json!(hex(bytes)))).collect();
+                    return serde_json::json!({"sync": sync, "inputs": values, "ms": ms, "due": played.ms});
+                }
             }
         }
     }

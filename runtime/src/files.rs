@@ -41,14 +41,15 @@ pub struct InputsLine {
     pub played: Option<Played>,
 }
 
-/// What the player had done by a tick's sync point, as the original's run had it (D194): the play's time there (ms
-/// from power-on), the keyboard controller's bytes since the tick before, and the mouse (in the screen's pixels) with
-/// its buttons, where it last moved.
+/// What the player did up to a tick's sync point, as the original's run had it (D194): the play's time there (ms from
+/// power-on) and at the next tick's (none at the last), the keyboard controller's bytes since the tick before and the
+/// mouse's moves (in the screen's pixels, with its buttons), each at its time.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Played {
     pub ms: u64,
-    pub keys: Vec<u8>,
-    pub mouse: Option<(i32, i32, u8)>,
+    pub next: Option<u64>,
+    pub keys: Vec<(u64, u8)>,
+    pub mouse: Vec<(u64, i32, i32, u8)>,
 }
 
 /// A read of the pass that saw an input otherwise than the read before it there (D68, D93): the input,
@@ -230,17 +231,22 @@ impl InputsReader {
         let spun = v["spun"].as_u64();
         let played = match v.get("devices") {
             Some(d) => {
-                let keys = d["keys"].as_array().into_iter().flatten();
-                let keys = keys.map(|k| k.as_u64().map(|k| k as u8).ok_or("a key's byte")).collect::<Result<_, _>>()?;
-                let mouse = match d["mouse"].as_array().map(Vec::as_slice) {
-                    Some([x, y, b]) => Some((
-                        x.as_i64().ok_or("the mouse's x")? as i32,
-                        y.as_i64().ok_or("the mouse's y")? as i32,
-                        b.as_u64().ok_or("the mouse's buttons")? as u8,
-                    )),
-                    _ => None,
-                };
-                Some(Played { ms: d["ms"].as_u64().ok_or("the devices' ms")?, keys, mouse })
+                let number = |v: &Value| v.as_i64().ok_or("the devices' numbers");
+                let mut keys = Vec::new();
+                for key in d["keys"].as_array().into_iter().flatten() {
+                    keys.push((number(&key[0])? as u64, number(&key[1])? as u8));
+                }
+                let mut mouse = Vec::new();
+                for m in d["mouse"].as_array().into_iter().flatten() {
+                    mouse.push((
+                        number(&m[0])? as u64,
+                        number(&m[1])? as i32,
+                        number(&m[2])? as i32,
+                        number(&m[3])? as u8,
+                    ));
+                }
+                let ms = d["ms"].as_u64().ok_or("the devices' ms")?;
+                Some(Played { ms, next: d["next"].as_u64(), keys, mouse })
             }
             None => None,
         };

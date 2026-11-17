@@ -752,11 +752,11 @@ ends is read as a file is; one that can't read its standard input is given the f
   inputs' `sync`). A tick may have `correct` (version 5, D191: `rrc compare --corrected`), of the same form: the
   original's values of the fields the port's tick before differed in, which the port sets over its state before it
   steps that tick (the line comes after the port wrote the tick it corrects). A tick may have `devices` (version 6,
-  D194: `rrc compare --live`): what the player had done by its sync point as the original's run had it, `{"ms":
-  21843, "keys": [77, 205], "mouse": [160, 100, 1]}`: the time in ms from power-on, the keyboard controller's bytes
-  since the tick before, the mouse where it last moved, in the screen's pixels (mode 13h's driver counts two across
-  one), with its buttons; a played port's `Live` is given them there. The last line is
-  `{"end":"the session's end","ticks":1400}`.
+  D194: `rrc compare --live`): what the player did up to its sync point as the original's run had it, `{"ms": 21843,
+  "next": 21857, "keys": [[21840, 77], [21841, 205]], "mouse": [[21842, 160, 100, 1]]}`: its time and the next
+  tick's in ms from power-on, the keyboard controller's bytes since the tick before and the mouse's moves (in the
+  screen's pixels: mode 13h's driver counts two across one, with its buttons), each with its time; a played port's
+  `Live` is given them at its frames. The last line is `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each
   mapped field's value at the tick by its path. The runtime sets each over the port's start state's
@@ -777,9 +777,10 @@ ends is read as a file is; one that can't read its standard input is given the f
   is in `"overrode"` with the port's own value before it: `{"tick":605,"state":{…},"overrode":{"hit_effects":
   […]}}` (D114). What the port noted (`rrc_runtime::note`) in the pass to a tick is in `"notes"`, with how many
   times: `{"tick":194,"state":{…},"notes":{"a bounce not counted (TOY.EXE+002FF)":1}}` (D115). A run with `--live`
-  (D194) has on each tick with `devices` what the port's `Live` made of them there, before the pass: `"live":
-  {"sync":"play","inputs":{"timer_count":"0500",…}}`, each input's bytes in hex, or `{"wait":true}` (its loop still
-  waits) or `{"end":true}` (it ends).
+  (D194) has on each tick with `devices` what the port's `Live` made of them, asked at its frames (70 a second) from
+  the last up to the next tick's time: `"live": {"sync":"play","inputs":{"timer_count":"0500",…},"ms":21843,
+  "due":21843}`, each input's bytes in hex, with the frame's time and the original's sync point's; or
+  `{"wait":true}` (its loop still waited at the next tick's time) or `{"end":true}` (it ended).
 - **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the
   port draws it, a frame's picture (below, `FRM1`, indexed), in `DIR/<tick>.frm` when it changed since the tick
   before, and the tick's line in the trace names it: `{"tick":102,"state":{…},"frame":"102.frm"}`. `--screen

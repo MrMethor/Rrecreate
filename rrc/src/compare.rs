@@ -1671,16 +1671,16 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
         }
     }
     let lived = match live {
-        true => Some(judge(&trace, &file("port.jsonl"))?),
+        true => Some(judge(&trace, &file("port.jsonl"), played.as_ref().unwrap_or(&BTreeMap::new()))?),
         false => None,
     };
     Ok((counting.census, lived))
 }
 
-/// What the player had done by each tick's sync point, as the session's run had it (D194): its input from where it
-/// starts (Clockwork's `queued`, once the session is loaded), each tick's time (ms from power-on), the keyboard
-/// controller's bytes since the tick before, the mouse where it last moved (in the screen's pixels: mode 13h's driver
-/// counts two across a pixel) with its buttons. By tick, as an inputs line's `devices`.
+/// What the player did up to each tick's sync point, as the session's run had it (D194): its input from where it
+/// starts (Clockwork's `queued`, once the session is loaded); each tick's time and the next's (ms from power-on), the
+/// keyboard controller's bytes since the tick before and the mouse's moves (in the screen's pixels: mode 13h's driver
+/// counts two across a pixel, with its buttons), each at its time. By tick, as an inputs line's `devices`.
 fn played(repo: &Repo, session: &Session, k: &Knowledge, trace: &Trace) -> Result<BTreeMap<u64, Value>, String> {
     let (mut clockwork, _, _) = crate::trace::begin(repo, session, &crate::trace::sync_points(k)?)?;
     let queued = clockwork.ask("queued", Value::Null)?;
@@ -1691,24 +1691,24 @@ fn played(repo: &Repo, session: &Session, k: &Knowledge, trace: &Trace) -> Resul
         let cycle: u64 = words.next().and_then(|c| c.parse().ok()).ok_or_else(|| format!("an input: {line:?}"))?;
         events.push((cycle, words.map(str::to_owned).collect::<Vec<_>>()));
     }
+    let ms = |cycle: u64| (u128::from(cycle) * 1000 / u128::from(ips)) as u64;
     let mut played = BTreeMap::new();
-    let (mut next, mut mouse) = (0, None);
-    for t in &trace.ticks {
-        let mut keys = Vec::new();
+    let mut next = 0;
+    for (i, t) in trace.ticks.iter().enumerate() {
+        let (mut keys, mut mouse) = (Vec::new(), Vec::new());
         while let Some((cycle, words)) = events.get(next).filter(|(cycle, _)| *cycle <= t.cycle) {
-            let _ = cycle;
             let number = |i: usize| words.get(i).and_then(|w| w.parse::<i64>().ok()).unwrap_or(0);
             match words.first().map(String::as_str) {
-                Some("K") => keys.extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok())),
-                Some("M") => mouse = Some(json!([number(1) / 2, number(2), number(3)])),
+                Some("K") => keys
+                    .extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok()).map(|k| json!([ms(*cycle), k]))),
+                Some("M") => mouse.push(json!([ms(*cycle), number(1) / 2, number(2), number(3)])),
                 _ => {}
             }
             next += 1;
         }
-        let ms = (u128::from(t.cycle) * 1000 / u128::from(ips)) as u64;
-        let mut devices = json!({"ms": ms, "keys": keys});
-        if let Some(mouse) = &mouse {
-            devices["mouse"] = mouse.clone();
+        let mut devices = json!({"ms": ms(t.cycle), "keys": keys, "mouse": mouse});
+        if let Some(after) = trace.ticks.get(i + 1) {
+            devices["next"] = json!(ms(after.cycle));
         }
         played.insert(t.tick, devices);
     }
@@ -1766,7 +1766,7 @@ impl Lived {
             say("differs", format!("the port's loop ends where the original's took a pass: {}", at(seen)));
         }
         for (input, seen) in &self.timing {
-            say("timing", format!("{input}: one pass early or late, {}", at(seen)));
+            say("timing", format!("{input}: a moment apart, {}", at(seen)));
         }
         if let Some(seen) = &self.waits {
             say("timing", format!("the port's loop waits where the original's took a pass: {}", at(seen)));
@@ -1775,8 +1775,9 @@ impl Lived {
 }
 
 /// The port's checks of its input handling (`live` on its trace's lines, `port`) against the original's inputs at
-/// each tick of `trace`.
-fn judge(trace: &Trace, port: &str) -> Result<Lived, String> {
+/// each tick of `trace` (`played`: each tick's devices, its time among them).
+fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Lived, String> {
+    let due = |t: u64| played.get(&t).and_then(|d| d["ms"].as_u64());
     let names: BTreeMap<&str, usize> =
         trace.header.inputs.iter().enumerate().map(|(i, item)| (item.name.as_str(), i)).collect();
     let values: Vec<Vec<Option<String>>> = (0..trace.header.inputs.len()).map(|i| trace.input_values(i)).collect();
@@ -1804,6 +1805,16 @@ fn judge(trace: &Trace, port: &str) -> Result<Lived, String> {
             seen(&mut lived.syncs, t, format!("the port's from {}, the original's from {}", live["sync"], tick.sync));
             same = false;
         }
+        // The port's pass more than a frame from the original's (a pass of the original's that took long, which the
+        // port's doesn't): what the time gives it is a moment apart, timing.
+        let apart = match (live["ms"].as_u64(), live["due"].as_u64()) {
+            (Some(ms), Some(due)) if ms.abs_diff(due) > 1000 / 70 + 1 => Some(if ms < due {
+                format!("its pass {} ms early", due - ms)
+            } else {
+                format!("its pass {} ms late", ms - due)
+            }),
+            _ => None,
+        };
         for (input, made) in live["inputs"].as_object().into_iter().flatten() {
             let (Some(&i), Some(made)) = (names.get(input.as_str()), made.as_str()) else { continue };
             let at = |t: u64| values[i].get((t as usize).wrapping_sub(1)).cloned().flatten();
@@ -1812,12 +1823,29 @@ fn judge(trace: &Trace, port: &str) -> Result<Lived, String> {
                 continue;
             }
             same = false;
-            // The first byte apart, as the comparison says a field's.
+            // Byte by byte: one the original's a pass before or after is timing (a key's moment, a count's), any other
+            // a difference; the first of each said.
             let byte = |hex: &str, k: usize| hex.get(2 * k..2 * k + 2).unwrap_or("--").to_ascii_uppercase();
-            let k = (0..theirs.len().max(made.len()) / 2).find(|&k| byte(&theirs, k) != byte(made, k)).unwrap_or(0);
-            let what = format!("byte {k}: original {}, port {}", byte(&theirs, k), byte(made, k));
-            let near = [t.wrapping_sub(1), t + 1].iter().any(|&n| at(n).is_some_and(|v| v.eq_ignore_ascii_case(made)));
-            let map = if near { &mut lived.timing } else { &mut lived.differs };
+            // The original's values a pass before and after, and at the ticks within a frame of when the port's pass
+            // came: what the time there gave the original's handlers.
+            let when = live["ms"].as_u64();
+            let others: Vec<String> = (t.saturating_sub(8)..=t + 8)
+                .filter(|&u| u != t)
+                .filter(|&u| {
+                    u.abs_diff(t) == 1 || when.zip(due(u)).is_some_and(|(ms, at)| ms.abs_diff(at) <= 1000 / 70 + 1)
+                })
+                .filter_map(at)
+                .collect();
+            let near = |k: usize, mine: &str| others.iter().any(|v| byte(v, k) == mine);
+            let bytes = theirs.len().max(made.len()) / 2;
+            let apart_bytes: Vec<usize> = (0..bytes).filter(|&k| byte(&theirs, k) != byte(made, k)).collect();
+            let wrong = apart_bytes.iter().copied().find(|&k| apart.is_none() && !near(k, &byte(made, k)));
+            let k = wrong.or(apart_bytes.first().copied()).unwrap_or(0);
+            let mut what = format!("byte {k}: original {}, port {}", byte(&theirs, k), byte(made, k));
+            if let Some(apart) = &apart {
+                what = format!("{what}; {apart}");
+            }
+            let map = if wrong.is_some() { &mut lived.differs } else { &mut lived.timing };
             match map.get_mut(input) {
                 Some(seen) => seen.ticks += 1,
                 None => {

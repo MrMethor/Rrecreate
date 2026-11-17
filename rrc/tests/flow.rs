@@ -1028,7 +1028,7 @@ fn a_port_s_sound_is_the_original_s() {
     // its timer a pass early or late (it counts from play's start, the original's from its install); its loop ends
     // where the original's does, a pass after Escape (it read Escape where the original doesn't, before).
     let lived = rrc.ok(&["compare", "play", "--live"]);
-    assert!(lived.contains("timing    timer_count: one pass early or late, in "), "{lived}");
+    assert!(lived.contains("timing    timer_count: a moment apart, in "), "{lived}");
     assert!(!lived.contains("differs"), "{lived}");
     // A note keyed an octave low: its key on differs, and who wrote the OPL's ports is named.
     rrc.env.push(("CHIME_BUG", "block"));

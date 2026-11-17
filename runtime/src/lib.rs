@@ -734,6 +734,10 @@ fn run_drawn<S: Simulation>(
             if line.tick == 0 && first == 1 && request.transplant.is_none() && request.resume.is_none() {
                 let next = following.as_ref().map(|l| l.sync.as_str());
                 state.power_on(&Tick { number: 0, sync: &line.sync, inputs: &current, spun: line.spun, next });
+                // What the start-up wrote into its inputs, to the check beside, as a pass's (D194).
+                if let Some(check) = check.as_deref_mut() {
+                    check.stepped(&state, &current);
+                }
             }
             reading = following;
             continue;
