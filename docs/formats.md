@@ -104,7 +104,10 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has
   the recording it is of (`recorded`) and the port's code (`port`) too; `corrected.json` is the corrected run's census
   (D191), which a play followed as it goes keeps too (`.rrc/play/NAME/census.json`, D192), with `panics`, where the
-  port stopped and was started again (D193). The workflow's gates read these. What was
+  port stopped and was started again (D193). `live.json` (`rrc compare --live`, D194) is what the port's input
+  handling made: `ticks` checked, `same` as the original's handlers made them, and by input the ticks it made
+  otherwise (`differs`) or a pass early or late (`timing`), each with its first tick and byte; `waits` (its loop still
+  waited where the original's took a pass), `syncs` (a pass from another sync point), `ends` (its loop ended). The workflow's gates read these. What was
   kept before them counts as other code's (stale): an `outcome.json` alone as a comparison of the fields, a census
   without `recorded` as one of the recording there is.
 - `work/card.json`: the item taken with `rrc work take` (D158): `item`, `question`, `route`, `other`, `budget`
@@ -748,7 +751,11 @@ ends is read as a file is; one that can't read its standard input is given the f
   (version 2; version 1 has no `fed`, and versions before 3 no rounds, `spun` or
   inputs' `sync`). A tick may have `correct` (version 5, D191: `rrc compare --corrected`), of the same form: the
   original's values of the fields the port's tick before differed in, which the port sets over its state before it
-  steps that tick (the line comes after the port wrote the tick it corrects). The last line is
+  steps that tick (the line comes after the port wrote the tick it corrects). A tick may have `devices` (version 6,
+  D194: `rrc compare --live`): what the player had done by its sync point as the original's run had it, `{"ms":
+  21843, "keys": [77, 205], "mouse": [160, 100, 1]}`: the time in ms from power-on, the keyboard controller's bytes
+  since the tick before, the mouse where it last moved, in the screen's pixels (mode 13h's driver counts two across
+  one), with its buttons; a played port's `Live` is given them there. The last line is
   `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each
@@ -769,7 +776,10 @@ ends is read as a file is; one that can't read its standard input is given the f
   its pointer null). A field a set changed (a scenario's edit, a fed field)
   is in `"overrode"` with the port's own value before it: `{"tick":605,"state":{…},"overrode":{"hit_effects":
   […]}}` (D114). What the port noted (`rrc_runtime::note`) in the pass to a tick is in `"notes"`, with how many
-  times: `{"tick":194,"state":{…},"notes":{"a bounce not counted (TOY.EXE+002FF)":1}}` (D115).
+  times: `{"tick":194,"state":{…},"notes":{"a bounce not counted (TOY.EXE+002FF)":1}}` (D115). A run with `--live`
+  (D194) has on each tick with `devices` what the port's `Live` made of them there, before the pass: `"live":
+  {"sync":"play","inputs":{"timer_count":"0500",…}}`, each input's bytes in hex, or `{"wait":true}` (its loop still
+  waits) or `{"end":true}` (it ends).
 - **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the
   port draws it, a frame's picture (below, `FRM1`, indexed), in `DIR/<tick>.frm` when it changed since the tick
   before, and the tick's line in the trace names it: `{"tick":102,"state":{…},"frame":"102.frm"}`. `--screen

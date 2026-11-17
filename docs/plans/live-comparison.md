@@ -540,7 +540,28 @@ path in the workspace now, and the build stops if one isn't in it.
   saved are read there, and its first line gives every input's value. Ten times at most; the play is recorded to its
   end whatever the port does. Tested on the toy: a panic and a hang each counted once, the port started again and
   matching from there.
-- **Memory over a long play** (pitfall 10): Followed live, a 12:45 play of Arena from power-on into the first dungeon (2572 ticks, recorded by the headless window from the cell session's input and five more minutes in the dungeon) kept each process's memory flat (clockwork/tools/speed/memory.py, the committed memory each minute: rrc 22 to 34 MB, the follower's Clockwork 63 to 84, the port 12 to 18), once the data segment a recording keeps at every tick (D92) wasn't kept in a play followed live: it grew rrc by 23 MB a minute, to its 256 MB limit. The play ran at 1.43 times its pace, every one of the window's 26 state hashes the follower's; a 7:45 play's live census was `rrc compare --corrected`'s byte for byte, one field differing at one tick (a difference of Arena's port that its sessions don't reach).
+- **Memory over a long play** (pitfall 10): Followed live, a 12:45 play of Arena from power-on into the first dungeon
+  (2572 ticks, recorded by the headless window from the cell session's input and five more minutes in the dungeon)
+  kept each process's memory flat (clockwork/tools/speed/memory.py, the committed memory each minute: rrc 22 to 34 MB,
+  the follower's Clockwork 63 to 84, the port 12 to 18), once the data segment a recording keeps at every tick (D92)
+  wasn't kept in a play followed live: it grew rrc by 23 MB a minute, to its 256 MB limit. The play ran at 1.43 times
+  its pace, every one of the window's 26 state hashes the follower's; a 7:45 play's live census was `rrc compare
+  --corrected`'s byte for byte, one field differing at one tick (a difference of Arena's port that its sessions don't
+  reach).
+
+### What step 6 did, its first part (2026-11-17, D194)
+
+- **The clock a parameter:** a played port's `Live` takes its time from `Host::ms`, the host's clock when played;
+  checked, the play's.
+- **`rrc compare SESSION --live`:** the port in lockstep, its `Live` given at each of the original's sync points the
+  session's devices as the machine had them (Clockwork's `queued`), on each tick's inputs line (`devices`); what it
+  made is on the tick's line of the port's trace (`live`), and rrc judges it: the same, timing (a pass early or late,
+  or its loop still waiting a moment), or a difference.
+- **The examples:** the chime's `Live` ended at Escape a pass before the original (which reads Escape at the loop's
+  top, right after a pass): fixed in the chime's and the vault's. Left: timing, their timers' phase (counted from
+  play's start, the originals' from their install).
+- **Next, its second part:** Arena's `Live` against `cell` and the dungeon session; then the check live, beside
+  `rrc play`.
 
 ## 8. Done when
 

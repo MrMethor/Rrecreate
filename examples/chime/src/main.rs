@@ -175,15 +175,17 @@ fn speaker_off(sounds: &mut Sounds) {
 struct Devices {
     keys: KeyStates,
     count: u16,
+    /// Escape was down at the loop's top, right after the last pass: the loop ends there.
+    escaped: bool,
 }
 
 impl Live for Chime {
     type Devices = Devices;
 
-    /// `main`'s loop (CHIME.EXE+00274): on until Escape is down, a pass each time the count moves.
+    /// `main`'s loop (CHIME.EXE+00274): on until Escape is down at its top, a pass each time the count moves.
     fn next(&self, devices: &mut Devices, host: &Host) -> Next {
         devices.keys.take(&host.scancodes);
-        if devices.keys.0[0x01] != 0 {
+        if devices.escaped {
             return Next::End;
         }
         let count = rrc_platform::timer_count(host.ms, 70) as u16;
@@ -193,6 +195,12 @@ impl Live for Chime {
         devices.count = count;
         let inputs = rrc_platform::inputs(&[("timer_count", &count.to_le_bytes()), ("key_down", &devices.keys.0)]);
         Next::Tick("pass".into(), inputs)
+    }
+
+    /// The loop's top, right after the pass: Escape read there (`while (!key_down[1])`), not while it waits, so a key
+    /// pressed during the wait still has its pass (D194: `rrc compare --live` found the port ending a pass early).
+    fn wrote(&self, devices: &mut Devices, _: &rrc_runtime::Inputs) {
+        devices.escaped = devices.keys.0[0x01] != 0;
     }
 }
 

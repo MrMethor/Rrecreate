@@ -135,7 +135,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 21, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 22, dos-pc ("), "{doctor}");
     assert!(doctor.contains("rules     RULES.md: 5 questions for the person not answered yet"), "{doctor}");
     // The stage the port is at, and what its gate lacks (D158): the person's answers, in place of the questions.
     let asking = rrc.ok(&["status"]);
@@ -859,6 +859,15 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(streamed.contains("every mapped field, frame and sound in all"), "{streamed}");
     assert_eq!(std::fs::read_to_string(work.join("port.jsonl")).unwrap(), piped);
     assert!(!drawn.is_empty() && frames(&work.join("frames")) == drawn);
+    // The port's own input handling (its `Live`) at each of the original's sync points, from power-on, given the
+    // session's keys at the play's time (D194): as the original's handlers made them, but where its loop would still
+    // wait a moment (its timer counts from play's start, the original's from its install).
+    let lived = rrc.ok(&["compare", "play", "--live"]);
+    assert!(
+        lived.contains("live      play: ") && lived.contains(" of 400 ticks as the original's handlers"),
+        "{lived}"
+    );
+    assert!(!lived.contains("differs") && lived.contains("timing    the port's loop waits where"), "{lived}");
     // A quirk's switch reaches the port's run (D149): only a registered one, and it isn't kept as the port's progress.
     let (refused, ok) = rrc.run(&["compare", "play", "--fix", "nothing"]);
     assert!(!ok && refused.contains("no quirk nothing"), "{refused}");
@@ -1015,6 +1024,12 @@ fn a_port_s_sound_is_the_original_s() {
     let streamed = rrc.ok(&["compare", "play", "--streamed"]);
     assert!(streamed.contains("sound     the port's sound is the original's at all 182 ticks"), "{streamed}");
     assert_eq!(std::fs::read_to_string(rrc.repo.join(".rrc/compare/play/port.jsonl")).unwrap(), piped);
+    // The port's own input handling (its `Live`), given the session's keys at each sync point at the play's time (D194):
+    // its timer a pass early or late (it counts from play's start, the original's from its install); its loop ends
+    // where the original's does, a pass after Escape (it read Escape where the original doesn't, before).
+    let lived = rrc.ok(&["compare", "play", "--live"]);
+    assert!(lived.contains("timing    timer_count: one pass early or late, in "), "{lived}");
+    assert!(!lived.contains("differs"), "{lived}");
     // A note keyed an octave low: its key on differs, and who wrote the OPL's ports is named.
     rrc.env.push(("CHIME_BUG", "block"));
     let (heard, ok) = rrc.run(&["compare", "play"]);

@@ -347,6 +347,8 @@ impl Presentation<Vault> for Screen {
 struct Devices {
     keys: KeyStates,
     count: u16,
+    /// Escape was down at a loop's top, right after the last pass: the loop ends there.
+    escaped: bool,
 }
 
 impl Live for Vault {
@@ -362,7 +364,7 @@ impl Live for Vault {
             1 => "play",
             _ => return Next::End,
         };
-        if devices.keys.0[0x01] != 0 {
+        if devices.escaped {
             return Next::End;
         }
         let count = rrc_platform::timer_count(host.ms, 70) as u16;
@@ -372,6 +374,12 @@ impl Live for Vault {
         devices.count = count;
         let inputs = rrc_platform::inputs(&[("timer_count", &count.to_le_bytes()), ("key_down", &devices.keys.0)]);
         Next::Tick(sync.into(), inputs)
+    }
+
+    /// A loop's top, right after the pass: Escape read there (`while (scene == 0 && !key_down[1])`), not while it
+    /// waits, so a key pressed during the wait still has its pass (D194).
+    fn wrote(&self, devices: &mut Devices, _: &rrc_runtime::Inputs) {
+        devices.escaped = devices.keys.0[0x01] != 0;
     }
 }
 

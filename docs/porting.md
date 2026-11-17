@@ -709,6 +709,13 @@ the port. It is the work
 list: take a difference, then `rrc compare SESSION --transplant T` with T the tick before its first, for who wrote
 the original's value.
 
+`rrc compare SESSION --live` checks the port's own input handling (its `Live`, what the platform plays it with)
+beside lockstep (D194): at each of the original's sync points, `Live` is given the session's keys and mouse as the
+original's run had them, at the play's time, and what it makes is judged against what the original's pass read: the
+same, timing (a pass early or late, or its loop still waiting a moment where the original's took a pass) or a
+difference, by input with its first tick (`.rrc/compare/SESSION/live.json`). Timing is a moment's phase; a
+difference is the port's handlers made otherwise than the original's: read the original's handler and fix `Live`.
+
 `rrc compare SESSION --corrected` runs the port free, on its own state, and sets the original's values over only
 the fields a tick left otherwise, before the next tick's step; after a pass the port noted, every field (D191). Each
 difference is counted where it arises, as in lockstep, and the census (`.rrc/compare/SESSION/corrected.json`) is

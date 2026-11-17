@@ -1212,6 +1212,7 @@ dependencies = [
  "nuked-opl3",
  "rrc-runtime",
  "serde",
+ "serde_json",
  "tinyaudio",
  "winapi",
 ]

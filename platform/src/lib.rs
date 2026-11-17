@@ -353,6 +353,19 @@ pub fn inputs(values: &[(&str, &[u8])]) -> Inputs {
 /// ```
 pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) -> Option<std::process::ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // A comparison's run with the port's own input handling checked beside it (`rrc compare --live`, D194).
+    if args.first().map(String::as_str) == Some("run") && args.iter().any(|a| a == "--live") {
+        let rest: Vec<String> = args.iter().filter(|a| *a != "--live").cloned().collect();
+        let checked = rrc_runtime::Request::parse(&rest)
+            .and_then(|request| rrc_runtime::run_checked::<S, P>(&request, &mut Checked::<S>::default()));
+        return Some(match checked {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("port: error: {e}");
+                std::process::ExitCode::from(1)
+            }
+        });
+    }
     if args.first().map(String::as_str) != Some("play") {
         return None;
     }
@@ -437,6 +450,50 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => fail(&e),
     })
+}
+
+/// The port's own input handling checked against the original's (D194, `rrc compare --live`): at each of the
+/// original's sync points, [`Live::next`] given the devices as the original's run had them there, the play's time its
+/// clock, and what the pass wrote taken back ([`Live::wrote`]) as it is when played.
+struct Checked<S: Live> {
+    devices: S::Devices,
+    mouse: Option<(i32, i32)>,
+    buttons: u8,
+}
+
+impl<S: Live> Default for Checked<S> {
+    fn default() -> Checked<S> {
+        Checked { devices: S::Devices::default(), mouse: None, buttons: 0 }
+    }
+}
+
+impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
+    fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
+        if let Some((x, y, buttons)) = played.mouse {
+            (self.mouse, self.buttons) = (Some((x, y)), buttons);
+        }
+        let host = Host {
+            ms: played.ms,
+            scancodes: played.keys.clone(),
+            mouse: self.mouse,
+            buttons: self.buttons,
+            ..Host::default()
+        };
+        match state.next(&mut self.devices, &host) {
+            Next::Wait => serde_json::json!({"wait": true}),
+            Next::End => serde_json::json!({"end": true}),
+            Next::Tick(sync, inputs) => {
+                let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+                let values: serde_json::Map<String, serde_json::Value> =
+                    inputs.values().map(|(name, bytes)| (name.to_owned(), serde_json::json!(hex(bytes)))).collect();
+                serde_json::json!({"sync": sync, "inputs": values})
+            }
+        }
+    }
+
+    fn stepped(&mut self, state: &S, inputs: &Inputs) {
+        state.wrote(&mut self.devices, inputs);
+    }
 }
 
 /// `--sound-buffer`'s samples a channel the output takes at a time (twice buffered): 256 to 16384.

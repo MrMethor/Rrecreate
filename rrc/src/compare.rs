@@ -57,11 +57,11 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let a = Args::parse(
         args,
         &["--transplant", "--resume", "--to", "--pair", "--feed", "--fix"],
-        &["--notes", "--lockstep", "--fields", "--streamed", "--corrected"],
+        &["--notes", "--lockstep", "--fields", "--streamed", "--corrected", "--live"],
     )?;
     let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] \
                  [--fields] [--notes] [--fix QUIRK] [--streamed] | compare SESSION --lockstep [--streamed] | compare \
-                 SESSION --corrected";
+                 SESSION --corrected | compare SESSION --live";
     // The port fed a tick at a time, each once it wrote the one before, as the live comparison feeds it (D190).
     STREAMED.store(a.has("--streamed"), std::sync::atomic::Ordering::Relaxed);
     // The mapped fields alone (D136): a stretch whose screens or sound the port doesn't make yet.
@@ -76,6 +76,18 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         if !crate::quirks::Quirks::load(repo)?.quirks.iter().any(|q| q.name == quirk) {
             return Err(format!("no quirk {quirk}: rrc quirk lists them"));
         }
+    }
+    // The port's own input handling checked beside lockstep (D194): what its `Live` makes of the session's devices.
+    if a.has("--live") {
+        if a.has("--corrected") || fixed.is_some() {
+            return Err("--live checks the port's input handling beside lockstep: not with --corrected or --fix".into());
+        }
+        let lived = live(repo, name)?;
+        let file = repo.state()?.join("compare").join(name.as_str()).join("live.json");
+        lived.save(&file)?;
+        lived.show(name);
+        say("live", crate::path_text(&file));
+        return Ok(if lived.differs() { ExitCode::from(1) } else { ExitCode::SUCCESS });
     }
     // The port's free run, corrected where it differs (D191): its census, kept beside lockstep's.
     if a.has("--corrected") {
@@ -160,7 +172,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     // What the port noted (D115): in all, the first tick and how many ticks; and in the pass to the last tick.
     let mut noted: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     let mut noted_last: Vec<(String, u64)> = Vec::new();
-    write_inputs(&trace, &sets, &feeds, &file("inputs.jsonl"))?;
+    write_inputs(&trace, &sets, &feeds, None, &file("inputs.jsonl"))?;
     let mut port_args =
         vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
     if let Some(t) = transplant {
@@ -1287,15 +1299,24 @@ fn write_inputs(
     trace: &Trace,
     sets: &BTreeMap<u64, serde_json::Map<String, Value>>,
     feeds: &BTreeMap<u64, serde_json::Map<String, Value>>,
+    played: Option<&BTreeMap<u64, Value>>,
     path: &str,
 ) -> Result<(), String> {
-    let mut text = inputs_header(&trace.header).to_string();
+    let mut header = inputs_header(&trace.header);
+    if played.is_some() {
+        header["version"] = json!(6);
+    }
+    let mut text = header.to_string();
     text.push('\n');
     // The start-up's pass, from power-on (D134): tick 0, before the first.
     let all: Vec<&crate::trace::Tick> =
         trace.header.power_on.as_deref().into_iter().chain(trace.ticks.iter()).collect();
     for (n, t) in all.iter().enumerate() {
-        text.push_str(&inputs_line(t, all.get(n + 1).copied(), sets.get(&t.tick), feeds.get(&t.tick)).to_string());
+        let mut line = inputs_line(t, all.get(n + 1).copied(), sets.get(&t.tick), feeds.get(&t.tick));
+        if let Some(devices) = played.and_then(|p| p.get(&t.tick)) {
+            line["devices"] = devices.clone();
+        }
+        text.push_str(&line.to_string());
         text.push('\n');
     }
     text.push_str(&json!({"end": trace.end.end, "ticks": trace.ticks.len()}).to_string());
@@ -1513,7 +1534,14 @@ impl Census {
 /// state before every pass (every field fed); every difference counted, none stopping it: the fields its own
 /// pass left otherwise, the frames and sound that differ, what it noted.
 pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
-    counted(repo, name, false)
+    Ok(counted(repo, name, false, false)?.0)
+}
+
+/// `rrc compare SESSION --live` (D194): the port in lockstep, its own input handling (the platform's `Live`) given at
+/// each of the original's sync points the devices as the original's run had them there (the session's input, at the
+/// play's time); what it made judged against what the original's pass read.
+pub(crate) fn live(repo: &Repo, name: &str) -> Result<Lived, String> {
+    counted(repo, name, false, true)?.1.ok_or_else(|| "the port wrote no check of its input handling".into())
 }
 
 /// `rrc compare SESSION --corrected` (D191): the port runs free, on its own state, and where a tick's fields differ
@@ -1521,11 +1549,11 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
 /// port writes it. Every difference is counted where it arises, as lockstep counts it, without the cascade a free
 /// run would have after it; where the mapping is exact, the census is lockstep's.
 pub(crate) fn corrected(repo: &Repo, name: &str) -> Result<Census, String> {
-    counted(repo, name, true)
+    Ok(counted(repo, name, true, false)?.0)
 }
 
 /// Lockstep's or the corrected run's census (D124, D191): the comparer takes the port's lines a tick at a time.
-fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> {
+fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Census, Option<Lived>), String> {
     let session = Session::load(repo, name)?;
     let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
     let k = Knowledge::load(&repo.knowledge())?;
@@ -1548,7 +1576,7 @@ fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> 
         Census { recorded: recorded.hash.clone(), port: crate::sources::fingerprint(&repo.root), ..Census::default() };
     let ticks = trace.ticks.len() as u64;
     if ticks < 2 {
-        return Ok(census);
+        return Ok((census, None));
     }
     let work = repo.state()?.join("compare").join(name);
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
@@ -1567,9 +1595,14 @@ fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> 
             feed_field(&mut feeds, m, values, fed_from);
         }
     }
-    write_inputs(&trace, &sets, &feeds, &file("inputs.jsonl"))?;
+    // The devices at each sync point, for the port's own input handling checked beside (D194).
+    let played = if live { Some(played(repo, &session, &k, &trace)?) } else { None };
+    write_inputs(&trace, &sets, &feeds, played.as_ref(), &file("inputs.jsonl"))?;
     let mut port_args =
         vec!["run".to_owned(), "--inputs".into(), file("inputs.jsonl"), "--out".into(), file("port.jsonl")];
+    if live {
+        port_args.push("--live".into());
+    }
     if from_power_on {
         let mut initial = mapped.clone();
         initial.extend(mapping.resolve_carried(&k)?);
@@ -1637,7 +1670,166 @@ fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> 
             );
         }
     }
-    Ok(counting.census)
+    let lived = match live {
+        true => Some(judge(&trace, &file("port.jsonl"))?),
+        false => None,
+    };
+    Ok((counting.census, lived))
+}
+
+/// What the player had done by each tick's sync point, as the session's run had it (D194): its input from where it
+/// starts (Clockwork's `queued`, once the session is loaded), each tick's time (ms from power-on), the keyboard
+/// controller's bytes since the tick before, the mouse where it last moved (in the screen's pixels: mode 13h's driver
+/// counts two across a pixel) with its buttons. By tick, as an inputs line's `devices`.
+fn played(repo: &Repo, session: &Session, k: &Knowledge, trace: &Trace) -> Result<BTreeMap<u64, Value>, String> {
+    let (mut clockwork, _, _) = crate::trace::begin(repo, session, &crate::trace::sync_points(k)?)?;
+    let queued = clockwork.ask("queued", Value::Null)?;
+    let ips = queued["ips"].as_u64().filter(|&i| i > 0).ok_or("the machine's speed")?;
+    let mut events = Vec::new();
+    for line in queued["events"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        let mut words = line.split(' ');
+        let cycle: u64 = words.next().and_then(|c| c.parse().ok()).ok_or_else(|| format!("an input: {line:?}"))?;
+        events.push((cycle, words.map(str::to_owned).collect::<Vec<_>>()));
+    }
+    let mut played = BTreeMap::new();
+    let (mut next, mut mouse) = (0, None);
+    for t in &trace.ticks {
+        let mut keys = Vec::new();
+        while let Some((cycle, words)) = events.get(next).filter(|(cycle, _)| *cycle <= t.cycle) {
+            let _ = cycle;
+            let number = |i: usize| words.get(i).and_then(|w| w.parse::<i64>().ok()).unwrap_or(0);
+            match words.first().map(String::as_str) {
+                Some("K") => keys.extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok())),
+                Some("M") => mouse = Some(json!([number(1) / 2, number(2), number(3)])),
+                _ => {}
+            }
+            next += 1;
+        }
+        let ms = (u128::from(t.cycle) * 1000 / u128::from(ips)) as u64;
+        let mut devices = json!({"ms": ms, "keys": keys});
+        if let Some(mouse) = &mouse {
+            devices["mouse"] = mouse.clone();
+        }
+        played.insert(t.tick, devices);
+    }
+    Ok(played)
+}
+
+/// What a port's own input handling made at the original's sync points, judged (D194): the ticks it made as the
+/// original's handlers did; by input, those one pass early or late (timing, as a read in the middle of a pass sees an
+/// event one read early or late) and those otherwise (a difference); the ticks its loop would wait where the
+/// original's took a pass (timing too), or take one from another sync point.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Lived {
+    pub ticks: u64,
+    pub same: u64,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub differs: BTreeMap<String, Seen>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub timing: BTreeMap<String, Seen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits: Option<Seen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syncs: Option<Seen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ends: Option<Seen>,
+}
+
+impl Lived {
+    /// Whether the port's input handling made anything otherwise than the original's handlers, timing aside.
+    pub fn differs(&self) -> bool {
+        !self.differs.is_empty() || self.syncs.is_some() || self.ends.is_some()
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// What it found, a line each.
+    pub fn show(&self, name: &str) {
+        let at = |seen: &Seen| {
+            let what = if seen.what.is_empty() { String::new() } else { format!(" ({})", seen.what) };
+            format!("in {} ticks, first at {name}'s tick {}{what}", seen.ticks, seen.tick)
+        };
+        say("live", format!("{}: {} of {} ticks as the original's handlers made them", name, self.same, self.ticks));
+        for (input, seen) in &self.differs {
+            say("differs", format!("{input}: {}", at(seen)));
+        }
+        if let Some(seen) = &self.syncs {
+            say("differs", format!("the pass from another sync point: {}", at(seen)));
+        }
+        if let Some(seen) = &self.ends {
+            say("differs", format!("the port's loop ends where the original's took a pass: {}", at(seen)));
+        }
+        for (input, seen) in &self.timing {
+            say("timing", format!("{input}: one pass early or late, {}", at(seen)));
+        }
+        if let Some(seen) = &self.waits {
+            say("timing", format!("the port's loop waits where the original's took a pass: {}", at(seen)));
+        }
+    }
+}
+
+/// The port's checks of its input handling (`live` on its trace's lines, `port`) against the original's inputs at
+/// each tick of `trace`.
+fn judge(trace: &Trace, port: &str) -> Result<Lived, String> {
+    let names: BTreeMap<&str, usize> =
+        trace.header.inputs.iter().enumerate().map(|(i, item)| (item.name.as_str(), i)).collect();
+    let values: Vec<Vec<Option<String>>> = (0..trace.header.inputs.len()).map(|i| trace.input_values(i)).collect();
+    let text = std::fs::read_to_string(port).map_err(|e| format!("the port's trace: {e}"))?;
+    let mut lived = Lived::default();
+    let seen = |slot: &mut Option<Seen>, t: u64, what: String| match slot {
+        Some(seen) => seen.ticks += 1,
+        None => *slot = Some(Seen { ticks: 1, session: trace.header.session.clone(), tick: t, what }),
+    };
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
+        let (Some(t), Some(live)) = (v["tick"].as_u64(), v.get("live")) else { continue };
+        let Some(tick) = trace.ticks.get((t as usize).wrapping_sub(1)) else { continue };
+        lived.ticks += 1;
+        if live["wait"] == true {
+            seen(&mut lived.waits, t, String::new());
+            continue;
+        }
+        if live["end"] == true {
+            seen(&mut lived.ends, t, String::new());
+            continue;
+        }
+        let mut same = true;
+        if live["sync"].as_str() != Some(tick.sync.as_str()) {
+            seen(&mut lived.syncs, t, format!("the port's from {}, the original's from {}", live["sync"], tick.sync));
+            same = false;
+        }
+        for (input, made) in live["inputs"].as_object().into_iter().flatten() {
+            let (Some(&i), Some(made)) = (names.get(input.as_str()), made.as_str()) else { continue };
+            let at = |t: u64| values[i].get((t as usize).wrapping_sub(1)).cloned().flatten();
+            let Some(theirs) = at(t) else { continue };
+            if theirs.eq_ignore_ascii_case(made) {
+                continue;
+            }
+            same = false;
+            // The first byte apart, as the comparison says a field's.
+            let byte = |hex: &str, k: usize| hex.get(2 * k..2 * k + 2).unwrap_or("--").to_ascii_uppercase();
+            let k = (0..theirs.len().max(made.len()) / 2).find(|&k| byte(&theirs, k) != byte(made, k)).unwrap_or(0);
+            let what = format!("byte {k}: original {}, port {}", byte(&theirs, k), byte(made, k));
+            let near = [t.wrapping_sub(1), t + 1].iter().any(|&n| at(n).is_some_and(|v| v.eq_ignore_ascii_case(made)));
+            let map = if near { &mut lived.timing } else { &mut lived.differs };
+            match map.get_mut(input) {
+                Some(seen) => seen.ticks += 1,
+                None => {
+                    map.insert(input.clone(), Seen { ticks: 1, session: trace.header.session.clone(), tick: t, what });
+                }
+            }
+        }
+        if same {
+            lived.same += 1;
+        }
+    }
+    Ok(lived)
 }
 
 /// The comparison a tick at a time (D191): the port's trace's lines as they come, against the original's ticks, the

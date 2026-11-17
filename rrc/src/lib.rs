@@ -210,6 +210,13 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          first, what), those it leaves unset, the frames and the sound that differ, what it
                          noted; the whole census in .rrc/compare/SESSION/census.json. Exits 1 if anything
                          differs
+  compare SESSION --live
+                         the port's own input handling (its Live, D194) beside lockstep: at each of the
+                         original's sync points it is given the session's keys and mouse as the original's
+                         run had them, at the play's time; what it makes judged against what the
+                         original's pass read: the same, timing (a pass early or late, its loop waiting a
+                         moment more) or a difference, by input (.rrc/compare/SESSION/live.json). Exits 1
+                         if anything differs
   play NAME [--from SESSION --tick N] [--replay FILE] | play NAME --resume
                          the person plays the original in Clockwork's window, from the session's tick N
                          (or power-on), recorded as the session NAME (sessions/NAME.session) and followed

@@ -42,7 +42,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-pub use files::{InputsFile, InputsReader, PortState, StartState, set_path};
+pub use files::{InputsFile, InputsReader, Played, PortState, StartState, set_path};
 /// The knowledge's types and the original's memory read and written as their values: what a port reads and
 /// writes the original's memory images with (its saved games, D126).
 pub use rrc_types as types;
@@ -418,6 +418,11 @@ impl Inputs {
         value
     }
 
+    /// Each input's bytes, by name.
+    pub fn values(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.values.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+    }
+
     /// An input's bytes (empty if the session has no such input, or it wasn't read yet).
     pub fn bytes(&self, name: &str) -> &[u8] {
         self.values.get(name).map_or(&[], Vec::as_slice)
@@ -583,7 +588,7 @@ pub fn main_drawn<S: Simulation + present::Shows, P: present::Presentation<S>>()
 
 fn main_with<S: Simulation>(drawer: &mut dyn present::Drawer<S>) -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match Request::parse(&args).and_then(|request| run_drawn::<S>(&request, drawer)) {
+    match Request::parse(&args).and_then(|request| run_drawn::<S>(&request, drawer, None)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("port: error: {message}");
@@ -636,12 +641,35 @@ pub fn started<S: Simulation>(dir: &std::path::Path) -> Result<Started<S>, Strin
 /// Runs the port as `request` says: from its start state (or a transplant, or a saved state) through
 /// the session's ticks, writing its state at every tick before it steps.
 pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
-    run_drawn::<S>(request, &mut present::Undrawn)
+    run_drawn::<S>(request, &mut present::Undrawn, None)
+}
+
+/// What a run checks beside its comparison at each tick (D194): a played port's own input handling (the platform's
+/// `Live`) given the devices as the original's run had them at the tick's sync point.
+pub trait Check<S> {
+    /// At a tick's sync point, before its pass, the port's state there and what the player had done by then: what to
+    /// write on the tick's line (`live`).
+    fn at(&mut self, state: &S, played: &files::Played) -> Value;
+    /// The pass stepped, `inputs` with what it wrote into them.
+    fn stepped(&mut self, state: &S, inputs: &Inputs);
+}
+
+/// Runs the port drawn by `P` as `request` says, `check` beside the comparison at each tick whose line has its
+/// devices (D194).
+pub fn run_checked<S: Simulation + present::Shows, P: present::Presentation<S>>(
+    request: &Request,
+    check: &mut dyn Check<S>,
+) -> Result<(), String> {
+    run_drawn::<S>(request, &mut present::Drawn(P::default()), Some(check))
 }
 
 /// The same, with the frames `drawer` draws written when the request asks for them (D107): each one
 /// that changed, into `frames` as `<tick>.frm`, named on its tick's line.
-fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<S>) -> Result<(), String> {
+fn run_drawn<S: Simulation>(
+    request: &Request,
+    drawer: &mut dyn present::Drawer<S>,
+    mut check: Option<&mut dyn Check<S>>,
+) -> Result<(), String> {
     for quirk in &request.fixes {
         fix(quirk);
     }
@@ -794,6 +822,10 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         if !line.set.is_empty() {
             set(&mut state, &mut line.set.iter().map(|(p, v)| (p, v)))?;
         }
+        // What the check beside makes of the devices at this sync point, before the pass (D194).
+        if let (Some(check), Some(played)) = (check.as_deref_mut(), &line.played) {
+            out.live(check.at(&state, played));
+        }
         let value = serialize(&state)?;
         out.tick(
             line.tick,
@@ -822,6 +854,9 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
             state = S::transplant(value)?;
         }
         state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun, next });
+        if let Some(check) = check.as_deref_mut() {
+            check.stepped(&state, &current);
+        }
         pass = Some(line.sync.clone());
         last = line.tick;
         reading = following;
@@ -1113,7 +1148,7 @@ mod tests {
             frames: Some(path("frames")),
             ..Request::default()
         };
-        run_drawn::<Counter>(&request, &mut present::Drawn(Animating)).unwrap();
+        run_drawn::<Counter>(&request, &mut present::Drawn(Animating), None).unwrap();
         let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
         let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect();
         let first = lines.iter().find(|v| v["tick"] == 1).unwrap();
@@ -1149,10 +1184,10 @@ mod tests {
             presentation: Some(path("own.json")),
             ..Request::default()
         };
-        run_drawn::<Counter>(&request, &mut present::Drawn(Blinking::default())).unwrap();
+        run_drawn::<Counter>(&request, &mut present::Drawn(Blinking::default()), None).unwrap();
         let frame = present::Frame::decode(&std::fs::read(d.join("frames").join("3.frm")).unwrap()).unwrap();
         assert_eq!(frame.pixels[0], 8, "tick 3's pass drew from the original's count, 7, on");
-        let refused = run_drawn::<Counter>(&request, &mut present::Drawn(Plain)).unwrap_err();
+        let refused = run_drawn::<Counter>(&request, &mut present::Drawn(Plain), None).unwrap_err();
         assert!(refused.contains("takes no state of its own") && refused.contains("drawn"), "{refused}");
         std::fs::remove_dir_all(&d).ok();
     }
@@ -1178,7 +1213,7 @@ mod tests {
         assert_eq!(lines[3]["state"]["count"], 101, "and stepped from there");
         // Its tick's frame is the pass's, drawn before the edit is written at the sync point (D165).
         let drawn = Request { frames: Some(path("frames")), ..request };
-        run_drawn::<Counter>(&drawn, &mut present::Drawn(Counting)).unwrap();
+        run_drawn::<Counter>(&drawn, &mut present::Drawn(Counting), None).unwrap();
         let frame = |t: u64| {
             present::Frame::decode(&std::fs::read(d.join("frames").join(format!("{t}.frm"))).unwrap()).unwrap()
         };
@@ -1191,7 +1226,7 @@ mod tests {
         );
         std::fs::write(d.join("inputs.jsonl"), fed).unwrap();
         std::fs::remove_dir_all(d.join("frames")).ok();
-        run_drawn::<Counter>(&drawn, &mut present::Drawn(Counting)).unwrap();
+        run_drawn::<Counter>(&drawn, &mut present::Drawn(Counting), None).unwrap();
         assert_eq!(frame(2).pixels[0], 1, "the pass's count, not the edit's");
         let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
         let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str(l).unwrap()).collect();

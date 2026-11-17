@@ -36,6 +36,19 @@ pub struct InputsLine {
     /// The hits the next tick's sync point's gate passed over before it (D130): how many times the original went
     /// round the wait the pass ends at. None where the file doesn't say.
     pub spun: Option<u64>,
+    /// The devices as the original's run had them at the tick's sync point (version 6, D194), for a played port's
+    /// own input handling checked against the original's.
+    pub played: Option<Played>,
+}
+
+/// What the player had done by a tick's sync point, as the original's run had it (D194): the play's time there (ms
+/// from power-on), the keyboard controller's bytes since the tick before, and the mouse (in the screen's pixels) with
+/// its buttons, where it last moved.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Played {
+    pub ms: u64,
+    pub keys: Vec<u8>,
+    pub mouse: Option<(i32, i32, u8)>,
 }
 
 /// A read of the pass that saw an input otherwise than the read before it there (D68, D93): the input,
@@ -98,8 +111,8 @@ impl InputsReader {
         let header = reader.text_line()?.ok_or_else(|| format!("{path}: empty"))?;
         let header: Value = serde_json::from_str(&header).map_err(|e| format!("{path}: {e}"))?;
         // Version 2 adds `fed` (D124); 3 a late read's round, a tick's `spun` and an input's `sync` (D130); 4 the
-        // start-up's pass, tick 0 (D134); 5 `correct` (D191).
-        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=5)) {
+        // start-up's pass, tick 0 (D134); 5 `correct` (D191); 6 `devices` (D194).
+        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=6)) {
             return Err(format!(
                 "{path}: not an inputs file this runtime reads ({} {})",
                 header["format"], header["version"]
@@ -215,7 +228,23 @@ impl InputsReader {
         let (set, fed, correct) = (paths("set"), paths("fed"), paths("correct"));
         let sync = v["sync"].as_str().unwrap_or_default().to_owned();
         let spun = v["spun"].as_u64();
-        Ok(Some(InputsLine { tick, sync, inputs, late, calls, set, fed, correct, spun }))
+        let played = match v.get("devices") {
+            Some(d) => {
+                let keys = d["keys"].as_array().into_iter().flatten();
+                let keys = keys.map(|k| k.as_u64().map(|k| k as u8).ok_or("a key's byte")).collect::<Result<_, _>>()?;
+                let mouse = match d["mouse"].as_array().map(Vec::as_slice) {
+                    Some([x, y, b]) => Some((
+                        x.as_i64().ok_or("the mouse's x")? as i32,
+                        y.as_i64().ok_or("the mouse's y")? as i32,
+                        b.as_u64().ok_or("the mouse's buttons")? as u8,
+                    )),
+                    _ => None,
+                };
+                Some(Played { ms: d["ms"].as_u64().ok_or("the devices' ms")?, keys, mouse })
+            }
+            None => None,
+        };
+        Ok(Some(InputsLine { tick, sync, inputs, late, calls, set, fed, correct, spun, played }))
     }
 }
 
@@ -374,13 +403,15 @@ pub(crate) struct TraceWriter {
     file: std::io::BufWriter<std::fs::File>,
     path: String,
     last: Option<Map<String, Value>>,
+    live: Option<Value>,
 }
 
 impl TraceWriter {
     /// `sounds`: the port's ticks have their sound (D108), the devices it makes (D121).
     pub fn create(path: &str, session: &str, from: u64, sounds: Option<&[&str]>) -> Result<TraceWriter, String> {
         let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
-        let mut writer = TraceWriter { file: std::io::BufWriter::new(file), path: path.to_owned(), last: None };
+        let mut writer =
+            TraceWriter { file: std::io::BufWriter::new(file), path: path.to_owned(), last: None, live: None };
         let mut header = json!({"format": "rrc-port-trace", "version": 1, "session": session, "from": from});
         if let Some(devices) = sounds {
             header["sound"] = json!(devices);
@@ -388,6 +419,11 @@ impl TraceWriter {
         writer.line(&header)?;
         writer.flush()?;
         Ok(writer)
+    }
+
+    /// What a run checked beside the comparison at the next tick (D194), for its line (`live`).
+    pub fn live(&mut self, checked: Value) {
+        self.live = Some(checked);
     }
 
     /// What is written so far, out of the buffer: a tick's line before the run reads past the next tick's (D190).
@@ -421,6 +457,9 @@ impl TraceWriter {
         };
         self.last = Some(state);
         let mut line = json!({"tick": tick, "state": changed});
+        if let Some(live) = self.live.take() {
+            line["live"] = live;
+        }
         if let Some(frame) = frame {
             line["frame"] = json!(frame);
         }

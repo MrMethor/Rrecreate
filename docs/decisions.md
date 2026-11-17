@@ -764,6 +764,30 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D194. M6.5's step 6, its first part: a played port's own input handling checked at virtual time. Accepted 2026-11-17.
+`rrc compare SESSION --live` runs the port in lockstep and checks its own input handling beside it (the platform's
+`Live`, D119): at each of the original's sync points the port's `Live::next` is given the devices as the original's
+run had them there, with the play's time as its clock (the clock is the host's when played, the play's when checked:
+`Host::ms`), and what the pass wrote into its inputs is given back to it (`Live::wrote`) as when played. The devices
+are the session's input as the machine has it once the session is loaded (Clockwork's `queued`, protocol 22: a
+script's events, a play's, from a snapshot on), given on each tick's inputs line (`devices`, inputs version 6: the
+time in ms from power-on, the keyboard controller's bytes since the tick before, the mouse in the screen's pixels).
+The port writes what `Live` made on the tick's line (`live`); rrc judges it against what the original's pass read:
+the same; one pass early or late (timing: as a read in the middle of a pass sees an event one read early or late,
+so a handler's timer or a key's moment a pass apart); its loop still waiting where the original's took a pass
+(timing); or otherwise, a difference (by input, with its first tick and byte), a pass from another sync point, or the
+loop ending where the original's went on. `.rrc/compare/SESSION/live.json` keeps it; differences exit 1. The
+platform's `main` answers a run with `--live` (`rrc_runtime::run_checked`, a `Check` beside the comparison).
+The examples, checked: the chime's loop ended at Escape before the original's last pass (the originals read Escape at
+the loop's top, right after a pass, not while waiting): fixed in the chime's and the vault's `Live` (`wrote` reads
+it). What is left is timing: their timers count from play's start, the originals' from their install, a 70th of a
+second apart in phase, so a count is one pass early or late (the chime: 130 of 182 ticks) or the loop still waits at
+the original's sync point (the chime: 26; the vault: 80 of 400).
+**Why:** the plan's step 6 (D184, section 3.7): what playing the port exercises that a comparison doesn't, its input
+handling, is checked against the original's from the same devices at the same moments, deterministically and
+offline; a port's handlers made otherwise than the original's show as differences, a moment's phase as timing.
+**Extends:** D119, D133, D145, D184.
+
 ### D193. M6.5's step 5 done: a port that stops is started again from the follower's state; memory stays flat. Accepted 2026-11-17.
 In a play followed as it goes (D192), a port that panics, or writes no line for ten times its slowest tick so far
 (ten seconds at least, then killed), is counted where it stopped (`panics` in the census, said when it happens and
@@ -773,7 +797,14 @@ and when that tick comes the port starts from it as from a transplant, its first
 the ticks before left it; the lines before are dropped, and its passes to there aren't counted as its own. After ten
 times, it is compared no more; the play is recorded to its end whatever the port does, and a port stopped at the
 end no longer fails the play. Tested on the toy's play: a port that panics in a pass, and one that hangs, are each
-counted once, started again, and match from there. Followed live, a 12:45 play of Arena from power-on into the first dungeon (2572 ticks, recorded by the headless window from the cell session's input and five more minutes in the dungeon) kept each process's memory flat (clockwork/tools/speed/memory.py, the committed memory each minute: rrc 22 to 34 MB, the follower's Clockwork 63 to 84, the port 12 to 18), once the data segment a recording keeps at every tick (D92) wasn't kept in a play followed live: it grew rrc by 23 MB a minute, to its 256 MB limit. The play ran at 1.43 times its pace, every one of the window's 26 state hashes the follower's; a 7:45 play's live census was `rrc compare --corrected`'s byte for byte, one field differing at one tick (a difference of Arena's port that its sessions don't reach).
+counted once, started again, and match from there. Followed live, a 12:45 play of Arena from power-on into the first
+dungeon (2572 ticks, recorded by the headless window from the cell session's input and five more minutes in the
+dungeon) kept each process's memory flat (clockwork/tools/speed/memory.py, the committed memory each minute: rrc 22 to
+34 MB, the follower's Clockwork 63 to 84, the port 12 to 18), once the data segment a recording keeps at every tick
+(D92) wasn't kept in a play followed live: it grew rrc by 23 MB a minute, to its 256 MB limit. The play ran at 1.43
+times its pace, every one of the window's 26 state hashes the follower's; a 7:45 play's live census was `rrc compare
+--corrected`'s byte for byte, one field differing at one tick (a difference of Arena's port that its sessions don't
+reach).
 **Why:** the plan's step 5, pitfalls 12 and 13 (a port that panics or hangs must cost the play neither its
 recording nor the rest of its comparison) and pitfall 10 (memory on this 8 GB machine, D171).
 **Extends:** D184, D192.

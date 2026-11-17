@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-17 (decisions to D193). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-17 (decisions to D194). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -179,7 +179,9 @@ port run free, corrected only where it differs, gives lockstep's census on all o
 done (D192, D193): `rrc play` follows the play as it goes, the port beside it, and says each difference when it is
 first found; the toy's and the vault's plays replayed through it match their offline comparisons, a planted bug is
 said at its tick, a port that panics or hangs is started again from the follower's state, and memory stays flat over
-a long play of Arena. Next, step 6: the port's own input handling checked at virtual time. Then M7.
+a long play of Arena. Step 6 is under way (D194): a played port's own input handling is checked against the
+original's handlers at virtual time (`rrc compare --live`), and the examples' are as the originals' but for a timer's
+phase. Next, Arena's, against its dungeon sessions, then the check beside a live play. Then M7.
 
 **The person's calls ahead:** the disk a play may take (the plan's section 10); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).

@@ -131,6 +131,10 @@ function's entry) outside interrupt handlers, and in them too for those `interru
 million, counted in `dropped`). `entries_take` answers the same with the runs kept since the last take, and keeps on
 (D192).
 
+**Input to come.** `queued` answers `{"events": ["<cycle> K|M|J|R ..."], "ips"}`, the input the machine still has
+to deliver, in order, as a recorded play's lines, and its speed (a cycle's millisecond: cycle × 1000 / ips): once a
+session is loaded, all of its input from where it starts (D194).
+
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}], "unwritten": FILE}` ... `uninit_end`: reads of memory nothing wrote
 (`reads`); `uninit_unwritten` `{"file"}` writes what nothing has written since it began, as a JSON list of physical
@@ -231,6 +235,7 @@ An IBM PC with DOS (Clockwork).
 20. `run` and `tick` take `until_cycle`, a cycle they don't run past; `input` takes `events`, a recorded play's
     lines (D189).
 21. `late_inputs_take` and `entries_take`: what was found so far, the check going on (D192).
+22. `queued`: the input still to come, as a recorded play's lines (D194).
 
 ## Changing the protocol
 

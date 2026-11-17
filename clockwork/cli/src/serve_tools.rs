@@ -33,6 +33,7 @@ pub const OPS: &[&str] = &[
     "uninit_end",
     "entries",
     "entries_take",
+    "queued",
     "entries_end",
     "screenshot",
     "image",
@@ -276,6 +277,17 @@ pub(crate) fn handle(
         "entries_end" => {
             let entries = m.take_entries().ok_or("no entries kept")?;
             Ok(json!({"entries": entry_hits(&entries.hits, name), "dropped": entries.dropped}))
+        }
+        // The input still to come, as a recorded play's lines (D194): a session's whole input once it is loaded.
+        "queued" => {
+            let line = |cycle: u64, input: &dos::Input| match *input {
+                dos::Input::Key(code) => format!("{cycle} K {code:02X}"),
+                dos::Input::Mouse { x, y, buttons } => format!("{cycle} M {x} {y} {buttons}"),
+                dos::Input::Joystick { stick, x, y, buttons } => format!("{cycle} J {stick} {x} {y} {buttons}"),
+                dos::Input::MouseMotion { dx, dy } => format!("{cycle} R {dx} {dy}"),
+            };
+            let events: Vec<String> = m.queued_inputs().map(|(cycle, input)| line(*cycle, input)).collect();
+            Ok(json!({ "events": events, "ips": m.config.instructions_per_second }))
         }
         // The runs so far, the keeping going on (D192): taken after each tick, the passes' before it.
         "entries_take" => {

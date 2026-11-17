@@ -1318,6 +1318,12 @@ impl Machine {
         self.probes.entries = Some(Box::new(crate::probe::Entries { at, mask, ..Default::default() }));
     }
 
+    /// The input still to come, each at its cycle, in order (D194: what a port's own input handling is checked
+    /// against).
+    pub fn queued_inputs(&self) -> impl Iterator<Item = &(u64, Input)> {
+        self.inputs.iter()
+    }
+
     pub fn take_entries(&mut self) -> Option<crate::probe::Entries> {
         self.probes.entries.take().map(|e| *e)
     }
