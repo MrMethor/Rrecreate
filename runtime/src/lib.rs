@@ -42,7 +42,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-pub use files::{InputsFile, InputsReader, PortState, StartState};
+pub use files::{InputsFile, InputsReader, PortState, StartState, set_path};
 /// The knowledge's types and the original's memory read and written as their values: what a port reads and
 /// writes the original's memory images with (its saved games, D126).
 pub use rrc_types as types;
@@ -813,6 +813,14 @@ fn run_drawn<S: Simulation>(request: &Request, drawer: &mut dyn present::Drawer<
         // Where the pass ends: the next tick's sync point (D143), read once this tick is written.
         let following = inputs.next_tick()?;
         let next = following.as_ref().map(|l| l.sync.as_str());
+        // A comparison's corrections (D191): the original's values of the fields this tick differed in, before its step.
+        if let Some(correct) = following.as_ref().map(|l| &l.correct).filter(|c| !c.is_empty()) {
+            let mut value = serialize(&state)?;
+            for (path, v) in correct {
+                files::set_path(&mut value, path, v.clone())?;
+            }
+            state = S::transplant(value)?;
+        }
         state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun, next });
         pass = Some(line.sync.clone());
         last = line.tick;

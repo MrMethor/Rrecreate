@@ -57,10 +57,11 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let a = Args::parse(
         args,
         &["--transplant", "--resume", "--to", "--pair", "--feed", "--fix"],
-        &["--notes", "--lockstep", "--fields", "--streamed"],
+        &["--notes", "--lockstep", "--fields", "--streamed", "--corrected"],
     )?;
     let usage = "compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] \
-                 [--fields] [--notes] [--fix QUIRK] [--streamed] | compare SESSION --lockstep [--streamed]";
+                 [--fields] [--notes] [--fix QUIRK] [--streamed] | compare SESSION --lockstep [--streamed] | compare \
+                 SESSION --corrected";
     // The port fed a tick at a time, each once it wrote the one before, as the live comparison feeds it (D190).
     STREAMED.store(a.has("--streamed"), std::sync::atomic::Ordering::Relaxed);
     // The mapped fields alone (D136): a stretch whose screens or sound the port doesn't make yet.
@@ -75,6 +76,18 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         if !crate::quirks::Quirks::load(repo)?.quirks.iter().any(|q| q.name == quirk) {
             return Err(format!("no quirk {quirk}: rrc quirk lists them"));
         }
+    }
+    // The port's free run, corrected where it differs (D191): its census, kept beside lockstep's.
+    if a.has("--corrected") {
+        if a.has("--lockstep") || fixed.is_some() {
+            return Err("--corrected is a census of its own: not with --lockstep or --fix".into());
+        }
+        let census = corrected(repo, name)?;
+        let file = repo.state()?.join("compare").join(name.as_str()).join("corrected.json");
+        census.save(&file)?;
+        census.show(name, 20);
+        say("census", crate::path_text(&file));
+        return Ok(if census.differs() { ExitCode::from(1) } else { ExitCode::SUCCESS });
     }
     if a.has("--lockstep") {
         let census = lockstep(repo, name)?;
@@ -211,7 +224,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         say("fixed", format!("{quirk}: a difference here is what its fix changes, not kept for rrc progress"));
         port_args.extend(["--fix".into(), quirk.to_owned()]);
     }
-    run_port(repo, &session, &port_args, Some(&saves))?;
+    run_port(repo, &session, &port_args, Some(&saves), None)?;
 
     // Tick by tick, the port's state against the original's.
     let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
@@ -1446,6 +1459,19 @@ impl Census {
 /// state before every pass (every field fed); every difference counted, none stopping it: the fields its own
 /// pass left otherwise, the frames and sound that differ, what it noted.
 pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
+    counted(repo, name, false)
+}
+
+/// `rrc compare SESSION --corrected` (D191): the port runs free, on its own state, and where a tick's fields differ
+/// from the original's, the original's values are set over them before that tick's step, a tick at a time as the
+/// port writes it. Every difference is counted where it arises, as lockstep counts it, without the cascade a free
+/// run would have after it; where the mapping is exact, the census is lockstep's.
+pub(crate) fn corrected(repo: &Repo, name: &str) -> Result<Census, String> {
+    counted(repo, name, true)
+}
+
+/// Lockstep's or the corrected run's census (D124, D191): the comparer takes the port's lines a tick at a time.
+fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> {
     let session = Session::load(repo, name)?;
     let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
     let k = Knowledge::load(&repo.knowledge())?;
@@ -1464,7 +1490,7 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
         let linear = |linear: u32| places.linear_id(linear).ok();
         original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
     };
-    let mut census =
+    let census =
         Census { recorded: recorded.hash.clone(), port: crate::sources::fingerprint(&repo.root), ..Census::default() };
     let ticks = trace.ticks.len() as u64;
     if ticks < 2 {
@@ -1482,8 +1508,10 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
     let fed_from = if from_power_on { 0 } else { after };
     let sets = edit_sets(repo, name, &trace, &mapped, &original, &k.types, after)?;
     let mut feeds = BTreeMap::new();
-    for (m, values) in mapped.iter().zip(&original) {
-        feed_field(&mut feeds, m, values, fed_from);
+    if !correcting {
+        for (m, values) in mapped.iter().zip(&original) {
+            feed_field(&mut feeds, m, values, fed_from);
+        }
     }
     write_inputs(&trace, &sets, &feeds, &file("inputs.jsonl"))?;
     let mut port_args =
@@ -1524,65 +1552,156 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
     }
     let saves = work.join("saves");
     write_saves(repo, &session, &k, (!from_power_on).then_some(after), &saves)?;
-    run_port(repo, &session, &port_args, Some(&saves))?;
-
-    let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
-    let mut lines = port_trace.lines().filter(|l| !l.trim().is_empty());
-    let header: Value =
-        serde_json::from_str(lines.next().ok_or("the port wrote an empty trace")?).map_err(|e| e.to_string())?;
-    if header["format"] != "rrc-port-trace" || header["version"] != 1 {
-        return Err(format!(
-            "the port's trace isn't rrc-port-trace version 1 ({} {})",
-            header["format"], header["version"]
-        ));
-    }
-    let made: Vec<&str> = match &header["sound"] {
-        Value::Bool(true) => SOUND_DEVICES.iter().map(|(d, _)| *d).collect(),
-        Value::Array(devices) => devices.iter().filter_map(Value::as_str).collect(),
-        _ => Vec::new(),
+    let mut counting = Counting {
+        name,
+        mapped: &mapped,
+        original: &original,
+        sets: &sets,
+        trace: &trace,
+        screens: &screens,
+        cache: &cache,
+        frames: work.join("frames"),
+        after,
+        free: correcting,
+        made: Vec::new(),
+        own: serde_json::Map::new(),
+        screens_seen: Screens::default(),
+        census,
+        corrected: (0, BTreeMap::new()),
     };
-    let fields: BTreeMap<&str, usize> = mapped.iter().enumerate().map(|(i, m)| (m.field.as_str(), i)).collect();
-    let seen_at = |t: u64, what: String| Seen { ticks: 1, session: name.to_owned(), tick: t, what };
-    let count = |map: &mut BTreeMap<String, Seen>, key: &str, t: u64, what: String| match map.get_mut(key) {
-        Some(seen) => seen.ticks += 1,
-        None => {
-            map.insert(key.to_owned(), seen_at(t, what));
+    if correcting {
+        let mut on_line = |v: &Value| counting.line(v);
+        run_port(repo, &session, &port_args, Some(&saves), Some(&mut on_line))?;
+    } else {
+        run_port(repo, &session, &port_args, Some(&saves), None)?;
+        let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
+        for line in port_trace.lines().filter(|l| !l.trim().is_empty()) {
+            let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
+            counting.line(&v)?;
         }
-    };
-    let mut screens_seen = Screens::default();
-    for line in lines {
-        let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
-        let Some(t) = v["tick"].as_u64() else { continue };
+    }
+    if correcting {
+        let (ticks, fields) = &counting.corrected;
+        let most: Vec<String> = fields.iter().map(|(f, n)| format!("{f} ({n})")).take(5).collect();
+        match ticks {
+            0 => say("corrected", "nothing: the port's free run is the original's at every tick"),
+            n => say("corrected", format!("at {n} ticks: {}", most.join(", "))),
+        }
+    }
+    Ok(counting.census)
+}
+
+/// The comparison a tick at a time (D191): the port's trace's lines as they come, against the original's ticks, the
+/// census kept as it goes: the fields the port's own pass left otherwise, the frames and sound that differ, what it
+/// noted. Lockstep's own values are what the feed overrode (the rest matched it); a free run's, its state's.
+struct Counting<'a> {
+    name: &'a str,
+    mapped: &'a [Mapped],
+    original: &'a [Vec<Value>],
+    sets: &'a BTreeMap<u64, serde_json::Map<String, Value>>,
+    trace: &'a Trace,
+    screens: &'a [Option<String>],
+    cache: &'a Cache,
+    frames: std::path::PathBuf,
+    /// The tick the port starts at: its pass to it was the original's.
+    after: u64,
+    /// A free run (corrected): every field compared with the port's state.
+    free: bool,
+    made: Vec<String>,
+    /// A free run's state as its lines leave it (each gives the top-level fields that changed).
+    own: serde_json::Map<String, Value>,
+    screens_seen: Screens,
+    census: Census,
+    /// The ticks corrected, and how many times each field was.
+    corrected: (u64, BTreeMap<String, u64>),
+}
+
+impl Counting<'_> {
+    /// A line of the port's trace: counted; for a free run's tick, the original's values of the fields it differs in
+    /// there (all of them after a pass the port noted, D115), to set before the tick's step.
+    fn line(&mut self, v: &Value) -> Result<serde_json::Map<String, Value>, String> {
+        let mut correct = serde_json::Map::new();
+        if v.get("format").is_some() {
+            if v["format"] != "rrc-port-trace" || v["version"] != 1 {
+                return Err(format!(
+                    "the port's trace isn't rrc-port-trace version 1 ({} {})",
+                    v["format"], v["version"]
+                ));
+            }
+            self.made = match &v["sound"] {
+                Value::Bool(true) => SOUND_DEVICES.iter().map(|(d, _)| (*d).to_owned()).collect(),
+                Value::Array(devices) => devices.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
+                _ => Vec::new(),
+            };
+            return Ok(correct);
+        }
+        let Some(t) = v["tick"].as_u64() else { return Ok(correct) };
+        let ticks = self.trace.ticks.len() as u64;
         if t == 0 || t > ticks {
             return Err(format!("the port's trace has tick {t}; the session has 1 to {ticks}"));
         }
+        for (key, value) in v["state"].as_object().into_iter().flatten() {
+            self.own.insert(key.clone(), value.clone());
+        }
+        let (name, census) = (self.name, &mut self.census);
+        let seen_at = |t: u64, what: String| Seen { ticks: 1, session: name.to_owned(), tick: t, what };
+        let count = |map: &mut BTreeMap<String, Seen>, key: &str, t: u64, what: String| match map.get_mut(key) {
+            Some(seen) => seen.ticks += 1,
+            None => {
+                map.insert(key.to_owned(), seen_at(t, what));
+            }
+        };
+        let noted = v["notes"].as_object().is_some_and(|n| !n.is_empty());
         for (what, _) in v["notes"].as_object().into_iter().flatten() {
             count(&mut census.notes, what, t, String::new());
         }
         if let Some(frame) = v["frame"].as_str() {
-            screens_seen.port(&work.join("frames").join(frame))?;
+            self.screens_seen.port(&self.frames.join(frame))?;
         }
-        if t <= after {
-            continue;
+        if t <= self.after {
+            return Ok(correct);
         }
         census.passes += 1;
-        for (path, own) in v["overrode"].as_object().into_iter().flatten() {
-            let Some(&i) = fields.get(path.as_str()) else { continue };
-            let (m, theirs) = (&mapped[i], &original[i][(t - 1) as usize]);
+        // Each field's own value: what the feed overrode (lockstep: a field not there matched), or the state's.
+        let own: Vec<(usize, Value)> = if self.free {
+            let state = Value::Object(self.own.clone());
+            (0..self.mapped.len())
+                .map(|i| (i, at_path(&state, &self.mapped[i].field).cloned().unwrap_or(Value::Null)))
+                .collect()
+        } else {
+            let fields: BTreeMap<&str, usize> =
+                self.mapped.iter().enumerate().map(|(i, m)| (m.field.as_str(), i)).collect();
+            v["overrode"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(path, own)| fields.get(path.as_str()).map(|&i| (i, own.clone())))
+                .collect()
+        };
+        for (i, own) in own {
+            let (m, theirs) = (&self.mapped[i], &self.original[i][(t - 1) as usize]);
             if own.is_null() {
-                count(&mut census.unset, path, t, String::new());
+                // None in both: memory the original freed (a pointer null), the port's field none.
+                if self.free && theirs.is_null() {
+                    continue;
+                }
+                count(&mut census.unset, &m.field, t, String::new());
+                correct.insert(m.field.clone(), theirs.clone());
                 continue;
             }
             // What a scenario's edit wrote at this tick isn't the pass's doing (D146).
-            let edited = sets.get(&t);
+            let edited = self.sets.get(&t);
             let mut differ = Vec::new();
-            differences(&m.field, theirs, &m.masked(own), edited.map_or(1, |_| usize::MAX), &mut differ);
+            differences(&m.field, theirs, &m.masked(&own), edited.map_or(1, |_| usize::MAX), &mut differ);
             if let Some((at, o, p)) = differ.iter().find(|(at, ..)| !edited.is_some_and(|s| edit_wrote(s, at))) {
-                count(&mut census.fields, path, t, format!("{at}: original {o}, port {p}"));
+                count(&mut census.fields, &m.field, t, format!("{at}: original {o}, port {p}"));
+            }
+            if !differ.is_empty() || noted {
+                correct.insert(m.field.clone(), theirs.clone());
             }
         }
-        if let Some(hash) = &screens[(t - 1) as usize]
-            && let Some(diff) = screens_seen.compare(hash, &cache)?
+        if let Some(hash) = &self.screens[(t - 1) as usize]
+            && let Some(diff) = self.screens_seen.compare(hash, self.cache)?
         {
             let what = match diff.sizes {
                 Some(((w, h), (pw, ph))) => format!("the original's is {w}x{h}, the port's {pw}x{ph}"),
@@ -1597,8 +1716,9 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
                 None => census.screen = Some(seen_at(t, what)),
             }
         }
+        let made: Vec<&str> = self.made.iter().map(String::as_str).collect();
         if !made.is_empty()
-            && let Some(diff) = sound_differences(&trace.ticks[(t - 1) as usize].sound, &v["sound"], &made)
+            && let Some(diff) = sound_differences(&self.trace.ticks[(t - 1) as usize].sound, &v["sound"], &made)
         {
             let text =
                 |e: &Option<Value>| e.as_ref().map_or_else(|| "none".to_owned(), |e| untimed_text(diff.device, e));
@@ -1614,8 +1734,24 @@ pub(crate) fn lockstep(repo: &Repo, name: &str) -> Result<Census, String> {
                 None => census.sound = Some(seen_at(t, what)),
             }
         }
+        if !self.free {
+            return Ok(serde_json::Map::new());
+        }
+        // A free run's own values carry on from the corrected ones.
+        if !correct.is_empty() {
+            self.corrected.0 += 1;
+            let mut state = Value::Object(std::mem::take(&mut self.own));
+            for (path, value) in &correct {
+                *self.corrected.1.entry(path.clone()).or_default() += 1;
+                rrc_runtime::set_path(&mut state, path, value.clone())?;
+            }
+            self.own = match state {
+                Value::Object(map) => map,
+                _ => serde_json::Map::new(),
+            };
+        }
+        Ok(correct)
     }
-    Ok(census)
 }
 
 /// A transplant (`rrc-state`): the mapped fields' values at `tick`.
@@ -1942,6 +2078,39 @@ pub(crate) fn build_port(repo: &Repo) -> Result<(), String> {
     ))
 }
 
+/// What a corrected run does with each line of the port's trace (D191): counts it, and answers the original's values
+/// of the fields the tick differs in, for the next tick's inputs.
+type Correct<'a> = dyn FnMut(&Value) -> Result<serde_json::Map<String, Value>, String> + 'a;
+
+/// A file read as it grows, a whole line at a time: the port's trace while it runs (D190).
+struct Tail {
+    path: std::path::PathBuf,
+    file: Option<std::fs::File>,
+    partial: Vec<u8>,
+}
+
+impl Tail {
+    fn new(path: &std::path::Path) -> Tail {
+        Tail { path: path.to_owned(), file: None, partial: Vec::new() }
+    }
+
+    /// The whole lines written since the last look.
+    fn lines(&mut self) -> Vec<String> {
+        if self.file.is_none() {
+            self.file = std::fs::File::open(&self.path).ok();
+        }
+        let Some(file) = self.file.as_mut() else { return Vec::new() };
+        let mut bytes = Vec::new();
+        if std::io::Read::read_to_end(file, &mut bytes).is_err() {
+            return Vec::new();
+        }
+        self.partial.extend(bytes);
+        let Some(end) = self.partial.iter().rposition(|&b| b == b'\n') else { return Vec::new() };
+        let whole: Vec<u8> = self.partial.drain(..=end).collect();
+        String::from_utf8_lossy(&whole).lines().filter(|l| !l.trim().is_empty()).map(str::to_owned).collect()
+    }
+}
+
 /// Whether the port is fed a tick at a time (`rrc compare --streamed`, D190).
 static STREAMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -1955,25 +2124,19 @@ fn feed_inputs(mut stdin: std::process::ChildStdin, path: &str, trace: Option<&s
     use std::io::Write as _;
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let mut written: Option<u64> = None;
-    let (mut seen, mut read, mut from, mut ended) = (None::<u64>, 0usize, None::<u64>, false);
+    let (mut seen, mut from, mut ended) = (None::<u64>, None::<u64>, false);
+    let mut tail = trace.map(Tail::new);
     for line in text.lines() {
         let tick = serde_json::from_str::<serde_json::Value>(line).ok().and_then(|v| v["tick"].as_u64());
-        if let (Some(trace), Some(_), Some(before)) = (trace, tick, written) {
+        if let (Some(tail), Some(_), Some(before)) = (tail.as_mut(), tick, written) {
             let started = std::time::Instant::now();
             // The port's trace as it grows: its `from`, the last tick it wrote, whether it ended.
             loop {
-                if let Ok(bytes) = std::fs::read(trace)
-                    && bytes.len() > read
-                {
-                    let new = String::from_utf8_lossy(&bytes[read..]).into_owned();
-                    let whole = new.rfind('\n').map_or(0, |i| i + 1);
-                    for l in new[..whole].lines() {
-                        let v: serde_json::Value = serde_json::from_str(l).unwrap_or_default();
-                        from = from.or(v["from"].as_u64());
-                        seen = v["tick"].as_u64().or(seen);
-                        ended |= v.get("end").is_some();
-                    }
-                    read += whole;
+                for l in tail.lines() {
+                    let v: serde_json::Value = serde_json::from_str(&l).unwrap_or_default();
+                    from = from.or(v["from"].as_u64());
+                    seen = v["tick"].as_u64().or(seen);
+                    ended |= v.get("end").is_some();
                 }
                 if ended {
                     return Ok(());
@@ -2001,7 +2164,15 @@ fn feed_inputs(mut stdin: std::process::ChildStdin, path: &str, trace: Option<&s
 
 /// Builds the port if rrc.toml says how (`[port] build`), then runs it (`[port] command`) in the port
 /// repository, for `session`.
-fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std::path::Path>) -> Result<(), String> {
+/// With `correct`, the port is run a tick at a time (D191): each line of its trace is given to `correct` as the port
+/// writes it, and what it answers for a tick goes with the next tick's inputs (`correct`, set before that tick's step).
+fn run_port(
+    repo: &Repo,
+    session: &Session,
+    args: &[String],
+    saves: Option<&std::path::Path>,
+    mut correct: Option<&mut Correct>,
+) -> Result<(), String> {
     let port = &repo.settings.port;
     // The person's copy of the game, for what the port loads from it (D82, `rrc_runtime::original`):
     // the folder the session runs on (D170), and the program as the analysis unpacked it (its static data).
@@ -2019,7 +2190,7 @@ fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std:
     if let Some(saves) = saves {
         original.push(("RRC_SAVES", saves.to_path_buf()));
     }
-    let run = |what: &str, command: &[String], args: &[String]| -> Result<(), String> {
+    let run = |what: &str, command: &[String], args: &[String], correct: Option<&mut Correct>| -> Result<(), String> {
         let (program, rest) = command.split_first().ok_or(format!("[port] {what} is empty"))?;
         // The inputs through a pipe (D190): the port reads them from its standard input as it needs them; from the
         // file itself with RRC_PORT_INPUTS=file (a port that reads only files, or to compare the two).
@@ -2028,9 +2199,14 @@ fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std:
         let (inputs, out) = (value("--inputs").filter(|_| piped), value("--out"));
         let args: Vec<String> =
             args.iter().map(|a| if Some(a) == inputs.as_ref() { "-".to_owned() } else { a.clone() }).collect();
-        let paced = STREAMED.load(std::sync::atomic::Ordering::Relaxed);
+        let paced = STREAMED.load(std::sync::atomic::Ordering::Relaxed) || correct.is_some();
         if let Some(out) = out.as_ref().filter(|_| paced) {
             let _ = std::fs::remove_file(out);
+        }
+        if correct.is_some() && inputs.is_none() {
+            return Err(
+                "a corrected run gives the port its inputs through a pipe: not with RRC_PORT_INPUTS=file".into()
+            );
         }
         let mut child = Command::new(program)
             .args(rest)
@@ -2042,20 +2218,28 @@ fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std:
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| format!("[port] {what} ({program}): {e}"))?;
-        let writer = match (child.stdin.take(), inputs) {
-            (Some(stdin), Some(inputs)) => {
-                let trace = out.filter(|_| paced).map(std::path::PathBuf::from);
-                Some(std::thread::spawn(move || feed_inputs(stdin, &inputs, trace.as_deref())))
+        // What the port says on its standard error, read beside it, so it never waits on a full pipe.
+        let errors = child.stderr.take().map(|mut pipe| {
+            std::thread::spawn(move || {
+                let mut stderr = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut pipe, &mut stderr);
+                stderr
+            })
+        });
+        let fed = match (child.stdin.take(), inputs, correct) {
+            (Some(stdin), Some(inputs), Some(correct)) => {
+                let trace = std::path::PathBuf::from(out.as_deref().ok_or("a corrected run needs the port's --out")?);
+                feed_corrected(stdin, &inputs, &trace, correct, &mut child)
             }
-            _ => None,
+            (Some(stdin), Some(inputs), None) => {
+                let trace = out.filter(|_| paced).map(std::path::PathBuf::from);
+                let writer = std::thread::spawn(move || feed_inputs(stdin, &inputs, trace.as_deref()));
+                writer.join().unwrap_or_else(|_| Err("feeding the port's inputs panicked".into()))
+            }
+            _ => Ok(()),
         };
-        let mut stderr = Vec::new();
-        if let Some(mut pipe) = child.stderr.take() {
-            std::io::Read::read_to_end(&mut pipe, &mut stderr).map_err(|e| format!("[port] {what}: {e}"))?;
-        }
         let status = child.wait().map_err(|e| format!("[port] {what} ({program}): {e}"))?;
-        let fed =
-            writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err("feeding the port's inputs panicked".into())));
+        let stderr = errors.map(|e| e.join().unwrap_or_default()).unwrap_or_default();
         if status.success() {
             return fed;
         }
@@ -2069,10 +2253,104 @@ fn run_port(repo: &Repo, session: &Session, args: &[String], saves: Option<&std:
     }
     crate::sources::held_still(&repo.root, || {
         if !port.build.is_empty() {
-            run("build", &port.build, &[])?;
+            run("build", &port.build, &[], None)?;
         }
-        run("command", &port.command, args)
+        run("command", &port.command, args, correct.take())
     })
+}
+
+/// Feeds the port a tick at a time, corrected where it differs (D191): a tick's inputs line goes once the port wrote the
+/// tick before, with `correct`'s answer for that tick, the original's values of the fields it differed in; the
+/// header says version 5, which has `correct`. Each line of the port's trace is given to `correct`, the last ones too.
+fn feed_corrected(
+    mut stdin: std::process::ChildStdin,
+    path: &str,
+    trace: &std::path::Path,
+    correct: &mut Correct,
+    child: &mut std::process::Child,
+) -> Result<(), String> {
+    use std::io::Write as _;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut tail = Tail::new(trace);
+    // The port's trace so far: its `from`, the last tick it wrote, whether it ended, the corrections for its ticks.
+    #[derive(Default)]
+    struct Seen {
+        from: Option<u64>,
+        tick: Option<u64>,
+        ended: bool,
+        corrections: BTreeMap<u64, serde_json::Map<String, Value>>,
+    }
+    fn take(tail: &mut Tail, seen: &mut Seen, correct: &mut Correct) -> Result<(), String> {
+        for l in tail.lines() {
+            let v: Value = serde_json::from_str(&l).map_err(|e| format!("the port's trace: {e}"))?;
+            seen.from = seen.from.or(v["from"].as_u64());
+            seen.ended |= v.get("end").is_some();
+            let fix = correct(&v)?;
+            if let Some(t) = v["tick"].as_u64() {
+                seen.tick = Some(t);
+                if !fix.is_empty() {
+                    seen.corrections.insert(t, fix);
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut port = Seen::default();
+    let mut written: Option<u64> = None;
+    for (n, line) in text.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+        let mut v: Value = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
+        if n == 0 {
+            v["version"] = json!(5);
+        }
+        let tick = v["tick"].as_u64();
+        if let (Some(_), Some(before)) = (tick, written) {
+            let started = std::time::Instant::now();
+            loop {
+                take(&mut tail, &mut port, correct)?;
+                if port.ended {
+                    return Ok(());
+                }
+                if port.from.is_some_and(|from| before < from) || port.tick.is_some_and(|seen| seen >= before) {
+                    break;
+                }
+                if child.try_wait().ok().flatten().is_some() {
+                    take(&mut tail, &mut port, correct)?;
+                    return Ok(());
+                }
+                if started.elapsed() > STREAM_WAIT {
+                    return Err(format!(
+                        "the port didn't write tick {before}'s line before asking for more (docs/formats.md)"
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            if let Some(fix) = port.corrections.remove(&before) {
+                v["correct"] = Value::Object(fix);
+            }
+        }
+        if writeln!(stdin, "{v}").and_then(|()| stdin.flush()).is_err() {
+            break;
+        }
+        written = tick.or(written);
+    }
+    // The last tick's line and the end, once the port has its inputs' end.
+    drop(stdin);
+    let started = std::time::Instant::now();
+    while !port.ended {
+        take(&mut tail, &mut port, correct)?;
+        if port.ended {
+            break;
+        }
+        if child.try_wait().ok().flatten().is_some() {
+            take(&mut tail, &mut port, correct)?;
+            break;
+        }
+        if started.elapsed() > STREAM_WAIT {
+            return Err("the port didn't end its trace (docs/formats.md)".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    Ok(())
 }
 
 /// The first divergence: the fields, the tick's late inputs, who wrote the original's value, and the

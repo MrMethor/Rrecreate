@@ -30,6 +30,9 @@ pub struct InputsLine {
     pub calls: Vec<(String, crate::Call)>,
     pub set: Vec<(String, Value)>,
     pub fed: Vec<(String, Value)>,
+    /// The original's values of the fields the port's tick before differed in, by path (D191): set over the port's
+    /// state before it steps that tick, as a comparison corrects a free run where it differs.
+    pub correct: Vec<(String, Value)>,
     /// The hits the next tick's sync point's gate passed over before it (D130): how many times the original went
     /// round the wait the pass ends at. None where the file doesn't say.
     pub spun: Option<u64>,
@@ -95,8 +98,8 @@ impl InputsReader {
         let header = reader.text_line()?.ok_or_else(|| format!("{path}: empty"))?;
         let header: Value = serde_json::from_str(&header).map_err(|e| format!("{path}: {e}"))?;
         // Version 2 adds `fed` (D124); 3 a late read's round, a tick's `spun` and an input's `sync` (D130); 4 the
-        // start-up's pass, tick 0 (D134).
-        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=4)) {
+        // start-up's pass, tick 0 (D134); 5 `correct` (D191).
+        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=5)) {
             return Err(format!(
                 "{path}: not an inputs file this runtime reads ({} {})",
                 header["format"], header["version"]
@@ -209,10 +212,10 @@ impl InputsReader {
         let paths = |key: &str| -> Vec<(String, Value)> {
             v[key].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect()
         };
-        let (set, fed) = (paths("set"), paths("fed"));
+        let (set, fed, correct) = (paths("set"), paths("fed"), paths("correct"));
         let sync = v["sync"].as_str().unwrap_or_default().to_owned();
         let spun = v["spun"].as_u64();
-        Ok(Some(InputsLine { tick, sync, inputs, late, calls, set, fed, spun }))
+        Ok(Some(InputsLine { tick, sync, inputs, late, calls, set, fed, correct, spun }))
     }
 }
 

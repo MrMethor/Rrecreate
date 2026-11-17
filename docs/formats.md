@@ -744,7 +744,9 @@ ends is read as a file is; one that can't read its standard input is given the f
   D124: `--feed`, `--lockstep`): their original values where they changed, each held until it changes and set at
   every tick from its first, then the port's own values put back at a `set`'s places until the tick is drawn (D166)
   (version 2; version 1 has no `fed`, and versions before 3 no rounds, `spun` or
-  inputs' `sync`). The last line is
+  inputs' `sync`). A tick may have `correct` (version 5, D191: `rrc compare --corrected`), of the same form: the
+  original's values of the fields the port's tick before differed in, which the port sets over its state before it
+  steps that tick (the line comes after the port wrote the tick it corrects). The last line is
   `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each

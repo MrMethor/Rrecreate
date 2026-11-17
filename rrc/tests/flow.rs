@@ -1152,9 +1152,18 @@ fn a_port_matches_the_original_tick_by_tick() {
     assert!(census.contains("note      a bounce not counted (TOY.EXE+002FF): in "), "{census}");
     assert!(census.contains("census    ") && census.contains("census.json"), "{census}");
     assert!(census.contains("next      rrc work: this with every other session's census, ranked"), "{census}");
+    // Its free run, corrected where it differs (D191): each difference counted where it arises, the same census.
+    let work = rrc.repo.join(".rrc/compare/play");
+    let census_of = |file: &str| std::fs::read_to_string(work.join(file)).unwrap();
+    let (corrected, ok) = rrc.run(&["compare", "play", "--corrected"]);
+    assert!(!ok && corrected.contains("corrected at ") && corrected.contains("enemies ("), "{corrected}");
+    assert_eq!(census_of("corrected.json"), census_of("census.json"), "{corrected}");
     rrc.env.pop();
     let matched = rrc.ok(&["compare", "play", "--lockstep"]);
     assert!(matched.contains("match     play: every mapped field, frame and sound in all 208 passes"), "{matched}");
+    let free = rrc.ok(&["compare", "play", "--corrected"]);
+    assert!(free.contains("corrected nothing: the port's free run is the original's at every tick"), "{free}");
+    assert_eq!(census_of("corrected.json"), census_of("census.json"));
     let needless = rrc.ok(&["compare", "play", "--feed", "enemies"]);
     assert!(
         needless.contains("fed       enemies: the port's own was the original's at all 208 ticks fed: the feed can go"),

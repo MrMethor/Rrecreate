@@ -188,7 +188,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          read as data.tsv's types (an array as its elements that aren't zero);
                          --path: where the trace file is (the path alone), to read it whole
   compare SESSION [--transplant TICK | --resume TICK] [--to TICK] [--pair TICK] [--feed FIELD,...] [--fields]
-          [--notes] [--streamed]
+          [--notes] [--streamed] | compare SESSION --corrected
                          run the port ([port] command in rrc.toml) with the session's inputs and compare
                          its state with the original's trace at every tick, field by field as
                          mapping.toml maps them: the first tick that differs, the fields and values, and
