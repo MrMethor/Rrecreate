@@ -192,6 +192,13 @@ pub trait Live: Simulation + Shows {
         let _ = (devices, host, sounds);
     }
 
+    /// Played from a session's tick: the original's boundary values there (`inputs`), what its handlers held (the keys
+    /// down, a queue, the timer's count), taken into the handlers' state (D194: `rrc compare --live` from a
+    /// transplant). Nothing by default.
+    fn given(&self, devices: &mut Self::Devices, inputs: &Inputs) {
+        let _ = (devices, inputs);
+    }
+
     /// What the pass wrote into its inputs itself (a keyboard queue it emptied: `Inputs::written`), taken into
     /// the handlers' state as the original's handlers would find it. Nothing by default.
     fn wrote(&self, devices: &mut Self::Devices, inputs: &Inputs) {
@@ -335,6 +342,21 @@ impl MouseDriver {
         }
     }
 
+    /// As the original's driver was (its `mouse` device's 46 bytes, as [`MouseDriver::state`] gives them): where play
+    /// starts from a session's tick (D194).
+    pub fn given(&mut self, bytes: &[u8]) {
+        if bytes.len() < 46 {
+            return;
+        }
+        let word = |i: usize| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
+        let signed = |i: usize| i32::from(word(i) as i16);
+        (self.buttons, self.x, self.y, self.mickeys) = (word(0), signed(1), signed(2), (signed(3), signed(4)));
+        for b in 0..3 {
+            self.presses[b] = (word(5 + 3 * b), signed(6 + 3 * b), signed(7 + 3 * b));
+            self.releases[b] = (word(14 + 3 * b), signed(15 + 3 * b), signed(16 + 3 * b));
+        }
+    }
+
     /// Read by a pass: its motion and its counts start again, as functions 0Bh, 05h and 06h clear them.
     pub fn read(&mut self) {
         self.mickeys = (0, 0);
@@ -470,9 +492,12 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
 }
 
 /// The port's own input handling checked against the original's (D194, `rrc compare --live`), played as the platform
-/// plays it at virtual time: [`Live::next`] asked at each of its frames (70 a second), each key and mouse move given at
-/// the first frame after it came, until it takes a pass, at the original's next sync point at the latest; what the pass
-/// wrote is taken back ([`Live::wrote`]) as when played.
+/// plays it at virtual time: [`Live::next`] asked at each of its frames (70 a second) from the one before the
+/// original's sync point, each key and mouse move given at the first frame after it came, until it takes a pass, at
+/// the original's next sync point at the latest; what the pass wrote is taken back ([`Live::wrote`]) as when played.
+/// Its frames start a frame before the original's sync point: what is judged is whether it is ready there and what it
+/// makes, not how soon after its last pass, which a pass of the original's that takes long (a story, a load) the
+/// port's doesn't take.
 struct Checked<S: Live> {
     devices: S::Devices,
     /// The frames asked so far; the keys and moves not given yet; the mouse as it last moved.
@@ -503,11 +528,8 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
         self.keys.extend(played.keys.iter().copied());
         self.moves.extend(played.mouse.iter().copied());
-        // Frames from the last one asked, to the original's next sync point (or one frame past this one at the last);
-        // the first from the original's first sync point: its start-up's pass took the time to there.
-        if self.frames == 0 {
-            self.frames = played.ms * FRAMES_HZ / 1000;
-        }
+        // Frames from the one before the original's sync point, to its next (or one frame past this one at the last).
+        self.frames = self.frames.max((played.ms * FRAMES_HZ / 1000).saturating_sub(1));
         let until = played.next.unwrap_or(played.ms + 1000 / FRAMES_HZ);
         loop {
             let ms = (self.frames + 1) * 1000 / FRAMES_HZ;
@@ -536,6 +558,10 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
                 }
             }
         }
+    }
+
+    fn given(&mut self, state: &S, inputs: &Inputs) {
+        state.given(&mut self.devices, inputs);
     }
 
     fn stepped(&mut self, state: &S, inputs: &Inputs) {
