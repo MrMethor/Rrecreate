@@ -192,9 +192,9 @@ pub trait Live: Simulation + Shows {
         let _ = (devices, host, sounds);
     }
 
-    /// Played from a session's tick: the original's boundary values there (`inputs`), what its handlers held (the keys
-    /// down, a queue, the timer's count), taken into the handlers' state (D194: `rrc compare --live` from a
-    /// transplant). Nothing by default.
+    /// The original's boundary values where a check of the handlers starts (`inputs`, D194: `rrc compare --live`'s
+    /// first tick), what its handlers held (the keys down, a queue, the timer's count), taken into the handlers' state.
+    /// Nothing by default.
     fn given(&self, devices: &mut Self::Devices, inputs: &Inputs) {
         let _ = (devices, inputs);
     }

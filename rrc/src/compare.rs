@@ -1729,6 +1729,9 @@ pub(crate) struct Lived {
     pub timing: BTreeMap<String, Seen>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits: Option<Seen>,
+    /// Its loop took no pass by the original's next sync point, more than two frames on: a pass skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skips: Option<Seen>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syncs: Option<Seen>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1738,7 +1741,7 @@ pub(crate) struct Lived {
 impl Lived {
     /// Whether the port's input handling made anything otherwise than the original's handlers, timing aside.
     pub fn differs(&self) -> bool {
-        !self.differs.is_empty() || self.syncs.is_some() || self.ends.is_some()
+        !self.differs.is_empty() || self.syncs.is_some() || self.ends.is_some() || self.skips.is_some()
     }
 
     pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
@@ -1764,6 +1767,9 @@ impl Lived {
         }
         if let Some(seen) = &self.ends {
             say("differs", format!("the port's loop ends where the original's took a pass: {}", at(seen)));
+        }
+        if let Some(seen) = &self.skips {
+            say("differs", format!("the port's loop takes no pass by the original's next: {}", at(seen)));
         }
         for (input, seen) in &self.timing {
             say("timing", format!("{input}: a moment apart, {}", at(seen)));
@@ -1792,8 +1798,11 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
         let (Some(t), Some(live)) = (v["tick"].as_u64(), v.get("live")) else { continue };
         let Some(tick) = trace.ticks.get((t as usize).wrapping_sub(1)) else { continue };
         lived.ticks += 1;
+        // Its loop still waiting at the original's next sync point: a pass skipped, but where the original's next came
+        // within two of the platform's frames (passes closer than its frames: a moment).
         if live["wait"] == true {
-            seen(&mut lived.waits, t, String::new());
+            let close = due(t).zip(due(t + 1)).is_some_and(|(at, next)| next.saturating_sub(at) <= 2 * 1000 / 70);
+            seen(if close { &mut lived.waits } else { &mut lived.skips }, t, String::new());
             continue;
         }
         if live["end"] == true {

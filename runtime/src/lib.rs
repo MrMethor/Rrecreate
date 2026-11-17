@@ -647,8 +647,8 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
 /// What a run checks beside its comparison at each tick (D194): a played port's own input handling (the platform's
 /// `Live`) given the devices as the original's run had them at the tick's sync point.
 pub trait Check<S> {
-    /// A run from a session's tick (a transplant): the original's boundary values at its first tick, what the
-    /// original's handlers held there.
+    /// The original's boundary values at the run's first tick, what its handlers held there (a start-up pass that took
+    /// long, or a session's tick before it, made them).
     fn given(&mut self, state: &S, inputs: &Inputs);
     /// At a tick's sync point, before its pass, the port's state there and what the player had done by then: what to
     /// write on the tick's line (`live`).
@@ -829,10 +829,10 @@ fn run_drawn<S: Simulation>(
         if !line.set.is_empty() {
             set(&mut state, &mut line.set.iter().map(|(p, v)| (p, v)))?;
         }
-        // What the check beside makes of the devices at this sync point, before the pass (D194); from a transplant, the
-        // handlers' state the original's had at the first tick.
+        // What the check beside makes of the devices at this sync point, before the pass (D194); at the first, the
+        // handlers' state the original's had there.
         if let (Some(check), Some(played)) = (check.as_deref_mut(), &line.played) {
-            if line.tick == first && request.transplant.is_some() {
+            if line.tick == first {
                 check.given(&state, &current);
             }
             out.live(check.at(&state, played));
