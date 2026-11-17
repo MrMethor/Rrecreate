@@ -1784,6 +1784,9 @@ impl Lived {
 /// each tick of `trace` (`played`: each tick's devices, its time among them).
 fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Lived, String> {
     let due = |t: u64| played.get(&t).and_then(|d| d["ms"].as_u64());
+    // The inputs each pass read in its middle (late reads, D60): an event there the port's live play sees a pass on.
+    let read_late: BTreeMap<u64, std::collections::BTreeSet<usize>> =
+        trace.ticks.iter().map(|t| (t.tick, t.late.iter().map(|l| l.input).collect())).collect();
     let names: BTreeMap<&str, usize> =
         trace.header.inputs.iter().enumerate().map(|(i, item)| (item.name.as_str(), i)).collect();
     let values: Vec<Vec<Option<String>>> = (0..trace.header.inputs.len()).map(|i| trace.input_values(i)).collect();
@@ -1848,11 +1851,15 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
             let near = |k: usize, mine: &str| others.iter().any(|v| byte(v, k) == mine);
             let bytes = theirs.len().max(made.len()) / 2;
             let apart_bytes: Vec<usize> = (0..bytes).filter(|&k| byte(&theirs, k) != byte(made, k)).collect();
-            let wrong = apart_bytes.iter().copied().find(|&k| apart.is_none() && !near(k, &byte(made, k)));
+            // An event the original's pass before read in its middle: the port's live play sees it a pass on.
+            let inside = read_late.get(&t.wrapping_sub(1)).is_some_and(|inputs| inputs.contains(&i));
+            let wrong = apart_bytes.iter().copied().find(|&k| apart.is_none() && !inside && !near(k, &byte(made, k)));
             let k = wrong.or(apart_bytes.first().copied()).unwrap_or(0);
             let mut what = format!("byte {k}: original {}, port {}", byte(&theirs, k), byte(made, k));
             if let Some(apart) = &apart {
                 what = format!("{what}; {apart}");
+            } else if inside && wrong.is_none() {
+                what = format!("{what}; read in the middle of the pass before");
             }
             let map = if wrong.is_some() { &mut lived.differs } else { &mut lived.timing };
             match map.get_mut(input) {

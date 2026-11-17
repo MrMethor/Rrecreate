@@ -495,9 +495,7 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
 /// plays it at virtual time: [`Live::next`] asked at each of its frames (70 a second) from the one before the
 /// original's sync point, each key and mouse move given at the first frame after it came, until it takes a pass, at
 /// the original's next sync point at the latest; what the pass wrote is taken back ([`Live::wrote`]) as when played.
-/// Its frames start a frame before the original's sync point: what is judged is whether it is ready there and what it
-/// makes, not how soon after its last pass, which a pass of the original's that takes long (a story, a load) the
-/// port's doesn't take.
+/// Its frames start at the original's last sync point, where its pass began and the port's is.
 struct Checked<S: Live> {
     devices: S::Devices,
     /// The frames asked so far; the keys and moves not given yet; the mouse as it last moved.
@@ -508,6 +506,8 @@ struct Checked<S: Live> {
     buttons: u8,
     /// The handlers' state was given at this tick: its keys and moves are in it already.
     given: bool,
+    /// The original's last sync point (ms): its pass began there, where the port's is.
+    last: Option<u64>,
 }
 
 impl<S: Live> Default for Checked<S> {
@@ -520,6 +520,7 @@ impl<S: Live> Default for Checked<S> {
             mouse: None,
             buttons: 0,
             given: false,
+            last: None,
         }
     }
 }
@@ -533,8 +534,11 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
             self.keys.extend(played.keys.iter().copied());
             self.moves.extend(played.mouse.iter().copied());
         }
-        // Frames from the one before the original's sync point, to its next (or one frame past this one at the last).
-        self.frames = self.frames.max((played.ms * FRAMES_HZ / 1000).saturating_sub(1));
+        // Frames from the original's last sync point, where its pass began and the port's is, to its next (or a frame
+        // past this one at the last): the port's waits run from its pass as when played, and a pass of the original's
+        // that took long (a story, a load) doesn't carry its lead into the next.
+        let from = self.last.replace(played.ms).unwrap_or(played.ms.saturating_sub(1000 / FRAMES_HZ));
+        self.frames = self.frames.max(from * FRAMES_HZ / 1000);
         let until = played.next.unwrap_or(played.ms + 1000 / FRAMES_HZ);
         loop {
             let ms = (self.frames + 1) * 1000 / FRAMES_HZ;
