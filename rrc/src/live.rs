@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::cache::Cache;
-use crate::compare::{At, Census, Counting, Original};
+use crate::compare::{At, Begin, Census, Counting, Original};
 use crate::knowledge::Knowledge;
 use crate::mapping::Mapping;
 use crate::places::Places;
@@ -35,6 +35,8 @@ pub(crate) struct Progress {
 /// What the follower sends the comparer: a tick, or its run's end.
 enum Made {
     Tick(Box<Tick>),
+    /// The machine's state at the last tick made, for a port started again there (D193).
+    State(Box<crate::compare::Given>),
     End(Box<Result<Ended, String>>),
 }
 
@@ -93,6 +95,8 @@ pub(crate) fn follow(
     let progress = Arc::new(Progress::default());
     crate::clockwork::below_normal(true);
     let (sent, taken) = mpsc::sync_channel::<Made>(AHEAD);
+    let (ask, asked) = mpsc::channel::<()>();
+    let (k, mapping) = (&k, &mapping);
     let followed = std::thread::scope(|s| {
         let to_end = progress.clone();
         let follower = s.spawn(move || {
@@ -100,9 +104,17 @@ pub(crate) fn follow(
                 let mut recorder = Recorder::start(repo, session, header, Some(&mut follow))?;
                 recorder.until_play_ends(to_end);
                 let mut file = TraceFile::create(repo, recorder.header.clone())?;
+                let stopped = |_| "the comparison stopped".to_owned();
                 while let Some(tick) = recorder.next()? {
                     file.tick(&tick)?;
-                    sent.send(Made::Tick(Box::new(tick))).map_err(|_| "the comparison stopped".to_owned())?;
+                    sent.send(Made::Tick(Box::new(tick))).map_err(stopped)?;
+                    // A port that stopped starts again from the state here (D193).
+                    if asked.try_recv().is_ok() {
+                        let given = recorder.at_made(|clockwork, places, tick| {
+                            crate::compare::given_now(clockwork, places, k, mapping, tick)
+                        })?;
+                        sent.send(Made::State(Box::new(given))).map_err(stopped)?;
+                    }
                 }
                 let (end, _, memory) = recorder.finish()?;
                 let written = file.end(&end, &Cache::open(&repo.local)?)?;
@@ -111,7 +123,7 @@ pub(crate) fn follow(
             let _ = sent.send(Made::End(Box::new(ended)));
         });
         let watched = Watched { window: &mut window, done: &done };
-        let compared = compare(&taken, &mut original, &mut counting, &start, &progress, ips, watched);
+        let compared = compare(&taken, &ask, &mut original, &mut counting, &start, &progress, ips, watched);
         // The follower stops at its next tick once the comparison has stopped taking them.
         drop(taken);
         let _ = follower.join();
@@ -148,11 +160,26 @@ impl Watched<'_> {
     }
 }
 
+/// The port as the comparer keeps it (D193): waiting for its start, running, stopped with the follower's state
+/// asked for, to start again when the original's tick it was read at comes, or stopped for good.
+enum Port {
+    Waiting(Vec<Value>),
+    Running(Box<crate::compare::PortRun>),
+    Asked,
+    Again(Box<crate::compare::Given>),
+    Off,
+}
+
+/// How many times the port is started again in a play at most; past that, it is compared no more.
+const AGAIN: usize = 10;
+
 /// The comparer: the follower's ticks as they come, each to the comparer and as an inputs line to the port, what
-/// differs said when it is first seen, and a status line on a terminal.
+/// differs said when it is first seen, a port that stops started again from the follower's state at its next tick
+/// (`ask`), and a status line on a terminal.
 #[allow(clippy::too_many_arguments)]
 fn compare(
     taken: &mpsc::Receiver<Made>,
+    ask: &mpsc::Sender<()>,
     original: &mut Original,
     counting: &mut Counting,
     start: &crate::compare::PortStart,
@@ -161,37 +188,39 @@ fn compare(
     mut watched: Watched,
 ) -> Result<(Ended, u64), String> {
     let mut status = Status::new(ips);
-    let mut lines: Vec<Value> = Vec::new();
-    let mut port: Option<crate::compare::PortRun> = None;
+    let mut port = Port::Waiting(Vec::new());
     let mut previous: Option<Tick> = None;
     let mut screen: Option<String> = None;
     let mut said = Census::default();
     let mut cycles = std::collections::BTreeMap::new();
     let mut start_cycle = 0;
-    let mut stopped: Option<String> = None;
     let mut ticks = 0;
-    // What the port says differs, as it is found; each tick's line to it.
-    let mut give = |line: Value,
-                    port: &mut Option<crate::compare::PortRun>,
-                    counting: &mut Counting,
-                    stopped: &mut Option<String>|
-     -> Result<(), String> {
-        let Some(run) = port.as_mut().filter(|_| stopped.is_none()) else {
-            lines.push(line);
-            return Ok(());
-        };
-        for line in lines.drain(..).chain([line]) {
+    // Each input's value as the original's ticks so far left it; a port started again gets them all in its first line
+    // (the ticks before brought its changes to a port that wasn't running): that tick, those values.
+    let mut inputs: std::collections::BTreeMap<usize, String> = std::collections::BTreeMap::new();
+    let mut whole: Option<(u64, Vec<Value>)> = None;
+    let header = crate::compare::inputs_header(start.header());
+    // A line to the port: given if it runs (a port that stops: counted, and its start again asked for), held until
+    // its start, or dropped while it is stopped.
+    let give = |line: Value, port: &mut Port, counting: &mut Counting| match port {
+        Port::Waiting(held) => held.push(line),
+        Port::Running(run) => {
             if let Err(e) = run.give(line, counting) {
-                // The play goes on being recorded; the port is compared again offline.
-                say(
-                    "port",
-                    format!("{e}; the play goes on being recorded (rrc compare --corrected compares it after)"),
-                );
-                *stopped = Some(e);
-                break;
+                counting.stopped(e);
+                *port = match counting.census.panics.len() < AGAIN && ask.send(()).is_ok() {
+                    true => Port::Asked,
+                    false => Port::Off,
+                };
             }
         }
-        Ok(())
+        Port::Asked | Port::Again(_) | Port::Off => {}
+    };
+    // The port started: what it was held for given.
+    let started = |run: crate::compare::PortRun, held: Vec<Value>, port: &mut Port, counting: &mut Counting| {
+        *port = Port::Running(Box::new(run));
+        for line in held {
+            give(line, port, counting);
+        }
     };
     let ended = loop {
         let made = match taken.recv_timeout(Duration::from_millis(250)) {
@@ -205,13 +234,27 @@ fn compare(
         };
         let tick = match made {
             Made::Tick(tick) => *tick,
+            Made::State(given) => {
+                if matches!(port, Port::Asked) {
+                    port = Port::Again(given);
+                }
+                continue;
+            }
             Made::End(ended) => break (*ended)?,
         };
+        for (i, value) in &tick.inputs {
+            match value {
+                Some(value) => inputs.insert(*i, value.clone()),
+                None => inputs.remove(i),
+            };
+        }
         if tick.tick == 0 {
             start_cycle = tick.cycle;
-            give(crate::compare::inputs_header(start.header()), &mut port, counting, &mut stopped)?;
-            if start.at_power_on() {
-                port = Some(start.spawn(None)?);
+            give(header.clone(), &mut port, counting);
+            if start.at_power_on()
+                && let Port::Waiting(held) = std::mem::replace(&mut port, Port::Off)
+            {
+                started(start.spawn(Begin::PowerOn)?, held, &mut port, counting);
             }
         } else {
             let values = original.values(&tick)?;
@@ -224,13 +267,33 @@ fn compare(
         }
         // A tick's line has the next tick's skipped hits (D130): it goes once that tick is made.
         if let Some(before) = previous.take() {
-            let line = crate::compare::inputs_line(&before, Some(&tick), None, None);
-            give(line, &mut port, counting, &mut stopped)?;
+            let mut line = crate::compare::inputs_line(&before, Some(&tick), None, None);
+            if let Some((_, values)) = whole.take_if(|(at, _)| *at == before.tick) {
+                line["inputs"] = json!(values);
+            }
+            give(line, &mut port, counting);
+        }
+        // Started again (the tick before's line dropped) at the tick the follower's state was read at: from there, as from a transplant (D193).
+        if let Port::Again(given) = &port
+            && given.tick == tick.tick
+        {
+            let given = given.clone();
+            let at = counting.at(tick.tick).ok_or("the tick the port starts again at")?;
+            let run = start.spawn(Begin::Again(at, &given))?;
+            counting.restart(given.tick);
+            whole = Some((given.tick, inputs.iter().map(|(i, v)| json!([i, v])).collect()));
+            status.clear();
+            say("port", format!("started again at tick {}, from the follower's state there", given.tick));
+            started(run, vec![header.clone()], &mut port, counting);
         }
         // From a session's tick: the port starts from the original's state at the first tick (D118), read once the
         // tick after it is made, as `rrc compare` reads it.
-        if port.is_none() && tick.tick == 2 && !start.at_power_on() {
-            port = Some(start.spawn(Some(counting.first().ok_or("the play's first tick")?))?);
+        if tick.tick == 2
+            && !start.at_power_on()
+            && let Port::Waiting(held) = std::mem::replace(&mut port, Port::Off)
+        {
+            let first = counting.first().ok_or("the play's first tick")?;
+            started(start.spawn(Begin::First(first))?, held, &mut port, counting);
         }
         previous = Some(tick);
         for (kind, key, seen) in said.new_in(&counting.census) {
@@ -247,12 +310,17 @@ fn compare(
     };
     status.clear();
     if let Some(before) = previous.take() {
-        let line = crate::compare::inputs_line(&before, None, None, None);
-        give(line, &mut port, counting, &mut stopped)?;
+        give(crate::compare::inputs_line(&before, None, None, None), &mut port, counting);
     }
-    give(json!({"end": ended.written.end, "ticks": ticks}), &mut port, counting, &mut stopped)?;
-    if let Some(run) = port {
-        run.finish(counting)?;
+    give(json!({"end": ended.written.end, "ticks": ticks}), &mut port, counting);
+    if let Port::Running(run) = port
+        && let Err(e) = run.finish(counting)
+    {
+        counting.stopped(e);
+    }
+    for (kind, key, seen) in said.new_in(&counting.census) {
+        let (kind, text) = Census::line(kind, key, seen, counting.census.passes);
+        say("new", format!("at the end: {kind} {text}"));
     }
     Ok((ended, start_cycle))
 }

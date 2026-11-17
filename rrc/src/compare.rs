@@ -1403,12 +1403,16 @@ pub(crate) struct Census {
     pub sound: Option<Seen>,
     /// What it noted (`rrc_runtime::note`, D115): paths not ported.
     pub notes: BTreeMap<String, Seen>,
+    /// Where the port stopped in a play followed as it goes (D193): it panicked, or wrote no line for far longer than
+    /// its slowest tick took; each time started again from the original's state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panics: Vec<Seen>,
 }
 
 impl Census {
-    /// Whether the port's state, frames or sound differ anywhere.
+    /// Whether the port's state, frames or sound differ anywhere, or it stopped.
     pub fn differs(&self) -> bool {
-        !self.fields.is_empty() || self.screen.is_some() || self.sound.is_some()
+        !self.fields.is_empty() || self.screen.is_some() || self.sound.is_some() || !self.panics.is_empty()
     }
 
     /// Each thing `other` has that this hasn't: (its kind, its name, where first).
@@ -1428,6 +1432,9 @@ impl Census {
                 new.push((kind, "", seen));
             }
         }
+        for seen in other.panics.iter().skip(self.panics.len()) {
+            new.push(("panic", "", seen));
+        }
         new
     }
 
@@ -1440,6 +1447,7 @@ impl Census {
             "unset" => format!("{key}: the port leaves it unset, in {} passes, {at}", seen.ticks),
             "screen" => format!("the port's frame differs at {} of {passes} ticks, {at}{what}", seen.ticks),
             "sound" => format!("the port's sound differs at {} of {passes} ticks, {at}{what}", seen.ticks),
+            "panic" => format!("the port stopped in the pass to {}'s tick {}: {}", seen.session, seen.tick, seen.what),
             _ => format!("{key}: in {} passes, first in the pass to {}'s tick {}", seen.ticks, seen.session, seen.tick),
         };
         (kind.to_owned(), text)
@@ -1467,6 +1475,10 @@ impl Census {
                 let (kind, text) = Census::line(kind, "", seen, self.passes);
                 say(&kind, text);
             }
+        }
+        for seen in &self.panics {
+            let (kind, text) = Census::line("panic", "", seen, self.passes);
+            say(&kind, text);
         }
         let notes = ranked(&self.notes);
         for (key, seen) in notes.iter().take(limit) {
@@ -1693,6 +1705,25 @@ impl<'a> Counting<'a> {
             corrected: Corrections::default(),
             compared: 0,
         }
+    }
+
+    /// The port started again at tick `from` (D193): its passes to there aren't its own, and its state is what it
+    /// writes from there.
+    pub(crate) fn restart(&mut self, from: u64) {
+        self.after = from;
+        self.own = Value::Object(serde_json::Map::new());
+        self.made = Vec::new();
+    }
+
+    /// The port stopped (`what`) in the pass after the last tick it wrote.
+    pub(crate) fn stopped(&mut self, what: String) {
+        let tick = self.compared + 1;
+        self.census.panics.push(Seen { ticks: 1, session: self.name.to_owned(), tick, what });
+    }
+
+    /// The original at tick `tick`, if it is given and not compared yet.
+    pub(crate) fn at(&self, tick: u64) -> Option<&At> {
+        self.ticks.iter().find(|at| at.tick == tick)
     }
 
     /// The original's first tick not compared yet.
@@ -1989,7 +2020,11 @@ fn write_saves(
     }
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let Some(tick) = tick else { return Ok(0) };
-    let files = crate::peek::changed_files_at(repo, session, &crate::trace::sync_points(k)?, tick)?;
+    write_files(crate::peek::changed_files_at(repo, session, &crate::trace::sync_points(k)?, tick)?, dir)
+}
+
+/// The files the program changed (`changed_files`), written into `dir`, and those it deleted listed (D131).
+fn write_files(files: Vec<crate::peek::ChangedFile>, dir: &std::path::Path) -> Result<usize, String> {
     let mut deleted = String::new();
     let mut written = 0;
     for (path, bytes) in files {
@@ -2098,14 +2133,28 @@ fn read_given(
     items: &[Mapped],
     tick: u64,
 ) -> Result<serde_json::Map<String, Value>, String> {
-    let mut state = serde_json::Map::new();
     if items.is_empty() {
-        return Ok(state);
+        return Ok(serde_json::Map::new());
     }
     let places = Places::new(repo, session);
     let length_ms = (session.seconds * 1000.0) as u64;
     let (mut clockwork, _, from) = crate::watch::open(repo, session, &crate::trace::sync_points(k)?, tick + 1)?;
     crate::watch::to_tick(&mut clockwork, tick + 1, from.as_ref(), length_ms)?;
+    read_given_from(&mut clockwork, &places, k, items, tick)
+}
+
+/// What the port is given of the original at a start, from a machine at `tick`'s sync point ([`read_given`]).
+fn read_given_from(
+    clockwork: &mut crate::clockwork::Clockwork,
+    places: &Places,
+    k: &Knowledge,
+    items: &[Mapped],
+    tick: u64,
+) -> Result<serde_json::Map<String, Value>, String> {
+    let mut state = serde_json::Map::new();
+    if items.is_empty() {
+        return Ok(state);
+    }
     // Each item's bytes, or the pointer's an item is found through (a carried one, D177); then the pointers of the
     // arrays carried pointers are indexes into (D179).
     let mut ranges = items
@@ -2138,7 +2187,7 @@ fn read_given(
             (Some(v), hex) => {
                 let pointer = hex.as_deref().map(crate::trace::unhex).unwrap_or_default();
                 let first = (&v.pointer, v.pointer.target(&pointer, 0));
-                match crate::trace::followed(&mut clockwork, &places, first, &v.then, v.offset, m.size, v.next)? {
+                match crate::trace::followed(clockwork, places, first, &v.then, v.offset, m.size, v.next)? {
                     Some(bytes) => bytes,
                     // A null pointer: nothing there.
                     None => {
@@ -2400,6 +2449,42 @@ fn port_env(
     Ok(original)
 }
 
+/// The original's state the port starts again from (D193): read from the follower at its tick `tick`, what the port
+/// carries, the presentation's own, the games saved.
+#[derive(Clone)]
+pub(crate) struct Given {
+    pub tick: u64,
+    carried: serde_json::Map<String, Value>,
+    presented: serde_json::Map<String, Value>,
+    files: Vec<crate::peek::ChangedFile>,
+}
+
+/// What a port starting again is given, read from the follower's machine at its tick `tick`'s sync point.
+pub(crate) fn given_now(
+    clockwork: &mut crate::clockwork::Clockwork,
+    places: &Places,
+    k: &Knowledge,
+    mapping: &Mapping,
+    tick: u64,
+) -> Result<Given, String> {
+    let carried = read_given_from(clockwork, places, k, &mapping.resolve_carried(k)?, tick)?;
+    let presented = read_given_from(clockwork, places, k, &mapping.resolve_present(k)?, tick)?;
+    let answer = clockwork.ask("changed_files", json!({}))?;
+    let mut files = Vec::new();
+    for f in answer["files"].as_array().into_iter().flatten() {
+        let path = f["path"].as_str().ok_or("a changed file without a path")?.to_owned();
+        files.push((path, f["hex"].as_str().map(crate::trace::unhex)));
+    }
+    Ok(Given { tick, carried, presented, files })
+}
+
+/// Where the port starts on a play followed: at power-on, at the play's first tick, or again at a later one.
+pub(crate) enum Begin<'b> {
+    PowerOn,
+    First(&'b At),
+    Again(&'b At, &'b Given),
+}
+
 /// How the port starts on a play followed (D192): from power-on with the program's initial data (D135, D137), or from
 /// a session's tick with the original's state at the play's first tick (D118), its carried memory and presentation,
 /// the screen and the games saved there, read as `rrc compare` reads them.
@@ -2412,6 +2497,8 @@ pub(crate) struct PortStart<'a> {
     mapped: &'a [Mapped],
     header: crate::trace::Header,
     work: std::path::PathBuf,
+    /// The port's runs so far: each writes a trace of its own.
+    runs: std::cell::Cell<u32>,
 }
 
 impl<'a> PortStart<'a> {
@@ -2430,7 +2517,7 @@ impl<'a> PortStart<'a> {
             std::fs::remove_dir_all(&frames).map_err(|e| format!("{}: {e}", frames.display()))?;
         }
         std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
-        Ok(PortStart { repo, session, name, k, mapping, mapped, header, work })
+        Ok(PortStart { repo, session, name, k, mapping, mapped, header, work, runs: std::cell::Cell::new(0) })
     }
 
     pub(crate) fn header(&self) -> &crate::trace::Header {
@@ -2446,15 +2533,49 @@ impl<'a> PortStart<'a> {
         self.work.join("frames")
     }
 
-    /// The port started, from power-on, or from `first`, the original at the play's first tick; its trace in
-    /// `port.jsonl`, its inputs given through [`PortRun::give`].
-    pub(crate) fn spawn(&self, first: Option<&At>) -> Result<PortRun, String> {
+    /// The port started where `begin` says; its trace in `port.jsonl` (a run started again: `port-2.jsonl`, ...), its
+    /// inputs given through [`PortRun::give`].
+    pub(crate) fn spawn(&self, begin: Begin) -> Result<PortRun, String> {
         let file = |f: &str| self.work.join(f).to_string_lossy().into_owned();
-        let mut args = vec!["run".to_owned(), "--inputs".into(), "-".into(), "--out".into(), file("port.jsonl")];
+        self.runs.set(self.runs.get() + 1);
+        let trace = match self.runs.get() {
+            1 => "port.jsonl".to_owned(),
+            n => format!("port-{n}.jsonl"),
+        };
+        let mut args = vec!["run".to_owned(), "--inputs".into(), "-".into(), "--out".into(), file(&trace)];
         args.extend(["--frames".to_owned(), file("frames")]);
         let saves = self.work.join("saves");
-        match first {
-            None => {
+        match begin {
+            Begin::Again(at, given) => {
+                write_state(
+                    self.name,
+                    self.mapped,
+                    &at.values,
+                    given.tick,
+                    given.carried.clone(),
+                    &file("start.json"),
+                )?;
+                args.extend(["--transplant".into(), file("start.json")]);
+                if !given.presented.is_empty() {
+                    let state = &given.presented;
+                    let presentation = json!({"format": "rrc-presentation", "version": 1, "session": self.name,
+                                              "tick": given.tick, "state": state});
+                    std::fs::write(file("presentation.json"), format!("{presentation}\n"))
+                        .map_err(|e| e.to_string())?;
+                    args.extend(["--presentation".into(), file("presentation.json")]);
+                }
+                if let Some(hash) = &at.screen {
+                    let picture = Cache::open(&self.repo.local)?.get(hash)?;
+                    std::fs::write(file("screen.frm"), picture).map_err(|e| e.to_string())?;
+                    args.extend(["--screen".into(), file("screen.frm")]);
+                }
+                if saves.is_dir() {
+                    std::fs::remove_dir_all(&saves).map_err(|e| format!("{}: {e}", saves.display()))?;
+                }
+                std::fs::create_dir_all(&saves).map_err(|e| format!("{}: {e}", saves.display()))?;
+                write_files(given.files.clone(), &saves)?;
+            }
+            Begin::PowerOn => {
                 let mut initial = self.mapped.to_vec();
                 initial.extend(self.mapping.resolve_carried(self.k)?);
                 if write_initial(self.repo, self.name, &initial, self.k, &file("initial.json"))? {
@@ -2462,7 +2583,7 @@ impl<'a> PortStart<'a> {
                 }
                 write_saves(self.repo, self.session, self.k, None, &saves)?;
             }
-            Some(at) => {
+            Begin::First(at) => {
                 let carried = read_given(self.repo, self.session, self.k, &self.mapping.resolve_carried(self.k)?, 1)?;
                 write_state(self.name, self.mapped, &at.values, 1, carried, &file("start.json"))?;
                 args.extend(["--transplant".into(), file("start.json")]);
@@ -2482,7 +2603,7 @@ impl<'a> PortStart<'a> {
         }
         let port = &self.repo.settings.port;
         let (program, rest) = port.command.split_first().ok_or("[port] command is empty")?;
-        let trace = self.work.join("port.jsonl");
+        let trace = self.work.join(&trace);
         let _ = std::fs::remove_file(&trace);
         let mut command = Command::new(program);
         command
@@ -2503,7 +2624,7 @@ impl<'a> PortStart<'a> {
             })
         });
         let stdin = child.stdin.take().ok_or("the port's input")?;
-        Ok(PortRun { child, feeder: Some(Feeder::new(stdin, &trace)), errors })
+        Ok(PortRun { child, feeder: Some(Feeder::new(stdin, &trace).timing_hangs()), errors })
     }
 }
 
@@ -2518,10 +2639,17 @@ impl PortRun {
     /// Gives line `v`, once the port wrote the tick before (its lines to `counting`, corrected where it differs).
     pub(crate) fn give(&mut self, v: Value, counting: &mut Counting) -> Result<(), String> {
         let feeder = self.feeder.as_mut().ok_or("the port's run is over")?;
-        if feeder.give(v, &mut |line: &Value| counting.line(line), &mut self.child)? {
-            return Ok(());
+        match feeder.give(v, &mut |line: &Value| counting.line(line), &mut self.child) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(self.ended()),
+            // It hangs, or what it wrote can't be compared: stopped.
+            Err(e) => {
+                self.feeder = None;
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                Err(e)
+            }
         }
-        Err(self.ended())
     }
 
     /// The inputs' end: the port's last lines to `counting`, and how it ended.
@@ -2539,9 +2667,11 @@ impl PortRun {
         let status = self.child.wait().map(|s| s.to_string()).unwrap_or_default();
         let stderr = self.errors.take().map(|e| e.join().unwrap_or_default()).unwrap_or_default();
         let stderr = String::from_utf8_lossy(&stderr);
-        let tail: Vec<&str> = stderr.lines().rev().take(8).collect();
-        let tail: Vec<&str> = tail.into_iter().rev().collect();
-        format!("[port] ended before the play did ({status}):\n{}", tail.join("\n"))
+        // Its last words: a panic's message, past the note on backtraces.
+        let said: Vec<&str> =
+            stderr.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("note: ")).collect();
+        let last = said.iter().rev().take(2).rev().copied().collect::<Vec<_>>().join(" ");
+        format!("it ended ({status}): {last}")
     }
 }
 
@@ -2574,7 +2704,13 @@ pub(crate) struct Feeder {
     port: PortSeen,
     /// The tick of the last line given.
     written: Option<u64>,
+    /// A port that writes no line for ten times its slowest tick so far hangs (D193); the slowest so far.
+    hangs: bool,
+    slowest: std::time::Duration,
 }
+
+/// The least a port may take over a tick before it is taken to hang (D193).
+const HANG_FLOOR: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The port's trace so far: its `from`, the last tick it wrote, whether it ended, the corrections for its ticks.
 #[derive(Default)]
@@ -2587,7 +2723,20 @@ struct PortSeen {
 
 impl Feeder {
     pub(crate) fn new(stdin: std::process::ChildStdin, trace: &std::path::Path) -> Feeder {
-        Feeder { stdin: Some(stdin), tail: Tail::new(trace), port: PortSeen::default(), written: None }
+        Feeder {
+            stdin: Some(stdin),
+            tail: Tail::new(trace),
+            port: PortSeen::default(),
+            written: None,
+            hangs: false,
+            slowest: std::time::Duration::ZERO,
+        }
+    }
+
+    /// A port that writes no line for ten times its slowest tick so far (ten seconds at least) is taken to hang.
+    pub(crate) fn timing_hangs(mut self) -> Feeder {
+        self.hangs = true;
+        self
     }
 
     /// The lines the port wrote since the last look.
@@ -2621,6 +2770,10 @@ impl Feeder {
         let tick = v["tick"].as_u64();
         if let (Some(_), Some(before)) = (tick, self.written) {
             let started = std::time::Instant::now();
+            let limit = match self.hangs && !self.slowest.is_zero() {
+                true => (self.slowest * 10).clamp(HANG_FLOOR, STREAM_WAIT),
+                false => STREAM_WAIT,
+            };
             loop {
                 self.take(correct)?;
                 if self.port.ended {
@@ -2634,13 +2787,20 @@ impl Feeder {
                     self.take(correct)?;
                     return Ok(false);
                 }
-                if started.elapsed() > STREAM_WAIT {
-                    return Err(format!(
-                        "the port didn't write tick {before}'s line before asking for more (docs/formats.md)"
-                    ));
+                if started.elapsed() > limit {
+                    return Err(match self.hangs {
+                        true => format!(
+                            "it hangs: no line for tick {before} in {} s, ten times its slowest tick",
+                            limit.as_secs()
+                        ),
+                        false => format!(
+                            "the port didn't write tick {before}'s line before asking for more (docs/formats.md)"
+                        ),
+                    });
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
+            self.slowest = self.slowest.max(started.elapsed());
             if let Some(fix) = self.port.corrections.remove(&before) {
                 v["correct"] = Value::Object(fix);
             }

@@ -532,6 +532,16 @@ path in the workspace now, and the build stops if one isn't in it.
   comparison stops (pitfalls 12 and 13: started again from the original's state at the follower's next tick, a
   hang timed against the slowest tick); memory over a long replay (pitfall 10).
 
+### What step 5 did, its second part (2026-11-17, D193)
+
+- **A port that stops starts again** (pitfalls 12, 13): one that panics, or writes no line for ten times its slowest
+  tick so far (ten seconds at least; it is killed), is counted where it stopped and started again from the
+  follower's machine at its next tick, as from a transplant: what it carries, the presentation's own and the games
+  saved are read there, and its first line gives every input's value. Ten times at most; the play is recorded to its
+  end whatever the port does. Tested on the toy: a panic and a hang each counted once, the port started again and
+  matching from there.
+- **Memory over a long play** (pitfall 10): Followed live, a 12:45 play of Arena from power-on into the first dungeon (2572 ticks, recorded by the headless window from the cell session's input and five more minutes in the dungeon) kept each process's memory flat (clockwork/tools/speed/memory.py, the committed memory each minute: rrc 22 to 34 MB, the follower's Clockwork 63 to 84, the port 12 to 18), once the data segment a recording keeps at every tick (D92) wasn't kept in a play followed live: it grew rrc by 23 MB a minute, to its 256 MB limit. The play ran at 1.43 times its pace, every one of the window's 26 state hashes the follower's; a 7:45 play's live census was `rrc compare --corrected`'s byte for byte, one field differing at one tick (a difference of Arena's port that its sessions don't reach).
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the

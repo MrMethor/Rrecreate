@@ -175,10 +175,14 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         1 => "1 state hash".to_owned(),
         n => format!("{n} state hashes"),
     };
+    let panics = match census.panics.len() {
+        1 => "1 panic".to_owned(),
+        n => format!("{n} panics"),
+    };
     say(
         "play",
         format!(
-            "{name}: {length} played from {start}, {} ticks; the runs the same ({hashes} of the window's)",
+            "{name}: {length} played from {start}, {} ticks, {panics}; the runs the same ({hashes} of the window's)",
             written.ticks
         ),
     );

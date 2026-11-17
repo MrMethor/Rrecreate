@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-17 (decisions to D192). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-17 (decisions to D193). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -175,11 +175,11 @@ margin (D188: 1.83x on the dungeon, every stretch faster than play; the interpre
 window's by the state hashes the window writes; a window without a window plays for the tests. Step 3 is done
 (D190): a port's run is fed through a pipe, a tick at a time when asked, and gives the same traces as from files,
 Arena's 58 sessions included. Step 4 is done (D191): the comparison takes the port's run a tick at a time, and the
-port run free, corrected only where it differs, gives lockstep's census on all of Arena's 58 sessions. Step 5's
-first part is done (D192): `rrc play` follows the play as it goes, the port beside it, and says each difference when
-it is first found; the toy's and the vault's plays replayed through it match their offline comparisons, a planted bug
-is said at its tick. Next, its second part: a port that panics or hangs started again, and memory over a long play.
-Then M7.
+port run free, corrected only where it differs, gives lockstep's census on all of Arena's 58 sessions. Step 5 is
+done (D192, D193): `rrc play` follows the play as it goes, the port beside it, and says each difference when it is
+first found; the toy's and the vault's plays replayed through it match their offline comparisons, a planted bug is
+said at its tick, a port that panics or hangs is started again from the follower's state, and memory stays flat over
+a long play of Arena. Next, step 6: the port's own input handling checked at virtual time. Then M7.
 
 **The person's calls ahead:** the disk a play may take (the plan's section 10); the game M9 is run on, which stays
 out of the toolkit's development until then (D71).

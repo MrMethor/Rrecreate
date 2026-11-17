@@ -102,7 +102,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   a match from a later tick doesn't replace one of the same recording and code from an earlier). An outcome also has
   `fields_only`, `drew` (the port's frames were compared), `unsounded` (the devices the original sounded that
   nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has
-  the recording it is of (`recorded`) and the port's code (`port`) too. The workflow's gates read these. What was
+  the recording it is of (`recorded`) and the port's code (`port`) too; `corrected.json` is the corrected run's census
+  (D191), which a play followed as it goes keeps too (`.rrc/play/NAME/census.json`, D192), with `panics`, where the
+  port stopped and was started again (D193). The workflow's gates read these. What was
   kept before them counts as other code's (stale): an `outcome.json` alone as a comparison of the fields, a census
   without `recorded` as one of the recording there is.
 - `work/card.json`: the item taken with `rrc work take` (D158): `item`, `question`, `route`, `other`, `budget`

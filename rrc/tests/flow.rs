@@ -1600,6 +1600,18 @@ ips 8000000
     assert_eq!(census("play/bugged", "census.json"), census("compare/bugged", "corrected.json"));
     assert!(bugged.contains("next      rrc compare bugged --transplant"), "{bugged}");
     rrc.env.pop();
+    // A port that panics, and one that hangs (D193): counted where it stopped, started again from the follower's
+    // state at its next tick, and compared on, matching.
+    for (bug, name, why) in [("panic:50", "panicked", "panicked"), ("hang:50", "hung", "it hangs: no line for tick")] {
+        rrc.env.push(("TOY_BUG", bug));
+        let stopped = rrc.ok(&["play", name, "--from", "play", "--tick", "100", "--replay", held]);
+        assert!(stopped.contains(&format!("panic     the port stopped in the pass to {name}'s tick ")), "{stopped}");
+        assert!(stopped.contains(why), "{stopped}");
+        assert!(stopped.contains("port      started again at tick "), "{stopped}");
+        assert!(stopped.contains(", 1 panic; the runs the same"), "{stopped}");
+        assert!(!stopped.contains("differs   "), "it matches after: {stopped}");
+        rrc.env.pop();
+    }
     std::fs::remove_dir_all(&dir).ok();
 }
 

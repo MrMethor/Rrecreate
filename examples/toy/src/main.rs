@@ -115,6 +115,16 @@ impl Simulation for Toy {
 
     /// update (TOY.EXE+00114): one pass.
     fn step(&mut self, tick: &Tick) {
+        // A port that panics or hangs in a pass (TOY_BUG=panic:N, hang:N): what a play followed starts again (D193).
+        let stops = |how: &str| bug(&format!("{how}:{}", tick.number));
+        if stops("panic") {
+            panic!("the pass after tick {} isn't ported (for the test)", tick.number);
+        }
+        if stops("hang") {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
         let timer_count = tick.inputs.u16("timer_count");
         let key = |code| tick.inputs.u8_at("key_down", code) != 0;
 

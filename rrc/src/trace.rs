@@ -1140,6 +1140,9 @@ impl<'a> Recorder<'a> {
     /// far the play and the run are.
     pub(crate) fn until_play_ends(&mut self, progress: std::sync::Arc<crate::live::Progress>) {
         self.length_ms = u64::MAX / 2;
+        // Nothing kept that grows with the play (D193): the data segment at every tick (D92) isn't, which a long play
+        // would take to its limit only to drop.
+        self.keeping = false;
         self.to_end = Some(progress);
     }
 
@@ -1160,6 +1163,18 @@ impl<'a> Recorder<'a> {
             }
             self.step()?;
         }
+    }
+
+    /// What `read` reads of the machine now, with the tick it is at: once [`Recorder::next`] gave a tick, the run is at
+    /// the sync point of the last tick made (D193: what a port started again there is given).
+    pub(crate) fn at_made<T>(
+        &mut self,
+        read: impl FnOnce(&mut Clockwork, &Places, u64) -> Result<T, String>,
+    ) -> Result<T, String> {
+        if self.stop.is_some() || self.made == 0 {
+            return Err("the run is at no tick".into());
+        }
+        read(&mut self.clockwork, &self.places, self.made)
     }
 
     /// Whether the oldest tick made is final: a later one was made, and each input with sync points of its own whose

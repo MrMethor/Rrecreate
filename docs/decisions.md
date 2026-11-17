@@ -764,6 +764,20 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D193. M6.5's step 5 done: a port that stops is started again from the follower's state; memory stays flat. Accepted 2026-11-17.
+In a play followed as it goes (D192), a port that panics, or writes no line for ten times its slowest tick so far
+(ten seconds at least, then killed), is counted where it stopped (`panics` in the census, said when it happens and
+in the play's line) and started again: the comparer asks the follower for the machine's state at its next tick (what
+the port carries, the presentation's own, the games saved: read from the follower's own machine, no snapshot needed),
+and when that tick comes the port starts from it as from a transplant, its first line giving every input's value as
+the ticks before left it; the lines before are dropped, and its passes to there aren't counted as its own. After ten
+times, it is compared no more; the play is recorded to its end whatever the port does, and a port stopped at the
+end no longer fails the play. Tested on the toy's play: a port that panics in a pass, and one that hangs, are each
+counted once, started again, and match from there. Followed live, a 12:45 play of Arena from power-on into the first dungeon (2572 ticks, recorded by the headless window from the cell session's input and five more minutes in the dungeon) kept each process's memory flat (clockwork/tools/speed/memory.py, the committed memory each minute: rrc 22 to 34 MB, the follower's Clockwork 63 to 84, the port 12 to 18), once the data segment a recording keeps at every tick (D92) wasn't kept in a play followed live: it grew rrc by 23 MB a minute, to its 256 MB limit. The play ran at 1.43 times its pace, every one of the window's 26 state hashes the follower's; a 7:45 play's live census was `rrc compare --corrected`'s byte for byte, one field differing at one tick (a difference of Arena's port that its sessions don't reach).
+**Why:** the plan's step 5, pitfalls 12 and 13 (a port that panics or hangs must cost the play neither its
+recording nor the rest of its comparison) and pitfall 10 (memory on this 8 GB machine, D171).
+**Extends:** D184, D192.
+
 ### D192. M6.5's step 5, its first part: `rrc play` follows the play as it goes, the port run beside it. Accepted 2026-11-17.
 `rrc play NAME [--from SESSION --tick N]` opens Clockwork's window on the original as before; a second Clockwork,
 the follower, records the play as its file is written (D189), and each tick, once final, goes to the comparer and,

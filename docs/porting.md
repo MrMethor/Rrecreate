@@ -590,7 +590,9 @@ the play as it is written, the port runs beside it, free and corrected where it 
 and what differs or the port noted is said as it is first found, with the play's time (`new at 3:51: differs`,
 `new at 12:40: note`); at the end the play's census is listed, most passes first, with `next`: where to look first.
 The play is a session like any other: compare it, watch it, peek into it. Nothing slows the window; if the
-comparison falls behind, the status line says by how much. `--replay FILE` follows a play recorded before with
+comparison falls behind, the status line says by how much. A port that panics or hangs is counted (`panic`) and
+started again from the original's state a tick later (D193); find why with `rrc compare NAME --transplant T` at its
+tick. `--replay FILE` follows a play recorded before with
 `clockwork play --record`; `--resume` follows a play cut short (rrc or the machine stopped) again from its file.
 
 ### A session from another's tick

@@ -95,4 +95,5 @@ def main():
         print(f"peak      {key}: working set {ws / 2**20:.0f} MB, committed {commit / 2**20:.0f} MB")
 
 
-main()
+if __name__ == "__main__":
+    main()
