@@ -21,6 +21,7 @@ pub mod frames;
 pub mod game;
 mod journal;
 pub mod knowledge;
+mod live;
 pub mod mapping;
 mod memory;
 mod naming;
@@ -209,14 +210,14 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          first, what), those it leaves unset, the frames and the sound that differ, what it
                          noted; the whole census in .rrc/compare/SESSION/census.json. Exits 1 if anything
                          differs
-  play NAME [--from SESSION --tick N] [--every SECONDS] [--replay FILE]
+  play NAME [--from SESSION --tick N] [--replay FILE] | play NAME --resume
                          the person plays the original in Clockwork's window, from the session's tick N
-                         (or power-on), recorded as the session NAME (sessions/NAME.session); every
-                         SECONDS of play (60) the part played since is recorded (sessions/NAME/1, 2, ...,
-                         each from the last tick of the one before) and compared in lockstep, and what
-                         differs or the port noted is said as it is first found; at the end, the whole
-                         play's census (.rrc/play/NAME/). --replay: a play recorded before
-                         (clockwork play --record), followed as if played now
+                         (or power-on), recorded as the session NAME (sessions/NAME.session) and followed
+                         as it goes (D192): a second Clockwork records it, the port runs beside it free and
+                         corrected where it differs, and what differs or the port noted is said as it is
+                         first found; at the end, the play's census (.rrc/play/NAME/). --replay: a play
+                         recorded before (clockwork play --record), followed at full speed; --resume: a
+                         play cut short, followed again from its file to its last mark
   start SESSION --tick N [--out DIR]
                          where the session's original is at tick N, for the port to play from without
                          the original: the mapped fields' values, the presentation's own state and the
@@ -380,7 +381,7 @@ fn say(label: &str, text: impl std::fmt::Display) {
 }
 
 thread_local! {
-    /// Whether `say` prints: not while `rrc play` records and compares a part (D124).
+    /// Whether `say` prints: not while `rrc play` makes what it starts from (D124).
     static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 

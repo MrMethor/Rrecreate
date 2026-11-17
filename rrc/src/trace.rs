@@ -479,48 +479,16 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         session.save(repo, name)?;
     }
     let k = Knowledge::load(&repo.knowledge())?;
-    if k.ticks.syncs.is_empty() {
-        return Err("no sync points in knowledge/ticks.toml: find where a tick ends first (docs/formats.md)".into());
-    }
-    let module = repo.module();
-    let (syncs, inputs, state) = items(repo, &k, &module)?;
-    let edits = crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?);
     let exe = clockwork::find(&repo.local)?;
+    let header = header(repo, &k, name, &exe, crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?))?;
     // A play still being written, followed (D189): from its first mark, by the Clockwork that played it.
     let mut follow = match a.has("--follow") {
         true => Some(follow_play(repo, &session, &exe)?),
         false => None,
     };
-    let header = Header {
-        format: FORMAT.into(),
-        version: VERSION,
-        game: repo.settings.game.name.clone(),
-        session: name.clone(),
-        program: module.clone(),
-        clockwork: clockwork::version(&exe).unwrap_or_default(),
-        syncs,
-        inputs,
-        state,
-        edits,
-        hooks: k
-            .ticks
-            .hooks
-            .iter()
-            .map(|h| HookItem {
-                name: h.name.clone(),
-                at: h.at.clone(),
-                registers: h.registers.clone(),
-                interrupts: h.interrupts,
-            })
-            .collect(),
-        power_on: None,
-    };
     // The run asked for: the last recording's only if its input, options and length are the same (D123); a
     // followed play's once it is written.
-    let identity = |session: &Session| -> Result<String, String> {
-        let run = crate::snapshots::run_identity(repo, session)?;
-        Ok(crate::cache::sha256(format!("{run}\n{}", session.seconds).as_bytes()))
-    };
+    let identity = |session: &Session| identity(repo, session);
     let asked = match follow {
         Some(_) => String::new(),
         None => identity(&session)?,
@@ -553,7 +521,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         from_kept(repo, &session, &header)?
     };
     let (trace, snapshots, memory) = match kept {
-        Ok(trace) => (trace, None, session.trace.as_ref().and_then(|t| t.memory.clone())),
+        Ok(trace) => (TraceFile::write(repo, &trace)?, None, session.trace.as_ref().and_then(|t| t.memory.clone())),
         Err(why) => {
             if !why.is_empty() {
                 say("runs", format!("the session: {why}"));
@@ -563,11 +531,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         }
     };
     let cache = Cache::open(&repo.local)?;
-    let text = trace.to_text();
-    let late = late_text(&trace);
-    let hash = cache.put(text.as_bytes())?;
-    let run = trace.run_hash();
-    let ticks = trace.ticks.len() as u64;
+    let (hash, run, ticks, late) = (trace.hash.clone(), trace.run.clone(), trace.ticks, trace.late.clone());
     let clockwork = trace.header.clockwork.clone();
     let identity = match follow {
         Some(_) => identity(&session)?,
@@ -581,7 +545,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         session.pairs.clear();
     }
     session.save(repo, name)?;
-    say("trace", format!("{ticks} ticks, {} KB: {}", text.len() / 1024, trace.end.end));
+    say("trace", format!("{ticks} ticks, {} KB: {}", trace.bytes / 1024, trace.end));
     if let Some(f) = &follow {
         let hashes = match f.checked {
             1 => "1 state hash".to_owned(),
@@ -643,6 +607,52 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     say("hash", hash);
     say("run", run);
     Ok(ExitCode::SUCCESS)
+}
+
+/// A trace's header for session `name`: what it follows from the knowledge (its sync points, inputs, state and hooks),
+/// the Clockwork `exe` that records it, the scenario's `edits`.
+pub(crate) fn header(
+    repo: &Repo,
+    k: &Knowledge,
+    name: &str,
+    exe: &std::path::Path,
+    edits: Vec<Value>,
+) -> Result<Header, String> {
+    if k.ticks.syncs.is_empty() {
+        return Err("no sync points in knowledge/ticks.toml: find where a tick ends first (docs/formats.md)".into());
+    }
+    let module = repo.module();
+    let (syncs, inputs, state) = items(repo, k, &module)?;
+    Ok(Header {
+        format: FORMAT.into(),
+        version: VERSION,
+        game: repo.settings.game.name.clone(),
+        session: name.to_owned(),
+        program: module,
+        clockwork: clockwork::version(exe).unwrap_or_default(),
+        syncs,
+        inputs,
+        state,
+        edits,
+        hooks: k
+            .ticks
+            .hooks
+            .iter()
+            .map(|h| HookItem {
+                name: h.name.clone(),
+                at: h.at.clone(),
+                registers: h.registers.clone(),
+                interrupts: h.interrupts,
+            })
+            .collect(),
+        power_on: None,
+    })
+}
+
+/// What a session's run was asked to be (D123): its run's identity and its length.
+pub(crate) fn identity(repo: &Repo, session: &Session) -> Result<String, String> {
+    let run = crate::snapshots::run_identity(repo, session)?;
+    Ok(crate::cache::sha256(format!("{run}\n{}", session.seconds).as_bytes()))
 }
 
 /// The sync points, inputs and state items of a trace.
@@ -924,7 +934,11 @@ fn data_ranges(
 
 /// A followed play's start (D189): the session's play file once it has its first mark, refused if another
 /// Clockwork played it or if it is a part of a play (D124's, recorded whole).
-fn follow_play(repo: &Repo, session: &Session, exe: &std::path::Path) -> Result<crate::follow::Follow, String> {
+pub(crate) fn follow_play(
+    repo: &Repo,
+    session: &Session,
+    exe: &std::path::Path,
+) -> Result<crate::follow::Follow, String> {
     let replay = session.replay.as_ref().ok_or("--follow follows a recorded play: the session has no replay")?;
     if let Some(from) = &session.from
         && Session::load(repo, &from.session)?.replay.as_ref() == Some(replay)
@@ -944,148 +958,335 @@ fn follow_play(repo: &Repo, session: &Session, exe: &std::path::Path) -> Result<
     Ok(follow)
 }
 
-/// The session run to its end, a tick at each sync point hit; how many snapshots it kept; and the hash
-/// of the data segment kept at every tick (D92), unless that was more than the cache keeps. A followed play
-/// (D189) gives its input as it is written, and the run is held at its last mark.
-fn run(
-    repo: &Repo,
-    session: &Session,
-    header: Header,
-    mut follow: Option<&mut crate::follow::Follow>,
-) -> Result<(Trace, usize, Option<String>), String> {
-    // A followed play's input comes as it is written, not from its file at the start; its speed is the play's.
-    let mut started = session.clone();
-    if let Some(f) = &follow {
-        started.replay = None;
-        if f.ips != 8_000_000 && !started.options.iter().any(|o| o == "--ips") {
-            started.options.extend(["--ips".to_owned(), f.ips.to_string()]);
-        }
-    }
-    let (mut clockwork, loaded, syncs) = begin(repo, &started, &header.syncs)?;
-    let places = Places::new(repo, session);
-    let mut saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
-    // Tracked from power-on, so the snapshots give a watch from them whole call chains.
-    clockwork.ask("calls", json!({"on": true}))?;
-    // Inputs a pass reads after they changed since its sync point (D60).
-    if !header.inputs.is_empty() {
-        let mut sources = Vec::new();
-        for item in &header.inputs {
-            let mut source = item.request(&places)?;
-            if !item.sync.is_empty() {
-                let at: Vec<&String> =
-                    syncs.iter().filter(|(_, name)| item.sync.contains(name)).map(|(at, _)| at).collect();
-                source["sync"] = json!(at);
+/// A session's run as it goes (D192): each tick once nothing more can come for it (its pass's late reads and hooks'
+/// calls are found in the pass after it), the start-up's (tick 0) first, then the run's end. A followed play (D189)
+/// gives its input as it is written, and the run is held at its last mark. What it holds doesn't grow with the run:
+/// the ticks not final yet, and the data segment at each tick (D92) only while that is less than the cache keeps.
+pub(crate) struct Recorder<'a> {
+    /// The trace's header, but the start-up's pass, which is the first tick given.
+    pub header: Header,
+    repo: &'a Repo,
+    session: &'a Session,
+    follow: Option<&'a mut crate::follow::Follow>,
+    clockwork: Clockwork,
+    places: Places<'a>,
+    /// Places' objects asked for (an LE program's), as the late reads' IDs need.
+    objects: bool,
+    syncs: BTreeMap<String, String>,
+    saver: crate::snapshots::Saver,
+    writer: crate::cache::Writer,
+    /// The screens at sync points, kept at once: a comparison reads them as the ticks come (D192).
+    cache: Cache,
+    picture: Value,
+    /// The cycle the run starts at, and the program's image (where the data segment is found from).
+    start: u64,
+    image: u32,
+    ranges: Value,
+    pointers: Pointers,
+    items: usize,
+    now: u64,
+    data: Vec<(String, u32)>,
+    memory: Vec<Vec<Option<Vec<u8>>>>,
+    keeping: bool,
+    length_ms: u64,
+    last_cycle: u64,
+    /// The values last written: an input's when it was last read, the state's at the tick before.
+    last_input: Vec<Option<Option<String>>>,
+    previous: Vec<Option<String>>,
+    /// The ticks made (the start-up's not counted), and each input's value as of the last.
+    made: u64,
+    inputs_now: Vec<Option<String>>,
+    /// The ticks made that more may still come for, oldest first.
+    pending: std::collections::VecDeque<Pending>,
+    /// For each input, the last tick made at one of its own sync points (D130: a source with some has its tick go on
+    /// past the other points' hits, and its late reads come at its own).
+    last_own: Vec<u64>,
+    /// The cycle of the last tick given.
+    given: Option<u64>,
+    /// Hooks' calls past what Clockwork keeps.
+    dropped: u64,
+    /// Why and where the run stopped, once it did.
+    stop: Option<(String, u64)>,
+    /// A play followed to its end (`rrc play`, D192): the session as long as the play once its end is written, and
+    /// how far the play and the run are.
+    to_end: Option<std::sync::Arc<crate::live::Progress>>,
+}
+
+/// A tick made and not final yet: each input's value at it (what a late read of one is read against), and its late
+/// reads with what orders them.
+struct Pending {
+    tick: Tick,
+    values: Vec<Option<String>>,
+    late: Vec<((usize, u64), LateRead)>,
+}
+
+impl<'a> Recorder<'a> {
+    pub(crate) fn start(
+        repo: &'a Repo,
+        session: &'a Session,
+        header: Header,
+        mut follow: Option<&'a mut crate::follow::Follow>,
+    ) -> Result<Recorder<'a>, String> {
+        // A followed play's input comes as it is written, not from its file at the start; its speed is the play's.
+        let mut started = session.clone();
+        if let Some(f) = &follow {
+            started.replay = None;
+            if f.ips != 8_000_000 && !started.options.iter().any(|o| o == "--ips") {
+                started.options.extend(["--ips".to_owned(), f.ips.to_string()]);
             }
-            sources.push(source);
         }
-        clockwork.ask("late_inputs", json!({ "sources": sources }))?;
-    }
-    // The inputs at power-on, where the start-up's pass begins (D134).
-    let mut power_on = Vec::new();
-    if !header.inputs.is_empty() {
-        let request: Vec<Value> = header.inputs.iter().map(|item| item.request(&places)).collect::<Result<_, _>>()?;
-        let read = clockwork.ask("read", json!({ "ranges": request }))?;
-        power_on = read["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
-    }
-    // Calls into ported code from a part not ported (D98).
-    if !header.hooks.is_empty() {
-        let at: Vec<String> = header.hooks.iter().map(|h| places.address(&h.at)).collect::<Result<_, _>>()?;
-        let interrupts: Vec<&String> =
-            header.hooks.iter().zip(&at).filter(|(h, _)| h.interrupts).map(|(_, a)| a).collect();
-        clockwork.ask("entries", json!({ "at": at, "interrupts": interrupts }))?;
-    }
-    // Each frame's picture, kept in the cache (D25).
-    clockwork.ask("frame_images", json!({"on": true}))?;
-    let writer = Cache::open(&repo.local)?.writer();
-    let mut picture = Value::Null;
-    let start = clockwork::number(&loaded, "cycles")?;
-    let mut ranges = Vec::new();
-    for item in header.inputs.iter().chain(header.state.iter().filter(|item| item.via.is_none())) {
-        ranges.push(item.request(&places)?);
-    }
-    let pointers = Pointers::new(&header.state)?;
-    let items = ranges.len();
-    if let Some(f) = follow.as_mut() {
-        f.starting_at(start);
-    }
-    let mut now = start;
-    // The data segment at each tick, from the first on (D92).
-    let mut data: Vec<(String, u32)> = Vec::new();
-    let mut memory: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
-    let mut keeping = true;
-    let ranges = json!({ "ranges": ranges });
-    let length_ms = (session.seconds * 1000.0) as u64;
-    let mut last_cycle = start;
-    // The values last written: an input's when it was last read, the state's at the tick before.
-    let mut last_input: Vec<Option<Option<String>>> = vec![None; header.inputs.len()];
-    let mut previous: Vec<Option<String>> = vec![None; header.state.len()];
-    let mut ticks = Vec::new();
-    let stop = loop {
-        let mut asked = ranges["ranges"].as_array().cloned().unwrap_or_default();
-        if keeping {
-            asked.extend(data.iter().map(|(at, len)| json!({"at": at, "len": len})));
+        let (mut clockwork, loaded, syncs) = begin(repo, &started, &header.syncs)?;
+        let places = Places::new(repo, session);
+        let saver = crate::snapshots::Saver::new(repo, session, &header.syncs)?;
+        // Tracked from power-on, so the snapshots give a watch from them whole call chains.
+        clockwork.ask("calls", json!({"on": true}))?;
+        // Inputs a pass reads after they changed since its sync point (D60).
+        if !header.inputs.is_empty() {
+            let mut sources = Vec::new();
+            for item in &header.inputs {
+                let mut source = item.request(&places)?;
+                if !item.sync.is_empty() {
+                    let at: Vec<&String> =
+                        syncs.iter().filter(|(_, name)| item.sync.contains(name)).map(|(at, _)| at).collect();
+                    source["sync"] = json!(at);
+                }
+                sources.push(source);
+            }
+            clockwork.ask("late_inputs", json!({ "sources": sources }))?;
         }
-        let mut request = json!({"from": last_cycle, "ranges": asked, "until_ms": length_ms, "screen": true});
+        // The inputs at power-on, where the start-up's pass begins (D134).
+        let mut power_on = Vec::new();
+        if !header.inputs.is_empty() {
+            let request: Vec<Value> =
+                header.inputs.iter().map(|item| item.request(&places)).collect::<Result<_, _>>()?;
+            let read = clockwork.ask("read", json!({ "ranges": request }))?;
+            power_on = read["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
+        }
+        // Calls into ported code from a part not ported (D98).
+        if !header.hooks.is_empty() {
+            let at: Vec<String> = header.hooks.iter().map(|h| places.address(&h.at)).collect::<Result<_, _>>()?;
+            let interrupts: Vec<&String> =
+                header.hooks.iter().zip(&at).filter(|(h, _)| h.interrupts).map(|(_, a)| a).collect();
+            clockwork.ask("entries", json!({ "at": at, "interrupts": interrupts }))?;
+        }
+        // Each frame's picture, kept in the cache (D25).
+        clockwork.ask("frame_images", json!({"on": true}))?;
+        let writer = Cache::open(&repo.local)?.writer();
+        let start = clockwork::number(&loaded, "cycles")?;
+        let mut ranges = Vec::new();
+        for item in header.inputs.iter().chain(header.state.iter().filter(|item| item.via.is_none())) {
+            ranges.push(item.request(&places)?);
+        }
+        let pointers = Pointers::new(&header.state)?;
+        let items = ranges.len();
+        if let Some(f) = follow.as_mut() {
+            f.starting_at(start);
+        }
+        // The start-up's pass (D134): tick 0, every input as it was at power-on.
+        let start_up = Tick {
+            tick: 0,
+            sync: "power-on".into(),
+            cycle: start,
+            skipped: None,
+            inputs: power_on.iter().cloned().enumerate().collect(),
+            state: Vec::new(),
+            late: Vec::new(),
+            hooks: Vec::new(),
+            frames: Vec::new(),
+            sound: serde_json::Map::new(),
+            screen: None,
+        };
+        let inputs = header.inputs.len();
+        let states = header.state.len();
+        Ok(Recorder {
+            repo,
+            session,
+            follow,
+            image: clockwork::linear(&loaded, "image")?,
+            clockwork,
+            places,
+            objects: false,
+            syncs,
+            saver,
+            writer,
+            cache: Cache::open(&repo.local)?,
+            picture: Value::Null,
+            start,
+            ranges: json!({ "ranges": ranges }),
+            pointers,
+            items,
+            now: start,
+            data: Vec::new(),
+            memory: Vec::new(),
+            keeping: true,
+            length_ms: (session.seconds * 1000.0) as u64,
+            last_cycle: start,
+            last_input: vec![None; inputs],
+            previous: vec![None; states],
+            made: 0,
+            inputs_now: vec![None; inputs],
+            pending: std::collections::VecDeque::from([Pending { tick: start_up, values: power_on, late: Vec::new() }]),
+            last_own: vec![0; inputs],
+            given: None,
+            dropped: 0,
+            stop: None,
+            to_end: None,
+            header,
+        })
+    }
+
+    /// Follows the play to its end (`rrc play`, D192): the run never goes past the millisecond the last mark is in, so
+    /// that it ends where the session, as long as the play, ends when it is recorded again (D111); `progress` says how
+    /// far the play and the run are.
+    pub(crate) fn until_play_ends(&mut self, progress: std::sync::Arc<crate::live::Progress>) {
+        self.length_ms = u64::MAX / 2;
+        self.to_end = Some(progress);
+    }
+
+    /// The next tick final, in order (the start-up's first); none once the run has ended and every tick is given.
+    pub(crate) fn next(&mut self) -> Result<Option<Tick>, String> {
+        loop {
+            if self.ready() {
+                let mut p = self.pending.pop_front().expect("a tick made");
+                // Each source's reads in the order Clockwork answers them: a source with sync points of its own gives a
+                // tick's reads over more than one take.
+                p.late.sort_by_key(|(order, _)| *order);
+                p.tick.late = p.late.into_iter().map(|(_, late)| late).collect();
+                self.given = Some(p.tick.cycle);
+                return Ok(Some(p.tick));
+            }
+            if self.stop.is_some() {
+                return Ok(None);
+            }
+            self.step()?;
+        }
+    }
+
+    /// Whether the oldest tick made is final: a later one was made, and each input with sync points of its own whose
+    /// tick it began has begun another since; or the run ended.
+    fn ready(&self) -> bool {
+        let Some(p) = self.pending.front() else { return false };
+        if self.stop.is_some() {
+            return true;
+        }
+        let n = p.tick.tick;
+        self.made > n
+            && self
+                .header
+                .inputs
+                .iter()
+                .zip(&self.last_own)
+                .all(|(item, &own)| item.sync.is_empty() || !(n == 0 || item.sync.contains(&p.tick.sync)) || own > n)
+    }
+
+    /// Runs to the next tick, or as far as the play is written: a tick made, and what the pass before it found given
+    /// to the ticks it is of; at the run's end, the rest of what was found.
+    fn step(&mut self) -> Result<(), String> {
         // A followed play: not past its last mark, nor a state hash of the window's not checked yet.
         let mut held = None;
-        if let Some(f) = follow.as_mut()
-            && let crate::follow::Next::To(bound) = f.next(&mut clockwork, now)?
-        {
-            request["until_cycle"] = json!(bound);
-            held = Some(bound);
+        let mut until_ms = self.length_ms;
+        let mut ips = 0;
+        if let Some(f) = self.follow.as_deref_mut() {
+            if let crate::follow::Next::To(bound) = f.next(&mut self.clockwork, self.now)? {
+                held = Some(bound);
+            }
+            ips = f.ips;
+            if let Some(progress) = &self.to_end
+                && ips > 0
+            {
+                // The session as long as the play once its end is written (as `rrc play` saves it), and until then not
+                // past the millisecond its last mark is in, which the session's end can't come before.
+                if let Some(end) = f.ended {
+                    self.length_ms = (crate::play::seconds(end, ips) * 1000.0) as u64;
+                }
+                until_ms = self.length_ms.min((u128::from(f.written()) * 1000 / u128::from(ips)) as u64);
+                progress.written.store(f.written(), std::sync::atomic::Ordering::Relaxed);
+            }
         }
-        let ran = clockwork.ask("tick", request)?;
+        let mut asked = self.ranges["ranges"].as_array().cloned().unwrap_or_default();
+        if self.keeping {
+            asked.extend(self.data.iter().map(|(at, len)| json!({"at": at, "len": len})));
+        }
+        let mut request = json!({"from": self.last_cycle, "ranges": asked, "until_ms": until_ms, "screen": true});
+        if let Some(bound) = held {
+            request["until_cycle"] = json!(bound);
+        }
+        let ran = self.clockwork.ask("tick", request)?;
         let cycle = clockwork::number(&ran, "cycles")?;
-        now = cycle;
+        let moved = cycle != self.now;
+        self.now = cycle;
+        if let Some(progress) = &self.to_end {
+            progress.now.store(cycle, std::sync::atomic::Ordering::Relaxed);
+        }
         let Some(at) = ran["sync"]["at"].as_str() else {
             // Held where the play is written to, short of the session's end: on once more is written.
-            if held == Some(cycle) && clockwork::number(&ran, "ms")? < length_ms {
-                continue;
+            let short = match &self.to_end {
+                Some(_) => held.is_some() && cycle < (u128::from(self.length_ms) * u128::from(ips) / 1000) as u64,
+                None => held == Some(cycle) && clockwork::number(&ran, "ms")? < self.length_ms,
+            };
+            if short {
+                if !moved {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                return Ok(());
             }
-            break (ran["stop"].as_str().unwrap_or("?").to_owned(), cycle);
+            return self.end((ran["stop"].as_str().unwrap_or("?").to_owned(), cycle));
         };
-        let sync = syncs.get(at).cloned().unwrap_or_else(|| at.to_owned());
+        let sync = self.syncs.get(at).cloned().unwrap_or_else(|| at.to_owned());
         let mut values: Vec<Option<String>> =
             ran["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(str::to_owned)).collect();
-        if keeping {
-            let kept: Vec<Option<Vec<u8>>> = if data.is_empty() {
+        if self.keeping {
+            let kept: Vec<Option<Vec<u8>>> = if self.data.is_empty() {
                 // The first tick says where the data segment is.
-                data = data_ranges(repo, &mut clockwork, &places, clockwork::linear(&loaded, "image")?)?;
-                let request: Vec<Value> = data.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
-                let read = clockwork.ask("read", json!({ "ranges": request }))?;
+                self.data = data_ranges(self.repo, &mut self.clockwork, &self.places, self.image)?;
+                let request: Vec<Value> = self.data.iter().map(|(at, len)| json!({"at": at, "len": len})).collect();
+                let read = self.clockwork.ask("read", json!({ "ranges": request }))?;
                 read["data"].as_array().into_iter().flatten().map(|v| v.as_str().map(unhex)).collect()
             } else {
-                values.split_off(items.min(values.len())).iter().map(|v| v.as_deref().map(unhex)).collect()
+                values.split_off(self.items.min(values.len())).iter().map(|v| v.as_deref().map(unhex)).collect()
             };
-            memory.push(kept);
-            let bytes = data.iter().map(|(_, len)| u64::from(*len)).sum::<u64>() * memory.len() as u64;
+            self.memory.push(kept);
+            let bytes = self.data.iter().map(|(_, len)| u64::from(*len)).sum::<u64>() * self.memory.len() as u64;
             if bytes > crate::memory::MAX_KEPT {
-                (keeping, memory) = (false, Vec::new());
+                (self.keeping, self.memory) = (false, Vec::new());
             }
         }
-        let (inputs, direct) = values.split_at(header.inputs.len().min(values.len()));
-        let state = pointers.read(&mut clockwork, &places, &header.state, direct)?;
+        let (inputs, direct) = values.split_at(self.header.inputs.len().min(values.len()));
+        let state = self.pointers.read(&mut self.clockwork, &self.places, &self.header.state, direct)?;
         let mut read = Vec::new();
         for (i, value) in inputs.iter().enumerate() {
-            if header.inputs[i].read_at(&sync) && last_input[i].as_ref() != Some(value) {
-                last_input[i] = Some(value.clone());
+            if self.header.inputs[i].read_at(&sync) && self.last_input[i].as_ref() != Some(value) {
+                self.last_input[i] = Some(value.clone());
                 read.push((i, value.clone()));
             }
         }
+        let first = self.made == 0;
         let changed = state
             .iter()
             .enumerate()
-            .filter(|(i, v)| ticks.is_empty() || previous[*i] != **v)
+            .filter(|(i, v)| first || self.previous[*i] != **v)
             .map(|(i, v)| (i, v.clone()))
             .collect();
-        previous = state;
-        let frames = pictures(&writer, &ran["frames"], &ran["images"], &mut picture);
+        self.previous = state;
+        let frames = pictures(&self.writer, &ran["frames"], &ran["images"], &mut self.picture);
         let sound = sound_events(&ran["sound"]);
         let skipped = ran["sync"]["skipped"].as_u64();
         // The screen at the sync point, when it changed (D107).
-        let screen = ran["screen"].as_str().map(|hex| writer.put(unhex(hex)));
-        ticks.push(Tick {
-            tick: ticks.len() as u64 + 1,
+        let screen = match ran["screen"].as_str() {
+            Some(hex) => Some(self.cache.put(&unhex(hex))?),
+            None => None,
+        };
+        self.made += 1;
+        for (i, value) in &read {
+            self.inputs_now[*i].clone_from(value);
+        }
+        for (i, item) in self.header.inputs.iter().enumerate() {
+            if item.sync.contains(&sync) {
+                self.last_own[i] = self.made;
+            }
+        }
+        let tick = Tick {
+            tick: self.made,
             sync,
             cycle,
             skipped,
@@ -1096,52 +1297,87 @@ fn run(
             frames,
             sound,
             screen,
-        });
-        saver.tick(&mut clockwork, ticks.len() as u64, cycle, clockwork::number(&ran, "ms")?)?;
-        last_cycle = cycle;
-    };
-    // A followed play: the window's state hash where the session ends, if it took one there.
-    if let Some(f) = follow.as_mut() {
-        f.check(&mut clockwork, stop.1)?;
+        };
+        self.pending.push_back(Pending { tick, values: self.inputs_now.clone(), late: Vec::new() });
+        self.saver.tick(&mut self.clockwork, self.made, cycle, clockwork::number(&ran, "ms")?)?;
+        self.last_cycle = cycle;
+        // What the passes before it found.
+        if !self.header.inputs.is_empty() {
+            let found = self.clockwork.ask("late_inputs_take", Value::Null)?;
+            self.late(&found)?;
+        }
+        if !self.header.hooks.is_empty() {
+            let found = self.clockwork.ask("entries_take", Value::Null)?;
+            self.entries(&found)?;
+        }
+        Ok(())
     }
-    // The start-up's pass (D134): tick 0, every input as it was at power-on.
-    let mut start_up = Tick {
-        tick: 0,
-        sync: "power-on".into(),
-        cycle: start,
-        skipped: None,
-        inputs: power_on.into_iter().enumerate().collect(),
-        state: Vec::new(),
-        late: Vec::new(),
-        hooks: Vec::new(),
-        frames: Vec::new(),
-        sound: serde_json::Map::new(),
-        screen: None,
-    };
-    if !header.inputs.is_empty() {
-        let found = clockwork.ask("late_inputs_end", Value::Null)?;
-        places.objects()?;
-        // Each late read as the input's value at its tick with the bytes the read saw (D68), numbered among
-        // its instruction's reads in the pass (D93); the start-up's (its tick at power-on) power-on's.
-        let values: Vec<Vec<Option<String>>> =
-            (0..header.inputs.len()).map(|i| carried(&ticks, i, |t| &t.inputs)).collect();
-        for late in found["late"].as_array().into_iter().flatten() {
+
+    /// The run stopped: the window's state hash where it ends (a followed play), and the rest of what was found.
+    fn end(&mut self, stop: (String, u64)) -> Result<(), String> {
+        if let Some(f) = self.follow.as_deref_mut() {
+            f.check(&mut self.clockwork, stop.1)?;
+        }
+        if !self.header.inputs.is_empty() {
+            let found = self.clockwork.ask("late_inputs_end", Value::Null)?;
+            self.late(&found)?;
+        }
+        if !self.header.hooks.is_empty() {
+            let found = self.clockwork.ask("entries_end", Value::Null)?;
+            self.entries(&found)?;
+        }
+        self.stop = Some(stop);
+        Ok(())
+    }
+
+    /// The tick not given yet that what was found at `cycle` is of (`of`), the latest such: none if it is of no tick;
+    /// an error if it is of one given already (`given`), which went without it.
+    fn tick_of(
+        &mut self,
+        cycle: u64,
+        of: impl Fn(&Pending) -> bool,
+        given: impl Fn(u64) -> bool,
+    ) -> Result<Option<&mut Pending>, String> {
+        match self.pending.iter().rposition(of) {
+            Some(i) => Ok(self.pending.get_mut(i)),
+            None if self.given.is_some_and(given) => Err(format!(
+                "what the run found at cycle {cycle} came after its tick was given: a recording's bug (D192)"
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// The IDs of an LE program's objects, before the first finding is named.
+    fn named(&mut self) -> Result<(), String> {
+        if !self.objects && !self.header.inputs.is_empty() {
+            self.places.objects()?;
+            self.objects = true;
+        }
+        Ok(())
+    }
+
+    /// Each late read (`late_inputs_take`, `late_inputs_end`) as the input's value at its tick with the bytes the read
+    /// saw (D68), numbered among its instruction's reads in the pass (D93); the start-up's (its tick at power-on)
+    /// power-on's.
+    fn late(&mut self, found: &Value) -> Result<(), String> {
+        let findings = found["late"].as_array().map(Vec::as_slice).unwrap_or_default();
+        if findings.is_empty() {
+            return Ok(());
+        }
+        self.named()?;
+        for late in findings {
             let (Some(cycle), Some(input), Some(at)) =
                 (late["tick"].as_u64(), late["source"].as_u64(), late["at"].as_str())
             else {
                 continue;
             };
-            let at = places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
+            let at = self.places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
             let input = input as usize;
-            let (tick, value) = if cycle == start {
-                let value = start_up.inputs.get(input).and_then(|(_, v)| v.clone());
-                (&mut start_up, value)
-            } else if let Ok(i) = ticks.binary_search_by_key(&cycle, |t: &Tick| t.cycle) {
-                (&mut ticks[i], values.get(input).and_then(|v| v[i].clone()))
-            } else {
-                continue;
-            };
-            let read = value.map(|hex| {
+            let start = self.start;
+            // The start-up's when it began at the start (D134), whatever tick has its cycle.
+            let of = move |p: &Pending| if cycle == start { p.tick.tick == 0 } else { p.tick.cycle == cycle };
+            let Some(p) = self.tick_of(cycle, of, |given| cycle <= given)? else { continue };
+            let read = p.values.get(input).cloned().flatten().map(|hex| {
                 let mut bytes: Vec<u8> =
                     (0..hex.len() / 2).filter_map(|k| u8::from_str_radix(&hex[2 * k..2 * k + 2], 16).ok()).collect();
                 for pair in late["bytes"].as_array().into_iter().flatten() {
@@ -1156,48 +1392,302 @@ fn run(
             let n = late["read"].as_u64().unwrap_or(1) as u32;
             let bytes = Some(byte_pairs(&late["bytes"]).unwrap_or_default());
             let round = late["round"].as_u64().unwrap_or(0) as u32;
-            tick.late.push(LateRead { input, at, value: read, read: n, bytes, round });
+            let order = (input, late["cycle"].as_u64().unwrap_or(0));
+            p.late.push((order, LateRead { input, at, value: read, read: n, bytes, round }));
         }
+        Ok(())
     }
-    // Each hook's call in the pass of the tick before it: its registers. The start-up's pass, before the first tick,
-    // is power-on's (D175).
-    if !header.hooks.is_empty() {
-        let found = clockwork.ask("entries_end", Value::Null)?;
-        for entry in found["entries"].as_array().into_iter().flatten() {
+
+    /// Each hook's call (`entries_take`, `entries_end`) in the pass of the tick before it: its registers. The start-up's
+    /// pass, before the first tick, is power-on's (D175).
+    fn entries(&mut self, found: &Value) -> Result<(), String> {
+        self.dropped += found["dropped"].as_u64().unwrap_or(0);
+        let entries = found["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.named()?;
+        for entry in entries {
             let (Some(cycle), Some(at)) = (entry["cycle"].as_u64(), entry["at"].as_str()) else { continue };
-            let at = places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
-            let Some(hook) = header.hooks.iter().position(|h| h.at == at) else { continue };
-            let i = ticks.partition_point(|t| t.cycle <= cycle);
-            let tick = match i.checked_sub(1) {
-                Some(i) => &mut ticks[i],
-                None => &mut start_up,
-            };
+            let at = self.places.id(at).map_or_else(|| at.to_owned(), |id| id.to_string());
+            let Some(hook) = self.header.hooks.iter().position(|h| h.at == at) else { continue };
             let values =
-                header.hooks[hook].registers.iter().map(|r| register(&entry["regs"], r).unwrap_or(0)).collect();
-            tick.hooks.push((hook, values));
+                self.header.hooks[hook].registers.iter().map(|r| register(&entry["regs"], r).unwrap_or(0)).collect();
+            // The last tick made at or before it: ticks' cycles only grow.
+            let Some(p) = self.tick_of(cycle, |p: &Pending| p.tick.cycle <= cycle, |given| given <= cycle)? else {
+                continue;
+            };
+            p.tick.hooks.push((hook, values));
         }
-        if found["dropped"].as_u64().unwrap_or(0) > 0 {
-            say("hooks", format!("{} calls past the limit not kept", found["dropped"]));
+        Ok(())
+    }
+
+    /// The run's end once every tick is given: what it did after the last tick and the machine's state then; how many
+    /// snapshots it kept; the hash of the data segment kept at every tick (D92), unless that was more than the cache
+    /// keeps.
+    pub(crate) fn finish(mut self) -> Result<(End, usize, Option<String>), String> {
+        let (stop, cycles) = self.stop.take().ok_or("the run goes on: its ticks aren't all given")?;
+        let span = json!({ "from": self.last_cycle });
+        let shown = self.clockwork.ask("frames", span.clone())?;
+        let taken = self.clockwork.ask("take_frame_images", Value::Null)?;
+        let frames = pictures(&self.writer, &shown["frames"], &taken["images"], &mut self.picture);
+        self.writer.finish()?;
+        let sound = sound_events(&self.clockwork.ask("sound", span)?);
+        let state_hash = self.clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
+        let end = if stop == "time limit reached" { "the session's end".to_owned() } else { stop };
+        let kept = if self.keeping && !self.memory.is_empty() {
+            let key = crate::memory::key(self.repo, self.session, &self.header.syncs, "data")?;
+            Some(crate::memory::keep(self.repo, &key, 1, &self.data, &self.memory)?.hash)
+        } else {
+            None
+        };
+        if self.dropped > 0 {
+            say("hooks", format!("{} calls past the limit not kept", self.dropped));
+        }
+        Ok((End { end, cycles, frames, sound, state_hash }, self.saver.finish()?, kept))
+    }
+}
+
+/// The session run to its end, a tick at each sync point hit, its trace written as the ticks come ([`TraceFile`]); how
+/// many snapshots it kept; and the hash of the data segment kept at every tick (D92), unless that was more than the
+/// cache keeps. A followed play (D189) gives its input as it is written, and the run is held at its last mark.
+fn run(
+    repo: &Repo,
+    session: &Session,
+    header: Header,
+    follow: Option<&mut crate::follow::Follow>,
+) -> Result<(Written, usize, Option<String>), String> {
+    let mut recorder = Recorder::start(repo, session, header, follow)?;
+    let mut file = TraceFile::create(repo, recorder.header.clone())?;
+    while let Some(tick) = recorder.next()? {
+        file.tick(&tick)?;
+    }
+    let (end, snapshots, kept) = recorder.finish()?;
+    Ok((file.end(&end, &Cache::open(&repo.local)?)?, snapshots, kept))
+}
+
+/// A trace as it was written: its hash (kept in the cache), its run's, its ticks, its size, how it ended, its header,
+/// what its passes read late in a line.
+pub(crate) struct Written {
+    pub hash: String,
+    pub run: String,
+    pub ticks: u64,
+    pub bytes: u64,
+    pub end: String,
+    pub header: Header,
+    pub late: Option<String>,
+}
+
+/// A trace written as its ticks come (D192): to a file of its own, hashed as it grows, and moved into the cache at its
+/// end. The run's hash takes every frame and sound event from the start to the end, which are written aside as they
+/// come, each device's apart: nothing kept grows with the run.
+pub(crate) struct TraceFile {
+    dir: std::path::PathBuf,
+    /// The trace's file, open until its end.
+    out: Option<std::io::BufWriter<std::fs::File>>,
+    hasher: sha2::Sha256,
+    bytes: u64,
+    header: Header,
+    started: bool,
+    ticks: u64,
+    frames: Option<Aside>,
+    sound: BTreeMap<String, Aside>,
+    /// The ticks with late reads, and each input's reads by the instruction: in how many ticks, the first.
+    late: (usize, LateReads),
+}
+
+/// Values written aside, `,` between them.
+struct Aside {
+    path: std::path::PathBuf,
+    out: std::io::BufWriter<std::fs::File>,
+    any: bool,
+}
+
+impl Aside {
+    fn create(path: std::path::PathBuf) -> Result<Aside, String> {
+        let file = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(Aside { out: std::io::BufWriter::new(file), path, any: false })
+    }
+
+    fn push(&mut self, value: &Value) -> Result<(), String> {
+        use std::io::Write as _;
+        let comma: &[u8] = if self.any { b"," } else { b"" };
+        self.any = true;
+        self.out
+            .write_all(comma)
+            .and_then(|()| self.out.write_all(value.to_string().as_bytes()))
+            .map_err(|e| format!("{}: {e}", self.path.display()))
+    }
+
+    /// What was written, into `hasher`.
+    fn hash_into(self, hasher: &mut sha2::Sha256) -> Result<(), String> {
+        use sha2::Digest as _;
+        use std::io::{Read as _, Write as _};
+        let Aside { path, mut out, .. } = self;
+        out.flush().map_err(|e| format!("{}: {e}", path.display()))?;
+        drop(out);
+        let mut file = std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut buffer = vec![0; 1 << 16];
+        loop {
+            let n = file.read(&mut buffer).map_err(|e| format!("{}: {e}", path.display()))?;
+            if n == 0 {
+                return Ok(());
+            }
+            hasher.update(&buffer[..n]);
         }
     }
-    // What the run did after the last tick, and the machine's state at the end.
-    let (stop, cycles) = stop;
-    let span = json!({ "from": last_cycle });
-    let shown = clockwork.ask("frames", span.clone())?;
-    let taken = clockwork.ask("take_frame_images", Value::Null)?;
-    let frames = pictures(&writer, &shown["frames"], &taken["images"], &mut picture);
-    writer.finish()?;
-    let sound = sound_events(&clockwork.ask("sound", span)?);
-    let state_hash = clockwork.ask("hash", Value::Null)?["state_hash"].as_str().unwrap_or_default().to_owned();
-    let end = if stop == "time limit reached" { "the session's end".to_owned() } else { stop };
-    let kept = if keeping && !memory.is_empty() {
-        let key = crate::memory::key(repo, session, &header.syncs, "data")?;
-        Some(crate::memory::keep(repo, &key, 1, &data, &memory)?.hash)
-    } else {
-        None
-    };
-    let header = Header { power_on: Some(Box::new(start_up)), ..header };
-    Ok((Trace { header, ticks, end: End { end, cycles, frames, sound, state_hash } }, saver.finish()?, kept))
+}
+
+impl TraceFile {
+    /// A trace with `header` (its `power_on` is the start-up's tick, the first given), in a folder of its own under
+    /// the repository's state.
+    pub(crate) fn create(repo: &Repo, header: Header) -> Result<TraceFile, String> {
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        TraceFile::create_in(&repo.state()?.join(format!("trace-{}-{n}", std::process::id())), header)
+    }
+
+    fn create_in(dir: &std::path::Path, header: Header) -> Result<TraceFile, String> {
+        use sha2::Digest as _;
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = dir.join("trace.jsonl");
+        let file = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(TraceFile {
+            dir: dir.to_owned(),
+            out: Some(std::io::BufWriter::new(file)),
+            hasher: sha2::Sha256::new(),
+            bytes: 0,
+            header: Header { power_on: None, ..header },
+            started: false,
+            ticks: 0,
+            frames: Some(Aside::create(dir.join("frames"))?),
+            sound: BTreeMap::new(),
+            late: (0, BTreeMap::new()),
+        })
+    }
+
+    /// A trace made whole (from the memory a recording kept, D92), written as one made as it goes.
+    pub(crate) fn write(repo: &Repo, trace: &Trace) -> Result<Written, String> {
+        let mut file = TraceFile::create(repo, trace.header.clone())?;
+        match &trace.header.power_on {
+            Some(start_up) => file.tick(start_up)?,
+            None => file.start()?,
+        }
+        for tick in &trace.ticks {
+            file.tick(tick)?;
+        }
+        file.end(&trace.end, &Cache::open(&repo.local)?)
+    }
+
+    fn line(&mut self, value: &Value) -> Result<(), String> {
+        use sha2::Digest as _;
+        use std::io::Write as _;
+        let mut text = value.to_string();
+        text.push('\n');
+        self.hasher.update(text.as_bytes());
+        self.bytes += text.len() as u64;
+        let out = self.out.as_mut().ok_or("the trace is written to its end")?;
+        out.write_all(text.as_bytes()).map_err(|e| format!("{}: {e}", self.dir.display()))
+    }
+
+    /// The header, without a start-up's pass (an older trace's).
+    fn start(&mut self) -> Result<(), String> {
+        if !self.started {
+            self.started = true;
+            let header = json!(self.header);
+            self.line(&header)?;
+        }
+        Ok(())
+    }
+
+    /// The next tick: the start-up's (tick 0) goes into the header.
+    pub(crate) fn tick(&mut self, tick: &Tick) -> Result<(), String> {
+        if !self.started && tick.tick == 0 {
+            self.header.power_on = Some(Box::new(tick.clone()));
+            return self.start();
+        }
+        self.start()?;
+        self.line(&json!(tick))?;
+        self.ticks += 1;
+        self.aside(&tick.frames, &tick.sound)?;
+        if !tick.late.is_empty() {
+            self.late.0 += 1;
+            for LateRead { input, at, .. } in &tick.late {
+                self.late.1.entry((*input, at.clone())).or_insert((0, tick.tick)).0 += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn aside(&mut self, frames: &[Value], sound: &serde_json::Map<String, Value>) -> Result<(), String> {
+        if let Some(aside) = self.frames.as_mut() {
+            for frame in frames {
+                aside.push(frame)?;
+            }
+        }
+        for (device, events) in sound {
+            if !self.sound.contains_key(device) {
+                let aside = Aside::create(self.dir.join(format!("sound-{}", self.sound.len())))?;
+                self.sound.insert(device.clone(), aside);
+            }
+            let aside = self.sound.get_mut(device).expect("just made");
+            for event in events.as_array().into_iter().flatten() {
+                aside.push(event)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The trace's end: the file kept in `cache` by its hash, the run's hash ([`Trace::run_hash`]'s, without the trace
+    /// in memory).
+    pub(crate) fn end(mut self, end: &End, cache: &Cache) -> Result<Written, String> {
+        use sha2::Digest as _;
+        use std::io::Write as _;
+        self.start()?;
+        self.line(&json!(end))?;
+        self.aside(&end.frames, &end.sound)?;
+        let mut out = self.out.take().ok_or("the trace is written to its end")?;
+        out.flush().map_err(|e| format!("{}: {e}", self.dir.display()))?;
+        drop(out);
+        let hash = crate::cache::hex(&std::mem::take(&mut self.hasher).finalize());
+        // The text `run_hash` hashes, its keys in order: the frames and each device's sound written aside.
+        let text = |v: &str| serde_json::to_string(v).unwrap_or_default();
+        let mut run = sha2::Sha256::new();
+        run.update(format!("{{\"cycles\":{},\"end\":{},\"frames\":[", end.cycles, text(&end.end)));
+        if let Some(frames) = self.frames.take() {
+            frames.hash_into(&mut run)?;
+        }
+        run.update("],\"sound\":{");
+        for (n, (device, aside)) in std::mem::take(&mut self.sound).into_iter().enumerate() {
+            run.update(format!("{}{}:[", if n > 0 { "," } else { "" }, text(&device)));
+            aside.hash_into(&mut run)?;
+            run.update("]");
+        }
+        run.update(format!("}},\"state_hash\":{}}}", text(&end.state_hash)));
+        let run = crate::cache::hex(&run.finalize());
+        let reads = std::mem::take(&mut self.late.1);
+        let late = late_line(self.late.0, reads, &self.header.inputs);
+        cache.adopt(&self.dir.join("trace.jsonl"), &hash)?;
+        Ok(Written {
+            hash,
+            run,
+            ticks: self.ticks,
+            bytes: self.bytes,
+            end: end.end.clone(),
+            header: self.header.clone(),
+            late,
+        })
+    }
+}
+
+impl Drop for TraceFile {
+    /// The folder is this trace's own: what is in it is kept elsewhere or wasn't finished.
+    fn drop(&mut self) {
+        // Closed first: an open file isn't removed on every system.
+        (self.out, self.frames) = (None, None);
+        self.sound.clear();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 /// The items read through pointers (D72): each one's index in the state, where it is past where its
@@ -1516,22 +2006,31 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 /// many, and the reads that made them late, most first.
 fn late_text(trace: &Trace) -> Option<String> {
     let ticks = trace.ticks.iter().filter(|t| !t.late.is_empty()).count();
-    if ticks == 0 {
-        return None;
-    }
     // (input, instruction) -> (ticks, the first)
-    let mut reads: BTreeMap<(usize, &str), (usize, u64)> = BTreeMap::new();
+    let mut reads = LateReads::new();
     for tick in &trace.ticks {
         for LateRead { input: i, at, .. } in &tick.late {
-            reads.entry((*i, at.as_str())).or_insert((0, tick.tick)).0 += 1;
+            reads.entry((*i, at.clone())).or_insert((0, tick.tick)).0 += 1;
         }
+    }
+    late_line(ticks, reads, &trace.header.inputs)
+}
+
+/// Each input's late reads by the instruction: in how many ticks, the first.
+type LateReads = BTreeMap<(usize, String), (usize, u64)>;
+
+/// [`late_text`] from what it counts: the ticks with late reads, and each input's reads by the instruction (in how many
+/// ticks, the first).
+fn late_line(ticks: usize, reads: LateReads, inputs: &[Item]) -> Option<String> {
+    if ticks == 0 {
+        return None;
     }
     let mut reads: Vec<_> = reads.into_iter().collect();
     reads.sort_by_key(|(_, (n, first))| (std::cmp::Reverse(*n), *first));
     let mut most: Vec<String> = reads
         .iter()
         .take(3)
-        .map(|((i, at), (n, first))| format!("{} at {at} in {n} (first tick {first})", trace.header.inputs[*i].name))
+        .map(|((i, at), (n, first))| format!("{} at {at} in {n} (first tick {first})", inputs[*i].name))
         .collect();
     if reads.len() > 3 {
         most.push(format!("{} other reads", reads.len() - 3));
@@ -1761,5 +2260,37 @@ mod tests {
             "buttons 1, at (120, 56), motion (-220, -100), left pressed 1 (last at 120, 56)"
         );
         assert_eq!(value_text(Some("0101FEFF2C01000000000000"), "joystick"), "A: buttons 1, at (-2, 300)");
+        // Written as it grows (D192), the same bytes and the same run's hash as whole, with the start-up's pass in the
+        // header and sound from two devices.
+        let dir = std::env::temp_dir().join(format!("rrc-tracefile-{}", std::process::id()));
+        let cache = Cache::at(&dir.join("cache")).unwrap();
+        let mut whole = rounds.clone();
+        whole.header.power_on = Some(Box::new(Tick {
+            tick: 0,
+            sync: "power-on".into(),
+            cycle: 0,
+            frames: vec![],
+            ..tick(1, one("0000"), vec![])
+        }));
+        whole.ticks[1].sound.insert("opl".into(), json!([[5, 1, 2], [6, 1, 3]]));
+        whole.ticks[1].sound.insert("speaker".into(), json!([[7, 1]]));
+        whole.ticks[2].sound.insert("opl".into(), json!([[8, 1, 4]]));
+        whole.end.sound.insert("cd".into(), json!([[9, 16, 2]]));
+        let mut file = TraceFile::create_in(&dir.join("trace"), whole.header.clone()).unwrap();
+        file.tick(whole.header.power_on.as_deref().unwrap()).unwrap();
+        for tick in &whole.ticks {
+            file.tick(tick).unwrap();
+        }
+        let written = file.end(&whole.end, &cache).unwrap();
+        let text = whole.to_text();
+        assert_eq!(
+            (written.hash.as_str(), written.run.as_str()),
+            (crate::cache::sha256(text.as_bytes()).as_str(), whole.run_hash().as_str())
+        );
+        assert_eq!(cache.get(&written.hash).unwrap(), text.as_bytes(), "kept in the cache");
+        assert_eq!((written.ticks, written.bytes), (3, text.len() as u64));
+        assert_eq!(written.late, late_text(&whole));
+        assert!(!dir.join("trace").exists(), "its folder is gone");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

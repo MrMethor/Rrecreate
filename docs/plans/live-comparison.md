@@ -508,6 +508,30 @@ path in the workspace now, and the build stops if one isn't in it.
   makes them (left from step 2); the first-difference comparison (`rrc compare` alone, with `--feed` or `--fix`)
   keeps its own loop, which the live check doesn't use.
 
+### What step 5 did, its first part (2026-11-17, D192)
+
+- **A recording gives its ticks as they are made.** Clockwork hands over what its late-input check and its entries
+  found so far (`late_inputs_take`, `entries_take`); a tick is given once nothing more can come for it, and the trace
+  is written to a file as it grows, hashed as it goes, its run's hash taken from the frames and sound written aside.
+  `rrc record` is this recorder; what it holds no longer grows with the run (the plan's pitfall 26).
+- **`rrc play` follows the play as it goes** (section 2): the follower on a thread of its own, at most four ticks
+  ahead of the comparer; each tick decoded, given to the comparer and, as an inputs line, to the port, run free and
+  corrected where it differs (step 4's comparer, fed by the follower instead of a finished trace). From power-on the
+  port starts at once; from a session's tick, once the play's second tick is made, from the original's state at
+  the first, read as `rrc compare` reads it. What differs is said when first found, with the play's time; a status
+  line (on a terminal) says how much is played, the tick compared, the lag, a long pass. The follower's Clockwork
+  and the port run below normal priority on Windows. The play's session ends where its recording would: the
+  follower never runs past the millisecond of the last mark.
+- **`--resume`** follows a play cut short again from its file, to its last mark; a window closed without its end
+  mark ends the play at its last mark; `--replay` follows a play recorded before at full speed.
+- **Tested:** the toy's play from a session's tick and the vault's from power-on (recorded by the headless window
+  from the session's script) at full speed: the live census is `rrc compare --corrected`'s, the play recorded again
+  is the same run, `--resume` gives the same census; the toy's planted bug is said at the tick the offline comparison
+  finds. Arena's 58 sessions recorded again with this recorder give the same traces, byte for byte (in 20.7 minutes; 18 at step 1).
+- **Left for the second part:** a port that panics or hangs is said and the play goes on being recorded, but its
+  comparison stops (pitfalls 12 and 13: started again from the original's state at the follower's next tick, a
+  hang timed against the slowest tick); memory over a long replay (pitfall 10).
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the

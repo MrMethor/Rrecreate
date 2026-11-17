@@ -194,6 +194,11 @@ impl Watched {
     }
 }
 
+/// Findings in the order they are answered: by tick, source, when, the instruction, its read.
+pub fn order(findings: &mut [Late]) {
+    findings.sort_by_key(|l| (l.tick_cycle, l.source, l.cycle, l.at, l.read));
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LateInputs {
     sources: Vec<Source>,
@@ -353,7 +358,7 @@ impl LateInputs {
             }
         }
         kept.into_iter().for_each(|late| self.push(late));
-        self.findings.sort_by_key(|l| (l.tick_cycle, l.source, l.cycle, l.at, l.read));
+        order(&mut self.findings);
         self
     }
 

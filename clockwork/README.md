@@ -70,8 +70,8 @@ written as it is played, with `# at <cycle>` every 100 ms of emulated time (the 
 `# hash <cycle> <state hash>` when it starts and every 30 s (the machine's state there, before the input at it),
 `# clockwork <source hash>` after its header, and `# end <cycle>` when the window closes, so a tool can follow
 the play and prove its run the window's (`rrc record --follow`, D189); `--hash-every S` sets how often. `play
---headless FILE` is the window's loop without a window: the play in FILE's input given frame by frame as a person's
-is, as fast as the machine runs (the tests' window). `play --load-snapshot FILE` plays
+--headless FILE` is the window's loop without a window: the play in FILE's input (or an input script's, as
+`--input-file` reads it) given frame by frame as a person's is, as fast as the machine runs (the tests' window). `play --load-snapshot FILE` plays
 from a snapshot: the input it still had to come is dropped, but the releases of keys held then.
 
 `unpack` undoes an executable packer (PKLITE, LZEXE, EXEPACK, DIET...) by running the program until the

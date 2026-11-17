@@ -301,7 +301,8 @@ which bugs it met.
   needed can go (D114).
 - **Lockstep:** every field fed, each pass starts where the original's did, and every difference of the session
   is counted at once: the census of what to port (D124). The person plays the original (`rrc play`), and rrc
-  follows the play in parts, each compared so as it is recorded.
+  follows the play as it goes: a second Clockwork records it as it is written, and the port runs beside it, free
+  and corrected where it differs (D191, D192).
 - **Fields alone:** a stretch whose screens the port doesn't draw yet is compared by its mapped fields alone,
   neither screen nor sound (`--fields`, D136).
 - **Unset fields:** from power-on, a field the port hasn't set yet (null) matches while the original's value is

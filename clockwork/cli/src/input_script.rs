@@ -186,66 +186,78 @@ impl Script {
 
     /// Queues the script's input in the machine; refused if its time has passed.
     pub fn schedule(&self, m: &mut Machine) -> Result<(), String> {
-        let mut at = m.cycle_at_ms(self.start_ms);
-        if at < m.cpu.cycles {
+        if m.cycle_at_ms(self.start_ms) < m.cpu.cycles {
             return Err(format!(
                 "input at {} ms: the machine is at {} ms already (times count from power-on)",
                 self.start_ms,
                 m.elapsed_ms()
             ));
         }
-        let ms = |m: &Machine, ms: u64| m.cycle_at_ms(ms);
+        for (cycle, input) in self.events(&|ms| m.cycle_at_ms(ms)) {
+            m.queue_input(cycle, input);
+        }
+        Ok(())
+    }
+
+    /// The script's input, each at its cycle (`cycle_at_ms` turns its times into cycles), in order.
+    pub fn events(&self, cycle_at_ms: &dyn Fn(u64) -> u64) -> Vec<(u64, dos::Input)> {
+        let mut events = Vec::new();
+        let keys = |events: &mut Vec<(u64, dos::Input)>, at: u64, codes: &[u8]| {
+            events.extend(codes.iter().map(|&code| (at, dos::Input::Key(code))));
+        };
+        let ms = cycle_at_ms;
+        let mut at = ms(self.start_ms);
         for step in &self.steps {
             match step {
                 Step::Key(codes) | Step::Hold(codes, _) => {
                     let held_ms = if let Step::Hold(_, held) = step { *held } else { KEY_HOLD_MS };
-                    m.queue_scancodes(at, codes);
+                    keys(&mut events, at, codes);
                     // Release in reverse: the key, then its prefix or the shift.
-                    let release = at + ms(m, held_ms);
+                    let release = at + ms(held_ms);
                     let (last, held) = codes.split_last().expect("a key has a scancode");
                     match held {
-                        [0xE0] => m.queue_scancodes(release, &[0xE0, last | 0x80]),
-                        [shift] => m.queue_scancodes(release, &[last | 0x80, shift | 0x80]),
-                        _ => m.queue_scancodes(release, &[last | 0x80]),
+                        [0xE0] => keys(&mut events, release, &[0xE0, last | 0x80]),
+                        [shift] => keys(&mut events, release, &[last | 0x80, shift | 0x80]),
+                        _ => keys(&mut events, release, &[last | 0x80]),
                     }
-                    at += ms(m, held_ms + KEY_SPACING_MS - KEY_HOLD_MS);
+                    at += ms(held_ms + KEY_SPACING_MS - KEY_HOLD_MS);
                 }
                 &Step::Click { x, y, button } => {
-                    m.queue_mouse(at, x, y, 0);
-                    let press = at + ms(m, CLICK_DELAY_MS);
-                    m.queue_mouse(press, x, y, button);
-                    m.queue_mouse(press + ms(m, CLICK_HOLD_MS), x, y, 0);
-                    at = press + ms(m, CLICK_HOLD_MS) + ms(m, KEY_SPACING_MS);
+                    events.push((at, dos::Input::Mouse { x, y, buttons: 0 }));
+                    let press = at + ms(CLICK_DELAY_MS);
+                    events.push((press, dos::Input::Mouse { x, y, buttons: button }));
+                    events.push((press + ms(CLICK_HOLD_MS), dos::Input::Mouse { x, y, buttons: 0 }));
+                    at = press + ms(CLICK_HOLD_MS) + ms(KEY_SPACING_MS);
                 }
                 &Step::Move { x, y } => {
-                    m.queue_mouse(at, x, y, 0);
-                    at += ms(m, KEY_SPACING_MS);
+                    events.push((at, dos::Input::Mouse { x, y, buttons: 0 }));
+                    at += ms(KEY_SPACING_MS);
                 }
                 &Step::Mouse { x, y, buttons } => {
-                    m.queue_mouse(at, x, y, buttons);
-                    at += ms(m, KEY_SPACING_MS);
+                    events.push((at, dos::Input::Mouse { x, y, buttons }));
+                    at += ms(KEY_SPACING_MS);
                 }
                 &Step::Motion { dx, dy } => {
-                    m.queue_input(at, dos::Input::MouseMotion { dx, dy });
-                    at += ms(m, KEY_SPACING_MS);
+                    events.push((at, dos::Input::MouseMotion { dx, dy }));
+                    at += ms(KEY_SPACING_MS);
                 }
                 &Step::Stick { stick, x, y, buttons } => {
-                    m.queue_input(at, dos::Input::Joystick { stick, x, y, buttons });
-                    at += ms(m, KEY_SPACING_MS);
+                    events.push((at, dos::Input::Joystick { stick, x, y, buttons }));
+                    at += ms(KEY_SPACING_MS);
                 }
                 Step::KeyDown(codes) => {
-                    m.queue_scancodes(at, codes);
-                    at += ms(m, KEY_SPACING_MS);
+                    keys(&mut events, at, codes);
+                    at += ms(KEY_SPACING_MS);
                 }
                 Step::KeyUp(codes) => {
                     let (last, prefix) = codes.split_last().expect("a key has a scancode");
-                    m.queue_scancodes(at, &[prefix, &[last | 0x80]].concat());
-                    at += ms(m, KEY_SPACING_MS);
+                    keys(&mut events, at, &[prefix, &[last | 0x80]].concat());
+                    at += ms(KEY_SPACING_MS);
                 }
-                &Step::Wait(wait) => at += ms(m, wait),
+                &Step::Wait(wait) => at += ms(wait),
             }
         }
-        Ok(())
+        events
     }
 }
 

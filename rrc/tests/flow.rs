@@ -135,7 +135,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 20, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 21, dos-pc ("), "{doctor}");
     assert!(doctor.contains("rules     RULES.md: 5 questions for the person not answered yet"), "{doctor}");
     // The stage the port is at, and what its gate lacks (D158): the person's answers, in place of the questions.
     let asking = rrc.ok(&["status"]);
@@ -967,6 +967,25 @@ fn a_port_from_power_on_loads_the_game_s_files() {
         ),
         "{palette}"
     );
+    // The session's input played in a window without a window, recorded as the person's play is, then followed
+    // through the whole pipeline at full speed (D192): from power-on, with frames and the game's files.
+    let played = dir.join("walk.session");
+    let script = rrc.repo.join("sessions/play.inputs");
+    let window = Command::new(&rrc.clockwork)
+        .args(["play", dir.join("game").to_str().unwrap(), "VAULT.EXE", "--headless", script.to_str().unwrap()])
+        .args(["--record", played.to_str().unwrap(), "--seconds", "6", "--hash-every", "1", "--no-audio"])
+        .output()
+        .unwrap();
+    assert!(window.status.success(), "{}", String::from_utf8_lossy(&window.stderr));
+    let walked = rrc.ok(&["play", "walk", "--replay", played.to_str().unwrap()]);
+    assert!(walked.contains("play      walk: 0:06 played from power-on, "), "{walked}");
+    assert!(walked.contains("state hashes of the window's)"), "{walked}");
+    assert!(walked.contains("match     walk: every mapped field, frame and sound in all "), "{walked}");
+    let live = std::fs::read_to_string(rrc.repo.join(".rrc/play/walk/census.json")).unwrap();
+    rrc.ok(&["compare", "walk", "--corrected"]);
+    assert_eq!(live, std::fs::read_to_string(rrc.repo.join(".rrc/compare/walk/corrected.json")).unwrap());
+    let again = rrc.ok(&["record", "walk", "--run"]);
+    assert!(again.contains("same      as the trace recorded before"), "{again}");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1470,10 +1489,9 @@ fn a_session_starts_from_another_s_tick() {
 }
 
 #[test]
-fn a_play_is_followed_in_parts_and_compared_in_lockstep() {
-    // D124: play recorded from play's tick 100 (1.4 s), right held from 2.2 s to 2.6 s, followed every 0.4 s of
-    // it, as far as its marks (every 0.25 s) allow: parts from 1.4, 1.9, 2.4 and 2.9 s, the key held across the
-    // third's start.
+fn a_play_is_followed_as_it_goes_and_compared_free() {
+    // D192: play recorded from play's tick 100 (1.4 s), right held from 2.2 s to 2.6 s, followed as its marks (every
+    // 0.25 s) allow, the port run beside it, free and corrected where it differs (D191).
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let (dir, mut rrc) = setup_file("followed", "TOY.EXE", &std::fs::read(root.join("testbins/bin/TOY.EXE")).unwrap());
     let port = built("toy-port", "toy-port", true);
@@ -1535,51 +1553,52 @@ ips 8000000
     let recorded = dir.join("held.session");
     std::fs::write(&recorded, text).unwrap();
     let held = recorded.to_str().unwrap();
-    let args = ["play", "hold", "--from", "play", "--tick", "100", "--every", "0.4", "--replay", held];
+    // Followed as it goes (D192): one session, its trace the follower's, the port run free beside it.
+    let args = ["play", "hold", "--from", "play", "--tick", "100", "--replay", held];
     let followed = rrc.ok(&args);
     assert!(
         followed.contains("play      hold: the original from play's tick 100, recorded in sessions/hold.session"),
         "{followed}"
     );
     assert!(followed.contains("start     the original's state at play's tick 100 isn't kept: made now"), "{followed}");
-    assert!(followed.contains("play      hold: 0:02 played from play's tick 100 (1.4 s from power-on)"), "{followed}");
-    assert_eq!(followed.matches("passes match").count(), 4, "four parts, each matching: {followed}");
-    assert!(followed.contains("part      hold/4: "), "{followed}");
-    assert!(followed.contains("4 parts (sessions/hold/1 to 4)"), "{followed}");
+    assert!(
+        followed.contains("play      hold: 0:02 played from play's tick 100 (1.4 s from power-on), "),
+        "{followed}"
+    );
+    assert!(followed.contains("the runs the same (0 state hashes of the window's)"), "{followed}");
     assert!(followed.contains("match     hold: every mapped field, frame and sound in all "), "{followed}");
-    // A part starts from the one before's tick: counted from a transplant there, though its trace has the
-    // start-up's pass too (D118, D164).
-    let counted = rrc.ok(&["compare", "hold/2", "--lockstep"]);
-    assert!(counted.contains("every mapped field, frame and sound in all"), "{counted}");
-    assert!(rrc.repo.join(".rrc/compare/hold/2/start.json").is_file(), "from a transplant: {counted}");
+    assert!(!followed.contains("new "), "nothing differs: {followed}");
     let (taken, ok) = rrc.run(&args);
     assert!(!ok && taken.contains("there is a session hold already"), "{taken}");
-    // The parts, one from the last tick of the one before, are the play recorded whole: no input lost or
-    // given twice where a part begins.
-    let ticks: u64 = followed
-        .lines()
-        .find(|l| l.starts_with("play") && l.contains(" parts "))
-        .and_then(|l| l.rsplit(", ").next()?.strip_suffix(" ticks")?.parse().ok())
-        .unwrap_or_else(|| panic!("{followed}"));
-    let whole = rrc.ok(&["record", "hold"]);
-    assert!(whole.contains(&format!("trace     {ticks} ticks")), "{ticks}: {whole}");
-    let last = std::fs::read_to_string(rrc.repo.join("sessions/hold/4.toml")).unwrap();
-    let last: u64 =
-        last.lines().find_map(|l| l.strip_prefix("ticks = ")?.parse().ok()).unwrap_or_else(|| panic!("{last}"));
-    let values = |text: String| text.lines().filter(|l| l.starts_with("value")).map(str::to_owned).collect::<Vec<_>>();
-    let ends = |session: &str, tick: u64| {
-        values(rrc.ok(&["peek", session, "--tick", &tick.to_string(), "player_x", "score", "rng_seed"]))
-    };
-    assert_eq!(ends("hold", ticks), ends("hold/4", last));
-    // A port that doesn't count a bounce: said in the part it is first in, and where to look.
+    // The live census is the play's offline comparison's (`--corrected`), and the play recorded again is the same run
+    // (D111): the follower stopped where the session ends.
+    let census = |name: &str, file: &str| std::fs::read_to_string(rrc.repo.join(".rrc").join(name).join(file)).unwrap();
+    let live = census("play/hold", "census.json");
+    rrc.ok(&["compare", "hold", "--corrected"]);
+    assert_eq!(live, census("compare/hold", "corrected.json"));
+    let again = rrc.ok(&["record", "hold", "--run"]);
+    assert!(again.contains("same      as the trace recorded before"), "{again}");
+    // Cut short (rrc or the machine stopped): followed again from its file.
+    let resumed = rrc.ok(&["play", "hold", "--resume"]);
+    assert!(resumed.contains("match     hold: every mapped field, frame and sound in all "), "{resumed}");
+    assert_eq!(census("play/hold", "census.json"), live);
+    // A port that doesn't count a bounce: said when it is first seen, at the tick the offline comparison finds it,
+    // and where to look.
     rrc.env.push(("TOY_BUG", "1"));
-    let args = ["play", "bugged", "--from", "play", "--tick", "100", "--every", "0.4", "--replay", held];
+    let args = ["play", "bugged", "--from", "play", "--tick", "100", "--replay", held];
     let bugged = rrc.ok(&args);
+    let found: serde_json::Value = serde_json::from_str(&census("play/bugged", "census.json")).unwrap();
+    let tick = found["fields"]["enemies"]["tick"].as_u64().unwrap_or_else(|| panic!("{found}"));
     assert!(
-        bugged.contains("new       differs enemies: in ") && bugged.contains("enemies[1].hits: original 1, port 0"),
+        bugged.contains("differs enemies: in 1 of ")
+            && bugged.contains(&format!("first at bugged's tick {tick} (enemies[1].hits: original 1, port 0)")),
         "{bugged}"
     );
-    assert!(bugged.contains("next      rrc compare bugged/"), "{bugged}");
+    assert!(bugged.lines().any(|l| l.starts_with("new       at 0:0") && l.contains("differs enemies")), "{bugged}");
+    let (offline, ok) = rrc.run(&["compare", "bugged", "--corrected"]);
+    assert!(!ok && offline.contains(&format!("first at bugged's tick {tick} ")), "{offline}");
+    assert_eq!(census("play/bugged", "census.json"), census("compare/bugged", "corrected.json"));
+    assert!(bugged.contains("next      rrc compare bugged --transplant"), "{bugged}");
     rrc.env.pop();
     std::fs::remove_dir_all(&dir).ok();
 }

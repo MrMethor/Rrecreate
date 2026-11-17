@@ -1018,58 +1018,111 @@ fn unset_matches(path: &str, leftovers: &Value, theirs: &Value, found: &mut Vec<
 
 /// Each mapped field's value at each tick of the original's trace.
 fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> Result<Vec<Vec<Value>>, String> {
-    let mut all = Vec::new();
-    for m in mapped {
-        let at = m.id.to_string();
-        let column = trace
-            .header
-            .state
-            .iter()
-            .position(|item| match &m.via {
-                Some(via) => {
-                    item.via.as_ref().is_some_and(|v| v.at == at && v.offset == via.offset)
-                        && item.name == via.item_name()
-                        && item.size == m.size
+    let mut decoding = Original::new(&trace.header, mapped, r, name)?;
+    let mut all: Vec<Vec<Value>> = mapped.iter().map(|_| Vec::with_capacity(trace.ticks.len())).collect();
+    for tick in &trace.ticks {
+        for (column, value) in all.iter_mut().zip(decoding.values(tick)?) {
+            column.push(value);
+        }
+    }
+    Ok(all)
+}
+
+/// The original's mapped fields decoded a tick at a time, as a trace's ticks come (D192): each field's value from the
+/// items the ticks changed, keeping only the values as the last tick left them.
+pub(crate) struct Original<'a> {
+    mapped: &'a [Mapped],
+    reader: &'a Reader<'a>,
+    /// Each field's item (its column in the trace's state), and an index's (D122) array's pointer's with how it points.
+    columns: Vec<(usize, Option<(usize, crate::values::PointerKind)>)>,
+    /// The state's items as the ticks so far left them, by column.
+    hex: Vec<Option<String>>,
+    /// Each field's bytes and value at the last tick: a value whose bytes didn't change isn't decoded again.
+    last: Vec<Option<(Option<String>, Value)>>,
+}
+
+impl<'a> Original<'a> {
+    /// The fields `mapped` in a trace with `header` (of session `name`), as `reader` reads them.
+    pub(crate) fn new(
+        header: &crate::trace::Header,
+        mapped: &'a [Mapped],
+        reader: &'a Reader<'a>,
+        name: &str,
+    ) -> Result<Original<'a>, String> {
+        let mut columns = Vec::new();
+        for m in mapped {
+            let at = m.id.to_string();
+            let column = header
+                .state
+                .iter()
+                .position(|item| match &m.via {
+                    Some(via) => {
+                        item.via.as_ref().is_some_and(|v| v.at == at && v.offset == via.offset)
+                            && item.name == via.item_name()
+                            && item.size == m.size
+                    }
+                    None => item.via.is_none() && item.at == at && item.size == m.size,
+                })
+                .ok_or_else(|| format!("the trace of {name} lacks {} ({at}): rrc record {name}", m.field))?;
+            // An index into an array on the heap (D122): where the field's pointer points, as an element of where the
+            // array's pointer points then.
+            let into = match &m.into {
+                Some(into) => {
+                    let kind = crate::values::PointerKind::of_type(&m.ty, reader.types)
+                        .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
+                    let base = into.base.to_string();
+                    let base = header
+                        .state
+                        .iter()
+                        .position(|item| item.via.is_none() && item.at == base && item.size == into.pointer.size())
+                        .ok_or_else(|| {
+                            format!("the trace of {name} lacks {}'s pointers: rrc record {name}", m.field)
+                        })?;
+                    Some((base, kind))
                 }
-                None => item.via.is_none() && item.at == at && item.size == m.size,
-            })
-            .ok_or_else(|| format!("the trace of {name} lacks {} ({at}): rrc record {name}", m.field))?;
-        let mut last: Option<(Option<String>, Value)> = None;
-        let mut values = Vec::with_capacity(trace.ticks.len());
-        for hex in trace.values(column) {
-            let value = match &last {
-                Some((h, v)) if *h == hex => v.clone(),
-                _ => match &hex {
-                    Some(h) => decoded(m, &unhex(h)?, r).map_err(|e| format!("{}: {e}", m.field))?,
+                None => None,
+            };
+            columns.push((column, into));
+        }
+        Ok(Original { mapped, reader, columns, hex: vec![None; header.state.len()], last: vec![None; mapped.len()] })
+    }
+
+    /// Each field's value at `tick`, the next tick of the trace.
+    pub(crate) fn values(&mut self, tick: &crate::trace::Tick) -> Result<Vec<Value>, String> {
+        for (column, value) in &tick.state {
+            if let Some(hex) = self.hex.get_mut(*column) {
+                hex.clone_from(value);
+            }
+        }
+        let mut values = Vec::with_capacity(self.mapped.len());
+        for (i, (m, (column, into))) in self.mapped.iter().zip(&self.columns).enumerate() {
+            let hex = &self.hex[*column];
+            if let (Some(into), Some((base, kind))) = (&m.into, into) {
+                let bytes = |hex: &Option<String>| hex.as_deref().and_then(|h| unhex(h).ok()).unwrap_or_default();
+                values.push(pointer_index(&bytes(hex), kind, &bytes(&self.hex[*base]), into));
+                continue;
+            }
+            let value = match &self.last[i] {
+                Some((h, v)) if h == hex => v.clone(),
+                _ => match hex {
+                    Some(h) => decoded(m, &unhex(h)?, self.reader).map_err(|e| format!("{}: {e}", m.field))?,
                     None => Value::Null,
                 },
             };
-            last = Some((hex, value.clone()));
+            self.last[i] = Some((hex.clone(), value.clone()));
             values.push(value);
         }
-        all.push(values);
+        Ok(values)
     }
-    // An index into an array on the heap (D122): where the field's pointer points, as an element of where the
-    // array's pointer points then.
-    for (i, m) in mapped.iter().enumerate() {
-        let Some(into) = &m.into else { continue };
-        let kind = crate::values::PointerKind::of_type(&m.ty, r.types)
-            .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
-        let column = |at: &str, size: u32| {
-            trace.header.state.iter().position(|item| item.via.is_none() && item.at == at && item.size == size)
-        };
-        let lacks = || format!("the trace of {name} lacks {}'s pointers: rrc record {name}", m.field);
-        let own = column(&m.id.to_string(), m.size).ok_or_else(lacks)?;
-        let base = column(&into.base.to_string(), into.pointer.size()).ok_or_else(lacks)?;
-        let bytes = |hex: &Option<String>| hex.as_deref().and_then(|h| unhex(h).ok()).unwrap_or_default();
-        all[i] = trace
-            .values(own)
-            .iter()
-            .zip(&trace.values(base))
-            .map(|(p, b)| pointer_index(&bytes(p), &kind, &bytes(b), into))
-            .collect();
-    }
-    Ok(all)
+}
+
+/// The original at a tick, as the comparer takes it (D192): the mapped fields' values, the screen there (the last
+/// that changed), the sound in the pass to it.
+pub(crate) struct At {
+    pub tick: u64,
+    pub values: Vec<Value>,
+    pub screen: Option<String>,
+    pub sound: serde_json::Map<String, Value>,
 }
 
 /// A pointer's bytes (`own`, of `kind`) read as the index of the element it points to in the array `into` names,
@@ -1236,8 +1289,23 @@ fn write_inputs(
     feeds: &BTreeMap<u64, serde_json::Map<String, Value>>,
     path: &str,
 ) -> Result<(), String> {
-    let inputs: Vec<Value> = trace
-        .header
+    let mut text = inputs_header(&trace.header).to_string();
+    text.push('\n');
+    // The start-up's pass, from power-on (D134): tick 0, before the first.
+    let all: Vec<&crate::trace::Tick> =
+        trace.header.power_on.as_deref().into_iter().chain(trace.ticks.iter()).collect();
+    for (n, t) in all.iter().enumerate() {
+        text.push_str(&inputs_line(t, all.get(n + 1).copied(), sets.get(&t.tick), feeds.get(&t.tick)).to_string());
+        text.push('\n');
+    }
+    text.push_str(&json!({"end": trace.end.end, "ticks": trace.ticks.len()}).to_string());
+    text.push('\n');
+    std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
+}
+
+/// The inputs' header (`rrc-inputs`) for a trace with `header`.
+pub(crate) fn inputs_header(header: &crate::trace::Header) -> Value {
+    let inputs: Vec<Value> = header
         .inputs
         .iter()
         .map(|i| {
@@ -1252,56 +1320,56 @@ fn write_inputs(
             item
         })
         .collect();
-    let mut header = json!({"format": "rrc-inputs", "version": 4, "session": trace.header.session, "inputs": inputs});
-    if !trace.header.hooks.is_empty() {
+    let mut line = json!({"format": "rrc-inputs", "version": 4, "session": header.session, "inputs": inputs});
+    if !header.hooks.is_empty() {
         let hooks: Vec<Value> =
-            trace.header.hooks.iter().map(|h| json!({"name": h.name, "registers": h.registers})).collect();
-        header["hooks"] = json!(hooks);
+            header.hooks.iter().map(|h| json!({"name": h.name, "registers": h.registers})).collect();
+        line["hooks"] = json!(hooks);
     }
-    let mut text = header.to_string();
-    text.push('\n');
-    // The start-up's pass, from power-on (D134): tick 0, before the first.
-    let start_up = trace.header.power_on.as_deref().into_iter();
-    for (n, t) in start_up.chain(trace.ticks.iter()).enumerate() {
-        let n = if trace.header.power_on.is_some() { n.wrapping_sub(1) } else { n };
-        let read: Vec<Value> = t.inputs.iter().filter_map(|(i, v)| v.as_ref().map(|v| json!([i, v]))).collect();
-        let mut line = json!({"tick": t.tick, "sync": t.sync, "inputs": read});
-        // How many times the original went round the wait the pass ends at: the next tick's skipped hits (D130).
-        if let Some(spun) = trace.ticks.get(n.wrapping_add(1)).and_then(|next| next.skipped) {
-            line["spun"] = json!(spun);
-        }
-        // The hooks' calls in the pass (D98).
-        if !t.hooks.is_empty() {
-            let calls: Vec<Value> = t.hooks.iter().map(|(i, values)| json!([i, values])).collect();
-            line["hooks"] = json!(calls);
-        }
-        // What each late read saw, and its bytes that differ from what the program should have read (D97).
-        let late: Vec<Value> = t
-            .late
-            .iter()
-            .filter_map(|l| {
-                l.value.as_ref().map(|v| match (&l.bytes, l.round) {
-                    (bytes, round) if round != 0 => json!([l.input, l.at, v, l.read, bytes, round]),
-                    (Some(bytes), _) => json!([l.input, l.at, v, l.read, bytes]),
-                    (None, _) => json!([l.input, l.at, v, l.read]),
-                })
+    line
+}
+
+/// A tick's inputs line: what its pass reads (`next`, the tick after it, has how many times the original went round
+/// the wait the pass ends at), the fields a scenario's edit sets there, the fields fed there (D124).
+pub(crate) fn inputs_line(
+    t: &crate::trace::Tick,
+    next: Option<&crate::trace::Tick>,
+    set: Option<&serde_json::Map<String, Value>>,
+    fed: Option<&serde_json::Map<String, Value>>,
+) -> Value {
+    let read: Vec<Value> = t.inputs.iter().filter_map(|(i, v)| v.as_ref().map(|v| json!([i, v]))).collect();
+    let mut line = json!({"tick": t.tick, "sync": t.sync, "inputs": read});
+    // How many times the original went round the wait the pass ends at: the next tick's skipped hits (D130).
+    if let Some(spun) = next.and_then(|next| next.skipped) {
+        line["spun"] = json!(spun);
+    }
+    // The hooks' calls in the pass (D98).
+    if !t.hooks.is_empty() {
+        let calls: Vec<Value> = t.hooks.iter().map(|(i, values)| json!([i, values])).collect();
+        line["hooks"] = json!(calls);
+    }
+    // What each late read saw, and its bytes that differ from what the program should have read (D97).
+    let late: Vec<Value> = t
+        .late
+        .iter()
+        .filter_map(|l| {
+            l.value.as_ref().map(|v| match (&l.bytes, l.round) {
+                (bytes, round) if round != 0 => json!([l.input, l.at, v, l.read, bytes, round]),
+                (Some(bytes), _) => json!([l.input, l.at, v, l.read, bytes]),
+                (None, _) => json!([l.input, l.at, v, l.read]),
             })
-            .collect();
-        if !late.is_empty() {
-            line["late"] = json!(late);
-        }
-        if let Some(set) = sets.get(&t.tick) {
-            line["set"] = json!(set);
-        }
-        if let Some(fed) = feeds.get(&t.tick) {
-            line["fed"] = json!(fed);
-        }
-        text.push_str(&line.to_string());
-        text.push('\n');
+        })
+        .collect();
+    if !late.is_empty() {
+        line["late"] = json!(late);
     }
-    text.push_str(&json!({"end": trace.end.end, "ticks": trace.ticks.len()}).to_string());
-    text.push('\n');
-    std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
+    if let Some(set) = set {
+        line["set"] = json!(set);
+    }
+    if let Some(fed) = fed {
+        line["fed"] = json!(fed);
+    }
+    line
 }
 
 /// Where the port's own passes differed from the original's in a lockstep comparison (D124): for a field, the
@@ -1341,32 +1409,6 @@ impl Census {
     /// Whether the port's state, frames or sound differ anywhere.
     pub fn differs(&self) -> bool {
         !self.fields.is_empty() || self.screen.is_some() || self.sound.is_some()
-    }
-
-    /// Adds `other`'s (a later part of the same play): counts summed, the first kept where it was.
-    pub fn add(&mut self, other: &Census) {
-        fn into(seen: &mut Option<Seen>, other: &Seen) {
-            match seen {
-                Some(seen) => seen.ticks += other.ticks,
-                None => *seen = Some(other.clone()),
-            }
-        }
-        self.passes += other.passes;
-        for (mine, theirs) in
-            [(&mut self.fields, &other.fields), (&mut self.unset, &other.unset), (&mut self.notes, &other.notes)]
-        {
-            for (key, seen) in theirs {
-                let mut slot = mine.remove(key);
-                into(&mut slot, seen);
-                mine.insert(key.clone(), slot.expect("added"));
-            }
-        }
-        if let Some(seen) = &other.screen {
-            into(&mut self.screen, seen);
-        }
-        if let Some(seen) = &other.sound {
-            into(&mut self.sound, seen);
-        }
     }
 
     /// Each thing `other` has that this hasn't: (its kind, its name, where first).
@@ -1552,23 +1594,11 @@ fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> 
     }
     let saves = work.join("saves");
     write_saves(repo, &session, &k, (!from_power_on).then_some(after), &saves)?;
-    let mut counting = Counting {
-        name,
-        mapped: &mapped,
-        original: &original,
-        sets: &sets,
-        trace: &trace,
-        screens: &screens,
-        cache: &cache,
-        frames: work.join("frames"),
-        after,
-        free: correcting,
-        made: Vec::new(),
-        own: Value::Object(serde_json::Map::new()),
-        screens_seen: Screens::default(),
-        census,
-        corrected: Corrections::default(),
-    };
+    let mut counting = Counting::new(name, &mapped, &sets, &cache, work.join("frames"), after, correcting, census);
+    for (i, (tick, screen)) in trace.ticks.iter().zip(&screens).enumerate() {
+        let values = original.iter().map(|column| column[i].clone()).collect();
+        counting.original(At { tick: tick.tick, values, screen: screen.clone(), sound: tick.sound.clone() });
+    }
     if correcting {
         let mut on_line = |v: &Value| counting.line(v);
         run_port(repo, &session, &port_args, Some(&saves), Some(&mut on_line))?;
@@ -1601,13 +1631,13 @@ fn counted(repo: &Repo, name: &str, correcting: bool) -> Result<Census, String> 
 /// The comparison a tick at a time (D191): the port's trace's lines as they come, against the original's ticks, the
 /// census kept as it goes: the fields the port's own pass left otherwise, the frames and sound that differ, what it
 /// noted. Lockstep's own values are what the feed overrode (the rest matched it); a free run's, its state's.
-struct Counting<'a> {
+pub(crate) struct Counting<'a> {
     name: &'a str,
     mapped: &'a [Mapped],
-    original: &'a [Vec<Value>],
+    /// The original's ticks given and not compared yet, and the last given (D192).
+    ticks: std::collections::VecDeque<At>,
+    newest: u64,
     sets: &'a BTreeMap<u64, serde_json::Map<String, Value>>,
-    trace: &'a Trace,
-    screens: &'a [Option<String>],
     cache: &'a Cache,
     frames: std::path::PathBuf,
     /// The tick the port starts at: its pass to it was the original's.
@@ -1618,8 +1648,10 @@ struct Counting<'a> {
     /// A free run's state as its lines leave it (each gives the top-level fields that changed).
     own: Value,
     screens_seen: Screens,
-    census: Census,
+    pub(crate) census: Census,
     corrected: Corrections,
+    /// The last tick of the port's trace.
+    compared: u64,
 }
 
 /// What a corrected run set (D191).
@@ -1632,10 +1664,56 @@ struct Corrections {
     noted: u64,
 }
 
-impl Counting<'_> {
+impl<'a> Counting<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        name: &'a str,
+        mapped: &'a [Mapped],
+        sets: &'a BTreeMap<u64, serde_json::Map<String, Value>>,
+        cache: &'a Cache,
+        frames: std::path::PathBuf,
+        after: u64,
+        free: bool,
+        census: Census,
+    ) -> Counting<'a> {
+        Counting {
+            name,
+            mapped,
+            ticks: std::collections::VecDeque::new(),
+            newest: 0,
+            sets,
+            cache,
+            frames,
+            after,
+            free,
+            made: Vec::new(),
+            own: Value::Object(serde_json::Map::new()),
+            screens_seen: Screens::default(),
+            census,
+            corrected: Corrections::default(),
+            compared: 0,
+        }
+    }
+
+    /// The original's first tick not compared yet.
+    pub(crate) fn first(&self) -> Option<&At> {
+        self.ticks.front()
+    }
+
+    /// The last tick the port's trace gave.
+    pub(crate) fn compared(&self) -> u64 {
+        self.compared
+    }
+
+    /// The original's next tick.
+    pub(crate) fn original(&mut self, at: At) {
+        self.newest = at.tick;
+        self.ticks.push_back(at);
+    }
+
     /// A line of the port's trace: counted; for a free run's tick, the original's values of the fields it differs in
     /// there (all of them after a pass the port noted, D115), to set before the tick's step.
-    fn line(&mut self, v: &Value) -> Result<serde_json::Map<String, Value>, String> {
+    pub(crate) fn line(&mut self, v: &Value) -> Result<serde_json::Map<String, Value>, String> {
         let mut correct = serde_json::Map::new();
         if v.get("format").is_some() {
             if v["format"] != "rrc-port-trace" || v["version"] != 1 {
@@ -1652,9 +1730,14 @@ impl Counting<'_> {
             return Ok(correct);
         }
         let Some(t) = v["tick"].as_u64() else { return Ok(correct) };
-        let ticks = self.trace.ticks.len() as u64;
+        self.compared = t;
+        let ticks = self.newest;
         if t == 0 || t > ticks {
             return Err(format!("the port's trace has tick {t}; the session has 1 to {ticks}"));
+        }
+        // The original's ticks before it are done with.
+        while self.ticks.front().is_some_and(|at| at.tick < t) {
+            self.ticks.pop_front();
         }
         if let (Some(changed), Value::Object(own)) = (v["state"].as_object(), &mut self.own) {
             for (key, value) in changed {
@@ -1680,6 +1763,11 @@ impl Counting<'_> {
             return Ok(correct);
         }
         census.passes += 1;
+        let at = self
+            .ticks
+            .front()
+            .filter(|at| at.tick == t)
+            .ok_or(format!("the port's trace has tick {t} out of order"))?;
         // Each field's own value: what the feed overrode (lockstep: a field not there matched), or the state's.
         static NONE: Value = Value::Null;
         let own: Vec<(usize, &Value)> = if self.free {
@@ -1696,7 +1784,7 @@ impl Counting<'_> {
         };
         let mut fixed: Vec<String> = Vec::new();
         for (i, own) in own {
-            let (m, theirs) = (&self.mapped[i], &self.original[i][(t - 1) as usize]);
+            let (m, theirs) = (&self.mapped[i], &at.values[i]);
             if own.is_null() {
                 // None in both: memory the original freed (a pointer null), the port's field none.
                 if self.free && theirs.is_null() {
@@ -1729,7 +1817,7 @@ impl Counting<'_> {
                 correct.insert(m.field.clone(), theirs.clone());
             }
         }
-        if let Some(hash) = &self.screens[(t - 1) as usize]
+        if let Some(hash) = &at.screen
             && let Some(diff) = self.screens_seen.compare(hash, self.cache)?
         {
             let what = match diff.sizes {
@@ -1747,7 +1835,7 @@ impl Counting<'_> {
         }
         let made: Vec<&str> = self.made.iter().map(String::as_str).collect();
         if !made.is_empty()
-            && let Some(diff) = sound_differences(&self.trace.ticks[(t - 1) as usize].sound, &v["sound"], &made)
+            && let Some(diff) = sound_differences(&at.sound, &v["sound"], &made)
         {
             let text =
                 |e: &Option<Value>| e.as_ref().map_or_else(|| "none".to_owned(), |e| untimed_text(diff.device, e));
@@ -1937,8 +2025,21 @@ fn write_start(
     carried: serde_json::Map<String, Value>,
     path: &str,
 ) -> Result<(), String> {
+    let values: Vec<Value> = original.iter().map(|values| values[(tick - 1) as usize].clone()).collect();
+    write_state(session, mapped, &values, tick, carried, path)
+}
+
+/// A transplant (`rrc-state`) of the mapped fields' `values` at `tick`, and the memory the port carries there.
+fn write_state(
+    session: &str,
+    mapped: &[Mapped],
+    values: &[Value],
+    tick: u64,
+    carried: serde_json::Map<String, Value>,
+    path: &str,
+) -> Result<(), String> {
     let mut state: serde_json::Map<String, Value> =
-        mapped.iter().zip(original).map(|(m, values)| (m.field.clone(), values[(tick - 1) as usize].clone())).collect();
+        mapped.iter().zip(values).map(|(m, value)| (m.field.clone(), value.clone())).collect();
     state.extend(carried);
     let file = json!({"format": "rrc-state", "version": 1, "session": session, "tick": tick, "state": state});
     std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))
@@ -2205,22 +2306,7 @@ fn run_port(
     mut correct: Option<&mut Correct>,
 ) -> Result<(), String> {
     let port = &repo.settings.port;
-    // The person's copy of the game, for what the port loads from it (D82, `rrc_runtime::original`):
-    // the folder the session runs on (D170), and the program as the analysis unpacked it (its static data).
-    let mut original: Vec<(&str, std::path::PathBuf)> = Vec::new();
-    match crate::folder::of(repo, session) {
-        Ok(folder) => original.push(("RRC_GAME", folder)),
-        // No game's folder, and none recorded: a port that reads none of the game's files still runs.
-        Err(_) if repo.game_dir().is_err() && session.root(repo)?.files.is_empty() => {}
-        Err(e) => return Err(e),
-    }
-    if let Some(index) = crate::analysis::Index::load(repo)? {
-        original.push(("RRC_PROGRAM", crate::cache::Cache::open(&repo.local)?.path(&index.program)));
-    }
-    // Where it keeps the games it saves, and reads saved ones first (D131).
-    if let Some(saves) = saves {
-        original.push(("RRC_SAVES", saves.to_path_buf()));
-    }
+    let original = port_env(repo, session, saves)?;
     let run = |what: &str, command: &[String], args: &[String], correct: Option<&mut Correct>| -> Result<(), String> {
         let (program, rest) = command.split_first().ok_or(format!("[port] {what} is empty"))?;
         // The inputs through a pipe (D190): the port reads them from its standard input as it needs them; from the
@@ -2290,63 +2376,263 @@ fn run_port(
     })
 }
 
-/// Feeds the port a tick at a time, corrected where it differs (D191): a tick's inputs line goes once the port wrote the
-/// tick before, with `correct`'s answer for that tick, the original's values of the fields it differed in; the
-/// header says version 5, which has `correct`. Each line of the port's trace is given to `correct`, the last ones too.
+/// What a port's run is given of the original: the person's copy of the game, for what the port loads from it (D82,
+/// `rrc_runtime::original`): the folder the session runs on (D170), and the program as the analysis unpacked it (its
+/// static data); where it keeps the games it saves, and reads saved ones first (D131).
+fn port_env(
+    repo: &Repo,
+    session: &Session,
+    saves: Option<&std::path::Path>,
+) -> Result<Vec<(&'static str, std::path::PathBuf)>, String> {
+    let mut original: Vec<(&str, std::path::PathBuf)> = Vec::new();
+    match crate::folder::of(repo, session) {
+        Ok(folder) => original.push(("RRC_GAME", folder)),
+        // No game's folder, and none recorded: a port that reads none of the game's files still runs.
+        Err(_) if repo.game_dir().is_err() && session.root(repo)?.files.is_empty() => {}
+        Err(e) => return Err(e),
+    }
+    if let Some(index) = crate::analysis::Index::load(repo)? {
+        original.push(("RRC_PROGRAM", crate::cache::Cache::open(&repo.local)?.path(&index.program)));
+    }
+    if let Some(saves) = saves {
+        original.push(("RRC_SAVES", saves.to_path_buf()));
+    }
+    Ok(original)
+}
+
+/// How the port starts on a play followed (D192): from power-on with the program's initial data (D135, D137), or from
+/// a session's tick with the original's state at the play's first tick (D118), its carried memory and presentation,
+/// the screen and the games saved there, read as `rrc compare` reads them.
+pub(crate) struct PortStart<'a> {
+    repo: &'a Repo,
+    session: &'a Session,
+    name: &'a str,
+    k: &'a Knowledge,
+    mapping: &'a Mapping,
+    mapped: &'a [Mapped],
+    header: crate::trace::Header,
+    work: std::path::PathBuf,
+}
+
+impl<'a> PortStart<'a> {
+    pub(crate) fn new(
+        repo: &'a Repo,
+        session: &'a Session,
+        name: &'a str,
+        k: &'a Knowledge,
+        mapping: &'a Mapping,
+        mapped: &'a [Mapped],
+        header: crate::trace::Header,
+    ) -> Result<PortStart<'a>, String> {
+        let work = repo.state()?.join("compare").join(name);
+        let frames = work.join("frames");
+        if frames.is_dir() {
+            std::fs::remove_dir_all(&frames).map_err(|e| format!("{}: {e}", frames.display()))?;
+        }
+        std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+        Ok(PortStart { repo, session, name, k, mapping, mapped, header, work })
+    }
+
+    pub(crate) fn header(&self) -> &crate::trace::Header {
+        &self.header
+    }
+
+    pub(crate) fn at_power_on(&self) -> bool {
+        self.session.from.is_none()
+    }
+
+    /// Where the port's frames go.
+    pub(crate) fn frames(&self) -> std::path::PathBuf {
+        self.work.join("frames")
+    }
+
+    /// The port started, from power-on, or from `first`, the original at the play's first tick; its trace in
+    /// `port.jsonl`, its inputs given through [`PortRun::give`].
+    pub(crate) fn spawn(&self, first: Option<&At>) -> Result<PortRun, String> {
+        let file = |f: &str| self.work.join(f).to_string_lossy().into_owned();
+        let mut args = vec!["run".to_owned(), "--inputs".into(), "-".into(), "--out".into(), file("port.jsonl")];
+        args.extend(["--frames".to_owned(), file("frames")]);
+        let saves = self.work.join("saves");
+        match first {
+            None => {
+                let mut initial = self.mapped.to_vec();
+                initial.extend(self.mapping.resolve_carried(self.k)?);
+                if write_initial(self.repo, self.name, &initial, self.k, &file("initial.json"))? {
+                    args.extend(["--initial".into(), file("initial.json")]);
+                }
+                write_saves(self.repo, self.session, self.k, None, &saves)?;
+            }
+            Some(at) => {
+                let carried = read_given(self.repo, self.session, self.k, &self.mapping.resolve_carried(self.k)?, 1)?;
+                write_state(self.name, self.mapped, &at.values, 1, carried, &file("start.json"))?;
+                args.extend(["--transplant".into(), file("start.json")]);
+                let presented = self.mapping.resolve_present(self.k)?;
+                if !presented.is_empty() {
+                    let at = (self.name, 1);
+                    write_presentation(self.repo, self.session, self.k, &presented, at, &file("presentation.json"))?;
+                    args.extend(["--presentation".into(), file("presentation.json")]);
+                }
+                if let Some(hash) = &at.screen {
+                    let picture = Cache::open(&self.repo.local)?.get(hash)?;
+                    std::fs::write(file("screen.frm"), picture).map_err(|e| e.to_string())?;
+                    args.extend(["--screen".into(), file("screen.frm")]);
+                }
+                write_saves(self.repo, self.session, self.k, Some(1), &saves)?;
+            }
+        }
+        let port = &self.repo.settings.port;
+        let (program, rest) = port.command.split_first().ok_or("[port] command is empty")?;
+        let trace = self.work.join("port.jsonl");
+        let _ = std::fs::remove_file(&trace);
+        let mut command = Command::new(program);
+        command
+            .args(rest)
+            .args(&args)
+            .envs(port_env(self.repo, self.session, Some(&saves))?)
+            .current_dir(&self.repo.root)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        crate::clockwork::lowered(&mut command);
+        let mut child = command.spawn().map_err(|e| format!("[port] command ({program}): {e}"))?;
+        let errors = child.stderr.take().map(|mut pipe| {
+            std::thread::spawn(move || {
+                let mut stderr = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut pipe, &mut stderr);
+                stderr
+            })
+        });
+        let stdin = child.stdin.take().ok_or("the port's input")?;
+        Ok(PortRun { child, feeder: Some(Feeder::new(stdin, &trace)), errors })
+    }
+}
+
+/// The port's run as a play goes (D192): its inputs given a line at a time, each line of its trace to the comparer.
+pub(crate) struct PortRun {
+    child: std::process::Child,
+    feeder: Option<Feeder>,
+    errors: Option<std::thread::JoinHandle<Vec<u8>>>,
+}
+
+impl PortRun {
+    /// Gives line `v`, once the port wrote the tick before (its lines to `counting`, corrected where it differs).
+    pub(crate) fn give(&mut self, v: Value, counting: &mut Counting) -> Result<(), String> {
+        let feeder = self.feeder.as_mut().ok_or("the port's run is over")?;
+        if feeder.give(v, &mut |line: &Value| counting.line(line), &mut self.child)? {
+            return Ok(());
+        }
+        Err(self.ended())
+    }
+
+    /// The inputs' end: the port's last lines to `counting`, and how it ended.
+    pub(crate) fn finish(mut self, counting: &mut Counting) -> Result<(), String> {
+        if let Some(feeder) = self.feeder.take() {
+            feeder.finish(&mut |line: &Value| counting.line(line), &mut self.child)?;
+        }
+        let status = self.child.wait().map_err(|e| format!("[port]: {e}"))?;
+        if status.success() { Ok(()) } else { Err(self.ended()) }
+    }
+
+    /// How the port ended before its inputs did: its last words.
+    fn ended(&mut self) -> String {
+        self.feeder = None;
+        let status = self.child.wait().map(|s| s.to_string()).unwrap_or_default();
+        let stderr = self.errors.take().map(|e| e.join().unwrap_or_default()).unwrap_or_default();
+        let stderr = String::from_utf8_lossy(&stderr);
+        let tail: Vec<&str> = stderr.lines().rev().take(8).collect();
+        let tail: Vec<&str> = tail.into_iter().rev().collect();
+        format!("[port] ended before the play did ({status}):\n{}", tail.join("\n"))
+    }
+}
+
+/// Feeds the port the inputs file at `path` a tick at a time, corrected where it differs (D191): [`Feeder`].
 fn feed_corrected(
-    mut stdin: std::process::ChildStdin,
+    stdin: std::process::ChildStdin,
     path: &str,
     trace: &std::path::Path,
     correct: &mut Correct,
     child: &mut std::process::Child,
 ) -> Result<(), String> {
-    use std::io::Write as _;
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut tail = Tail::new(trace);
-    // The port's trace so far: its `from`, the last tick it wrote, whether it ended, the corrections for its ticks.
-    #[derive(Default)]
-    struct Seen {
-        from: Option<u64>,
-        tick: Option<u64>,
-        ended: bool,
-        corrections: BTreeMap<u64, serde_json::Map<String, Value>>,
+    let mut feeder = Feeder::new(stdin, trace);
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let v: Value = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
+        if !feeder.give(v, correct, child)? {
+            break;
+        }
     }
-    fn take(tail: &mut Tail, seen: &mut Seen, correct: &mut Correct) -> Result<(), String> {
-        for l in tail.lines() {
+    feeder.finish(correct, child)
+}
+
+/// The port fed a line at a time, corrected where it differs (D191, D192): a tick's inputs line goes once the port
+/// wrote the tick before, with `correct`'s answer for that tick, the original's values of the fields it differed in;
+/// the header says version 5, which has `correct`. Each line of the port's trace (`trace`, read as it grows) goes to
+/// `correct`, the last ones too.
+pub(crate) struct Feeder {
+    stdin: Option<std::process::ChildStdin>,
+    tail: Tail,
+    port: PortSeen,
+    /// The tick of the last line given.
+    written: Option<u64>,
+}
+
+/// The port's trace so far: its `from`, the last tick it wrote, whether it ended, the corrections for its ticks.
+#[derive(Default)]
+struct PortSeen {
+    from: Option<u64>,
+    tick: Option<u64>,
+    ended: bool,
+    corrections: BTreeMap<u64, serde_json::Map<String, Value>>,
+}
+
+impl Feeder {
+    pub(crate) fn new(stdin: std::process::ChildStdin, trace: &std::path::Path) -> Feeder {
+        Feeder { stdin: Some(stdin), tail: Tail::new(trace), port: PortSeen::default(), written: None }
+    }
+
+    /// The lines the port wrote since the last look.
+    fn take(&mut self, correct: &mut Correct) -> Result<(), String> {
+        for l in self.tail.lines() {
             let v: Value = serde_json::from_str(&l).map_err(|e| format!("the port's trace: {e}"))?;
-            seen.from = seen.from.or(v["from"].as_u64());
-            seen.ended |= v.get("end").is_some();
+            self.port.from = self.port.from.or(v["from"].as_u64());
+            self.port.ended |= v.get("end").is_some();
             let fix = correct(&v)?;
             if let Some(t) = v["tick"].as_u64() {
-                seen.tick = Some(t);
+                self.port.tick = Some(t);
                 if !fix.is_empty() {
-                    seen.corrections.insert(t, fix);
+                    self.port.corrections.insert(t, fix);
                 }
             }
         }
         Ok(())
     }
-    let mut port = Seen::default();
-    let mut written: Option<u64> = None;
-    for (n, line) in text.lines().filter(|l| !l.trim().is_empty()).enumerate() {
-        let mut v: Value = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
-        if n == 0 {
+
+    /// Gives line `v` (the header, a tick's, the end); false once the port has ended or stopped reading.
+    pub(crate) fn give(
+        &mut self,
+        mut v: Value,
+        correct: &mut Correct,
+        child: &mut std::process::Child,
+    ) -> Result<bool, String> {
+        use std::io::Write as _;
+        if v["format"] == "rrc-inputs" {
             v["version"] = json!(5);
         }
         let tick = v["tick"].as_u64();
-        if let (Some(_), Some(before)) = (tick, written) {
+        if let (Some(_), Some(before)) = (tick, self.written) {
             let started = std::time::Instant::now();
             loop {
-                take(&mut tail, &mut port, correct)?;
-                if port.ended {
-                    return Ok(());
+                self.take(correct)?;
+                if self.port.ended {
+                    return Ok(false);
                 }
-                if port.from.is_some_and(|from| before < from) || port.tick.is_some_and(|seen| seen >= before) {
+                let from = self.port.from;
+                if from.is_some_and(|from| before < from) || self.port.tick.is_some_and(|seen| seen >= before) {
                     break;
                 }
                 if child.try_wait().ok().flatten().is_some() {
-                    take(&mut tail, &mut port, correct)?;
-                    return Ok(());
+                    self.take(correct)?;
+                    return Ok(false);
                 }
                 if started.elapsed() > STREAM_WAIT {
                     return Err(format!(
@@ -2355,33 +2641,39 @@ fn feed_corrected(
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
-            if let Some(fix) = port.corrections.remove(&before) {
+            if let Some(fix) = self.port.corrections.remove(&before) {
                 v["correct"] = Value::Object(fix);
             }
         }
+        let Some(stdin) = self.stdin.as_mut() else { return Ok(false) };
         if writeln!(stdin, "{v}").and_then(|()| stdin.flush()).is_err() {
-            break;
+            self.stdin = None;
+            return Ok(false);
         }
-        written = tick.or(written);
+        self.written = tick.or(self.written);
+        Ok(true)
     }
-    // The last tick's line and the end, once the port has its inputs' end.
-    drop(stdin);
-    let started = std::time::Instant::now();
-    while !port.ended {
-        take(&mut tail, &mut port, correct)?;
-        if port.ended {
-            break;
+
+    /// The inputs' end: the port's last lines read as it ends.
+    pub(crate) fn finish(mut self, correct: &mut Correct, child: &mut std::process::Child) -> Result<(), String> {
+        drop(self.stdin.take());
+        let started = std::time::Instant::now();
+        while !self.port.ended {
+            self.take(correct)?;
+            if self.port.ended {
+                break;
+            }
+            if child.try_wait().ok().flatten().is_some() {
+                self.take(correct)?;
+                break;
+            }
+            if started.elapsed() > STREAM_WAIT {
+                return Err("the port didn't end its trace (docs/formats.md)".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        if child.try_wait().ok().flatten().is_some() {
-            take(&mut tail, &mut port, correct)?;
-            break;
-        }
-        if started.elapsed() > STREAM_WAIT {
-            return Err("the port didn't end its trace (docs/formats.md)".into());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        Ok(())
     }
-    Ok(())
 }
 
 /// The first divergence: the fields, the tick's late inputs, who wrote the original's value, and the

@@ -585,13 +585,13 @@ from another session's tick, and a scenario's edits for a state play rarely reac
 
 Scripts reach what an agent can plan; the person reaches the rest. `rrc play NAME --from SESSION --tick N` opens
 Clockwork's window on the original from that tick (or power-on without `--from`): the person plays it, and the
-play is recorded as the session `NAME`. While they play, rrc follows: each minute of play (`--every`) becomes a
-part, `NAME/1`, `NAME/2`, ..., each from the last tick of the one before, recorded and compared in lockstep; what
-differs or the port noted is said as it is first found (`new differs`, `new note`), and at the end the whole
-play's census is listed, most passes first, with `next`: where to look first. The parts are sessions like any
-other: compare them, watch them, peek into them, and keep them, as the play's record of what to port. Recording
-runs at about the speed of play, so rrc follows a part or so behind and catches up when the window closes.
-`--replay FILE` follows a play recorded before with `clockwork play --record`.
+play is recorded as the session `NAME`. While they play, rrc follows it as it goes (D192): a second Clockwork records
+the play as it is written, the port runs beside it, free and corrected where it differs (`rrc compare --corrected`),
+and what differs or the port noted is said as it is first found, with the play's time (`new at 3:51: differs`,
+`new at 12:40: note`); at the end the play's census is listed, most passes first, with `next`: where to look first.
+The play is a session like any other: compare it, watch it, peek into it. Nothing slows the window; if the
+comparison falls behind, the status line says by how much. `--replay FILE` follows a play recorded before with
+`clockwork play --record`; `--resume` follows a play cut short (rrc or the machine stopped) again from its file.
 
 ### A session from another's tick
 

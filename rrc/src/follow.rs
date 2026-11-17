@@ -40,6 +40,9 @@ pub(crate) struct Follow {
     /// Marks read and state hashes checked so far.
     pub marks: u64,
     pub checked: u64,
+    /// Set once nothing more will be written (the window closed, or the play is followed again from its file): its last
+    /// mark is then its end, whether or not it wrote one.
+    done: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// What the run may do next.
@@ -65,7 +68,22 @@ impl Follow {
             from,
             marks: 0,
             checked: 0,
+            done: None,
         }
+    }
+
+    /// Nothing more will be written once `done` is set (D192): the play then ends at its last mark.
+    pub fn finished_when(&mut self, done: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.done = Some(done);
+    }
+
+    fn is_done(&self) -> bool {
+        self.done.as_ref().is_some_and(|d| d.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Every input up to this cycle is in (the last mark read; 0 before the first).
+    pub fn written(&self) -> u64 {
+        self.mark.unwrap_or(0)
     }
 
     /// The run starts at cycle `cycle`: input before it isn't the run's.
@@ -77,9 +95,16 @@ impl Follow {
     /// Waits until the file has its header and a first mark: then its speed and its Clockwork are known.
     pub fn start(&mut self) -> Result<(), String> {
         loop {
+            let done = self.is_done();
             self.read()?;
             if self.mark.is_some() {
                 return if self.ips == 0 { Err(format!("{}: no ips line", self.path.display())) } else { Ok(()) };
+            }
+            if done {
+                return Err(format!(
+                    "{}: the play ended before its first mark: nothing to follow",
+                    self.path.display()
+                ));
             }
             std::thread::sleep(POLL);
         }
@@ -188,6 +213,14 @@ impl Follow {
             }
             if self.ended.is_some() && self.hashes.is_empty() && self.waiting.is_empty() {
                 return Ok(Next::End);
+            }
+            // Nothing more will be written: what is, read to its end, ends at its last mark.
+            if self.ended.is_none() && self.is_done() {
+                self.read()?;
+                if self.mark.is_some_and(|mark| mark <= now) {
+                    self.ended = self.mark;
+                }
+                continue;
             }
             std::thread::sleep(POLL);
         }

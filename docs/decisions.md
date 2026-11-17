@@ -764,6 +764,41 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D192. M6.5's step 5, its first part: `rrc play` follows the play as it goes, the port run beside it. Accepted 2026-11-17.
+`rrc play NAME [--from SESSION --tick N]` opens Clockwork's window on the original as before; a second Clockwork,
+the follower, records the play as its file is written (D189), and each tick, once final, goes to the comparer and,
+as an inputs line, to the port, run free and corrected where it differs (D191). What differs is said when it is
+first found, with the play's time; on a terminal a status line says how much is played, the tick compared, how far
+behind the comparison is and when a pass is long. The play is one session, its trace the follower's, its census in
+`.rrc/play/NAME/` and where `rrc compare NAME --corrected` keeps its own. Nothing waits on the window: the follower
+gives the comparer four ticks at most (a slow port slows the follower, never the window), and on Windows the
+follower's Clockwork and the port run below normal priority. The session is as long as the play: the follower never
+runs past the millisecond of the play's last mark, so it ends where a recording of the session ends. `--replay
+FILE` follows a play recorded before at full speed; `--resume` follows a play cut short again from its file, to its
+last mark; a window closed without an end mark ends the play at its last mark.
+For this, a recording gives its ticks as they are made: Clockwork hands over what its late-input check and its
+entries found so far (`late_inputs_take`, `entries_take`, protocol revision 21), a tick is given once nothing more
+can come for it (the tick after it made; for an input with sync points of its own, its next tick at one), and the
+trace is written to a file as it grows, hashed as it goes, the run's hash taken from the frames and sound written
+aside, then moved into the cache: what a recording holds no longer grows with the run, but for the data segment it
+keeps while that is small (D92). The original's side of every comparison is decoded a tick at a time, and the
+comparer takes the original's ticks as they come. The screens at sync points go into the cache at once, as the
+comparer reads them. The headless window (D189) plays an input script too, so a test makes a recorded play from a
+session's script.
+Tested: the flow tests' sessions record as before (a trace written as it grows is the bytes the whole trace was,
+with the same run's hash); the toy's play from a session's tick and the vault's from power-on (its frames and the
+game's files, recorded by the headless window from the session's script) followed at full speed: the live census
+is `rrc compare --corrected`'s of the play, the play recorded again is the same run (D111), and `--resume` gives the
+same census; with the toy's planted bug, the bounce it doesn't count is said at tick 95, the tick the comparison
+finds offline. Arena's 58 sessions recorded again with this recorder give the same traces, byte for byte (in 20.7 minutes; 18 at step 1).
+Left for the step's second part: a port that panics or hangs is said and the play goes on being recorded, but the
+comparison stops (the plan: started again from the original's state, at the follower's next tick); memory over a
+long replay.
+**Why:** the plan's step 5 (D184): the window, the follower, the port and the comparer together. One session
+followed as it goes says a difference within a tick or two of the follower, where the parts said it minutes late,
+and one pipeline compares a play live and offline alike.
+**Supersedes:** D124's play in parts. **Extends:** D184, D189, D190, D191.
+
 ### D191. M6.5's step 4: the comparison a tick at a time, and the port's free run corrected where it differs. Accepted 2026-11-17.
 rrc counts a comparison's census a line of the port's trace at a time, as the port writes it or from its finished
 trace; lockstep (D124) is counted so. `rrc compare SESSION --corrected` runs the port free, on its own state, fed
@@ -1565,7 +1600,7 @@ the same files, so saves load both ways. Two pieces make that general:
 state the port models (46 mapped fields fall in them), but its records' types declare 77% of a creature's bytes
 and 36% of an item's: writing a save from the modeled fields alone would lose the rest.
 
-### D124. The person plays the original; rrc follows the play in parts and compares the port in lockstep. Accepted 2026-11-03, with the person.
+### D124. The person plays the original; rrc follows the play in parts and compares the port in lockstep. Accepted 2026-11-03, with the person; the play in parts: superseded by D192.
 `rrc play NAME [--from SESSION --tick N]` opens Clockwork's window on the original, from a session's tick (its
 snapshot, the input it still had to come dropped but held keys' releases, as D118) or power-on, and records the
 play as the session `NAME` (`sessions/NAME.session`, written as it is played: `# at CYCLE` each emulated second

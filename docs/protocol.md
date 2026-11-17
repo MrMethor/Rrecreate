@@ -128,7 +128,8 @@ bytes read; `clockwork run --contracts` writes the same, `clockwork/dos/src/cont
 **Entries.** `entries` `{"at": [addr], "interrupts": [addr]}` ... `entries_end`: each run of those instructions (a
 function's entry) outside interrupt handlers, and in them too for those `interrupts` lists (D174), `{"entries":
 [{"cycle", "at", "regs": {"eax", ..., "es", "cs", "ss", "ds", "flags"}}], "dropped"}`, in order (D98; past a
-million, counted in `dropped`).
+million, counted in `dropped`). `entries_take` answers the same with the runs kept since the last take, and keeps on
+(D192).
 
 **Checks.** `bounds` `{"objects": [{"at", "size"}]}` ... `bounds_end`: accesses past declared objects'
 ends (`findings`). `uninit` `{"more": [{"at", "len"}], "unwritten": FILE}` ... `uninit_end`: reads of memory nothing wrote
@@ -152,6 +153,9 @@ saw the source otherwise than the same instruction's read before it (the first, 
 value): the tick (the cycle of its hit), the source (its index), when and by which instruction (for a driver,
 the instruction its call returns to), which of that instruction's reads (from 1), and the bytes that differ
 from the tick's value (`[offset, value]`; none: the tick's value again); `dropped`, what went past 10000.
+`late_inputs_take` answers the same with what was found since the last take, and the check goes on (D192): a pass's
+reads are found at the next hit of their source's sync points, so taken after a tick they are those of the passes
+before it, but a source with sync points of its own, whose tick goes on past other sync points' hits.
 
 **Frames and sound.** `frames` `{"from", "to"}` (cycles; `to` defaults to now): the frames shown then, as
 `[number, cycle, mode, hash]`. `frame_images` `{"on": true}`: from now on, the picture of each frame whose
@@ -226,6 +230,7 @@ An IBM PC with DOS (Clockwork).
 19. `entries` takes `interrupts`: entries whose runs from interrupt handlers are kept too (D174).
 20. `run` and `tick` take `until_cycle`, a cycle they don't run past; `input` takes `events`, a recorded play's
     lines (D189).
+21. `late_inputs_take` and `entries_take`: what was found so far, the check going on (D192).
 
 ## Changing the protocol
 

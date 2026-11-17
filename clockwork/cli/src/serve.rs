@@ -55,6 +55,7 @@ pub const MACHINE_OPS: &[&str] = &[
     "uninit_unwritten",
     "uninit_end",
     "late_inputs",
+    "late_inputs_take",
     "late_inputs_end",
     "frames",
     "sound",
@@ -63,6 +64,18 @@ pub const MACHINE_OPS: &[&str] = &[
     "screen",
     "changed_files",
 ];
+
+/// Late reads as `late_inputs_end` and `late_inputs_take` answer them.
+fn late_findings(findings: &[dos::late::Late], name: &dyn Fn(u32) -> String) -> Vec<Value> {
+    findings
+        .iter()
+        .map(|l| {
+            let bytes: Vec<Value> = l.bytes.iter().map(|(offset, value)| json!([offset, value])).collect();
+            json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at),
+                   "read": l.read, "round": l.round, "bytes": bytes})
+        })
+        .collect()
+}
 
 struct State {
     m: Option<Machine>,
@@ -550,16 +563,12 @@ fn handle(st: &mut State, op: &str, r: &Value) -> Result<Value, String> {
         }
         "late_inputs_end" => {
             let late = m.take_late_inputs().ok_or("no late-input check on")?;
-            let findings: Vec<Value> = late
-                .findings
-                .iter()
-                .map(|l| {
-                    let bytes: Vec<Value> = l.bytes.iter().map(|(offset, value)| json!([offset, value])).collect();
-                    json!({"tick": l.tick_cycle, "source": l.source, "cycle": l.cycle, "at": name(l.at),
-                           "read": l.read, "round": l.round, "bytes": bytes})
-                })
-                .collect();
-            Ok(json!({"late": findings, "dropped": late.dropped}))
+            Ok(json!({"late": late_findings(&late.findings, &name), "dropped": late.dropped}))
+        }
+        // What was found so far, the check going on (D192): taken after each tick, the passes' before it.
+        "late_inputs_take" => {
+            let (findings, dropped) = m.take_late_findings().ok_or("no late-input check on")?;
+            Ok(json!({"late": late_findings(&findings, &name), "dropped": dropped}))
         }
         "frames" => {
             let (from, to) = span(m, r)?;
@@ -850,6 +859,34 @@ mod tests {
         ask_state(&mut plain, json!({"op": "tick", "from": ran["cycles"]})).unwrap();
         let hash = |st: &mut State| ask_state(st, json!({"op": "hash"})).unwrap()["state_hash"].clone();
         assert_eq!(hash(&mut st), hash(&mut plain));
+    }
+
+    #[test]
+    fn what_a_check_found_is_taken_as_it_goes() {
+        let dir = game("take");
+        let mut st = State::new();
+        ask_state(&mut st, json!({"op": "load", "argv": [dir.to_str().unwrap(), "T.COM"]})).unwrap();
+        assert!(ask_state(&mut st, json!({"op": "late_inputs_take"})).is_err(), "no check on");
+        assert!(ask_state(&mut st, json!({"op": "entries_take"})).is_err(), "no entries kept");
+        ask_state(&mut st, json!({"op": "late_inputs", "sources": [{"at": "+0000", "len": 2}]})).unwrap();
+        // T.COM's one instruction, run again and again: each run an entry's.
+        ask_state(&mut st, json!({"op": "entries", "at": ["+0000"]})).unwrap();
+        ask_state(&mut st, json!({"op": "run", "until_ms": 2})).unwrap();
+        let taken = |st: &mut State, op: &str| ask_state(st, json!({ "op": op })).unwrap();
+        let first = taken(&mut st, "entries_take");
+        ask_state(&mut st, json!({"op": "run", "until_ms": 4})).unwrap();
+        let second = taken(&mut st, "entries_take");
+        let cycles = |v: &Value| -> Vec<u64> {
+            v["entries"].as_array().unwrap().iter().map(|e| e["cycle"].as_u64().unwrap()).collect()
+        };
+        let (first, second) = (cycles(&first), cycles(&second));
+        assert!(!first.is_empty() && !second.is_empty());
+        assert!(first.last() < second.first(), "each take has the runs since the one before");
+        ask_state(&mut st, json!({"op": "run", "until_ms": 6})).unwrap();
+        assert!(!cycles(&taken(&mut st, "entries_end")).is_empty(), "the keeping went on to its end");
+        assert_eq!(taken(&mut st, "late_inputs_take")["late"], json!([]), "the instruction reads nothing");
+        assert!(ask_state(&mut st, json!({"op": "late_inputs_end"})).is_ok(), "the check went on");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

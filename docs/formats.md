@@ -568,13 +568,13 @@ inputs = "walk.inputs"          # an input script (clockwork run --input-file), 
                                 # `# at CYCLE` every 100 ms, the input up to there in; `# hash CYCLE HASH`, the
                                 # machine's state there before its input, at the start and every 30 s;
                                 # `# clockwork SOURCE`; `# end CYCLE`); rrc record --follow records it
-                                # as it is written (D189)
+                                # as it is written (D189), and rrc play compares the port with it so (D192)
 seconds = 86.0                  # emulated seconds it runs (from power-on, for a session from another's tick too)
 options = []                    # optional: more `clockwork run` options (rrc session --clockwork)
 
 [from]                          # optional: where it starts (D118): another session's tick, its tick 1
 session = "walk"                # its input replaces that session's from there; a recorded play that is the
-                                # session's too goes on after its end (a part of rrc play, D124)
+                                # session's too goes on after its end (D124)
 tick = 1200
 cycle = 2419767066              # the cycle of that session's hit before the tick (D128): where it is found again
                                 # when sync points added to that session number its ticks otherwise (rrc sets it,

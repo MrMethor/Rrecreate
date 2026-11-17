@@ -12,7 +12,7 @@ use crate::repo::{Local, Repo};
 use crate::session::Session;
 
 /// The protocol's revision rrc speaks (`docs/protocol.md`).
-pub const PROTOCOL: u64 = 20;
+pub const PROTOCOL: u64 = 21;
 
 /// The platform rrc knows.
 pub const PLATFORM: &str = "dos-pc";
@@ -27,17 +27,41 @@ pub struct Clockwork {
     log: Option<std::fs::File>,
 }
 
+/// Whether the Clockworks started now run below normal priority: while the person plays (D192), so that the window
+/// keeps first call on the processor.
+static BELOW_NORMAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The Clockworks started from now on run below normal priority, or again at normal.
+pub fn below_normal(on: bool) {
+    BELOW_NORMAL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `command` started below normal priority (on Windows; elsewhere as it is).
+pub fn lowered(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        command.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 impl Clockwork {
     pub fn start(exe: &Path) -> Result<Clockwork, String> {
-        let mut child = Command::new(exe)
+        let mut command = Command::new(exe);
+        command
             .arg("serve")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Its warnings (file names that aren't 8.3) would drown rrc's short output; errors
             // come back in the answers.
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("{}: {e}", exe.display()))?;
+            .stderr(Stdio::null());
+        if BELOW_NORMAL.load(std::sync::atomic::Ordering::Relaxed) {
+            lowered(&mut command);
+        }
+        let mut child = command.spawn().map_err(|e| format!("{}: {e}", exe.display()))?;
         let input = child.stdin.take().expect("a piped input");
         let output = BufReader::new(child.stdout.take().expect("a piped output"));
         let log = std::env::var_os("RRC_PROTOCOL_LOG")

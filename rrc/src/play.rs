@@ -1,14 +1,13 @@
-//! `rrc play` (D124): the person plays the original in Clockwork's window, and rrc follows the play as it is
-//! recorded: every so often (`--every`, 60 s of play) the part played since is a session of its own, from the
-//! last tick of the part before (`NAME/1`, `NAME/2`, ... in `sessions/NAME/`), recorded and compared with
-//! the port in lockstep (`rrc compare --lockstep`): what differs and what the port noted, said as it is
-//! first seen, and counted for the whole play in `.rrc/play/NAME/`. The play is the session `NAME` too.
+//! `rrc play` (D124, D192): the person plays the original in Clockwork's window, and rrc follows the play as it is
+//! recorded: a second Clockwork runs it as its file is written, the port runs beside it, free and corrected where it
+//! differs, and what differs is said as it is found (`live.rs`). The play is the session `NAME`, its trace the
+//! follower's; what was found is in `.rrc/play/NAME/` and, as `rrc compare NAME --corrected` keeps it, in
+//! `.rrc/compare/NAME/corrected.json`.
 //!
 //! Recorded play (`clockwork play --record`, a session's `replay`) as rrc reads it: lines `<cycle>
 //! K|M|J|R ...` after a header (`program`, `args`, `ips`); `# at <cycle>` says every input up to that cycle
 //! is in the file, `# end <cycle>` that the play stopped.
 
-use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
@@ -17,45 +16,7 @@ use crate::cache::sha256;
 use crate::compare::Census;
 use crate::repo::Repo;
 use crate::say;
-use crate::session::{Base, Session};
-
-/// How far a recorded play is: its speed, the cycle every input up to which is written, whether it ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Progress {
-    pub ips: u64,
-    pub at: u64,
-    pub ended: bool,
-}
-
-/// Reads how far the play in `path` is.
-pub fn progress(path: &Path) -> Result<Progress, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut progress =
-        Progress { ips: ips(&text).ok_or_else(|| format!("{}: no ips line", path.display()))?, at: 0, ended: false };
-    for line in text.lines() {
-        if let Some(cycle) = line.strip_prefix("# at ").and_then(|c| c.trim().parse().ok()) {
-            progress.at = cycle;
-        } else if let Some(cycle) = line.strip_prefix("# end ").and_then(|c| c.trim().parse().ok()) {
-            (progress.at, progress.ended) = (cycle, true);
-        }
-    }
-    Ok(progress)
-}
-
-/// How far the play in `path` was at each of its marks, in order.
-fn marks(path: &Path) -> Result<Vec<Progress>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let ips = ips(&text).ok_or_else(|| format!("{}: no ips line", path.display()))?;
-    let at = |line: &str, mark: &str| line.strip_prefix(mark).and_then(|c| c.trim().parse().ok());
-    Ok(text
-        .lines()
-        .filter_map(|l| match (at(l, "# at "), at(l, "# end ")) {
-            (Some(cycle), _) => Some(Progress { ips, at: cycle, ended: false }),
-            (_, Some(cycle)) => Some(Progress { ips, at: cycle, ended: true }),
-            _ => None,
-        })
-        .collect())
-}
+use crate::session::{Base, Recorded, Session};
 
 /// The play's speed, from its `ips` line.
 fn ips(text: &str) -> Option<u64> {
@@ -94,53 +55,58 @@ pub fn identity(path: &Path, seconds: f64) -> Result<String, String> {
     Ok(sha256(format!("play 1\n{}", kept.join("\n")).as_bytes()))
 }
 
-/// A part of the play, recorded: its session, its ticks, the cycles it begins and ends at.
-struct Part {
-    name: String,
-    ticks: u64,
-    begin: u64,
-    end: u64,
-}
+/// A play's length while it is played: a year.
+const PLAYING: f64 = 365.0 * 24.0 * 3600.0;
 
-/// `rrc play NAME [--from SESSION --tick N] [--every SECONDS] [--replay FILE]`.
+/// `rrc play NAME [--from SESSION --tick N] [--replay FILE]`, or `rrc play NAME --resume`.
 pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--from", "--tick", "--every", "--replay"], &[])?;
-    let usage = "play NAME [--from SESSION --tick N] [--every SECONDS] [--replay FILE]";
+    let a = Args::parse(args, &["--from", "--tick", "--replay"], &["--resume"])?;
+    let usage = "play NAME [--from SESSION --tick N] [--replay FILE] | play NAME --resume";
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     if name.is_empty() || name.contains(['/', '\\', '.']) {
         return Err(format!("{name:?}: a play's name is a session's, without / \\ or ."));
     }
-    if Session::path(repo, name).exists() || repo.sessions().join(name).exists() {
-        return Err(format!("there is a session {name} already: play under another name"));
-    }
-    let from = match (a.value("--from"), a.value("--tick")) {
-        (Some(session), Some(tick)) => {
-            let tick = tick.parse().ok().filter(|&t: &u64| t > 0).ok_or("--tick is a tick number")?;
-            Some(Base { session: session.to_owned(), tick, cycle: None })
-        }
-        (None, None) => None,
-        _ => return Err("--from SESSION and --tick N go together".into()),
-    };
-    let every: f64 = match a.value("--every") {
-        Some(s) => s.parse().ok().filter(|s: &f64| *s > 0.0).ok_or("--every is a number of seconds")?,
-        None => 60.0,
-    };
-    std::fs::create_dir_all(repo.sessions()).map_err(|e| format!("{}: {e}", repo.sessions().display()))?;
     let file = format!("{name}.session");
     let path = repo.sessions().join(&file);
-    let mut session = Session {
-        description: "played by the person (rrc play)".into(),
-        replay: Some(file.clone()),
-        from: from.clone(),
-        ..Session::default()
+    let resume = a.has("--resume");
+    let mut session = if resume {
+        // A play cut short (rrc or the machine stopped): followed again from its file, to its last mark.
+        if a.value("--from").is_some() || a.value("--replay").is_some() {
+            return Err("--resume goes on with a play as it was begun: alone".into());
+        }
+        let session = Session::load(repo, name)?;
+        if session.replay.as_deref() != Some(file.as_str()) || !path.is_file() {
+            return Err(format!("{name} isn't a play (rrc play {name} begins one)"));
+        }
+        session
+    } else {
+        if Session::path(repo, name).exists() || repo.sessions().join(name).exists() {
+            return Err(format!("there is a session {name} already: play under another name"));
+        }
+        let from = match (a.value("--from"), a.value("--tick")) {
+            (Some(session), Some(tick)) => {
+                let tick = tick.parse().ok().filter(|&t: &u64| t > 0).ok_or("--tick is a tick number")?;
+                Some(Base { session: session.to_owned(), tick, cycle: None })
+            }
+            (None, None) => None,
+            _ => return Err("--from SESSION and --tick N go together".into()),
+        };
+        let mut session = Session {
+            description: "played by the person (rrc play)".into(),
+            replay: Some(file.clone()),
+            from,
+            ..Session::default()
+        };
+        // From power-on: the game's folder as it is now, which the play runs on (D170).
+        if session.from.is_none() {
+            session.files = crate::folder::take(repo)?;
+        }
+        session
     };
-    // From power-on: the game's folder as it is now, which the play and its parts run on (D170).
-    if from.is_none() {
-        session.files = crate::folder::take(repo)?;
-    }
+    std::fs::create_dir_all(repo.sessions()).map_err(|e| format!("{}: {e}", repo.sessions().display()))?;
     // Where the play starts: the session's tick (its snapshot there), or power-on. Said first, and what takes
     // time before the window opens, so the terminal never sits silent.
-    let start = match &from {
+    let start = match &session.from {
         Some(f) => format!("{}'s tick {}", f.session, f.tick),
         None => "power-on".to_owned(),
     };
@@ -154,15 +120,21 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let based = crate::quietly(|| crate::snapshots::based(repo, &session))?;
     // The port built now: a build while the person plays would slow the window.
     say("port", "built first, so that no build slows the window");
-    let built = crate::compare::build_port(repo);
+    crate::compare::build_port(repo)?;
     let start_ms = based.as_ref().map_or(0, |(_, ms)| *ms);
-    let mut window = match a.value("--replay") {
+    // As long as the play, which is known once it ends; until then, longer than any play (what reads the session's run
+    // as it goes, as the port's start from a session's tick does, isn't cut short).
+    session.seconds = PLAYING;
+    // Kept before the window opens, so that a play cut short goes on (--resume).
+    session.save(repo, name)?;
+    let window = match (a.value("--replay"), resume) {
         // A play recorded before: followed as if played now.
-        Some(recorded) => {
+        (Some(recorded), _) => {
             std::fs::copy(recorded, &path).map_err(|e| format!("{recorded}: {e}"))?;
             None
         }
-        None => {
+        (None, true) => None,
+        (None, false) => {
             let mut command = Command::new(crate::clockwork::find(&repo.local)?);
             let folder = crate::folder::of(repo, &session)?;
             command.arg("play").args(crate::clockwork::argv_on(repo, &folder, &session.options));
@@ -173,91 +145,41 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             Some(command.spawn().map_err(|e| format!("clockwork play: {e}"))?)
         }
     };
-    let start = match &from {
-        Some(f) => format!("{}'s tick {} ({:.1} s from power-on)", f.session, f.tick, start_ms as f64 / 1000.0),
-        None => "power-on".to_owned(),
-    };
     if window.is_some() {
         say("window", "play in it; close it to stop. What the port does otherwise shows here as it is found");
     }
-    let dir = repo.state()?.join("play").join(name.as_str());
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut log = std::fs::File::create(dir.join("log.txt")).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut parts: Vec<Part> = Vec::new();
-    let mut census = Census::default();
-    let mut failed = false;
-    if let Err(e) = built {
-        say("error", format!("{e}; the play is recorded, compare its parts once the port builds"));
-        failed = true;
-    }
-    // A play recorded before goes mark by mark, as it was played.
-    let mut marks = match &window {
-        Some(_) => Vec::new().into_iter(),
-        None => marks(&path)?.into_iter(),
-    };
-    loop {
-        let (progress, done) = match &mut window {
-            Some(child) => {
-                let done = child.try_wait().map_err(|e| format!("clockwork play: {e}"))?.is_some();
-                (progress(&path).ok(), done)
-            }
-            None => (marks.next(), marks.len() == 0),
-        };
-        if let Some(progress) = progress {
-            let ips = progress.ips;
-            let last = parts.last().map_or(end_cycle(start_ms as f64 / 1000.0, ips), |p| p.end);
-            let due = progress.at > last
-                && (done || progress.ended || progress.at - last >= end_cycle(every, ips))
-                && !failed;
-            if due {
-                match part(repo, name, &file, (&from, &session.files), &mut parts, (last, progress.at), ips) {
-                    Ok(Some(found)) => {
-                        let p = parts.last().expect("a part");
-                        let played = |cycle: u64| clock(seconds(cycle, ips) - start_ms as f64 / 1000.0);
-                        let line = format!(
-                            "{}: {}-{} of the play, {} ticks: {}",
-                            p.name,
-                            played(p.begin),
-                            played(p.end),
-                            p.ticks,
-                            summary(&found)
-                        );
-                        say("part", &line);
-                        writeln!(log, "part      {line}").ok();
-                        for (kind, key, seen) in census.new_in(&found) {
-                            let (kind, text) = Census::line(kind, key, seen, found.passes);
-                            say("new", format!("{kind} {text}"));
-                            writeln!(log, "new       {kind} {text}").ok();
-                        }
-                        census.add(&found);
-                        census.save(&dir.join("census.json"))?;
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        say("error", format!("following the play: {e}; it goes on being recorded"));
-                        failed = true;
-                    }
-                }
-            }
-        }
-        if done {
-            break;
-        }
-        if window.is_some() {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-    }
-    let progress = progress(&path)?;
-    session.seconds = seconds(progress.at, progress.ips);
+    let followed = crate::sources::held_still(&repo.root, || crate::live::follow(repo, name, &session, window))?;
+    // The play is the session: as long as the play, its trace the follower's.
+    session.seconds = seconds(followed.end, followed.ips);
+    let identity = crate::trace::identity(repo, &session)?;
+    let written = &followed.written;
+    session.trace = Some(Recorded {
+        hash: written.hash.clone(),
+        run: written.run.clone(),
+        ticks: written.ticks,
+        clockwork: written.header.clockwork.clone(),
+        memory: followed.memory.clone(),
+        identity,
+    });
     session.save(repo, name)?;
-    let length = clock(session.seconds - start_ms as f64 / 1000.0);
-    let ticks = parts.first().map_or(0, |_| parts.iter().map(|p| p.ticks).sum::<u64>() + 1 - parts.len() as u64);
+    let census = Census { recorded: written.hash.clone(), ..followed.census };
+    let dir = repo.state()?.join("play").join(name.as_str());
+    census.save(&dir.join("census.json"))?;
+    census.save(&repo.state()?.join("compare").join(name.as_str()).join("corrected.json"))?;
+    let length = crate::live::clock(session.seconds - start_ms as f64 / 1000.0);
+    let start = match &session.from {
+        Some(f) => format!("{}'s tick {} ({:.1} s from power-on)", f.session, f.tick, start_ms as f64 / 1000.0),
+        None => "power-on".to_owned(),
+    };
+    let hashes = match followed.hashes {
+        1 => "1 state hash".to_owned(),
+        n => format!("{n} state hashes"),
+    };
     say(
         "play",
         format!(
-            "{name}: {length} played from {start}, {} parts (sessions/{name}/1 to {}), {ticks} ticks",
-            parts.len(),
-            parts.len()
+            "{name}: {length} played from {start}, {} ticks; the runs the same ({hashes} of the window's)",
+            written.ticks
         ),
     );
     census.show(name, 15);
@@ -277,74 +199,6 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The next part of the play, from cycle `begin` to `end`: a session from the last tick of the part before (or
-/// where the play starts), recorded and compared in lockstep. None when no tick ended in it yet: a later
-/// round takes it on with what follows.
-fn part(
-    repo: &Repo,
-    name: &str,
-    file: &str,
-    (from, files): (&Option<Base>, &std::collections::BTreeMap<String, String>),
-    parts: &mut Vec<Part>,
-    (begin, end): (u64, u64),
-    ips: u64,
-) -> Result<Option<Census>, String> {
-    let n = parts.len() + 1;
-    let part = format!("{name}/{n}");
-    let base = match parts.last() {
-        Some(p) => Some(Base { session: p.name.clone(), tick: p.ticks, cycle: None }),
-        None => from.clone(),
-    };
-    // The first part of a play from power-on runs on the play's folder (D170); the others on their base's.
-    let files = if base.is_none() { files.clone() } else { Default::default() };
-    let session = Session {
-        description: format!("part {n} of the play {name} (rrc play)"),
-        replay: Some(file.to_owned()),
-        seconds: seconds(end, ips),
-        from: base,
-        files,
-        ..Session::default()
-    };
-    std::fs::create_dir_all(repo.sessions().join(name)).map_err(|e| e.to_string())?;
-    session.save(repo, &part)?;
-    // A part recorded is read back below; its exit code says nothing more.
-    let _ = crate::quietly(|| crate::trace::record(repo, std::slice::from_ref(&part)))?;
-    let ticks = Session::load(repo, &part)?.trace.map_or(0, |t| t.ticks);
-    if ticks == 0 {
-        return Ok(None);
-    }
-    let census = crate::quietly(|| crate::compare::lockstep(repo, &part))?;
-    parts.push(Part { name: part, ticks, begin, end });
-    Ok(Some(census))
-}
-
-/// A part's census in a few words.
-fn summary(c: &Census) -> String {
-    let mut parts = Vec::new();
-    if !c.fields.is_empty() {
-        parts.push(format!("{} fields differ", c.fields.len()));
-    }
-    if let Some(s) = &c.screen {
-        parts.push(format!("the screen at {} ticks", s.ticks));
-    }
-    if let Some(s) = &c.sound {
-        parts.push(format!("the sound at {} ticks", s.ticks));
-    }
-    if !c.unset.is_empty() {
-        parts.push(format!("{} unset", c.unset.len()));
-    }
-    if !c.notes.is_empty() {
-        parts.push(format!("{} notes", c.notes.len()));
-    }
-    if parts.is_empty() { format!("all {} passes match", c.passes) } else { parts.join(", ") }
-}
-
-/// Seconds as m:ss.
-fn clock(seconds: f64) -> String {
-    let s = seconds.max(0.0).round() as u64;
-    format!("{}:{:02}", s / 60, s % 60)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,12 +208,10 @@ mod tests {
         let path = std::env::temp_dir().join(format!("rrc-play-{}.session", std::process::id()));
         let start = "# clockwork session v1\nprogram G.EXE\nargs \nips 1000\n";
         std::fs::write(&path, format!("{start}# at 2000\n2100 K 1E\n# at 3000\n3500 K 9E\n")).unwrap();
-        assert_eq!(progress(&path).unwrap(), Progress { ips: 1000, at: 3000, ended: false });
         let before = identity(&path, 3.0).unwrap();
         // Played on: a session of the first 3 s runs as it did.
         std::fs::write(&path, format!("{start}# at 2000\n2100 K 1E\n# at 3000\n3500 K 9E\n# at 4000\n# end 4100\n"))
             .unwrap();
-        assert_eq!(progress(&path).unwrap(), Progress { ips: 1000, at: 4100, ended: true });
         assert_eq!(identity(&path, 3.0).unwrap(), before);
         assert_ne!(identity(&path, 4.0).unwrap(), before, "the release at 3500 is in a longer one");
         assert_eq!((end_of(&path, 4.1).unwrap(), seconds(4100, 1000)), (4100, 4.1));

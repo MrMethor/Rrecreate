@@ -8,9 +8,10 @@
 //! releases of keys held then, as for a session started there (D118): the person's play takes its place.
 //! `--record` writes the play as it goes ([`Recording`]), so a tool can follow it.
 //!
-//! `--headless FILE` is the same loop without a window (D189), for tests and tools: a recorded play's input given
-//! as the window gives what the person does, at the first frame that reaches its cycle and at that frame's cycle,
-//! recorded as the window records it, as fast as the machine runs.
+//! `--headless FILE` is the same loop without a window (D189), for tests and tools: a recorded play's input (or an
+//! input script's, `MS:KEYS` lines as `--input-file` reads them, D192) given as the window gives what the person does,
+//! at the first frame that reaches its cycle and at that frame's cycle, recorded as the window records it, as fast as
+//! the machine runs.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -154,7 +155,18 @@ fn headless(
     ips: u64,
     limit: Option<u64>,
 ) -> Result<Option<Stop>, String> {
-    let events = crate::session::Session::load(source)?.inputs;
+    let text = std::fs::read_to_string(source).map_err(|e| format!("{}: {e}", source.display()))?;
+    let events = if text.starts_with("# clockwork session") {
+        crate::session::Session::load(source)?.inputs
+    } else {
+        // An input script: its events at their cycles, in time order (the same time: the script's order).
+        let mut events = Vec::new();
+        for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+            events.extend(crate::input_script::Script::parse(line)?.events(&|ms| m.cycle_at_ms(ms)));
+        }
+        events.sort_by_key(|&(cycle, _)| cycle);
+        events
+    };
     let mut next = 0;
     let cycles_per_frame = (ips / 70).max(1);
     while limit.is_none_or(|limit| m.cpu.cycles < limit) {

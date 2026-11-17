@@ -32,10 +32,24 @@ pub const OPS: &[&str] = &[
     "uninit_unwritten",
     "uninit_end",
     "entries",
+    "entries_take",
     "entries_end",
     "screenshot",
     "image",
 ];
+
+/// Entries' runs as `entries_end` and `entries_take` answer them.
+fn entry_hits(hits: &[dos::EntryHit], name: &dyn Fn(u32) -> String) -> Vec<Value> {
+    hits.iter()
+        .map(|h| {
+            let g = &h.regs;
+            json!({"cycle": h.cycle, "at": name(h.at), "regs": {
+                "eax": g.gpr[0], "ecx": g.gpr[1], "edx": g.gpr[2], "ebx": g.gpr[3],
+                "esp": g.gpr[4], "ebp": g.gpr[5], "esi": g.gpr[6], "edi": g.gpr[7],
+                "es": g.es(), "cs": g.cs(), "ss": g.ss(), "ds": g.ds(), "flags": g.flags}})
+        })
+        .collect()
+}
 
 /// How the request's addresses read and what answers name them by (`serve.rs`'s).
 pub(crate) struct Names<'a> {
@@ -261,18 +275,12 @@ pub(crate) fn handle(
         }
         "entries_end" => {
             let entries = m.take_entries().ok_or("no entries kept")?;
-            let hits: Vec<Value> = entries
-                .hits
-                .iter()
-                .map(|h| {
-                    let g = &h.regs;
-                    json!({"cycle": h.cycle, "at": name(h.at), "regs": {
-                        "eax": g.gpr[0], "ecx": g.gpr[1], "edx": g.gpr[2], "ebx": g.gpr[3],
-                        "esp": g.gpr[4], "ebp": g.gpr[5], "esi": g.gpr[6], "edi": g.gpr[7],
-                        "es": g.es(), "cs": g.cs(), "ss": g.ss(), "ds": g.ds(), "flags": g.flags}})
-                })
-                .collect();
-            Ok(json!({"entries": hits, "dropped": entries.dropped}))
+            Ok(json!({"entries": entry_hits(&entries.hits, name), "dropped": entries.dropped}))
+        }
+        // The runs so far, the keeping going on (D192): taken after each tick, the passes' before it.
+        "entries_take" => {
+            let (hits, dropped) = m.take_entry_hits().ok_or("no entries kept")?;
+            Ok(json!({"entries": entry_hits(&hits, name), "dropped": dropped}))
         }
         "screenshot" => {
             let file = std::path::PathBuf::from(text(r, "file")?);

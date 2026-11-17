@@ -41,12 +41,32 @@ impl Cache {
         if !path.is_file() {
             let parent = path.parent().expect("an object's folder");
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-            // Written aside and renamed, so a reader never sees half an object.
-            let partial = path.with_extension(format!("partial-{}", std::process::id()));
+            // Written aside and renamed, so a reader never sees half an object; aside under a name of its own, as
+            // another thread may be putting the same bytes (a screen that is also a frame's picture, D192).
+            static PUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = PUT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let partial = path.with_extension(format!("partial-{}-{n}", std::process::id()));
             std::fs::write(&partial, bytes).map_err(|e| format!("{}: {e}", partial.display()))?;
             std::fs::rename(&partial, &path).map_err(|e| format!("{}: {e}", path.display()))?;
         }
         Ok(hash)
+    }
+
+    /// Keeps the file at `path`, whose bytes hash to `hash`, moving it in (D192: a trace written as it grew). Moved in
+    /// under another name first, so a reader never sees half an object; copied where a move can't reach.
+    pub fn adopt(&self, path: &Path, hash: &str) -> Result<(), String> {
+        let to = self.path(hash);
+        if to.is_file() {
+            return std::fs::remove_file(path).map_err(|e| format!("{}: {e}", path.display()));
+        }
+        let parent = to.parent().expect("an object's folder");
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        let partial = to.with_extension(format!("partial-{}", std::process::id()));
+        if std::fs::rename(path, &partial).is_err() {
+            std::fs::copy(path, &partial).map_err(|e| format!("{}: {e}", partial.display()))?;
+            let _ = std::fs::remove_file(path);
+        }
+        std::fs::rename(&partial, &to).map_err(|e| format!("{}: {e}", to.display()))
     }
 
     /// A writer that puts objects on a thread of its own, for many objects in a row (a recording's
@@ -121,7 +141,7 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

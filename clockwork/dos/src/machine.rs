@@ -1327,6 +1327,23 @@ impl Machine {
         self.probes.late.take().map(|l| l.finish())
     }
 
+    /// The late reads found so far, the check going on (D192): a pass's reads are found at the next hit of their
+    /// source's sync points, so taken after a tick they are the passes' before it. In [`crate::late::LateInputs::finish`]'s
+    /// order, and how many went past the limit since the last take.
+    pub fn take_late_findings(&mut self) -> Option<(Vec<crate::late::Late>, u64)> {
+        let late = self.probes.late.as_deref_mut()?;
+        let mut findings = std::mem::take(&mut late.findings);
+        crate::late::order(&mut findings);
+        Some((findings, std::mem::take(&mut late.dropped)))
+    }
+
+    /// The entries' runs kept so far, the keeping going on (D192), and how many went past the limit since the last
+    /// take.
+    pub fn take_entry_hits(&mut self) -> Option<(Vec<crate::probe::EntryHit>, u64)> {
+        let entries = self.probes.entries.as_deref_mut()?;
+        Some((std::mem::take(&mut entries.hits), std::mem::take(&mut entries.dropped)))
+    }
+
     /// A counted hit of the sync point at `at` (none: the check's start): the late-input sources it ticks keep
     /// what they hold.
     fn late_tick(&mut self, at: Option<u32>) {
