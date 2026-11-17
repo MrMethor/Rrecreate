@@ -506,6 +506,8 @@ struct Checked<S: Live> {
     moves: std::collections::VecDeque<(u64, i32, i32, u8)>,
     mouse: Option<(i32, i32)>,
     buttons: u8,
+    /// The handlers' state was given at this tick: its keys and moves are in it already.
+    given: bool,
 }
 
 impl<S: Live> Default for Checked<S> {
@@ -517,6 +519,7 @@ impl<S: Live> Default for Checked<S> {
             moves: Default::default(),
             mouse: None,
             buttons: 0,
+            given: false,
         }
     }
 }
@@ -526,8 +529,10 @@ const FRAMES_HZ: u64 = 70;
 
 impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
-        self.keys.extend(played.keys.iter().copied());
-        self.moves.extend(played.mouse.iter().copied());
+        if !std::mem::take(&mut self.given) {
+            self.keys.extend(played.keys.iter().copied());
+            self.moves.extend(played.mouse.iter().copied());
+        }
         // Frames from the one before the original's sync point, to its next (or one frame past this one at the last).
         self.frames = self.frames.max((played.ms * FRAMES_HZ / 1000).saturating_sub(1));
         let until = played.next.unwrap_or(played.ms + 1000 / FRAMES_HZ);
@@ -562,6 +567,7 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
 
     fn given(&mut self, state: &S, inputs: &Inputs) {
         state.given(&mut self.devices, inputs);
+        self.given = true;
     }
 
     fn stepped(&mut self, state: &S, inputs: &Inputs) {
