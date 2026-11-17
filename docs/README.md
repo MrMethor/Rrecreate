@@ -172,9 +172,9 @@ tracking cheap (D187): a recording's run of the first dungeon went from 0.90x th
 recording Arena's 58 sessions from about 1.5 hours to 18 minutes, every trace the same. Next, the rest of the way to
 twice the pace: the call tracker's work, the late reads' in polling loops, the interpreter. Then M7.
 
-**The person's calls ahead:** M6.5's fallback, only if step 1 leaves the follower under twice the pace of play,
-and the disk a play may take (the plan's section 10); the game M9 is run on, which stays out of the toolkit's
-development until then (D71).
+**The person's calls ahead:** M6.5's margin, the follower at 1.83x the pace of play on the dungeon and every
+stretch faster than play: go on to step 2 with it, or work on the interpreter first; and the disk a play may take
+(the plan's section 10); the game M9 is run on, which stays out of the toolkit's development until then (D71).
 
 The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
 `notes/handoff.md` says how to pick it up).

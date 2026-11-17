@@ -429,6 +429,18 @@ moves the stack, about 5 s of the dungeon's first 64 s of play; in polling loops
 each device read; and the interpreter itself (51 ns an instruction, emulation alone). rrc's own work is now a fifth
 of a recording (23 s of the dungeon's 109), which step 2's streaming runs beside Clockwork's instead of after it.
 
+Tried next and left out (2026-11-17): working out each instruction's address once for every analysis, and the
+stack's base and top once for the call tracker's two looks, changed nothing measurable; on this machine the same
+replay varies by about 5% from run to run (its processor's turbo and heat), so a change is judged by alternating the
+two builds, and one that doesn't show isn't kept (it would change Clockwork's source, and every session would be
+recorded again for nothing). What remains is the interpreter's: its operand decoding isn't inlined into the
+instruction loop for the late reads' bus (a tenth of the time), and a byte at a time is how it reads and writes
+memory without paging. That is a project of its own, with the CPU suites run after it.
+
+Where it stands against the gate: every stretch measured runs faster than play (the slowest, the new game's story,
+at 1.44x), so a follower doesn't fall behind; the margin on the dungeon is 1.83x, not 2x. Whether that margin is
+enough, or the interpreter is worked on first, is the person's (section 10).
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the
@@ -459,7 +471,9 @@ first dungeon, with the port alongside, and:
 Decided 2026-11-16: M6.5 accepted, with section 8 as its done-when, and the `Live` check (3.7, step 6) inside it.
 Step 0 measured the rest (section 7, "What step 0 found"):
 
-- **The fallback**, only if step 1 leaves the follower under twice the pace of play: the window instrumented (the
+- **The margin:** step 1 leaves the follower at 1.83x on the dungeon, every stretch faster than play (section 7,
+  "What step 1 did"): go on with that margin, or work on the interpreter first for the rest to 2x.
+- **The fallback**, only if step 1 leaves the follower under twice the pace of play and the margin isn't enough: the window instrumented (the
   person's play pays a little), the lag accepted, or a third way step 0 opened: since emulation alone runs at more
   than twice the pace, one plain follower keeps up with the window and saves a snapshot every 20 s or so, and the
   tracking runs from those snapshots on the processor's other cores, a stretch each; the window stays untouched,
