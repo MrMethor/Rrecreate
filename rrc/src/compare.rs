@@ -1810,7 +1810,8 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
         // Its loop still waiting at the original's next sync point: a pass skipped, but where the original's next came
         // within two of the platform's frames (passes closer than its frames: a moment).
         if live["wait"] == true {
-            let close = due(t).zip(due(t + 1)).is_some_and(|(at, next)| next.saturating_sub(at) <= 2 * 1000 / 70);
+            // (The last tick has no next to wait for: a moment.)
+            let close = due(t).zip(due(t + 1)).is_none_or(|(at, next)| next.saturating_sub(at) <= 2 * 1000 / 70);
             seen(if close { &mut lived.waits } else { &mut lived.skips }, t, String::new());
             continue;
         }

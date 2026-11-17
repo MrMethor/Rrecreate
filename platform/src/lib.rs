@@ -194,9 +194,11 @@ pub trait Live: Simulation + Shows {
 
     /// The original's boundary values at a sync point (`inputs`, at `host.ms`: D194, `rrc compare --live`, which starts
     /// each pass's handling from the original's), what its handlers held there (the keys down, a queue, the timer's
-    /// count), taken into the handlers' state. Nothing by default.
-    fn given(&self, devices: &mut Self::Devices, inputs: &Inputs, host: &Host) {
+    /// count), taken into the handlers' state; whether they were (then the keys and moves that came by it are in them).
+    /// Not by default: the handlers go on from their own.
+    fn given(&self, devices: &mut Self::Devices, inputs: &Inputs, host: &Host) -> bool {
         let _ = (devices, inputs, host);
+        false
     }
 
     /// What the pass wrote into its inputs itself (a keyboard queue it emptied: `Inputs::written`), taken into
@@ -530,17 +532,16 @@ const FRAMES_HZ: u64 = 70;
 
 impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
-        match self.given.take() {
-            Some(inputs) => state.given(&mut self.devices, &inputs, &Host { ms: played.ms, ..Host::default() }),
-            None => {
-                self.keys.extend(played.keys.iter().copied());
-                self.moves.extend(played.mouse.iter().copied());
-            }
+        let host = Host { ms: played.ms, ..Host::default() };
+        let taken = self.given.take().is_some_and(|inputs| state.given(&mut self.devices, &inputs, &host));
+        if !taken {
+            self.keys.extend(played.keys.iter().copied());
+            self.moves.extend(played.mouse.iter().copied());
         }
         // Frames from the original's last sync point, where its pass began and the port's is, to its next (or a frame
         // past this one at the last): the port's waits run from its pass as when played, and a pass of the original's
         // that took long (a story, a load) doesn't carry its lead into the next.
-        let from = self.last.replace(played.ms).unwrap_or(played.ms.saturating_sub(1000 / FRAMES_HZ));
+        let from = self.last.replace(played.ms).unwrap_or(played.ms);
         self.frames = self.frames.max(from * FRAMES_HZ / 1000);
         let until = played.next.unwrap_or(played.ms + 1000 / FRAMES_HZ);
         loop {
@@ -582,15 +583,16 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     /// it from the handlers).
     fn stepped(&mut self, state: &S, inputs: &Inputs) {
         let ms = self.last.unwrap_or(0);
-        // What came by the sync point is in the original's state there: given with it, not again.
-        while self.keys.front().is_some_and(|(at, _)| *at <= ms) {
-            self.keys.pop_front();
+        // Where the handlers take the original's state there, what came by the sync point is in it: not given again.
+        if state.given(&mut self.devices, inputs, &Host { ms, ..Host::default() }) {
+            while self.keys.front().is_some_and(|(at, _)| *at <= ms) {
+                self.keys.pop_front();
+            }
+            while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= ms) {
+                (self.mouse, self.buttons) = (Some((x, y)), buttons);
+                self.moves.pop_front();
+            }
         }
-        while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= ms) {
-            (self.mouse, self.buttons) = (Some((x, y)), buttons);
-            self.moves.pop_front();
-        }
-        state.given(&mut self.devices, inputs, &Host { ms, ..Host::default() });
         state.wrote(&mut self.devices, inputs);
     }
 }
