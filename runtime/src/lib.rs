@@ -653,7 +653,7 @@ pub trait Check<S> {
     /// At a tick's sync point, before its pass, the port's state there and what the player had done by then: what to
     /// write on the tick's line (`live`).
     fn at(&mut self, state: &S, played: &files::Played) -> Value;
-    /// The pass stepped, `inputs` with what it wrote into them.
+    /// The pass stepped: `inputs`, the original's at its sync point, with what it wrote into them.
     fn stepped(&mut self, state: &S, inputs: &Inputs);
 }
 

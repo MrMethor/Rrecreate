@@ -574,7 +574,12 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
         self.given = true;
     }
 
+    /// After each pass the handlers start again from the original's state at its sync point, then take what the pass
+    /// wrote: each pass is judged on its own, and an event the original's pass read in its middle, which the port's
+    /// live play sees a pass on, leaves nothing behind (the port's next pass, fed the original's inputs, wouldn't take
+    /// it from the handlers).
     fn stepped(&mut self, state: &S, inputs: &Inputs) {
+        state.given(&mut self.devices, inputs);
         state.wrote(&mut self.devices, inputs);
     }
 }
