@@ -467,6 +467,11 @@ Clockwork gives the same trace.
 Left for step 4, where the comparer takes them: the ticks still go to the trace when the recording ends, not to a
 sink as they are made.
 
+Found on the way: Clockwork's source hash (D76) named each file by its whole path, the build script having reached
+the workspace through `..`, so the same sources hashed differently in every checkout, and a session recorded with a
+worktree's build named a Clockwork the main checkout's build of the same commit isn't. It names each file by its
+path in the workspace now, and the build stops if one isn't in it.
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the

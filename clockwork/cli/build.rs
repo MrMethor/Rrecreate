@@ -39,8 +39,11 @@ const TOOLS: &[&str] = &[
 ];
 
 fn main() {
-    let clockwork = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it")).join("..");
-    let workspace = clockwork.join("..");
+    // Parents, not `..`: a file's name in the hash is its path in the workspace, which a path through `..` isn't (it
+    // stayed the whole path, so the same sources hashed differently in each checkout, found in M6.5's step 2).
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it"));
+    let clockwork = manifest.parent().expect("cli is in clockwork/").to_owned();
+    let workspace = clockwork.parent().expect("clockwork is in the workspace").to_owned();
     let mut files = Vec::new();
     for name in CRATES {
         let dir = clockwork.join(name);
@@ -61,7 +64,8 @@ fn main() {
     hasher.update(locked("clockwork", &workspace.join("Cargo.lock")).as_bytes());
     hasher.update([0]);
     for file in files.iter().filter(|f| f.is_file()) {
-        let name = file.strip_prefix(&workspace).unwrap_or(file).to_string_lossy().replace('\\', "/");
+        // Its path in the workspace, the same in every checkout.
+        let name = file.strip_prefix(&workspace).expect("a file of the workspace").to_string_lossy().replace('\\', "/");
         if TOOLS.iter().any(|tool| name.ends_with(&format!("/{tool}"))) {
             continue;
         }
