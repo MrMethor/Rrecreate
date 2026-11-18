@@ -764,17 +764,30 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
-### D198. A run from a followed play's snapshot gets the rest of the play. Accepted 2026-11-18.
-A play followed as it was written (D189, D192) gives Clockwork its input as the file has it, up to its next mark or
+### D198. What the person's first play found in the toolkit. Accepted 2026-11-18.
+The person's first play of step 7 (3:01, from power-on into the dungeon, played in Clockwork's window) met what the
+scripted sessions never did; three of the toolkit's, each made general:
+- **A run from a followed play's snapshot gets the rest of the play.** A play followed as it was written (D189, D192) gives Clockwork its input as the file has it, up to its next mark or
 state hash, so a snapshot the follower takes holds what was given by then and none of the rest: a run from it (`rrc
 watch`, `pass`, `peek`, `compare --transplant`) waited at the play's next click ("the session ends before tick N"),
 or went on without the player's keys. Loading a snapshot of a session played from a file now gives the play's
 events after those the machine holds (Clockwork's `queued`; where it holds none, after its cycle): a follower gives
-them in order, all of a cycle's at once, so what a machine holds is the play's up to a cycle.
-**Why:** found on the person's first play of step 7: the next step at its first difference, a transplant before it
-with who wrote the original's value, couldn't run. The vault's test follows its walk with a snapshot every 1.5 s
-and reads a tick near its end from one, as the run with all the input read it.
-**Extends:** D118, D189, D192.
+them in order, all of a cycle's at once, so what a machine holds is the play's up to a cycle. The vault's test
+  follows its walk with a snapshot every 1.5 s and reads a tick near its end from one, as the run with all the input
+  read it.
+- **A range set leaves a position inside it as it is.** INT 33h 07h and 08h move the position only where it lies
+  outside the new range, and the runtime's model of them (`MouseRanges`) now writes nothing then: it wrote the
+  reported position back, and a driver at an odd x (a window's move, to half a pixel) lost it.
+- **The host's mouse by the sync point goes with the original's state.** Where a check gives a port's handlers the
+  original's state at a sync point (D194), the host's mouse as the play's moves left it by then goes with it
+  (`Live::given`'s `host`), and the platform's driver takes it first (`MouseDriver::given`): where the original's
+  report agrees, the driver's own position is the host's, at the precision the report doesn't carry.
+What it found in Arena's port is the port's work: a mouse moved while the cinematic played, read where the port's
+loop reads fewer times than the original's busy wait did, and from there a list the original opened and the port
+didn't.
+**Why:** the next step at the play's first difference, a transplant before it with who wrote the original's value,
+couldn't run; and the check said differences that were the toolkit's model of the driver, not the port's.
+**Extends:** D118, D133, D189, D192, D194, D197.
 
 ### D197. M6.5's step 6, its third part: the check made exact, and beside a live play. Accepted 2026-11-18.
 What `cell`'s four ticks left by D195 came from, each made general, and what that found:

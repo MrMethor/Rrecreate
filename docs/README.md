@@ -186,8 +186,9 @@ and each pass judged at the original's moment too. Arena's, what differed fixed 
 `cell`, the dungeon and a 12:45 play replayed through `rrc play` but for timing; the chime's at every tick, the
 vault's but for timing. Next, step 7, the person's: playing Arena twenty minutes with the port alongside (the plan's
 section 8). Then M7. The person's first play (3:01, from power-on into the dungeon) was followed to its end, its run
-proved the window's; a run from its snapshots lacked the rest of the play, now given (D198). What it found in Arena's
-port is the port's work (a mouse moved during the cinematic, read where the port's loop reads fewer times).
+proved the window's; a run from its snapshots lacked the rest of the play, and the model of the mouse driver lost a
+position's half pixel, both fixed (D198). What it found in Arena's port is the port's work (a mouse moved during the
+cinematic, read where the port's loop reads fewer times).
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).
