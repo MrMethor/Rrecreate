@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D201. rrc's cache is outside `%LOCALAPPDATA%` on Windows. Accepted 2026-11-19.
+The cache's default folder on Windows is `%USERPROFILE%\.cache\rrecreate`, as on other systems' `~/.cache/rrecreate`,
+not `%LOCALAPPDATA%\rrecreate\cache`. A packaged app's processes (the Claude desktop app's, an agent's commands among
+them) write what goes under `%LOCALAPPDATA%` into a copy of the app's own, which no other process sees: an agent's
+analysis, recordings and snapshots were there, and the person's `rrc play`, started from the desktop, didn't find
+them. Where the old folder is and the new one isn't yet, rrc says so once, to copy what it holds in.
+**Why:** the person's plays of M6.5's step 7 stopped at the port's start every time, the program's image "not in the
+cache" that the agent's runs found (D200 took it for a moment's refusal): the two saw two caches. The person's own
+cache was copied to the new folder, both caches' contents.
+**Extends:** D44 (the user's cache folder, on Windows), D200.
+
 ### D200. A read from the cache the system refuses for a moment is tried again. Accepted 2026-11-18.
 rrc's cache reads an object again, for 30 s at most, where the system refuses to open it (another program has it
 open: a virus scanner opens a program's image as it is read, for seconds the first time in a while; a second wasn't

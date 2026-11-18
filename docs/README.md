@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-18 (decisions to D200). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-19 (decisions to D201). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -190,7 +190,9 @@ proved the window's; a run from its snapshots lacked the rest of the play, and t
 position's half pixel, both fixed (D198). What it found in Arena's port is the port's work (a mouse moved during the
 cinematic, read where the port's loop reads fewer times). Its sound broke up in the window, as the port's had before
 D168: the window's output now buffers as the port's does (D199). The second play stopped at its start where the
-cache's read of the program's image failed for a moment; such a read is now tried again (D200).
+cache's read of the program's image failed; such a read is now tried again (D200), but the cause was that an agent in
+the Claude desktop app and the person saw two caches, Windows keeping the app's writes under `AppData\Local` apart:
+the cache is outside it now (D201).
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).

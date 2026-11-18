@@ -1,7 +1,9 @@
 //! The cache (docs/design.md §9, D44): files addressed by their SHA-256, per user and outside git:
 //! program images, Ghidra exports, snapshots, traces. `RRC_CACHE` names its folder; otherwise
-//! `rrc.local.toml` does, or the user's cache folder (`%LOCALAPPDATA%\rrecreate\cache`,
-//! `$XDG_CACHE_HOME/rrecreate` or `~/.cache/rrecreate`).
+//! `rrc.local.toml` does, or the user's cache folder (`%USERPROFILE%\.cache\rrecreate` on Windows,
+//! `$XDG_CACHE_HOME/rrecreate` or `~/.cache/rrecreate`). Not `%LOCALAPPDATA%` (D201): what a packaged
+//! app's processes write there (an agent's, in the Claude desktop app) goes to a copy of the app's own,
+//! which the person's don't see.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -16,11 +18,15 @@ pub struct Cache {
 
 impl Cache {
     pub fn open(local: &Local) -> Result<Cache, String> {
-        let dir = std::env::var_os("RRC_CACHE")
-            .map(PathBuf::from)
-            .or_else(|| local.cache.clone())
-            .or_else(default_dir)
-            .ok_or("no cache folder: set RRC_CACHE")?;
+        let chosen = std::env::var_os("RRC_CACHE").map(PathBuf::from).or_else(|| local.cache.clone());
+        let dir = match chosen {
+            Some(dir) => dir,
+            None => {
+                let dir = default_dir().ok_or("no cache folder: set RRC_CACHE")?;
+                moved(&dir);
+                dir
+            }
+        };
         Cache::at(&dir)
     }
 
@@ -183,10 +189,25 @@ impl Writer {
     }
 }
 
+/// Before the default cache `new` is made: where the one before D201 is (`%LOCALAPPDATA%\rrecreate\cache`), said
+/// once, so that what it holds can be copied in.
+fn moved(new: &Path) {
+    let old = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("rrecreate").join("cache"));
+    if let Some(old) = old.filter(|old| cfg!(windows) && old.is_dir() && !new.exists()) {
+        eprintln!(
+            "rrc: the cache is {} now (D201), and one is at {}: copy it in to keep what it holds (robocopy \"{}\" \"{}\" /E)",
+            new.display(),
+            old.display(),
+            old.display(),
+            new.display()
+        );
+    }
+}
+
 fn default_dir() -> Option<PathBuf> {
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
     if cfg!(windows) {
-        return var("LOCALAPPDATA").map(|d| d.join("rrecreate").join("cache"));
+        return var("USERPROFILE").map(|d| d.join(".cache").join("rrecreate"));
     }
     var("XDG_CACHE_HOME").or_else(|| var("HOME").map(|h| h.join(".cache"))).map(|d| d.join("rrecreate"))
 }
@@ -204,6 +225,13 @@ mod tests {
         assert_eq!(cache.put(b"abc").unwrap(), hash, "storing again is harmless");
         assert_eq!(cache.get(&hash).unwrap(), b"abc");
         assert!(cache.has(&hash) && !cache.has(&sha256(b"abd")));
+        // The default folder is outside %LOCALAPPDATA%, which a packaged app's processes see a copy of (D201).
+        if cfg!(windows) {
+            let default = default_dir().unwrap();
+            assert!(
+                default.ends_with(".cache/rrecreate") && !default.starts_with(std::env::var("LOCALAPPDATA").unwrap())
+            );
+        }
         // One that isn't there says so, and only that (D200).
         let missing = cache.get(&sha256(b"abd")).unwrap_err();
         assert!(missing.ends_with(&format!("isn't in the cache ({})", dir.display())), "{missing}");

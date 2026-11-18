@@ -169,7 +169,8 @@ what an earlier run made from given inputs:
   build of `rrc` (D55, D57).
 
 It is `RRC_CACHE`,
-else `cache` in `rrc.local.toml`, else `%LOCALAPPDATA%\rrecreate\cache` on Windows and `$XDG_CACHE_HOME/rrecreate`
+else `cache` in `rrc.local.toml`, else `%USERPROFILE%\.cache\rrecreate` on Windows (D201: not `%LOCALAPPDATA%`, which a
+packaged app's processes see a copy of their own of) and `$XDG_CACHE_HOME/rrecreate`
 or `~/.cache/rrecreate` elsewhere. Anything in it can be deleted; what refers to it is rebuilt or recorded again.
 
 ## `knowledge/functions.tsv` and `knowledge/data.tsv`: named functions and data
