@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-18 (decisions to D196). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-18 (decisions to D197). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -179,10 +179,14 @@ port run free, corrected only where it differs, gives lockstep's census on all o
 done (D192, D193): `rrc play` follows the play as it goes, the port beside it, and says each difference when it is
 first found; the toy's and the vault's plays replayed through it match their offline comparisons, a planted bug is
 said at its tick, a port that panics or hangs is started again from the follower's state, and memory stays flat over
-a long play of Arena. Step 6 is under way (D194, D195): a played port's own input handling is checked against the
-original's handlers at virtual time, a pass at a time (`rrc compare --live`). The examples' are as the originals' but
-for a timer's phase; Arena's, five things fixed, is as the original's on its dungeon session but for timing, and on
-`cell` four ticks are left. Next, those, then the check beside a live play. Then M7.
+a long play of Arena. Step 6 is done (D194, D195, D197): a played port's own input handling is checked against the
+original's handlers at virtual time, a pass at a time, offline (`rrc compare --live`) and beside a play (`rrc
+play`). Made exact on the way: the clock in microseconds, the mouse driver as an emulator's, at its own precision,
+and each pass judged at the original's moment too. Arena's, what differed fixed in its port, is as the original's on
+`cell` and the dungeon but for timing, and on a 12:45 play replayed through `rrc play` at all of its 2572 ticks but
+one, a mouse move the original's driver didn't take (why is open: its ranges aren't in the trace); the chime's at
+every tick, the vault's but for timing. Next, step 7, the person's: playing Arena twenty minutes with the port
+alongside (the plan's section 8). Then M7.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).

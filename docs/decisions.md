@@ -764,21 +764,44 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
-### D197. M6.5's step 6, its third part: the check's clock in µs, a driver's motion as an emulator's, a wait's poll the original's. Accepted 2026-11-18.
-What `cell`'s four ticks left by D195 came from, each made general:
+### D197. M6.5's step 6, its third part: the check made exact, and beside a live play. Accepted 2026-11-18.
+What `cell`'s four ticks left by D195 came from, each made general, and what that found:
 - **The clock in µs.** The host's clock a port's `Live` runs on is in microseconds (`Host::us`, in place of `ms`; a
   timer's count, `rrc_platform::timer_count`, from it), and so are the devices a check is given (inputs version 7):
   a timer's interrupt that came within the sync point's millisecond was counted again from it.
-- **A driver's motion as an emulator's.** The platform's mouse driver counts the motion from its own position to
-  the host's cursor (kept in its ranges), as an emulator's driver takes a host's cursor (Clockwork's, DOSBox's: what
-  the original's run counted), not from the host's cursor before: a position the program set or a range moves no
-  mouse, and the host's cursor on the driver's pixel, where the platform puts it when played (D145), is no move.
-- **A wait's poll the original's.** `Live::given` is told the sync point it is given (the runtime's `Check` the
-  tick's sync): the loop's wait there took its tick then, so a gate's next poll is a tick when the keys or the mouse
-  changed since the original's (D48), not since the port's own pass before, which came at another moment.
+- **A mouse driver as an emulator's.** The platform's driver counts the motion from its own position to the host's
+  cursor (kept in its ranges), as an emulator's driver takes a host's cursor (Clockwork's, DOSBox's: what the
+  original's run counted), not from the host's cursor before: a position the program set or a range moves no mouse,
+  and the host's cursor on the driver's pixel, where the platform puts it when played (D145), is no move. Its position
+  is kept at the driver's precision, which the device reports at its granularity (an odd x in mode 13h as the even
+  below it): the runtime's model holds where the program put it (`MouseRanges::held`), and the platform's driver keeps
+  its own wherever the report agrees. The host's mouse is given to a fraction of a pixel (`Host::mouse`; a play's x
+  is the driver's, 321 as 160.5), and a move to where the mouse was is a move (`Host::moved`): a script's or a play's
+  moves are each taken, as the original's driver took them.
+- **A wait's poll the original's.** After a pass, `Live::given` is told the sync point the pass came from (`taken`;
+  none at the first tick, still to be taken): the loop's wait took its tick there, so a gate's next poll is a tick
+  when the keys or the mouse changed since the original's (D48), not since the port's own pass before.
+- **At the original's moment.** The check asks `Live` at the original's sync point too, between the platform's
+  frames, so a pass the port would take there is judged there, the frames' phase aside. Where the port's pass comes
+  before the original's moment, a copy of its handlers (`Live::Devices` is `Clone`) is asked there as well, every
+  event by then given (`then` on the tick's line): a value they make there as the original's is the moment alone,
+  timing.
+- **Beside a live play.** `rrc play` gives each tick's line the play's input up to it (the follower keeps the inputs
+  it gives Clockwork and hands them on with the tick), runs the port with `--live`, and judges its `Live` at the
+  play's end as `rrc compare --live` does (`.rrc/play/NAME/live.json`). A port without the platform's `Live` takes
+  `--live` and checks nothing, which is said.
+What it found: Arena's `Live` counted the retraces a pass waited as whole frames from the frame after the pass, so
+its next pass came up to two frames late, played too; it now counts them to the screen's refreshes after the pass
+(every 17045 of the PIT's ticks from power-on, as its timer counts the PIT's boundaries). Now Arena's `cell` and
+dungeon sessions are as the original's handlers made them but for timing; the chime's at every tick (182 of 182), the
+vault's but for timing (389 of 400), and the vault's play is judged as its session is offline. Beside a 12:45 play of
+Arena replayed through `rrc play` (2572 ticks), its `Live` is as the original's handlers made it but for timing at
+every tick but one, as the same session checked offline says: a mouse move the original's driver didn't take where
+the port's did (the driver's ranges there aren't in the trace, so why is open).
 **Why:** each pass of the check is judged from the original's state at its sync point (D194); what the port carried
-from its own pass before, or rounded off, showed as a difference the play wouldn't make.
-**Extends:** D133, D145, D194, D195.
+from its own pass before, rounded off, or met a frame from the original's moment showed as a difference the play
+wouldn't make. And the check is what the person's play needs beside it (the plan's section 8).
+**Extends:** D133, D145, D184, D192, D194, D195.
 
 ### D196. A play followed live keeps as little on disk as it can. Accepted 2026-11-18, with the person.
 No disk budget for a play: what it keeps is made small instead (the person: "if there is a way to not bloat up the

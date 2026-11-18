@@ -213,16 +213,17 @@ usage: rrc <command> [arguments]     (inside a port repository)
   compare SESSION --live
                          the port's own input handling (its Live, D194) beside lockstep: at each of the
                          original's sync points it is given the session's keys and mouse as the original's
-                         run had them, at the play's time; what it makes judged against what the
-                         original's pass read: the same, timing (a pass early or late, its loop waiting a
-                         moment more) or a difference, by input (.rrc/compare/SESSION/live.json). Exits 1
-                         if anything differs
+                         run had them, at the play's time and at the original's moment (D197); what it
+                         makes judged against what the original's pass read: the same, timing (a pass early
+                         or late, its loop waiting a moment more) or a difference, by input
+                         (.rrc/compare/SESSION/live.json). Exits 1 if anything differs
   play NAME [--from SESSION --tick N] [--replay FILE] | play NAME --resume
                          the person plays the original in Clockwork's window, from the session's tick N
                          (or power-on), recorded as the session NAME (sessions/NAME.session) and followed
                          as it goes (D192): a second Clockwork records it, the port runs beside it free and
                          corrected where it differs, and what differs or the port noted is said as it is
-                         first found; at the end, the play's census (.rrc/play/NAME/). --replay: a play
+                         first found; at the end, the play's census and the port's input handling judged
+                         beside it (its Live, as compare --live: .rrc/play/NAME/). --replay: a play
                          recorded before (clockwork play --record), followed at full speed; --resume: a
                          play cut short, followed again from its file to its last mark
   start SESSION --tick N [--out DIR]

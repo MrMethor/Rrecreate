@@ -588,7 +588,8 @@ Clockwork's window on the original from that tick (or power-on without `--from`)
 play is recorded as the session `NAME`. While they play, rrc follows it as it goes (D192): a second Clockwork records
 the play as it is written, the port runs beside it, free and corrected where it differs (`rrc compare --corrected`),
 and what differs or the port noted is said as it is first found, with the play's time (`new at 3:51: differs`,
-`new at 12:40: note`); at the end the play's census is listed, most passes first, with `next`: where to look first.
+`new at 12:40: note`); at the end the play's census is listed, most passes first, with `next`: where to look first,
+and the port's own input handling judged against the play's (`live`, as `rrc compare --live`, D197).
 The play is a session like any other: compare it, watch it, peek into it. Nothing slows the window; if the
 comparison falls behind, the status line says by how much. A port that panics or hangs is counted (`panic`) and
 started again from the original's state a tick later (D193); find why with `rrc compare NAME --transplant T` at its
@@ -713,10 +714,12 @@ the original's value.
 
 `rrc compare SESSION --live` checks the port's own input handling (its `Live`, what the platform plays it with)
 beside lockstep (D194): at each of the original's sync points, `Live` is given the session's keys and mouse as the
-original's run had them, at the play's time, and what it makes is judged against what the original's pass read: the
-same, timing (a pass early or late, or its loop still waiting a moment where the original's took a pass) or a
-difference, by input with its first tick (`.rrc/compare/SESSION/live.json`). Timing is a moment's phase; a
-difference is the port's handlers made otherwise than the original's: read the original's handler and fix `Live`.
+original's run had them, at the play's time, asked at the platform's frames and at the original's moment (D197), and
+what it makes is judged against what the original's pass read: the same, timing (a pass early or late, its handlers
+making the original's at the original's moment, or its loop still waiting a moment where the original's took a
+pass) or a difference, by input with its first tick (`.rrc/compare/SESSION/live.json`). Timing is a moment's phase;
+a difference is the port's handlers made otherwise than the original's: read the original's handler and fix `Live`.
+`rrc play` checks it beside the play the same way (`.rrc/play/NAME/live.json`).
 
 `rrc compare SESSION --corrected` runs the port free, on its own state, and sets the original's values over only
 the fields a tick left otherwise, before the next tick's step; after a pass the port noted, every field (D191). Each
