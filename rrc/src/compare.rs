@@ -741,7 +741,10 @@ impl Between {
             let mut nearest: Option<(usize, usize)> = None;
             for (i, hash) in originals.iter().enumerate().skip(from) {
                 if !self.decoded.contains_key(*hash) {
-                    let frame = Frame::decode(&cache.get(hash)?).map_err(|e| {
+                    let bytes = cache.get(hash).map_err(|e| {
+                        format!("{e}: a picture between ticks of a play followed live isn't kept (D196), `rrc record NAME --run` makes them again")
+                    })?;
+                    let frame = Frame::decode(&bytes).map_err(|e| {
                         format!("the original's picture at tick {t}: {e} (only indexed modes are compared)")
                     })?;
                     self.decoded.insert((*hash).to_owned(), frame);

@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D200. A read from the cache the system refuses for a moment is tried again. Accepted 2026-11-18.
+rrc's cache reads an object again, for a second at most, where the system refuses to open it (another program has it
+open: a virus scanner opens a program's image as it is read), and says what the system said if it still does;
+"isn't in the cache" only where it isn't. The hint that a play followed live keeps its pictures between ticks by
+hash alone (D196) is said where such a picture is read (`rrc compare`'s pictures between ticks, `rrc frame`), not
+on every read.
+**Why:** the person's second play stopped at its start: the port's start from power-on reads the program's image from
+the cache for its initial data (D135), the read failed though the object was there, and rrc said it wasn't, with
+the hint about pictures.
+**Extends:** D26, D135, D196.
+
 ### D199. Clockwork's window buffers its sound as a played port does. Accepted 2026-11-18.
 `clockwork play` asks the host's output for 2048 samples a channel at a time (about 41 ms), twice buffered, where it
 asked for 1024, as a played port's output does (D168), and keeps queued ahead of it at least half a block more than

@@ -81,14 +81,24 @@ impl Cache {
         Writer { sender, thread }
     }
 
+    /// The object `hash`. A read the system refuses for a moment (a file another program has open, as a virus scanner
+    /// opens a program's image: D200) is tried again for a second before it fails, with what the system said.
     pub fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
         let path = self.path(hash);
-        std::fs::read(&path).map_err(|_| {
-            format!(
-                "{hash} isn't in the cache ({}): a picture between ticks of a play followed live isn't kept (D196),                  rrc record SESSION --run makes them again",
-                self.dir.display()
-            )
-        })
+        let mut tries = 0;
+        loop {
+            match std::fs::read(&path) {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(format!("{hash} isn't in the cache ({})", self.dir.display()));
+                }
+                Err(_) if tries < 20 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => return Err(format!("{hash} in the cache ({}): {e}", self.dir.display())),
+            }
+        }
     }
 
     pub fn has(&self, hash: &str) -> bool {
@@ -193,6 +203,9 @@ mod tests {
         assert_eq!(cache.put(b"abc").unwrap(), hash, "storing again is harmless");
         assert_eq!(cache.get(&hash).unwrap(), b"abc");
         assert!(cache.has(&hash) && !cache.has(&sha256(b"abd")));
+        // One that isn't there says so, and only that (D200).
+        let missing = cache.get(&sha256(b"abd")).unwrap_err();
+        assert!(missing.ends_with(&format!("isn't in the cache ({})", dir.display())), "{missing}");
         assert_eq!(sha256_file(&cache.path(&hash)).unwrap(), hash);
         assert_eq!(cache.recall("analysis", "k"), None);
         cache.remember("analysis", "k", "text").unwrap();

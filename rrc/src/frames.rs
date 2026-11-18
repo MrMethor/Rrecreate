@@ -44,7 +44,10 @@ pub(crate) fn frame(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let frame = trace.ticks.iter().take_while(|t| t.tick <= tick).flat_map(|t| &t.frames).last();
     let frame = frame.ok_or_else(|| format!("no frame was shown by tick {tick}"))?;
     let hash = frame[4].as_str().ok_or("the frame has no picture")?;
-    let picture = Picture::decode(&cache.get(hash)?)?;
+    let bytes = cache.get(hash).map_err(|e| {
+        format!("{e}: a picture between ticks of a play followed live isn't kept (D196), `rrc record {name} --run` makes them again")
+    })?;
+    let picture = Picture::decode(&bytes)?;
     let out = match a.value("--out") {
         Some(path) => PathBuf::from(path),
         None => repo.state()?.join("frames").join(format!("{name}-{tick}.png")),
