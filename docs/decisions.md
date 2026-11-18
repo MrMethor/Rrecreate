@@ -764,6 +764,18 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D198. A run from a followed play's snapshot gets the rest of the play. Accepted 2026-11-18.
+A play followed as it was written (D189, D192) gives Clockwork its input as the file has it, up to its next mark or
+state hash, so a snapshot the follower takes holds what was given by then and none of the rest: a run from it (`rrc
+watch`, `pass`, `peek`, `compare --transplant`) waited at the play's next click ("the session ends before tick N"),
+or went on without the player's keys. Loading a snapshot of a session played from a file now gives the play's
+events after those the machine holds (Clockwork's `queued`; where it holds none, after its cycle): a follower gives
+them in order, all of a cycle's at once, so what a machine holds is the play's up to a cycle.
+**Why:** found on the person's first play of step 7: the next step at its first difference, a transplant before it
+with who wrote the original's value, couldn't run. The vault's test follows its walk with a snapshot every 1.5 s
+and reads a tick near its end from one, as the run with all the input read it.
+**Extends:** D118, D189, D192.
+
 ### D197. M6.5's step 6, its third part: the check made exact, and beside a live play. Accepted 2026-11-18.
 What `cell`'s four ticks left by D195 came from, each made general, and what that found:
 - **The clock in µs.** The host's clock a port's `Live` runs on is in microseconds (`Host::us`, in place of `ms`; a

@@ -1002,6 +1002,21 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert_eq!(lived, std::fs::read_to_string(rrc.repo.join(".rrc/compare/walk/live.json")).unwrap());
     let again = rrc.ok(&["record", "walk", "--run"]);
     assert!(again.contains("same      as the trace recorded before"), "{again}");
+    // A snapshot of a play followed as it was written holds the input given by then, up to the play's next state hash
+    // (one a second here): a run from it gets the rest of the play (D198). Followed again with a snapshot every 1.5 s
+    // (the keys at 5 and 5.5 s after the one at 4.5 s), a tick near the walk's end read from a snapshot is as the run's
+    // that had all the play's input.
+    let ticks: u64 = walked.split(" ticks").next().and_then(|s| s.rsplit(' ').next()?.parse().ok()).unwrap();
+    let read = |out: String| out.lines().filter(|l| l.starts_with("value")).map(str::to_owned).collect::<Vec<_>>();
+    let near_end = (ticks - 10).to_string();
+    let peek = ["peek", "walk", "--tick", near_end.as_str(), "player_x", "player_y", "moves"];
+    let whole = rrc.ok(&peek);
+    rrc.env.push(("RRC_SNAPSHOT_MS", "1500"));
+    rrc.ok(&["record", "walk", "--follow"]);
+    rrc.env.pop();
+    let from = rrc.ok(&peek);
+    assert!(from.contains("start     from the snapshot at tick"), "{from}");
+    assert_eq!(read(from), read(whole));
     std::fs::remove_dir_all(&dir).ok();
 }
 
