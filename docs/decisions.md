@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D202. Clockwork's window paces by the sound still to play, not the queue alone. Accepted 2026-11-19.
+`clockwork play` runs each frame a little more or less of the game's time to keep its sound queued near a target
+(the sound card's clock, not the host's, sets the pace). It measured the queue alone, which falls by a whole block
+each time the output takes one; it now adds what the output took last that is still to play (from when it took it),
+which holds level as the block plays out. Simulated, a shown frame ran 10 to 20 ms of the game's time with 2048
+samples' blocks (12 to 17 with 1024), now 14.3 every frame.
+**Why:** the person found the window's play poor after D199 doubled the block: measured during a play, the machine
+had room (23% of its CPU on average, the window under half a core), so the pace itself was uneven: the game's
+motion advanced unevenly from frame to frame.
+**Extends:** D199.
+
 ### D201. rrc's cache is outside `%LOCALAPPDATA%` on Windows. Accepted 2026-11-19.
 The cache's default folder on Windows is `%USERPROFILE%\.cache\rrecreate`, as on other systems' `~/.cache/rrecreate`,
 not `%LOCALAPPDATA%\rrecreate\cache`. A packaged app's processes (the Claude desktop app's, an agent's commands among

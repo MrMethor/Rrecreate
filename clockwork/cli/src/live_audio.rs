@@ -8,7 +8,10 @@
 //!
 //! The queue also paces the emulator: [`LiveAudio::frame_cycles`] runs a little more or less
 //! than a nominal frame so that a little more sound stays queued than the device takes at once
-//! (its target), which keeps the emulated time in step with the sound card's clock.
+//! (its target), which keeps the emulated time in step with the sound card's clock. What it
+//! measures is the sound queued and what the device took last that is still to play (D202): the
+//! queue alone falls by a whole block each time the device takes one, and pacing by it ran each
+//! shown frame 10 to 20 ms of the game's time, not 14.3, with 2048 samples' blocks.
 //!
 //! The device takes [`DEVICE_FRAMES`] samples a channel at a time, twice buffered, as a played
 //! port's output does (Rrecreate D168, D199): Windows' DirectSound, emulated over its audio engine,
@@ -18,7 +21,9 @@
 //! the window replays nothing.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use dos::Machine;
 use dos::audio::{Renderer, SAMPLE_RATE_HZ};
@@ -49,10 +54,15 @@ pub struct LiveAudio {
     renderer: Renderer,
     rendered: Vec<i16>,
     queue: Queue,
-    /// Samples a channel the device takes at a time; the queue kept ahead of it, and the most.
+    /// Samples a channel the device takes at a time (and how long they play); the queue kept ahead
+    /// of it, and the most.
     frames: usize,
+    block_ns: u64,
     target_ns: u64,
     max_ns: u64,
+    /// When the device last took a block (the host's ns from `epoch`).
+    epoch: Instant,
+    taken: Arc<AtomicU64>,
     /// Stops the device's thread when dropped.
     device: Option<OutputDevice>,
     midi: Midi,
@@ -74,11 +84,14 @@ impl LiveAudio {
             channel_sample_count: frames,
         };
         let shared = queue.clone();
+        let (epoch, taken) = (Instant::now(), Arc::new(AtomicU64::new(0)));
+        let took = taken.clone();
         let device = run_output_device(params, move |data: &mut [f32]| {
             let mut queue = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             for out in data.iter_mut() {
                 *out = queue.pop_front().map_or(0.0, |s| f32::from(s) / 32768.0);
             }
+            took.store(epoch.elapsed().as_nanos() as u64, Ordering::Relaxed);
         });
         let device = device.map_err(|e| eprintln!("clockwork: no sound: {e}")).ok();
         LiveAudio {
@@ -86,8 +99,11 @@ impl LiveAudio {
             rendered: Vec::new(),
             queue,
             frames,
+            block_ns,
             target_ns,
             max_ns,
+            epoch,
+            taken,
             device,
             midi: Midi::new(midi_port),
         }
@@ -98,14 +114,19 @@ impl LiveAudio {
         (samples / 2) as u64 * NANOS_PER_SECOND / u64::from(SAMPLE_RATE_HZ)
     }
 
+    /// What the device took last that is still to play.
+    fn playing_ns(&self) -> u64 {
+        let since = (self.epoch.elapsed().as_nanos() as u64).saturating_sub(self.taken.load(Ordering::Relaxed));
+        self.block_ns.saturating_sub(since)
+    }
+
     /// Cycles to run in the next frame: `nominal` (a 70 Hz frame), adjusted to keep the sound
-    /// queue near its target. Without an audio device, just `nominal`.
+    /// queued near its target. Without an audio device, just `nominal`.
     pub fn frame_cycles(&self, nominal: u64) -> u64 {
         if self.device.is_none() {
             return nominal;
         }
-        let error = self.target_ns as i64 - self.queued_ns() as i64;
-        let run_ns = (FRAME_NS as i64 + error / 4).clamp(FRAME_NS as i64 / 2, FRAME_NS as i64 * 2) as u64;
+        let run_ns = pace(self.target_ns, self.block_ns, self.queued_ns(), self.playing_ns());
         (u128::from(nominal) * u128::from(run_ns) / u128::from(FRAME_NS)).max(1) as u64
     }
 
@@ -129,6 +150,14 @@ impl LiveAudio {
         let heard_tick = (u128::from(heard_ns) * u128::from(PIT_HZ) / u128::from(NANOS_PER_SECOND)) as u64;
         self.midi.send_until(&m.devices.mpu.midi_log, heard_tick);
     }
+}
+
+/// The game's time to run in the next frame (ns), the sound queued `queued_ns` and what the device
+/// took last still to play `playing_ns`: a nominal frame, adjusted toward keeping `target_ns` queued
+/// on the average (the device's block plays out half of it, on the average).
+fn pace(target_ns: u64, block_ns: u64, queued_ns: u64, playing_ns: u64) -> u64 {
+    let error = (target_ns + block_ns / 2) as i64 - (queued_ns + playing_ns) as i64;
+    (FRAME_NS as i64 + error / 4).clamp(FRAME_NS as i64 / 2, FRAME_NS as i64 * 2) as u64
 }
 
 /// The samples a channel the device takes at a time: `CLOCKWORK_SOUND_BUFFER`'s (`set`), if it is
@@ -232,5 +261,21 @@ mod tests {
         assert_eq!(buffer_frames(Some("4096")), 4096);
         assert_eq!(buffer_frames(Some("100")), 2048, "out of range");
         assert_eq!(buffer_frames(Some("lots")), 2048);
+    }
+
+    #[test]
+    fn a_frame_runs_the_same_time_whenever_the_device_takes_a_block() {
+        // A block of 2048 samples taken while the queue is at the target: the queue falls by the block,
+        // and what plays from it makes up for that as it plays out (D202).
+        let block = 2048 * NANOS_PER_SECOND / u64::from(SAMPLE_RATE_HZ);
+        let target = 50_000_000;
+        let level = target + block / 2;
+        for elapsed in [0, block / 4, block / 2, block * 3 / 4, block] {
+            let (queued, playing) = (level - block + elapsed, block - elapsed);
+            assert_eq!(pace(target, block, queued, playing), FRAME_NS, "{elapsed} ns after the block");
+        }
+        // More queued than the target: a shorter frame; less: a longer one.
+        assert!(pace(target, block, level + 10_000_000, 0) < FRAME_NS);
+        assert!(pace(target, block, 0, 0) > FRAME_NS);
     }
 }
