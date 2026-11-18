@@ -786,6 +786,10 @@ What `cell`'s four ticks left by D195 came from, each made general, and what tha
   before the original's moment, a copy of its handlers (`Live::Devices` is `Clone`) is asked there as well, every
   event by then given (`then` on the tick's line): a value they make there as the original's is the moment alone,
   timing.
+- **An input the pass wrote over.** The check writes on each tick's line what the port's pass before wrote into its
+  inputs itself (`wrote`). A byte the original's tick has as that write, where the player's input came during that
+  pass, is the order of the two inside the original's pass (there the input came before the write; here the pass is
+  at once): timing.
 - **Beside a live play.** `rrc play` gives each tick's line the play's input up to it (the follower keeps the inputs
   it gives Clockwork and hands them on with the tick), runs the port with `--live`, and judges its `Live` at the
   play's end as `rrc compare --live` does (`.rrc/play/NAME/live.json`). A port without the platform's `Live` takes
@@ -795,9 +799,11 @@ its next pass came up to two frames late, played too; it now counts them to the 
 (every 17045 of the PIT's ticks from power-on, as its timer counts the PIT's boundaries). Now Arena's `cell` and
 dungeon sessions are as the original's handlers made them but for timing; the chime's at every tick (182 of 182), the
 vault's but for timing (389 of 400), and the vault's play is judged as its session is offline. Beside a 12:45 play of
-Arena replayed through `rrc play` (2572 ticks), its `Live` is as the original's handlers made it but for timing at
-every tick but one, as the same session checked offline says: a mouse move the original's driver didn't take where
-the port's did (the driver's ranges there aren't in the trace, so why is open).
+Arena replayed through `rrc play` (2572 ticks), one tick was left, the pointer where the original's wasn't: each of a
+screen's polls puts the driver at the game's own pointer (INT 33h 04h in `+077F0`, `mouse_x` doubled), which Arena's
+port didn't (it does now: the driver's x even after each poll, as the original's), and a move that came between a
+poll's read and that call was undone in the original's pass. Now the play is as the original's handlers made it but
+for timing at every tick.
 **Why:** each pass of the check is judged from the original's state at its sync point (D194); what the port carried
 from its own pass before, rounded off, or met a frame from the original's moment showed as a difference the play
 wouldn't make. And the check is what the person's play needs beside it (the plan's section 8).

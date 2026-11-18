@@ -183,9 +183,8 @@ a long play of Arena. Step 6 is done (D194, D195, D197): a played port's own inp
 original's handlers at virtual time, a pass at a time, offline (`rrc compare --live`) and beside a play (`rrc
 play`). Made exact on the way: the clock in microseconds, the mouse driver as an emulator's, at its own precision,
 and each pass judged at the original's moment too. Arena's, what differed fixed in its port, is as the original's on
-`cell` and the dungeon but for timing, and on a 12:45 play replayed through `rrc play` at all of its 2572 ticks but
-one, a mouse move the original's driver didn't take (why is open: its ranges aren't in the trace); the chime's at
-every tick, the vault's but for timing. Next, step 7, the person's: playing Arena twenty minutes with the port
+`cell`, the dungeon and a 12:45 play replayed through `rrc play` but for timing; the chime's at every tick, the
+vault's but for timing. Next, step 7, the person's: playing Arena twenty minutes with the port
 alongside (the plan's section 8). Then M7.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

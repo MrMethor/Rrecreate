@@ -581,15 +581,15 @@ path in the workspace now, and the build stops if one isn't in it.
   mouse driver as an emulator's (motion from its own position, at its own precision; the host's mouse to a fraction
   of a pixel; a move to where it was taken); a wait's last poll the original's after each pass; `Live` asked at the
   original's moment too, and where the port's pass comes before it, a copy of its handlers asked there (timing when
-  they make the original's).
+  they make the original's); a byte the port's pass wrote itself, where the player's input came during the pass,
+  timing too (the order of the two inside the original's pass).
 - **Arena:** its retraces counted to the screen's refreshes after the pass, not as whole frames from the frame after
-  it (its next pass up to two frames late, played too).
+  it (its next pass up to two frames late, played too); each screen's poll puts the driver at the game's pointer
+  (`+077F0`'s INT 33h 04h), as the original's does.
   `cell` and the dungeon: timing only. The chime: every tick; the vault: timing only.
 - **Beside a live play:** `rrc play` gives the port the play's input on each tick's line and judges its `Live` at the
-  play's end; the vault's play is judged as its session offline. Beside a 12:45 play of Arena replayed through `rrc
-  play` (2572 ticks), its `Live` is as the original's handlers made it but for timing at every tick but one, as the
-  same session checked offline says: a mouse move the original's driver didn't take where the port's did (the
-  driver's ranges there aren't in the trace, so why is open).
+  play's end; the vault's play is judged as its session offline. A 12:45 play of Arena replayed through `rrc play`
+  (2572 ticks): as the original's handlers made it but for timing at every tick.
 - **Step 6's gate holds.** Next, step 7: the person plays (section 8).
 
 ## 8. Done when
