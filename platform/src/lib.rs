@@ -200,8 +200,9 @@ pub trait Live: Simulation + Shows {
     /// each pass's handling from the original's), what its handlers held there (the keys down, a queue, the timer's
     /// count), taken into the handlers' state; whether they were (then the keys and moves that came by it are in
     /// them). After a pass, `taken` is its sync point, where the loop's wait took its tick: what the wait keeps of it
-    /// is the original's then (a gate's last poll, D197); none at the run's first tick, still to be taken. Not by
-    /// default: the handlers go on from their own.
+    /// is the original's then (a gate's last poll, D197); none at the run's first tick, still to be taken. `host.mouse`
+    /// is where the host's mouse was by then (D198: a driver's position at its own precision, which the original's
+    /// report doesn't carry: [`MouseDriver::given`]). Not by default: the handlers go on from their own.
     fn given(&self, devices: &mut Self::Devices, taken: Option<&str>, inputs: &Inputs, host: &Host) -> bool {
         let _ = (devices, taken, inputs, host);
         false
@@ -367,11 +368,13 @@ impl MouseDriver {
     }
 
     /// As the original's driver was (its `mouse` device's 46 bytes, as [`MouseDriver::state`] gives them): where play
-    /// starts from a session's tick (D194).
-    pub fn given(&mut self, bytes: &[u8]) {
+    /// starts from a session's tick (D194). The host's mouse then (`host`, `scale` as for [`MouseDriver::take`]) is taken
+    /// first (D198): where the report agrees, the driver's own position is the host's, as an emulator's driver took it.
+    pub fn given(&mut self, bytes: &[u8], host: &Host, scale: (i32, i32)) {
         if bytes.len() < 46 {
             return;
         }
+        self.take(host, scale);
         let word = |i: usize| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
         let signed = |i: usize| i32::from(word(i) as i16);
         // Its position as the bytes report it, at the driver's own precision where they report it so (D197).
@@ -662,15 +665,22 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     /// it from the handlers).
     fn stepped(&mut self, state: &S, sync: &str, inputs: &Inputs) {
         let us = self.last.unwrap_or(0);
+        // The host's mouse as the moves by the sync point left it (D198): where the original's driver took it last,
+        // which its state there reports at its granularity only.
+        let (mut mouse, mut buttons, mut moved) = (self.mouse, self.buttons, false);
+        for &(_, x, y, b) in self.moves.iter().take_while(|(at, ..)| *at <= us) {
+            (mouse, buttons, moved) = (Some((x, y)), b, true);
+        }
+        let host = Host { us, mouse, moved, buttons, ..Host::default() };
         // Where the handlers take the original's state there, what came by the sync point is in it: not given again.
-        if state.given(&mut self.devices, Some(sync), inputs, &Host { us, ..Host::default() }) {
+        if state.given(&mut self.devices, Some(sync), inputs, &host) {
             while self.keys.front().is_some_and(|(at, _)| *at <= us) {
                 self.keys.pop_front();
             }
-            while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= us) {
-                (self.mouse, self.buttons) = (Some((x, y)), buttons);
+            while self.moves.front().is_some_and(|(at, ..)| *at <= us) {
                 self.moves.pop_front();
             }
+            (self.mouse, self.buttons) = (mouse, buttons);
         }
         state.wrote(&mut self.devices, inputs);
         self.wrote = inputs
@@ -955,8 +965,16 @@ mod tests {
         mouse.wrote(&ranges, &inputs);
         assert_eq!((mouse.x, mouse.y), (159, 114));
         // The original's driver given as reported there: still where it is.
-        mouse.given(&mouse.state());
+        mouse.given(&mouse.state(), &Host::default(), (2, 1));
         assert_eq!((mouse.x, mouse.y), (159, 114));
+        // Given the original's as reported (x even) with the host's mouse where its driver took it last, half a pixel
+        // on: the driver's own position is the host's (D198).
+        let mut original = MouseDriver::default();
+        let host = Host { mouse: Some((205.5, 129.0)), moved: true, ..Host::default() };
+        original.take(&host, (2, 1));
+        let mut given = MouseDriver::default();
+        given.given(&original.state(), &host, (2, 1));
+        assert_eq!((original.state()[2], given.x, given.y), (154, 411, 129));
         // Moved: the motion from where the driver holds it.
         mouse.read();
         mouse.take(&Host { mouse: Some((160.0, 114.0)), ..Host::default() }, (2, 1));
