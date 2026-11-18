@@ -558,6 +558,9 @@ impl Request {
                 "--presentation" => request.presentation = Some(value()?),
                 "--initial" => request.initial = Some(value()?),
                 "--fix" => request.fixes.push(value()?),
+                // A port's own input handling checked beside (D194): the platform's `main` takes it; a port without
+                // one checks nothing, and its lines say nothing of it (D197).
+                "--live" => {}
                 _ => return Err(format!("unknown option {flag}\n{usage}")),
             }
         }

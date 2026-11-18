@@ -1152,6 +1152,15 @@ impl<'a> Recorder<'a> {
         // would take to its limit only to drop.
         self.keeping = false;
         self.to_end = Some(progress);
+        // The play's inputs, for the check of the port's input handling beside it (D197).
+        if let Some(follow) = self.follow.as_mut() {
+            follow.keep_given();
+        }
+    }
+
+    /// The followed play's inputs given up to `cycle` (a tick's), each once.
+    pub(crate) fn played_until(&mut self, cycle: u64) -> Vec<(u64, String)> {
+        self.follow.as_mut().map(|f| f.given_until(cycle)).unwrap_or_default()
     }
 
     /// The next tick final, in order (the start-up's first); none once the run has ended and every tick is given.

@@ -43,6 +43,8 @@ pub(crate) struct Follow {
     /// Set once nothing more will be written (the window closed, or the play is followed again from its file): its last
     /// mark is then its end, whether or not it wrote one.
     done: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The inputs given and not taken yet, where they are kept (`rrc play`'s check of the port's input handling, D197).
+    given: Option<VecDeque<(u64, String)>>,
 }
 
 /// What the run may do next.
@@ -69,7 +71,20 @@ impl Follow {
             marks: 0,
             checked: 0,
             done: None,
+            given: None,
         }
+    }
+
+    /// The inputs given to Clockwork are kept, for [`Follow::given_until`].
+    pub fn keep_given(&mut self) {
+        self.given.get_or_insert_with(VecDeque::new);
+    }
+
+    /// The inputs given up to `cycle`, each once: `<cycle> K 1E` lines as the file has them.
+    pub fn given_until(&mut self, cycle: u64) -> Vec<(u64, String)> {
+        let Some(given) = self.given.as_mut() else { return Vec::new() };
+        let n = given.iter().take_while(|(at, _)| *at <= cycle).count();
+        given.drain(..n).collect()
     }
 
     /// Nothing more will be written once `done` is set (D192): the play then ends at its last mark.
@@ -203,7 +218,11 @@ impl Follow {
             while let Some((cycle, _)) = self.waiting.front()
                 && *cycle < before
             {
-                events.push(self.waiting.pop_front().expect("there is one").1);
+                let (cycle, line) = self.waiting.pop_front().expect("there is one");
+                if let Some(given) = self.given.as_mut() {
+                    given.push_back((cycle, line.clone()));
+                }
+                events.push(line);
             }
             if !events.is_empty() {
                 clockwork.ask("input", json!({ "events": events }))?;

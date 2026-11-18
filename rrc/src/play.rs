@@ -188,6 +188,9 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     );
     census.show(name, 15);
     say("census", crate::path_text(&dir.join("census.json")));
+    // The port's own input handling, beside (D197): what its `Live` made of the play's input at each tick.
+    followed.lived.save(&dir.join("live.json"))?;
+    followed.lived.show(name);
     // Where to look first: the field that differs in the most passes.
     if let Some((key, seen)) = census.fields.iter().max_by_key(|(key, seen)| (seen.ticks, std::cmp::Reverse(*key))) {
         say(

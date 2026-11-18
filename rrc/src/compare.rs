@@ -1671,49 +1671,58 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
         }
     }
     let lived = match live {
-        true => Some(judge(&trace, &file("port.jsonl"), played.as_ref().unwrap_or(&BTreeMap::new()))?),
+        true => Some(judge(&trace, &[file("port.jsonl").into()], played.as_ref().unwrap_or(&BTreeMap::new()))?),
         false => None,
     };
     Ok((counting.census, lived))
 }
 
 /// What the player did up to each tick's sync point, as the session's run had it (D194): its input from where it
-/// starts (Clockwork's `queued`, once the session is loaded); each tick's time and the next's (ms from power-on), the
-/// keyboard controller's bytes since the tick before and the mouse's moves (in the screen's pixels: mode 13h's driver
-/// counts two across a pixel, with its buttons), each at its time. By tick, as an inputs line's `devices`.
+/// starts (Clockwork's `queued`, once the session is loaded), as [`devices`] gives a tick's. By tick, as an inputs
+/// line's `devices`.
 fn played(repo: &Repo, session: &Session, k: &Knowledge, trace: &Trace) -> Result<BTreeMap<u64, Value>, String> {
     let (mut clockwork, _, _) = crate::trace::begin(repo, session, &crate::trace::sync_points(k)?)?;
     let queued = clockwork.ask("queued", Value::Null)?;
     let ips = queued["ips"].as_u64().filter(|&i| i > 0).ok_or("the machine's speed")?;
-    let mut events = Vec::new();
+    let mut events = std::collections::VecDeque::new();
     for line in queued["events"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-        let mut words = line.split(' ');
-        let cycle: u64 = words.next().and_then(|c| c.parse().ok()).ok_or_else(|| format!("an input: {line:?}"))?;
-        events.push((cycle, words.map(str::to_owned).collect::<Vec<_>>()));
+        let cycle: u64 =
+            line.split(' ').next().and_then(|c| c.parse().ok()).ok_or_else(|| format!("an input: {line:?}"))?;
+        events.push_back((cycle, line.to_owned()));
     }
-    let us = |cycle: u64| (u128::from(cycle) * 1_000_000 / u128::from(ips)) as u64;
     let mut played = BTreeMap::new();
-    let mut next = 0;
     for (i, t) in trace.ticks.iter().enumerate() {
-        let (mut keys, mut mouse) = (Vec::new(), Vec::new());
-        while let Some((cycle, words)) = events.get(next).filter(|(cycle, _)| *cycle <= t.cycle) {
-            let number = |i: usize| words.get(i).and_then(|w| w.parse::<i64>().ok()).unwrap_or(0);
-            match words.first().map(String::as_str) {
-                Some("K") => keys
-                    .extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok()).map(|k| json!([us(*cycle), k]))),
-                // The driver's coordinates in the screen's pixels: mode 13h's counts two across one (321 is 160.5).
-                Some("M") => mouse.push(json!([us(*cycle), number(1) as f64 / 2.0, number(2), number(3)])),
-                _ => {}
-            }
-            next += 1;
-        }
-        let mut devices = json!({"us": us(t.cycle), "keys": keys, "mouse": mouse});
-        if let Some(after) = trace.ticks.get(i + 1) {
-            devices["next"] = json!(us(after.cycle));
-        }
-        played.insert(t.tick, devices);
+        let n = events.iter().take_while(|(cycle, _)| *cycle <= t.cycle).count();
+        let came: Vec<(u64, String)> = events.drain(..n).collect();
+        played.insert(t.tick, devices(&came, t.cycle, trace.ticks.get(i + 1).map(|after| after.cycle), ips));
     }
     Ok(played)
+}
+
+/// A tick's devices (an inputs line's `devices`, D194): its time and the next tick's (µs from power-on, at `ips`
+/// cycles a second), and the input that `came` since the tick before (`<cycle> K 1E` lines, as a play file and
+/// Clockwork's `queued` have them): the keyboard controller's bytes and the mouse's moves (in the screen's pixels, to a
+/// fraction where the driver counts finer, with its buttons), each at its time.
+pub(crate) fn devices(came: &[(u64, String)], cycle: u64, next: Option<u64>, ips: u64) -> Value {
+    let us = |cycle: u64| (u128::from(cycle) * 1_000_000 / u128::from(ips.max(1))) as u64;
+    let (mut keys, mut mouse) = (Vec::new(), Vec::new());
+    for (at, line) in came {
+        let words: Vec<&str> = line.split(' ').skip(1).collect();
+        let number = |i: usize| words.get(i).and_then(|w| w.parse::<i64>().ok()).unwrap_or(0);
+        match words.first().copied() {
+            Some("K") => {
+                keys.extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok()).map(|k| json!([us(*at), k])));
+            }
+            // The driver's coordinates in the screen's pixels: mode 13h's counts two across one (321 is 160.5).
+            Some("M") => mouse.push(json!([us(*at), number(1) as f64 / 2.0, number(2), number(3)])),
+            _ => {}
+        }
+    }
+    let mut devices = json!({"us": us(cycle), "keys": keys, "mouse": mouse});
+    if let Some(next) = next {
+        devices["next"] = json!(us(next));
+    }
+    devices
 }
 
 /// What a port's own input handling made at the original's sync points, judged (D194): the ticks it made as the
@@ -1759,6 +1768,10 @@ impl Lived {
             let what = if seen.what.is_empty() { String::new() } else { format!(" ({})", seen.what) };
             format!("in {} ticks, first at {name}'s tick {}{what}", seen.ticks, seen.tick)
         };
+        if self.ticks == 0 {
+            say("live", format!("{name}: the port's input handling isn't checked: a port without the platform's Live"));
+            return;
+        }
         say("live", format!("{}: {} of {} ticks as the original's handlers made them", name, self.same, self.ticks));
         for (input, seen) in &self.differs {
             say("differs", format!("{input}: {}", at(seen)));
@@ -1781,9 +1794,14 @@ impl Lived {
     }
 }
 
-/// The port's checks of its input handling (`live` on its trace's lines, `port`) against the original's inputs at
-/// each tick of `trace` (`played`: each tick's devices, its time among them).
-fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Lived, String> {
+/// The port's checks of its input handling (`live` on its traces' lines, `ports`: a run's, and a run started again's
+/// after it) against the original's inputs at each tick of `trace` (`played`: each tick's devices, its time among
+/// them).
+pub(crate) fn judge(
+    trace: &Trace,
+    ports: &[std::path::PathBuf],
+    played: &BTreeMap<u64, Value>,
+) -> Result<Lived, String> {
     let due = |t: u64| played.get(&t).and_then(|d| d["us"].as_u64());
     // The platform's frame (µs): 70 a second.
     const FRAME: u64 = 1_000_000 / 70;
@@ -1799,7 +1817,11 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
     let names: BTreeMap<&str, usize> =
         trace.header.inputs.iter().enumerate().map(|(i, item)| (item.name.as_str(), i)).collect();
     let values: Vec<Vec<Option<String>>> = (0..trace.header.inputs.len()).map(|i| trace.input_values(i)).collect();
-    let text = std::fs::read_to_string(port).map_err(|e| format!("the port's trace: {e}"))?;
+    let mut text = String::new();
+    for port in ports {
+        text += &std::fs::read_to_string(port).map_err(|e| format!("{}: {e}", port.display()))?;
+        text.push('\n');
+    }
     let mut lived = Lived::default();
     let seen = |slot: &mut Option<Seen>, t: u64, what: String| match slot {
         Some(seen) => seen.ticks += 1,
@@ -2751,6 +2773,8 @@ pub(crate) struct PortStart<'a> {
     work: std::path::PathBuf,
     /// The port's runs so far: each writes a trace of its own.
     runs: std::cell::Cell<u32>,
+    /// Its own input handling checked beside (`--live`, D197).
+    live: bool,
 }
 
 impl<'a> PortStart<'a> {
@@ -2769,7 +2793,21 @@ impl<'a> PortStart<'a> {
             std::fs::remove_dir_all(&frames).map_err(|e| format!("{}: {e}", frames.display()))?;
         }
         std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
-        Ok(PortStart { repo, session, name, k, mapping, mapped, header, work, runs: std::cell::Cell::new(0) })
+        let runs = std::cell::Cell::new(0);
+        Ok(PortStart { repo, session, name, k, mapping, mapped, header, work, runs, live: false })
+    }
+
+    /// Its input handling checked beside its runs (D197): each runs with `--live`.
+    pub(crate) fn checking_live(mut self) -> Self {
+        self.live = true;
+        self
+    }
+
+    /// The traces of its runs so far, in order.
+    pub(crate) fn traces(&self) -> Vec<std::path::PathBuf> {
+        (1..=self.runs.get())
+            .map(|n| self.work.join(if n == 1 { "port.jsonl".to_owned() } else { format!("port-{n}.jsonl") }))
+            .collect()
     }
 
     pub(crate) fn header(&self) -> &crate::trace::Header {
@@ -2796,6 +2834,9 @@ impl<'a> PortStart<'a> {
         };
         let mut args = vec!["run".to_owned(), "--inputs".into(), "-".into(), "--out".into(), file(&trace)];
         args.extend(["--frames".to_owned(), file("frames")]);
+        if self.live {
+            args.push("--live".into());
+        }
         let saves = self.work.join("saves");
         match begin {
             Begin::Again(at, given) => {
