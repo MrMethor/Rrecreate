@@ -188,7 +188,7 @@ impl Live for Chime {
         if devices.escaped {
             return Next::End;
         }
-        let count = rrc_platform::timer_count(host.ms, 70) as u16;
+        let count = rrc_platform::timer_count(host.us, 70) as u16;
         if count == devices.count {
             return Next::Wait;
         }

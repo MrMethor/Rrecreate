@@ -764,6 +764,22 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D197. M6.5's step 6, its third part: the check's clock in µs, a driver's motion as an emulator's, a wait's poll the original's. Accepted 2026-11-18.
+What `cell`'s four ticks left by D195 came from, each made general:
+- **The clock in µs.** The host's clock a port's `Live` runs on is in microseconds (`Host::us`, in place of `ms`; a
+  timer's count, `rrc_platform::timer_count`, from it), and so are the devices a check is given (inputs version 7):
+  a timer's interrupt that came within the sync point's millisecond was counted again from it.
+- **A driver's motion as an emulator's.** The platform's mouse driver counts the motion from its own position to
+  the host's cursor (kept in its ranges), as an emulator's driver takes a host's cursor (Clockwork's, DOSBox's: what
+  the original's run counted), not from the host's cursor before: a position the program set or a range moves no
+  mouse, and the host's cursor on the driver's pixel, where the platform puts it when played (D145), is no move.
+- **A wait's poll the original's.** `Live::given` is told the sync point it is given (the runtime's `Check` the
+  tick's sync): the loop's wait there took its tick then, so a gate's next poll is a tick when the keys or the mouse
+  changed since the original's (D48), not since the port's own pass before, which came at another moment.
+**Why:** each pass of the check is judged from the original's state at its sync point (D194); what the port carried
+from its own pass before, or rounded off, showed as a difference the play wouldn't make.
+**Extends:** D133, D145, D194, D195.
+
 ### D196. A play followed live keeps as little on disk as it can. Accepted 2026-11-18, with the person.
 No disk budget for a play: what it keeps is made small instead (the person: "if there is a way to not bloat up the
 disk then that is preferable"). Measured on a 12:45 play of Arena (2572 ticks), a play followed live kept about
@@ -795,7 +811,7 @@ pass, not at the original's (1).
 **Why:** the plan's step 6 (D184): Arena's `Live` against `cell` and the dungeon session.
 **Extends:** D133, D145, D184, D194.
 
-### D194. M6.5's step 6, its first part: a played port's own input handling checked at virtual time. Accepted 2026-11-17.
+### D194. M6.5's step 6, its first part: a played port's own input handling checked at virtual time. Accepted 2026-11-17; its clock in ms: superseded by D197.
 `rrc compare SESSION --live` runs the port in lockstep and checks its own input handling beside it (the platform's
 `Live`, D119), played as the platform plays it at virtual time, a pass at a time: from each of the original's sync
 points, where the original's pass and the port's begin, `Live::next` is asked at the platform's frames (70 a second)

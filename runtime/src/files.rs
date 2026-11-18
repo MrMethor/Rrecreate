@@ -36,17 +36,17 @@ pub struct InputsLine {
     /// The hits the next tick's sync point's gate passed over before it (D130): how many times the original went
     /// round the wait the pass ends at. None where the file doesn't say.
     pub spun: Option<u64>,
-    /// The devices as the original's run had them at the tick's sync point (version 6, D194), for a played port's
+    /// The devices as the original's run had them at the tick's sync point (version 6, D194; in µs from 7), for a played port's
     /// own input handling checked against the original's.
     pub played: Option<Played>,
 }
 
-/// What the player did up to a tick's sync point, as the original's run had it (D194): the play's time there (ms from
+/// What the player did up to a tick's sync point, as the original's run had it (D194): the play's time there (µs from
 /// power-on) and at the next tick's (none at the last), the keyboard controller's bytes since the tick before and the
 /// mouse's moves (in the screen's pixels, with its buttons), each at its time.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Played {
-    pub ms: u64,
+    pub us: u64,
     pub next: Option<u64>,
     pub keys: Vec<(u64, u8)>,
     pub mouse: Vec<(u64, i32, i32, u8)>,
@@ -113,7 +113,7 @@ impl InputsReader {
         let header: Value = serde_json::from_str(&header).map_err(|e| format!("{path}: {e}"))?;
         // Version 2 adds `fed` (D124); 3 a late read's round, a tick's `spun` and an input's `sync` (D130); 4 the
         // start-up's pass, tick 0 (D134); 5 `correct` (D191); 6 `devices` (D194).
-        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=6)) {
+        if header["format"] != "rrc-inputs" || !matches!(header["version"].as_u64(), Some(1..=7)) {
             return Err(format!(
                 "{path}: not an inputs file this runtime reads ({} {})",
                 header["format"], header["version"]
@@ -245,8 +245,13 @@ impl InputsReader {
                         number(&m[3])? as u8,
                     ));
                 }
-                let ms = d["ms"].as_u64().ok_or("the devices' ms")?;
-                Some(Played { ms, next: d["next"].as_u64(), keys, mouse })
+                // Version 6's times are in ms.
+                let scale = if d.get("us").is_some() { 1 } else { 1000 };
+                let at = |v: &Value| v.as_u64().map(|t| t * scale);
+                let us = at(&d["us"]).or_else(|| at(&d["ms"])).ok_or("the devices' time")?;
+                keys.iter_mut().for_each(|k| k.0 *= scale);
+                mouse.iter_mut().for_each(|m| m.0 *= scale);
+                Some(Played { us, next: at(&d["next"]), keys, mouse })
             }
             None => None,
         };

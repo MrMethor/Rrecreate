@@ -551,8 +551,8 @@ path in the workspace now, and the build stops if one isn't in it.
 
 ### What step 6 did, its first part (2026-11-17, D194)
 
-- **The clock a parameter:** a played port's `Live` takes its time from `Host::ms`, the host's clock when played;
-  checked, the play's.
+- **The clock a parameter:** a played port's `Live` takes its time from the host's clock when played (`Host::us`,
+  in µs since D197); checked, the play's.
 - **`rrc compare SESSION --live`:** the port in lockstep, its `Live` given at each of the original's sync points the
   session's devices as the machine had them (Clockwork's `queued`), on each tick's inputs line (`devices`); what it
   made is on the tick's line of the port's trace (`live`), and rrc judges it: the same, timing (a pass early or late,

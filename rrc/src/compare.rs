@@ -1304,7 +1304,7 @@ fn write_inputs(
 ) -> Result<(), String> {
     let mut header = inputs_header(&trace.header);
     if played.is_some() {
-        header["version"] = json!(6);
+        header["version"] = json!(7);
     }
     let mut text = header.to_string();
     text.push('\n');
@@ -1691,7 +1691,7 @@ fn played(repo: &Repo, session: &Session, k: &Knowledge, trace: &Trace) -> Resul
         let cycle: u64 = words.next().and_then(|c| c.parse().ok()).ok_or_else(|| format!("an input: {line:?}"))?;
         events.push((cycle, words.map(str::to_owned).collect::<Vec<_>>()));
     }
-    let ms = |cycle: u64| (u128::from(cycle) * 1000 / u128::from(ips)) as u64;
+    let us = |cycle: u64| (u128::from(cycle) * 1_000_000 / u128::from(ips)) as u64;
     let mut played = BTreeMap::new();
     let mut next = 0;
     for (i, t) in trace.ticks.iter().enumerate() {
@@ -1700,15 +1700,15 @@ fn played(repo: &Repo, session: &Session, k: &Knowledge, trace: &Trace) -> Resul
             let number = |i: usize| words.get(i).and_then(|w| w.parse::<i64>().ok()).unwrap_or(0);
             match words.first().map(String::as_str) {
                 Some("K") => keys
-                    .extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok()).map(|k| json!([ms(*cycle), k]))),
-                Some("M") => mouse.push(json!([ms(*cycle), number(1) / 2, number(2), number(3)])),
+                    .extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok()).map(|k| json!([us(*cycle), k]))),
+                Some("M") => mouse.push(json!([us(*cycle), number(1) / 2, number(2), number(3)])),
                 _ => {}
             }
             next += 1;
         }
-        let mut devices = json!({"ms": ms(t.cycle), "keys": keys, "mouse": mouse});
+        let mut devices = json!({"us": us(t.cycle), "keys": keys, "mouse": mouse});
         if let Some(after) = trace.ticks.get(i + 1) {
-            devices["next"] = json!(ms(after.cycle));
+            devices["next"] = json!(us(after.cycle));
         }
         played.insert(t.tick, devices);
     }
@@ -1783,7 +1783,9 @@ impl Lived {
 /// The port's checks of its input handling (`live` on its trace's lines, `port`) against the original's inputs at
 /// each tick of `trace` (`played`: each tick's devices, its time among them).
 fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Lived, String> {
-    let due = |t: u64| played.get(&t).and_then(|d| d["ms"].as_u64());
+    let due = |t: u64| played.get(&t).and_then(|d| d["us"].as_u64());
+    // The platform's frame (µs): 70 a second.
+    const FRAME: u64 = 1_000_000 / 70;
     // The inputs each pass read in its middle (late reads, D60), and what it read: an event there the port's live play
     // sees a pass on, and the values the original's handlers held in the pass, a moment from its sync points.
     let read_late: BTreeMap<u64, std::collections::BTreeSet<usize>> =
@@ -1811,7 +1813,7 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
         // within two of the platform's frames (passes closer than its frames: a moment).
         if live["wait"] == true {
             // (The last tick has no next to wait for: a moment.)
-            let close = due(t).zip(due(t + 1)).is_none_or(|(at, next)| next.saturating_sub(at) <= 2 * 1000 / 70);
+            let close = due(t).zip(due(t + 1)).is_none_or(|(at, next)| next.saturating_sub(at) <= 2 * FRAME);
             seen(if close { &mut lived.waits } else { &mut lived.skips }, t, String::new());
             continue;
         }
@@ -1826,11 +1828,11 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
         }
         // The port's pass more than a frame from the original's (a pass of the original's that took long, which the
         // port's doesn't): what the time gives it is a moment apart, timing.
-        let apart = match (live["ms"].as_u64(), live["due"].as_u64()) {
-            (Some(ms), Some(due)) if ms.abs_diff(due) > 1000 / 70 + 1 => Some(if ms < due {
-                format!("its pass {} ms early", due - ms)
+        let apart = match (live["us"].as_u64(), live["due"].as_u64()) {
+            (Some(us), Some(due)) if us.abs_diff(due) > FRAME => Some(if us < due {
+                format!("its pass {} ms early", (due - us) / 1000)
             } else {
-                format!("its pass {} ms late", ms - due)
+                format!("its pass {} ms late", (us - due) / 1000)
             }),
             _ => None,
         };
@@ -1847,12 +1849,10 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
             let byte = |hex: &str, k: usize| hex.get(2 * k..2 * k + 2).unwrap_or("--").to_ascii_uppercase();
             // The original's values a pass before and after, and at the ticks within a frame of when the port's pass
             // came: what the time there gave the original's handlers.
-            let when = live["ms"].as_u64();
+            let when = live["us"].as_u64();
             let mut others: Vec<String> = (t.saturating_sub(8)..=t + 8)
                 .filter(|&u| u != t)
-                .filter(|&u| {
-                    u.abs_diff(t) == 1 || when.zip(due(u)).is_some_and(|(ms, at)| ms.abs_diff(at) <= 1000 / 70 + 1)
-                })
+                .filter(|&u| u.abs_diff(t) == 1 || when.zip(due(u)).is_some_and(|(us, at)| us.abs_diff(at) <= FRAME))
                 .filter_map(at)
                 .collect();
             others.extend(late_values(t.wrapping_sub(1), i));

@@ -21,7 +21,7 @@
 //!     // INT 09h keeps the keys by scan code; INT 08h counts at 70 Hz, and the loop waits for its count to move.
 //!     fn next(&self, d: &mut Devices, host: &Host) -> Next {
 //!         d.keys.take(&host.scancodes);
-//!         let count = rrc_platform::timer_count(host.ms, 70) as u16;
+//!         let count = rrc_platform::timer_count(host.us, 70) as u16;
 //!         if count == d.last {
 //!             return Next::Wait;
 //!         }
@@ -56,8 +56,8 @@ const CATCH_UP: usize = 8;
 /// The host's devices as the PC's, when the platform asks what the original's loop does next.
 #[derive(Debug, Clone, Default)]
 pub struct Host {
-    /// Milliseconds since play began.
-    pub ms: u64,
+    /// Microseconds since play began: a timer's interrupts are counted from it to the one (D197).
+    pub us: u64,
     /// The keyboard controller's bytes since the last tick, in order (scan code set 1: a key's code when it is
     /// pressed, with 80h when it is let go; a grey key's after E0h).
     pub scancodes: Vec<u8>,
@@ -192,12 +192,13 @@ pub trait Live: Simulation + Shows {
         let _ = (devices, host, sounds);
     }
 
-    /// The original's boundary values at a sync point (`inputs`, at `host.ms`: D194, `rrc compare --live`, which starts
-    /// each pass's handling from the original's), what its handlers held there (the keys down, a queue, the timer's
-    /// count), taken into the handlers' state; whether they were (then the keys and moves that came by it are in them).
-    /// Not by default: the handlers go on from their own.
-    fn given(&self, devices: &mut Self::Devices, inputs: &Inputs, host: &Host) -> bool {
-        let _ = (devices, inputs, host);
+    /// The original's boundary values at a sync point (`sync`, its `inputs`, at `host.us`: D194, `rrc compare --live`,
+    /// which starts each pass's handling from the original's), what its handlers held there (the keys down, a queue,
+    /// the timer's count), taken into the handlers' state, with what the loop's wait there keeps of them (a gate's last
+    /// poll, D197); whether they were (then the keys and moves that came by it are in them). Not by default: the
+    /// handlers go on from their own.
+    fn given(&self, devices: &mut Self::Devices, sync: &str, inputs: &Inputs, host: &Host) -> bool {
+        let _ = (devices, sync, inputs, host);
         false
     }
 
@@ -276,16 +277,23 @@ impl MouseDriver {
     /// `scale` of them: (2, 1) in mode 13h's 640 × 200) kept in the ranges, its motion as mickeys (the driver's
     /// default ratio: 8 a pixel's 8 across, 16 down); its buttons' presses and releases. A position the program set
     /// holds until the host's mouse moves; where the platform can, it puts the host's there (D145).
+    ///
+    /// The motion is counted from the driver's position to the host's (in range), as an emulator's driver takes a
+    /// host's cursor (Clockwork's, DOSBox's: what the original's run counted, D197): a position the program set or a
+    /// range moves no mouse, and the host's cursor on the driver's pixel (where the platform put it) is no move.
     pub fn take(&mut self, host: &Host, (sx, sy): (i32, i32)) {
         if let Some((x, y)) = host.mouse {
+            let on_pointer = (x, y) == (self.x.div_euclid(sx), self.y.div_euclid(sy));
             let (x, y) = (x * sx, y * sy);
             if self.host != Some((x, y)) {
-                let (was_x, was_y) = self.host.unwrap_or((self.x, self.y));
-                self.mickeys.0 += x - was_x;
-                self.mickeys.1 += 2 * (y - was_y);
                 self.host = Some((x, y));
                 let r = &self.ranges;
-                (self.x, self.y) = (x.clamp(r.x.0, r.x.1), y.clamp(r.y.0, r.y.1));
+                let (x, y) = (x.clamp(r.x.0, r.x.1), y.clamp(r.y.0, r.y.1));
+                if !on_pointer {
+                    self.mickeys.0 += x - self.x;
+                    self.mickeys.1 += 2 * (y - self.y);
+                    (self.x, self.y) = (x, y);
+                }
             }
         }
         let buttons = u16::from(host.buttons & 7);
@@ -368,9 +376,9 @@ impl MouseDriver {
     }
 }
 
-/// How many times a timer interrupt at `hz` has come since play began.
-pub fn timer_count(ms: u64, hz: u64) -> u64 {
-    ms * hz / 1000
+/// How many times a timer interrupt at `hz` has come since play began, `us` microseconds ago.
+pub fn timer_count(us: u64, hz: u64) -> u64 {
+    us * hz / 1_000_000
 }
 
 /// A tick's boundary values from their bytes, by name.
@@ -506,9 +514,10 @@ struct Checked<S: Live> {
     moves: std::collections::VecDeque<(u64, i32, i32, u8)>,
     mouse: Option<(i32, i32)>,
     buttons: u8,
-    /// The handlers' state to give at the next tick, the first's: its keys and moves are in it already.
-    given: Option<Inputs>,
-    /// The original's last sync point (ms): its pass began there, where the port's is.
+    /// The handlers' state to give at the next tick, the first's (its sync point, its inputs): its keys and moves are
+    /// in it already.
+    given: Option<(String, Inputs)>,
+    /// The original's last sync point (µs): its pass began there, where the port's is.
     last: Option<u64>,
 }
 
@@ -532,8 +541,9 @@ const FRAMES_HZ: u64 = 70;
 
 impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
-        let host = Host { ms: played.ms, ..Host::default() };
-        let taken = self.given.take().is_some_and(|inputs| state.given(&mut self.devices, &inputs, &host));
+        let host = Host { us: played.us, ..Host::default() };
+        let taken =
+            self.given.take().is_some_and(|(sync, inputs)| state.given(&mut self.devices, &sync, &inputs, &host));
         if !taken {
             self.keys.extend(played.keys.iter().copied());
             self.moves.extend(played.mouse.iter().copied());
@@ -541,54 +551,54 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
         // Frames from the original's last sync point, where its pass began and the port's is, to its next (or a frame
         // past this one at the last): the port's waits run from its pass as when played, and a pass of the original's
         // that took long (a story, a load) doesn't carry its lead into the next.
-        let from = self.last.replace(played.ms).unwrap_or(played.ms);
-        self.frames = self.frames.max(from * FRAMES_HZ / 1000);
-        let until = played.next.unwrap_or(played.ms + 1000 / FRAMES_HZ);
+        let from = self.last.replace(played.us).unwrap_or(played.us);
+        self.frames = self.frames.max(from * FRAMES_HZ / 1_000_000);
+        let until = played.next.unwrap_or(played.us + 1_000_000 / FRAMES_HZ);
         loop {
-            let ms = (self.frames + 1) * 1000 / FRAMES_HZ;
-            if ms > until.max(played.ms) {
+            let us = (self.frames + 1) * 1_000_000 / FRAMES_HZ;
+            if us > until.max(played.us) {
                 return serde_json::json!({"wait": true});
             }
             self.frames += 1;
             let mut scancodes = Vec::new();
-            while let Some(&(_, code)) = self.keys.front().filter(|(at, _)| *at <= ms) {
+            while let Some(&(_, code)) = self.keys.front().filter(|(at, _)| *at <= us) {
                 scancodes.push(code);
                 self.keys.pop_front();
             }
-            while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= ms) {
+            while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= us) {
                 (self.mouse, self.buttons) = (Some((x, y)), buttons);
                 self.moves.pop_front();
             }
-            let host = Host { ms, scancodes, mouse: self.mouse, buttons: self.buttons, ..Host::default() };
+            let host = Host { us, scancodes, mouse: self.mouse, buttons: self.buttons, ..Host::default() };
             match state.next(&mut self.devices, &host) {
                 Next::Wait => continue,
-                Next::End => return serde_json::json!({"end": true, "ms": ms, "due": played.ms}),
+                Next::End => return serde_json::json!({"end": true, "us": us, "due": played.us}),
                 Next::Tick(sync, inputs) => {
                     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
                     let values: serde_json::Map<String, serde_json::Value> =
                         inputs.values().map(|(name, bytes)| (name.to_owned(), serde_json::json!(hex(bytes)))).collect();
-                    return serde_json::json!({"sync": sync, "inputs": values, "ms": ms, "due": played.ms});
+                    return serde_json::json!({"sync": sync, "inputs": values, "us": us, "due": played.us});
                 }
             }
         }
     }
 
-    fn given(&mut self, _: &S, inputs: &Inputs) {
-        self.given = Some(inputs.clone());
+    fn given(&mut self, _: &S, sync: &str, inputs: &Inputs) {
+        self.given = Some((sync.to_owned(), inputs.clone()));
     }
 
     /// After each pass the handlers start again from the original's state at its sync point, then take what the pass
     /// wrote: each pass is judged on its own, and an event the original's pass read in its middle, which the port's
     /// live play sees a pass on, leaves nothing behind (the port's next pass, fed the original's inputs, wouldn't take
     /// it from the handlers).
-    fn stepped(&mut self, state: &S, inputs: &Inputs) {
-        let ms = self.last.unwrap_or(0);
+    fn stepped(&mut self, state: &S, sync: &str, inputs: &Inputs) {
+        let us = self.last.unwrap_or(0);
         // Where the handlers take the original's state there, what came by the sync point is in it: not given again.
-        if state.given(&mut self.devices, inputs, &Host { ms, ..Host::default() }) {
-            while self.keys.front().is_some_and(|(at, _)| *at <= ms) {
+        if state.given(&mut self.devices, sync, inputs, &Host { us, ..Host::default() }) {
+            while self.keys.front().is_some_and(|(at, _)| *at <= us) {
                 self.keys.pop_front();
             }
-            while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= ms) {
+            while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= us) {
                 (self.mouse, self.buttons) = (Some((x, y)), buttons);
                 self.moves.pop_front();
             }
@@ -694,7 +704,7 @@ pub fn play<S: Live, P: Presentation<S>>(
         let (down, up) = keys::changed(&window);
         let given = controls.give(&down, &up);
         let mut host = Host {
-            ms: started.elapsed().as_millis() as u64,
+            us: started.elapsed().as_micros() as u64,
             scancodes: given.scancodes,
             mouse: mouse(&window, &frame),
             buttons: buttons(&window, &mut pressed) | given.buttons,
@@ -810,7 +820,7 @@ mod tests {
         // Left pressed, then the grey Up (E0h 48h), then Left let go.
         keys.take(&[0x4B, 0xE0, 0x48, 0xCB]);
         assert_eq!((keys.0[0x4B], keys.0[0x48], keys.0[0x60]), (0, 1, 0));
-        assert_eq!(timer_count(1000, 70), 70);
+        assert_eq!(timer_count(1_000_000, 70), 70);
         let i = inputs(&[("timer_count", &[3, 0]), ("key_down", &keys.0)]);
         assert_eq!((i.u16("timer_count"), i.u8_at("key_down", 0x48)), (3, 1));
     }
@@ -847,7 +857,13 @@ mod tests {
         // The host's mouse still: the position holds; moved, it is the host's, kept in the ranges.
         mouse.take(&Host { mouse: Some((165, 30)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (162, 114));
+        mouse.read();
+        // The host's cursor put on the driver's pixel (D145): no move.
+        mouse.take(&Host { mouse: Some((81, 114)), ..Host::default() }, (2, 1));
+        assert_eq!((mouse.x, mouse.y, mouse.mickeys), (162, 114, (0, 0)));
+        // Moved: the motion from the driver's position to the host's in range, as an emulator's driver counts it.
         mouse.take(&Host { mouse: Some((300, 150)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (471, 137));
+        assert_eq!(mouse.mickeys, (471 - 162, 2 * (137 - 114)));
     }
 }

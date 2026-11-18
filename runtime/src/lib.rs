@@ -647,14 +647,14 @@ pub fn run<S: Simulation>(request: &Request) -> Result<(), String> {
 /// What a run checks beside its comparison at each tick (D194): a played port's own input handling (the platform's
 /// `Live`) given the devices as the original's run had them at the tick's sync point.
 pub trait Check<S> {
-    /// The original's boundary values at the run's first tick, what its handlers held there (a start-up pass that took
-    /// long, or a session's tick before it, made them).
-    fn given(&mut self, state: &S, inputs: &Inputs);
+    /// The original's boundary values at the run's first tick, at its sync point `sync`: what its handlers held there
+    /// (a start-up pass that took long, or a session's tick before it, made them).
+    fn given(&mut self, state: &S, sync: &str, inputs: &Inputs);
     /// At a tick's sync point, before its pass, the port's state there and what the player had done by then: what to
     /// write on the tick's line (`live`).
     fn at(&mut self, state: &S, played: &files::Played) -> Value;
-    /// The pass stepped: `inputs`, the original's at its sync point, with what it wrote into them.
-    fn stepped(&mut self, state: &S, inputs: &Inputs);
+    /// The pass from `sync` stepped: `inputs`, the original's at its sync point, with what it wrote into them.
+    fn stepped(&mut self, state: &S, sync: &str, inputs: &Inputs);
 }
 
 /// Runs the port drawn by `P` as `request` says, `check` beside the comparison at each tick whose line has its
@@ -739,7 +739,7 @@ fn run_drawn<S: Simulation>(
                 state.power_on(&Tick { number: 0, sync: &line.sync, inputs: &current, spun: line.spun, next });
                 // What the start-up wrote into its inputs, to the check beside, as a pass's (D194).
                 if let Some(check) = check.as_deref_mut() {
-                    check.stepped(&state, &current);
+                    check.stepped(&state, &line.sync, &current);
                 }
             }
             reading = following;
@@ -833,7 +833,7 @@ fn run_drawn<S: Simulation>(
         // handlers' state the original's had there.
         if let (Some(check), Some(played)) = (check.as_deref_mut(), &line.played) {
             if line.tick == first {
-                check.given(&state, &current);
+                check.given(&state, &line.sync, &current);
             }
             out.live(check.at(&state, played));
         }
@@ -866,7 +866,7 @@ fn run_drawn<S: Simulation>(
         }
         state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun, next });
         if let Some(check) = check.as_deref_mut() {
-            check.stepped(&state, &current);
+            check.stepped(&state, &line.sync, &current);
         }
         pass = Some(line.sync.clone());
         last = line.tick;
