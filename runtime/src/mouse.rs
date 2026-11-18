@@ -62,18 +62,25 @@ impl MouseRanges {
         self.put(inputs, x, y);
     }
 
-    /// 07h: the range across, from `a` to `b` either way round; a position outside it moves to its nearer end.
+    /// 07h: the range across, from `a` to `b` either way round; a position outside it moves to its nearer end. One
+    /// inside it is left as it is (D198), at the driver's own precision, which the device's report doesn't carry.
     pub fn set_x_range(&mut self, inputs: &Inputs, a: i16, b: i16) {
         self.x = ends(a, b);
         let (x, y) = self.position(inputs);
-        self.put(inputs, x.clamp(self.x.0, self.x.1), y);
+        let kept = x.clamp(self.x.0, self.x.1);
+        if kept != x {
+            self.put(inputs, kept, y);
+        }
     }
 
     /// 08h: the range down, as [`MouseRanges::set_x_range`] across.
     pub fn set_y_range(&mut self, inputs: &Inputs, a: i16, b: i16) {
         self.y = ends(a, b);
         let (x, y) = self.position(inputs);
-        self.put(inputs, x, y.clamp(self.y.0, self.y.1));
+        let kept = y.clamp(self.y.0, self.y.1);
+        if kept != y {
+            self.put(inputs, x, kept);
+        }
     }
 
     /// A position as the device reports it: at the granularity.
@@ -162,6 +169,10 @@ mod tests {
         ranges.set_y_range(&inputs, 137, 91);
         assert_eq!(ranges.y, (91, 137), "a range given either way round");
         assert_eq!(position(&inputs), (330, 91));
+        // A range the position is inside leaves it: nothing written (D198).
+        let (before, mut wide) = (inputs.written(MOUSE), MouseRanges::MODE_13H);
+        wide.set_x_range(&inputs, 0, 639);
+        assert_eq!((inputs.written(MOUSE), wide.held), (before, None));
         ranges.set_position(&inputs, 158, 114);
         assert_eq!(position(&inputs), (162, 114));
         // A read sees the program's change (the tick's value with the pass's writes).
