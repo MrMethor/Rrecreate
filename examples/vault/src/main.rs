@@ -343,7 +343,7 @@ impl Presentation<Vault> for Screen {
 
 /// The original's input handling, played live: INT 09h's key states (`on_keyboard`) and INT 08h's count at 70 Hz
 /// (`on_timer`), whose change `wait_tick` (VAULT.EXE+00383) waits for.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Devices {
     keys: KeyStates,
     count: u16,

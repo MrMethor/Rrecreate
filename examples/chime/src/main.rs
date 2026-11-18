@@ -171,7 +171,7 @@ fn speaker_off(sounds: &mut Sounds) {
 
 /// The original's input handling, played live: INT 09h's key states (`on_keyboard`) and INT 08h's count at 70 Hz
 /// (`on_timer`), whose change `wait_tick` (CHIME.EXE+00156) waits for.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Devices {
     keys: KeyStates,
     count: u16,

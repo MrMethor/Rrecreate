@@ -13,7 +13,7 @@
 //! # #[derive(serde::Serialize, serde::Deserialize)] struct Game;
 //! # impl rrc_runtime::Simulation for Game { fn start() -> Game { Game } fn step(&mut self, _: &rrc_runtime::Tick) {} }
 //! # impl rrc_runtime::present::Shows for Game { type Scene<'a> = (); fn scene(&self) {} }
-//! #[derive(Default)]
+//! #[derive(Default, Clone)]
 //! struct Devices { keys: KeyStates, last: u16 }
 //!
 //! impl Live for Game {
@@ -162,8 +162,9 @@ pub enum Next {
 /// A port played live: its simulation, and the original's input handling, which a comparison gives it from
 /// the original's memory instead (the boundary values at each sync point).
 pub trait Live: Simulation + Shows {
-    /// What the original's input handling keeps: its keyboard handler's key states, its timer's count.
-    type Devices: Default;
+    /// What the original's input handling keeps: its keyboard handler's key states, its timer's count. A check
+    /// copies it to ask what the handlers would make at another moment (D197).
+    type Devices: Default + Clone;
 
     /// Whether the program draws its own mouse pointer (D142): the host's is then hidden over the window, as a PC's
     /// screen showed only the game's. False by default (a program that shows the mouse driver's, or none).
@@ -553,6 +554,16 @@ impl<S: Live> Default for Checked<S> {
 /// The platform's frames a second (its window's), the check's too.
 const FRAMES_HZ: u64 = 70;
 
+impl<S: Live> Checked<S> {
+    /// A pass the port's loop took: from `sync`, with its inputs' bytes in hex.
+    fn made(sync: &str, inputs: &Inputs) -> serde_json::Value {
+        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let values: serde_json::Map<String, serde_json::Value> =
+            inputs.values().map(|(name, bytes)| (name.to_owned(), serde_json::json!(hex(bytes)))).collect();
+        serde_json::json!({"sync": sync, "inputs": values})
+    }
+}
+
 impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
         let host = Host { us: played.us, ..Host::default() };
@@ -593,15 +604,32 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
                 (self.mouse, self.buttons, moved) = (Some((x, y)), buttons, true);
                 self.moves.pop_front();
             }
+            // Before the original's moment, the handlers as they are, to ask them there too should the pass come now.
+            let before = (us < played.us).then(|| self.devices.clone());
             let host = Host { us, scancodes, mouse: self.mouse, moved, buttons: self.buttons, ..Host::default() };
             match state.next(&mut self.devices, &host) {
                 Next::Wait => continue,
                 Next::End => return serde_json::json!({"end": true, "us": us, "due": played.us}),
                 Next::Tick(sync, inputs) => {
-                    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
-                    let values: serde_json::Map<String, serde_json::Value> =
-                        inputs.values().map(|(name, bytes)| (name.to_owned(), serde_json::json!(hex(bytes)))).collect();
-                    return serde_json::json!({"sync": sync, "inputs": values, "us": us, "due": played.us});
+                    let mut made = Self::made(&sync, &inputs);
+                    (made["us"], made["due"]) = (us.into(), played.us.into());
+                    // A pass before the original's moment: what the handlers would make there, had it not come yet,
+                    // every event by then given (D197). Where that is the original's, the moment alone differs.
+                    if let Some(mut devices) = before {
+                        let mut scancodes = host.scancodes;
+                        scancodes.extend(self.keys.iter().filter(|(at, _)| *at <= played.us).map(|&(_, code)| code));
+                        let (mut mouse, mut buttons, mut moved) = (self.mouse, self.buttons, host.moved);
+                        for &(_, x, y, b) in self.moves.iter().filter(|(at, ..)| *at <= played.us) {
+                            (mouse, buttons, moved) = (Some((x, y)), b, true);
+                        }
+                        let then = Host { us: played.us, scancodes, mouse, moved, buttons, ..Host::default() };
+                        made["then"] = match state.next(&mut devices, &then) {
+                            Next::Tick(sync, inputs) => Self::made(&sync, &inputs),
+                            Next::Wait => serde_json::json!({"wait": true}),
+                            Next::End => serde_json::json!({"end": true}),
+                        };
+                    }
+                    return made;
                 }
             }
         }

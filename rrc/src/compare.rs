@@ -1862,13 +1862,20 @@ fn judge(trace: &Trace, port: &str, played: &BTreeMap<u64, Value>) -> Result<Liv
             let apart_bytes: Vec<usize> = (0..bytes).filter(|&k| byte(&theirs, k) != byte(made, k)).collect();
             // An event the original's pass before read in its middle: the port's live play sees it a pass on.
             let inside = read_late.get(&t.wrapping_sub(1)).is_some_and(|inputs| inputs.contains(&i));
-            let wrong = apart_bytes.iter().copied().find(|&k| apart.is_none() && !inside && !near(k, &byte(made, k)));
+            // The port's pass came before the original's moment, and its handlers asked there make the original's
+            // (`then`, D197): the moment alone differs.
+            let then = live["then"]["inputs"][input].as_str().is_some_and(|v| v.eq_ignore_ascii_case(&theirs));
+            let wrong =
+                apart_bytes.iter().copied().find(|&k| apart.is_none() && !inside && !then && !near(k, &byte(made, k)));
             let k = wrong.or(apart_bytes.first().copied()).unwrap_or(0);
             let mut what = format!("byte {k}: original {}, port {}", byte(&theirs, k), byte(made, k));
             if let Some(apart) = &apart {
                 what = format!("{what}; {apart}");
             } else if inside && wrong.is_none() {
                 what = format!("{what}; read in the middle of the pass before");
+            } else if then && wrong.is_none() {
+                let early = live["due"].as_u64().zip(live["us"].as_u64()).map_or(0, |(d, u)| d.saturating_sub(u));
+                what = format!("{what}; its pass {} ms early, the original's at its moment", early / 1000);
             }
             let map = if wrong.is_some() { &mut lived.differs } else { &mut lived.timing };
             match map.get_mut(input) {

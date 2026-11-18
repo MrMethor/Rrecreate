@@ -783,8 +783,9 @@ ends is read as a file is; one that can't read its standard input is given the f
   times: `{"tick":194,"state":{…},"notes":{"a bounce not counted (TOY.EXE+002FF)":1}}` (D115). A run with `--live`
   (D194) has on each tick with `devices` what the port's `Live` made of them, asked at its frames (70 a second) from
   the tick before's sync point up to the next tick's: `"live": {"sync":"play","inputs":{"timer_count":"0500",…},
-  "us":21842857,"due":21843012}`, each input's bytes in hex, with the frame's time and the original's sync point's (µs);
-  or
+  "us":21842857,"due":21843012}`, each input's bytes in hex, with the frame's time and the original's sync point's (µs),
+  and where the frame came before the original's sync point, what the port's handlers would make at it (`"then"`, the
+  same form, or `{"wait":true}`, D197); or
   `{"wait":true}` (its loop still waited at the next tick's time) or `{"end":true}` (it ended).
 - **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the
   port draws it, a frame's picture (below, `FRM1`, indexed), in `DIR/<tick>.frm` when it changed since the tick
