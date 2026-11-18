@@ -7,8 +7,15 @@
 //! this only reads the machine, so a played session still replays exactly.
 //!
 //! The queue also paces the emulator: [`LiveAudio::frame_cycles`] runs a little more or less
-//! than a nominal frame so that about [`TARGET_QUEUE_NS`] of sound stays queued, which keeps
-//! the emulated time in step with the sound card's clock.
+//! than a nominal frame so that a little more sound stays queued than the device takes at once
+//! (its target), which keeps the emulated time in step with the sound card's clock.
+//!
+//! The device takes [`DEVICE_FRAMES`] samples a channel at a time, twice buffered, as a played
+//! port's output does (Rrecreate D168, D199): Windows' DirectSound, emulated over its audio engine,
+//! reads ahead of where it plays, and halves of 1024 (20 ms) were played before they were written,
+//! the sound breaking up. `CLOCKWORK_SOUND_BUFFER` sets another (256 to 16384), which `rrc play
+//! --sound-buffer` passes; it isn't an option, which would count in the source hash (D76) though
+//! the window replays nothing.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -21,11 +28,17 @@ use midir::{MidiOutput, MidiOutputConnection};
 use tinyaudio::{OutputDevice, OutputDeviceParameters, run_output_device};
 
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
-/// Frames the output device takes at a time (about 21 ms); it buffers two such blocks.
-const DEVICE_FRAMES: usize = 1024;
-/// How much sound the emulator keeps queued ahead of the device.
+/// Frames the output device takes at a time by default (about 41 ms); it buffers two such blocks.
+pub const DEVICE_FRAMES: usize = 2048;
+/// The environment variable that sets another, and the frames it may set.
+const BUFFER_VAR: &str = "CLOCKWORK_SOUND_BUFFER";
+const BUFFER_FRAMES: std::ops::RangeInclusive<usize> = 256..=16384;
+/// How much sound the emulator keeps queued ahead of the device at least, and more than half a
+/// block above it: the queue falls by a block each time the device takes one.
 const TARGET_QUEUE_NS: u64 = 50_000_000;
-/// More than this is dropped (only after the window stalled, as pacing keeps the queue short).
+const QUEUE_MARGIN_NS: u64 = 30_000_000;
+/// More than this is dropped (only after the window stalled, as pacing keeps the queue short):
+/// 250 ms, or two blocks past the target.
 const MAX_QUEUE_NS: u64 = 250_000_000;
 const FRAME_NS: u64 = NANOS_PER_SECOND / 70;
 
@@ -36,6 +49,10 @@ pub struct LiveAudio {
     renderer: Renderer,
     rendered: Vec<i16>,
     queue: Queue,
+    /// Samples a channel the device takes at a time; the queue kept ahead of it, and the most.
+    frames: usize,
+    target_ns: u64,
+    max_ns: u64,
     /// Stops the device's thread when dropped.
     device: Option<OutputDevice>,
     midi: Midi,
@@ -47,10 +64,14 @@ impl LiveAudio {
     /// program first sends MIDI.
     pub fn start(midi_port: Option<String>) -> LiveAudio {
         let queue = Queue::default();
+        let frames = buffer_frames(std::env::var(BUFFER_VAR).ok().as_deref());
+        let block_ns = frames as u64 * NANOS_PER_SECOND / u64::from(SAMPLE_RATE_HZ);
+        let target_ns = TARGET_QUEUE_NS.max(block_ns / 2 + QUEUE_MARGIN_NS);
+        let max_ns = MAX_QUEUE_NS.max(target_ns + 2 * block_ns);
         let params = OutputDeviceParameters {
             sample_rate: SAMPLE_RATE_HZ as usize,
             channels_count: 2,
-            channel_sample_count: DEVICE_FRAMES,
+            channel_sample_count: frames,
         };
         let shared = queue.clone();
         let device = run_output_device(params, move |data: &mut [f32]| {
@@ -60,7 +81,16 @@ impl LiveAudio {
             }
         });
         let device = device.map_err(|e| eprintln!("clockwork: no sound: {e}")).ok();
-        LiveAudio { renderer: Renderer::default(), rendered: Vec::new(), queue, device, midi: Midi::new(midi_port) }
+        LiveAudio {
+            renderer: Renderer::default(),
+            rendered: Vec::new(),
+            queue,
+            frames,
+            target_ns,
+            max_ns,
+            device,
+            midi: Midi::new(midi_port),
+        }
     }
 
     fn queued_ns(&self) -> u64 {
@@ -74,7 +104,7 @@ impl LiveAudio {
         if self.device.is_none() {
             return nominal;
         }
-        let error = TARGET_QUEUE_NS as i64 - self.queued_ns() as i64;
+        let error = self.target_ns as i64 - self.queued_ns() as i64;
         let run_ns = (FRAME_NS as i64 + error / 4).clamp(FRAME_NS as i64 / 2, FRAME_NS as i64 * 2) as u64;
         (u128::from(nominal) * u128::from(run_ns) / u128::from(FRAME_NS)).max(1) as u64
     }
@@ -85,19 +115,32 @@ impl LiveAudio {
         self.rendered.clear();
         self.renderer.render(&m.audio_log(), m.audio_settled_ns(), &mut self.rendered);
         let heard_ns = if self.device.is_some() {
-            let max_samples = (MAX_QUEUE_NS * u64::from(SAMPLE_RATE_HZ) / NANOS_PER_SECOND) as usize * 2;
+            let max_samples = (self.max_ns * u64::from(SAMPLE_RATE_HZ) / NANOS_PER_SECOND) as usize * 2;
             let mut queue = self.queue.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             queue.extend(&self.rendered);
             let excess = queue.len().saturating_sub(max_samples);
             queue.drain(..excess);
             drop(queue);
-            let device_ns = DEVICE_FRAMES as u64 * NANOS_PER_SECOND / u64::from(SAMPLE_RATE_HZ);
+            let device_ns = self.frames as u64 * NANOS_PER_SECOND / u64::from(SAMPLE_RATE_HZ);
             self.renderer.rendered_ns().saturating_sub(self.queued_ns() + device_ns)
         } else {
             m.elapsed_ns()
         };
         let heard_tick = (u128::from(heard_ns) * u128::from(PIT_HZ) / u128::from(NANOS_PER_SECOND)) as u64;
         self.midi.send_until(&m.devices.mpu.midi_log, heard_tick);
+    }
+}
+
+/// The samples a channel the device takes at a time: `CLOCKWORK_SOUND_BUFFER`'s (`set`), if it is
+/// a number in range, else the default (with a message where it was set otherwise).
+fn buffer_frames(set: Option<&str>) -> usize {
+    match set.map(|s| s.trim().parse::<usize>().ok().filter(|f| BUFFER_FRAMES.contains(f))) {
+        Some(Some(frames)) => frames,
+        Some(None) => {
+            eprintln!("clockwork: {BUFFER_VAR}: samples a channel, 256 to 16384; {DEVICE_FRAMES} it is");
+            DEVICE_FRAMES
+        }
+        None => DEVICE_FRAMES,
     }
 }
 
@@ -176,5 +219,18 @@ impl Drop for Midi {
                 let _ = connection.send(&[0xB0 | channel, 121, 0]); // reset all controllers
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_sound_buffer_is_the_ports_or_the_one_set() {
+        assert_eq!(buffer_frames(None), 2048, "about 41 ms, as a played port's (D168)");
+        assert_eq!(buffer_frames(Some("4096")), 4096);
+        assert_eq!(buffer_frames(Some("100")), 2048, "out of range");
+        assert_eq!(buffer_frames(Some("lots")), 2048);
     }
 }

@@ -62,7 +62,9 @@ target/release/clockwork play "C:/Games/KEEN1" KEEN1.EXE --record keen.session
 ```
 
 `play` opens a window with keyboard, mouse and gamepad input and live sound (OPL, Sound Blaster and PC
-speaker through the sound output, MIDI through the computer's synthesizer: `--midi-out NAME`, `--no-audio`).
+speaker through the sound output, MIDI through the computer's synthesizer: `--midi-out NAME`, `--no-audio`). The
+output takes 2048 samples a channel at a time, twice buffered (D199); if the sound still breaks up, set
+`CLOCKWORK_SOUND_BUFFER` to more (256 to 16384, `rrc play --sound-buffer`).
 With `--record`, the input is saved as a session that `run DIR --replay keen.session` reproduces exactly.
 Session files are text: `<cycle> K <scancode hex>` for keys, `<cycle> M <x> <y> <buttons>` for the mouse
 (`<cycle> R <dx> <dy>` for relative motion), `<cycle> J <stick> <x> <y> <buttons>` for a joystick. The file is

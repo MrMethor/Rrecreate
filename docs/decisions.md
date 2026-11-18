@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D199. Clockwork's window buffers its sound as a played port does. Accepted 2026-11-18.
+`clockwork play` asks the host's output for 2048 samples a channel at a time (about 41 ms), twice buffered, where it
+asked for 1024, as a played port's output does (D168), and keeps queued ahead of it at least half a block more than
+30 ms (50 ms at the least) to pace the emulator by. `CLOCKWORK_SOUND_BUFFER` sets another (256 to 16384), which `rrc
+play --sound-buffer FRAMES` passes to the window. Not an option of Clockwork's: its options count in its source hash
+(D76), and a new one would make every recording stale, the person's plays among them, though the window replays
+nothing; the window's sound code is one of the files the hash leaves out (D173).
+**Why:** the person heard the original's sound break up in the window while playing step 7, as the port's had before
+D168: the same output, the same read-ahead of Windows' audio engine.
+**Extends:** D168, D173, D192.
+
 ### D198. What the person's first play found in the toolkit. Accepted 2026-11-18.
 The person's first play of step 7 (3:01, from power-on into the dungeon, played in Clockwork's window) met what the
 scripted sessions never did; three of the toolkit's, each made general:

@@ -60,8 +60,19 @@ const PLAYING: f64 = 365.0 * 24.0 * 3600.0;
 
 /// `rrc play NAME [--from SESSION --tick N] [--replay FILE]`, or `rrc play NAME --resume`.
 pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--from", "--tick", "--replay"], &["--resume"])?;
-    let usage = "play NAME [--from SESSION --tick N] [--replay FILE] | play NAME --resume";
+    let a = Args::parse(args, &["--from", "--tick", "--replay", "--sound-buffer"], &["--resume"])?;
+    let usage = "play NAME [--from SESSION --tick N] [--replay FILE] [--sound-buffer FRAMES] | play NAME --resume";
+    // The window's sound output, samples a channel at a time (D199): Clockwork's own default is a played port's.
+    let sound_buffer = match a.value("--sound-buffer") {
+        Some(frames) => Some(
+            frames
+                .parse::<usize>()
+                .ok()
+                .filter(|f| (256..=16384).contains(f))
+                .ok_or_else(|| format!("--sound-buffer {frames}: samples a channel, 256 to 16384"))?,
+        ),
+        None => None,
+    };
     let [name] = a.positionals(1, 1, usage)? else { unreachable!() };
     if name.is_empty() || name.contains(['/', '\\', '.']) {
         return Err(format!("{name:?}: a play's name is a session's, without / \\ or ."));
@@ -142,6 +153,9 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 command.arg("--load-snapshot").arg(crate::cache::Cache::open(&repo.local)?.path(hash));
             }
             command.arg("--record").arg(&path);
+            if let Some(frames) = sound_buffer {
+                command.env("CLOCKWORK_SOUND_BUFFER", frames.to_string());
+            }
             Some(command.spawn().map_err(|e| format!("clockwork play: {e}"))?)
         }
     };
