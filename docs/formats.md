@@ -785,7 +785,8 @@ ends is read as a file is; one that can't read its standard input is given the f
   the tick before's sync point up to the next tick's: `"live": {"sync":"play","inputs":{"timer_count":"0500",…},
   "us":21842857,"due":21843012}`, each input's bytes in hex, with the frame's time and the original's sync point's (µs),
   and where the frame came before the original's sync point, what the port's handlers would make at it (`"then"`, the
-  same form, or `{"wait":true}`, D197); or
+  same form, or `{"wait":true}`, D197), and what the port's pass before wrote into its inputs itself, by input, each
+  byte's place and value (`"wrote": {"mouse": [[2, 64], [3, 1]]}`, D197); or
   `{"wait":true}` (its loop still waited at the next tick's time) or `{"end":true}` (it ended).
 - **Frames** (`--frames DIR`, written by a port that draws, D107): the screen at each tick's sync point as the
   port draws it, a frame's picture (below, `FRM1`, indexed), in `DIR/<tick>.frm` when it changed since the tick

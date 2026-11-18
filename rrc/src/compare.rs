@@ -1887,8 +1887,22 @@ pub(crate) fn judge(
             // The port's pass came before the original's moment, and its handlers asked there make the original's
             // (`then`, D197): the moment alone differs.
             let then = live["then"]["inputs"][input].as_str().is_some_and(|v| v.eq_ignore_ascii_case(&theirs));
-            let wrong =
-                apart_bytes.iter().copied().find(|&k| apart.is_none() && !inside && !then && !near(k, &byte(made, k)));
+            // A byte the original's tick has as the port's pass before wrote it itself, with the player's input come
+            // in that pass (D197): there the write came after the input, here, the pass at once, before it.
+            let came = played.get(&t).is_some_and(|d| {
+                d["keys"].as_array().is_some_and(|k| !k.is_empty())
+                    || d["mouse"].as_array().is_some_and(|m| !m.is_empty())
+            });
+            let wrote_over = |k: usize| {
+                came && live["wrote"][input].as_array().into_iter().flatten().any(|w| {
+                    w[0].as_u64() == Some(k as u64)
+                        && w[1].as_u64().is_some_and(|b| format!("{b:02X}") == byte(&theirs, k))
+                })
+            };
+            let wrong = apart_bytes
+                .iter()
+                .copied()
+                .find(|&k| apart.is_none() && !inside && !then && !wrote_over(k) && !near(k, &byte(made, k)));
             let k = wrong.or(apart_bytes.first().copied()).unwrap_or(0);
             let mut what = format!("byte {k}: original {}, port {}", byte(&theirs, k), byte(made, k));
             if let Some(apart) = &apart {
@@ -1898,6 +1912,8 @@ pub(crate) fn judge(
             } else if then && wrong.is_none() {
                 let early = live["due"].as_u64().zip(live["us"].as_u64()).map_or(0, |(d, u)| d.saturating_sub(u));
                 what = format!("{what}; its pass {} ms early, the original's at its moment", early / 1000);
+            } else if wrong.is_none() && wrote_over(k) {
+                what = format!("{what}; the pass before wrote it, the player's input came in it");
             }
             let map = if wrong.is_some() { &mut lived.differs } else { &mut lived.timing };
             match map.get_mut(input) {

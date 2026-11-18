@@ -534,6 +534,8 @@ struct Checked<S: Live> {
     given: Option<Inputs>,
     /// The original's last sync point (µs): its pass began there, where the port's is.
     last: Option<u64>,
+    /// What the port's last pass wrote into its inputs itself, by input: its bytes, by place.
+    wrote: BTreeMap<String, BTreeMap<usize, u8>>,
 }
 
 impl<S: Live> Default for Checked<S> {
@@ -547,6 +549,7 @@ impl<S: Live> Default for Checked<S> {
             buttons: 0,
             given: None,
             last: None,
+            wrote: BTreeMap::new(),
         }
     }
 }
@@ -613,6 +616,20 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
                 Next::Tick(sync, inputs) => {
                     let mut made = Self::made(&sync, &inputs);
                     (made["us"], made["due"]) = (us.into(), played.us.into());
+                    // The pass before's own writes (D197): the player's input that came in the original's pass may
+                    // have come before them there, and after them here, where the pass is at once.
+                    if !self.wrote.is_empty() {
+                        let wrote = std::mem::take(&mut self.wrote);
+                        made["wrote"] = serde_json::json!(
+                            wrote
+                                .iter()
+                                .map(|(name, bytes)| (
+                                    name.clone(),
+                                    bytes.iter().map(|(at, b)| [*at, usize::from(*b)]).collect::<Vec<_>>()
+                                ))
+                                .collect::<BTreeMap<_, _>>()
+                        );
+                    }
                     // A pass before the original's moment: what the handlers would make there, had it not come yet,
                     // every event by then given (D197). Where that is the original's, the moment alone differs.
                     if let Some(mut devices) = before {
@@ -656,6 +673,11 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
             }
         }
         state.wrote(&mut self.devices, inputs);
+        self.wrote = inputs
+            .values()
+            .map(|(name, _)| (name.to_owned(), inputs.written(name)))
+            .filter(|(_, w)| !w.is_empty())
+            .collect();
     }
 }
 
