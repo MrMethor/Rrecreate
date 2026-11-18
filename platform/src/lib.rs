@@ -192,13 +192,14 @@ pub trait Live: Simulation + Shows {
         let _ = (devices, host, sounds);
     }
 
-    /// The original's boundary values at a sync point (`sync`, its `inputs`, at `host.us`: D194, `rrc compare --live`,
-    /// which starts each pass's handling from the original's), what its handlers held there (the keys down, a queue,
-    /// the timer's count), taken into the handlers' state, with what the loop's wait there keeps of them (a gate's last
-    /// poll, D197); whether they were (then the keys and moves that came by it are in them). Not by default: the
-    /// handlers go on from their own.
-    fn given(&self, devices: &mut Self::Devices, sync: &str, inputs: &Inputs, host: &Host) -> bool {
-        let _ = (devices, sync, inputs, host);
+    /// The original's boundary values at a sync point (`inputs`, at `host.us`: D194, `rrc compare --live`, which starts
+    /// each pass's handling from the original's), what its handlers held there (the keys down, a queue, the timer's
+    /// count), taken into the handlers' state; whether they were (then the keys and moves that came by it are in
+    /// them). After a pass, `taken` is its sync point, where the loop's wait took its tick: what the wait keeps of it
+    /// is the original's then (a gate's last poll, D197); none at the run's first tick, still to be taken. Not by
+    /// default: the handlers go on from their own.
+    fn given(&self, devices: &mut Self::Devices, taken: Option<&str>, inputs: &Inputs, host: &Host) -> bool {
+        let _ = (devices, taken, inputs, host);
         false
     }
 
@@ -311,6 +312,11 @@ impl MouseDriver {
         self.buttons = buttons;
     }
 
+    /// `at`, the position at the driver's precision, where the device reports it as `reported`; else as reported.
+    fn precise(&self, at: Option<(i32, i32)>, reported: (i32, i32)) -> (i32, i32) {
+        at.filter(|&p| self.ranges.reported(p) == reported).unwrap_or(reported)
+    }
+
     /// What it reports, as Clockwork's `mouse` device has it: the buttons, x, y (function 03h), the motion
     /// (0Bh), then the presses (05h) and the releases (06h), each a count and the last one's x and y; positions at
     /// the granularity.
@@ -337,6 +343,8 @@ impl MouseDriver {
         if written.is_empty() {
             return;
         }
+        // A position the pass put is where the program put it (`ranges.held`), at the driver's precision (D197).
+        let put = written.iter().any(|(at, _)| (2..6).contains(at));
         let mut bytes = self.state();
         for (at, byte) in written {
             if let Some(b) = bytes.get_mut(at) {
@@ -345,7 +353,9 @@ impl MouseDriver {
         }
         let word = |i: usize| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
         let signed = |i: usize| i32::from(word(i) as i16);
-        (self.x, self.y, self.mickeys) = (signed(1), signed(2), (signed(3), signed(4)));
+        let at = if put { ranges.held } else { Some((self.x, self.y)) };
+        (self.x, self.y) = self.precise(at, (signed(1), signed(2)));
+        self.mickeys = (signed(3), signed(4));
         for b in 0..3 {
             self.presses[b] = (word(5 + 3 * b), signed(6 + 3 * b), signed(7 + 3 * b));
             self.releases[b] = (word(14 + 3 * b), signed(15 + 3 * b), signed(16 + 3 * b));
@@ -360,7 +370,9 @@ impl MouseDriver {
         }
         let word = |i: usize| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
         let signed = |i: usize| i32::from(word(i) as i16);
-        (self.buttons, self.x, self.y, self.mickeys) = (word(0), signed(1), signed(2), (signed(3), signed(4)));
+        // Its position as the bytes report it, at the driver's own precision where they report it so (D197).
+        (self.x, self.y) = self.precise(Some((self.x, self.y)), (signed(1), signed(2)));
+        (self.buttons, self.mickeys) = (word(0), (signed(3), signed(4)));
         for b in 0..3 {
             self.presses[b] = (word(5 + 3 * b), signed(6 + 3 * b), signed(7 + 3 * b));
             self.releases[b] = (word(14 + 3 * b), signed(15 + 3 * b), signed(16 + 3 * b));
@@ -514,9 +526,8 @@ struct Checked<S: Live> {
     moves: std::collections::VecDeque<(u64, i32, i32, u8)>,
     mouse: Option<(i32, i32)>,
     buttons: u8,
-    /// The handlers' state to give at the next tick, the first's (its sync point, its inputs): its keys and moves are
-    /// in it already.
-    given: Option<(String, Inputs)>,
+    /// The handlers' state to give at the next tick, the first's: its keys and moves are in it already.
+    given: Option<Inputs>,
     /// The original's last sync point (µs): its pass began there, where the port's is.
     last: Option<u64>,
 }
@@ -542,8 +553,7 @@ const FRAMES_HZ: u64 = 70;
 impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn at(&mut self, state: &S, played: &rrc_runtime::Played) -> serde_json::Value {
         let host = Host { us: played.us, ..Host::default() };
-        let taken =
-            self.given.take().is_some_and(|(sync, inputs)| state.given(&mut self.devices, &sync, &inputs, &host));
+        let taken = self.given.take().is_some_and(|inputs| state.given(&mut self.devices, None, &inputs, &host));
         if !taken {
             self.keys.extend(played.keys.iter().copied());
             self.moves.extend(played.mouse.iter().copied());
@@ -554,12 +564,19 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
         let from = self.last.replace(played.us).unwrap_or(played.us);
         self.frames = self.frames.max(from * FRAMES_HZ / 1_000_000);
         let until = played.next.unwrap_or(played.us + 1_000_000 / FRAMES_HZ);
+        // The original's sync point is asked too, between the frames (D197): where the port's loop takes the pass
+        // there, it is judged at the original's moment, the platform's frames' phase aside.
+        let mut due = Some(played.us);
         loop {
-            let us = (self.frames + 1) * 1_000_000 / FRAMES_HZ;
+            let frame = (self.frames + 1) * 1_000_000 / FRAMES_HZ;
+            let at_due = due.take().filter(|&d| d < frame);
+            let us = at_due.unwrap_or(frame);
             if us > until.max(played.us) {
                 return serde_json::json!({"wait": true});
             }
-            self.frames += 1;
+            if at_due.is_none() {
+                self.frames += 1;
+            }
             let mut scancodes = Vec::new();
             while let Some(&(_, code)) = self.keys.front().filter(|(at, _)| *at <= us) {
                 scancodes.push(code);
@@ -583,8 +600,8 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
         }
     }
 
-    fn given(&mut self, _: &S, sync: &str, inputs: &Inputs) {
-        self.given = Some((sync.to_owned(), inputs.clone()));
+    fn given(&mut self, _: &S, inputs: &Inputs) {
+        self.given = Some(inputs.clone());
     }
 
     /// After each pass the handlers start again from the original's state at its sync point, then take what the pass
@@ -594,7 +611,7 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
     fn stepped(&mut self, state: &S, sync: &str, inputs: &Inputs) {
         let us = self.last.unwrap_or(0);
         // Where the handlers take the original's state there, what came by the sync point is in it: not given again.
-        if state.given(&mut self.devices, sync, inputs, &Host { us, ..Host::default() }) {
+        if state.given(&mut self.devices, Some(sync), inputs, &Host { us, ..Host::default() }) {
             while self.keys.front().is_some_and(|(at, _)| *at <= us) {
                 self.keys.pop_front();
             }
@@ -865,5 +882,25 @@ mod tests {
         mouse.take(&Host { mouse: Some((300, 150)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (471, 137));
         assert_eq!(mouse.mickeys, (471 - 162, 2 * (137 - 114)));
+    }
+
+    #[test]
+    fn a_position_is_kept_at_the_driver_s_precision() {
+        let mut mouse = MouseDriver::default();
+        let state = mouse.state();
+        let inputs = inputs(&[(MOUSE, &state)]);
+        // A box's middle set at an odd x: reported even, held as set (D197).
+        let mut ranges = MouseRanges::MODE_13H;
+        ranges.set_position(&inputs, 159, 114);
+        assert_eq!(inputs.current(MOUSE)[2], 158);
+        mouse.wrote(&ranges, &inputs);
+        assert_eq!((mouse.x, mouse.y), (159, 114));
+        // The original's driver given as reported there: still where it is.
+        mouse.given(&mouse.state());
+        assert_eq!((mouse.x, mouse.y), (159, 114));
+        // Moved: the motion from where the driver holds it.
+        mouse.read();
+        mouse.take(&Host { mouse: Some((160, 114)), ..Host::default() }, (2, 1));
+        assert_eq!(mouse.mickeys, (320 - 159, 0));
     }
 }

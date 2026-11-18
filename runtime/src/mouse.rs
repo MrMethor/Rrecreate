@@ -30,13 +30,17 @@ const MOTION: usize = 3;
 const PRESSES: usize = 5;
 const RELEASES: usize = 14;
 
-/// What a driver keeps that its device doesn't report: the ranges a position is kept in (07h, 08h, inclusive) and
-/// the granularity its video mode reports positions with (the bits kept).
+/// What a driver keeps that its device doesn't report: the ranges a position is kept in (07h, 08h, inclusive), the
+/// granularity its video mode reports positions with (the bits kept), and where the program last put the position
+/// (04h, or a range that moved it) at the driver's own precision, which it reports at the granularity (an odd x in
+/// mode 13h as the even below) and counts the mouse's motion from (D197).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MouseRanges {
     pub x: (i32, i32),
     pub y: (i32, i32),
     pub granularity: (u16, u16),
+    #[serde(default)]
+    pub held: Option<(i32, i32)>,
 }
 
 impl Default for MouseRanges {
@@ -48,10 +52,11 @@ impl Default for MouseRanges {
 impl MouseRanges {
     /// After VGA's mode 13h is set (or the driver reset in it): 640 across, so x is twice the screen's, x even, and
     /// 200 down.
-    pub const MODE_13H: MouseRanges = MouseRanges { x: (0, 639), y: (0, 199), granularity: (0xFFFE, 0xFFFF) };
+    pub const MODE_13H: MouseRanges =
+        MouseRanges { x: (0, 639), y: (0, 199), granularity: (0xFFFE, 0xFFFF), held: None };
 
     /// 04h: the position set at (`x`, `y`), kept in the ranges.
-    pub fn set_position(&self, inputs: &Inputs, x: i16, y: i16) {
+    pub fn set_position(&mut self, inputs: &Inputs, x: i16, y: i16) {
         let x = i32::from(x).clamp(self.x.0, self.x.1);
         let y = i32::from(y).clamp(self.y.0, self.y.1);
         self.put(inputs, x, y);
@@ -60,21 +65,36 @@ impl MouseRanges {
     /// 07h: the range across, from `a` to `b` either way round; a position outside it moves to its nearer end.
     pub fn set_x_range(&mut self, inputs: &Inputs, a: i16, b: i16) {
         self.x = ends(a, b);
-        let (x, y) = position(inputs);
+        let (x, y) = self.position(inputs);
         self.put(inputs, x.clamp(self.x.0, self.x.1), y);
     }
 
     /// 08h: the range down, as [`MouseRanges::set_x_range`] across.
     pub fn set_y_range(&mut self, inputs: &Inputs, a: i16, b: i16) {
         self.y = ends(a, b);
-        let (x, y) = position(inputs);
+        let (x, y) = self.position(inputs);
         self.put(inputs, x, y.clamp(self.y.0, self.y.1));
     }
 
-    /// The position reported, at its granularity.
-    fn put(&self, inputs: &Inputs, x: i32, y: i32) {
-        let mut bytes = (x as u16 & self.granularity.0).to_le_bytes().to_vec();
-        bytes.extend((y as u16 & self.granularity.1).to_le_bytes());
+    /// A position as the device reports it: at the granularity.
+    pub fn reported(&self, (x, y): (i32, i32)) -> (i32, i32) {
+        let at = |v: i32, mask: u16| i32::from((v as u16 & mask) as i16);
+        (at(x, self.granularity.0), at(y, self.granularity.1))
+    }
+
+    /// The position now at the driver's precision: where the program put it while the device still reports it there
+    /// (the mouse hasn't moved it since), else as reported.
+    fn position(&self, inputs: &Inputs) -> (i32, i32) {
+        let reported = position(inputs);
+        self.held.filter(|&p| self.reported(p) == reported).unwrap_or(reported)
+    }
+
+    /// The position put at (`x`, `y`): held, and reported at its granularity.
+    fn put(&mut self, inputs: &Inputs, x: i32, y: i32) {
+        self.held = Some((x, y));
+        let (x, y) = self.reported((x, y));
+        let mut bytes = (x as u16).to_le_bytes().to_vec();
+        bytes.extend((y as u16).to_le_bytes());
         inputs.write(MOUSE, 2 * X, &bytes);
     }
 }
