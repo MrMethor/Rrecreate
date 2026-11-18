@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D196. A play followed live keeps as little on disk as it can. Accepted 2026-11-18, with the person.
+No disk budget for a play: what it keeps is made small instead (the person: "if there is a way to not bloat up the
+disk then that is preferable"). Measured on a 12:45 play of Arena (2572 ticks), a play followed live kept about
+150 MB, 0.7 GB an hour: the pictures between ticks 88 MB (3259 of them), the snapshots, one every 10 s, about 50 MB,
+the trace 11 MB. Now a play followed live keeps the pictures between ticks by their hashes alone (the trace names
+them as before, and its run's hash is the same): the live comparison compares the screens at sync points, which are
+kept, and a recording of the play's session (`rrc record NAME --run`, the same run) makes the pictures again where a
+later comparison wants them (plain `rrc compare`'s pictures between ticks, D180), which says so. It takes a snapshot
+each minute of play instead of every 10 s (`rrc watch` and the like run up to a minute further). The same play now keeps 29.6 MB, 0.14 GB an hour: the trace 11 MB, the screens at its sync points 9.3 MB, 12 snapshots 9.3 MB; its result and its 26 state hashes as before.
+**Why:** the plan's section 10 left the disk a play may take to the person; the person chose the least it can take.
+What is dropped is what the play's own run makes again, the same every time (D9).
+**Extends:** D25, D51, D184, D192. Settles the plan's pitfalls 23 and 24 for a live play.
+
 ### D195. M6.5's step 6, its second part: Arena's input handling checked; what it found. Accepted 2026-11-18.
 `rrc compare --live` on Arena's `cell` (from power-on: the menus, the creation, the story, into the dungeon) and
 `dungeon` sessions found five things in Arena's `Live` and its port, fixed there: the mouse driver's counts and motion

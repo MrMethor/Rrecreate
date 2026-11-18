@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-18 (decisions to D195). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-18 (decisions to D196). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -184,8 +184,8 @@ original's handlers at virtual time, a pass at a time (`rrc compare --live`). Th
 for a timer's phase; Arena's, five things fixed, is as the original's on its dungeon session but for timing, and on
 `cell` four ticks are left. Next, those, then the check beside a live play. Then M7.
 
-**The person's calls ahead:** the disk a play may take (the plan's section 10); the game M9 is run on, which stays
-out of the toolkit's development until then (D71).
+**The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
+A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).
 
 The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
 `notes/handoff.md` says how to pick it up).

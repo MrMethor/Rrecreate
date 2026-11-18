@@ -604,7 +604,6 @@ first dungeon, with the port alongside, and:
 
 Decided 2026-11-16: M6.5 accepted, with section 8 as its done-when, and the `Live` check (3.7, step 6) inside it.
 Decided 2026-11-17 (D188): step 1 is done with the follower at 1.83x on the dungeon, every stretch faster than play;
-the interpreter's speed waits, and no fallback is needed. Still the person's:
-
-- **How much disk** a play may take: about 0.6 GB an hour at the most with the live settings, 0.2 to 0.35 GB for the
-  twenty minutes of section 8. Proposed: a play is refused when less than an hour's worth is free.
+the interpreter's speed waits, and no fallback is needed. Decided 2026-11-18 (D196): no disk budget, as little as
+can be: a play followed live keeps the pictures between ticks by their hashes alone and a snapshot a minute (a
+recording of its session makes the rest again). Nothing is left the person's in this plan.

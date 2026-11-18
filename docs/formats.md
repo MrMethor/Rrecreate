@@ -671,7 +671,8 @@ JSON lines (D72): a header, a line per tick, and an end line.
   hit comes in, the last at most 40 of the program's instructions before it), and memory a host service reads
   for the program (the BIOS keyboard buffer through INT 16h).
 - `frames`: the frames Clockwork showed since the tick before (a display refresh each, 70 a second):
-  `[number, cycle, BIOS video mode, fingerprint, picture]`, the picture's hash in the cache (below).
+  `[number, cycle, BIOS video mode, fingerprint, picture]`, the picture's hash in the cache (below); a play followed
+  live names a picture by its hash alone, not keeping it (D196), which a recording of its session keeps again.
 - `sound`: the sound events since the tick before, by device, only those with events: `opl` `[ns, register,
   value]`, `speaker` `[pit_tick, waveform]`, `pcm` (digitized sound starts) `[ns, rate, stereo]`, `midi`
   `[pit_tick, byte]`, `cd` `[ns, sector, sectors]`.

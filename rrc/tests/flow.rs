@@ -1591,8 +1591,26 @@ ips 8000000
     let live = census("play/hold", "census.json");
     rrc.ok(&["compare", "hold", "--corrected"]);
     assert_eq!(live, census("compare/hold", "corrected.json"));
+    // Its disk kept small (D196): the pictures between ticks named by their hashes alone, which a recording of the
+    // session keeps again.
+    let pictures = || -> (usize, usize) {
+        let path = rrc.ok(&["trace", "hold", "--path"]);
+        let text = std::fs::read_to_string(path.trim().lines().last().unwrap()).unwrap();
+        let mut named = std::collections::BTreeSet::new();
+        for line in text.lines().skip(1) {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            for frame in v["frames"].as_array().into_iter().flatten() {
+                named.extend(frame[4].as_str().map(str::to_owned));
+            }
+        }
+        let kept = named.iter().filter(|h| rrc.cache.join("objects").join(&h[..2]).join(&h[2..]).is_file()).count();
+        (named.len(), kept)
+    };
+    let (named, kept) = pictures();
+    assert!(named > 0 && kept < named, "{kept} of {named} pictures kept");
     let again = rrc.ok(&["record", "hold", "--run"]);
     assert!(again.contains("same      as the trace recorded before"), "{again}");
+    assert_eq!(pictures(), (named, named), "kept again");
     // Cut short (rrc or the machine stopped): followed again from its file.
     let resumed = rrc.ok(&["play", "hold", "--resume"]);
     assert!(resumed.contains("match     hold: every mapped field, frame and sound in all "), "{resumed}");

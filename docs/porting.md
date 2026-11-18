@@ -594,6 +594,8 @@ comparison falls behind, the status line says by how much. A port that panics or
 started again from the original's state a tick later (D193); find why with `rrc compare NAME --transplant T` at its
 tick. `--replay FILE` follows a play recorded before with
 `clockwork play --record`; `--resume` follows a play cut short (rrc or the machine stopped) again from its file.
+A play keeps little on disk (D196): the pictures between its ticks by their hashes alone, a snapshot a minute;
+`rrc record NAME --run` makes the pictures again where a comparison wants them.
 
 ### A session from another's tick
 
