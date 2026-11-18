@@ -765,8 +765,9 @@ lockstep censuses counted the compass turned at tick 2, where both match from a 
 every field, frame and sound.
 
 ### D200. A read from the cache the system refuses for a moment is tried again. Accepted 2026-11-18.
-rrc's cache reads an object again, for a second at most, where the system refuses to open it (another program has it
-open: a virus scanner opens a program's image as it is read), and says what the system said if it still does;
+rrc's cache reads an object again, for 30 s at most, where the system refuses to open it (another program has it
+open: a virus scanner opens a program's image as it is read, for seconds the first time in a while; a second wasn't
+enough on the person's third play), and says what the system said if it still does;
 "isn't in the cache" only where it isn't. The hint that a play followed live keeps its pictures between ticks by
 hash alone (D196) is said where such a picture is read (`rrc compare`'s pictures between ticks, `rrc frame`), not
 on every read.

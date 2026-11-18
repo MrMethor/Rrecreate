@@ -81,8 +81,9 @@ impl Cache {
         Writer { sender, thread }
     }
 
-    /// The object `hash`. A read the system refuses for a moment (a file another program has open, as a virus scanner
-    /// opens a program's image: D200) is tried again for a second before it fails, with what the system said.
+    /// The object `hash`. A read the system refuses for a while (a file another program has open, as a virus scanner
+    /// opens a program's image, for seconds the first time in a while: D200) is tried again for 30 s before it fails,
+    /// with what the system said.
     pub fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
         let path = self.path(hash);
         let mut tries = 0;
@@ -92,7 +93,7 @@ impl Cache {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Err(format!("{hash} isn't in the cache ({})", self.dir.display()));
                 }
-                Err(_) if tries < 20 => {
+                Err(_) if tries < 600 => {
                     tries += 1;
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }

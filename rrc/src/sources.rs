@@ -195,7 +195,7 @@ pub fn held_still<T>(root: &Path, run: impl FnOnce() -> Result<T, String>) -> Re
     let before = fingerprint(root);
     let made = run()?;
     if fingerprint(root) != before {
-        return Err("the port's code changed while it ran: what it made is of neither version, run it again with the                     code as it is (to edit while a long census runs, edit a copy of the port)"
+        return Err("the port's code changed while it ran: what it made is of neither version, run it again with the code as it is (to edit while a long census runs, edit a copy of the port)"
             .into());
     }
     Ok(made)
