@@ -756,9 +756,10 @@ ends is read as a file is; one that can't read its standard input is given the f
   steps that tick (the line comes after the port wrote the tick it corrects). A tick may have `devices` (version 6,
   D194: `rrc compare --live`; its times in µs from version 7, D197): what the player did up to its sync point as the
   original's run had it, `{"us": 21843012, "next": 21857300, "keys": [[21840115, 77], [21841020, 205]], "mouse":
-  [[21842500, 160, 100, 1]]}`: its time and the next tick's in µs from power-on, the keyboard controller's bytes since
-  the tick before and the mouse's moves (in the screen's pixels: mode 13h's driver counts two across one, with its
-  buttons), each with its time (version 6's are in ms); a played port's
+  [[21842500, 160.5, 100, 1]]}`: its time and the next tick's in µs from power-on, the keyboard controller's bytes since
+  the tick before and the mouse's moves (in the screen's pixels, to a fraction where the driver counts finer: mode
+  13h's counts two across one, so 160.5 is its 321; with its buttons), each with its time (version 6's are in ms,
+  its pixels whole); a played port's
   `Live` is given them at its frames, from the tick before's sync point. The last line is `{"end":"the session's end","ticks":1400}`.
 - **Start state** (`--transplant`, written by `rrc`):
   `{"format":"rrc-state","version":1,"session":"play","tick":500,"state":{"player.x":2560,"enemies":[…]}}`, each

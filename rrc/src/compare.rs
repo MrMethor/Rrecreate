@@ -1701,7 +1701,8 @@ fn played(repo: &Repo, session: &Session, k: &Knowledge, trace: &Trace) -> Resul
             match words.first().map(String::as_str) {
                 Some("K") => keys
                     .extend(words.get(1).and_then(|w| u8::from_str_radix(w, 16).ok()).map(|k| json!([us(*cycle), k]))),
-                Some("M") => mouse.push(json!([us(*cycle), number(1) / 2, number(2), number(3)])),
+                // The driver's coordinates in the screen's pixels: mode 13h's counts two across one (321 is 160.5).
+                Some("M") => mouse.push(json!([us(*cycle), number(1) as f64 / 2.0, number(2), number(3)])),
                 _ => {}
             }
             next += 1;

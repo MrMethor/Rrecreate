@@ -166,9 +166,10 @@ mod tests {
         assert_eq!(position(&inputs), (162, 114));
         // A read sees the program's change (the tick's value with the pass's writes).
         assert_eq!(inputs.at_site("GAME.EXE+1000").u16_at(MOUSE, X), 162);
-        // Mode 13h reports x even.
-        MouseRanges::MODE_13H.set_position(&inputs, 301, 9);
-        assert_eq!(position(&inputs), (300, 9));
+        // Mode 13h reports x even; the driver holds it as set (D197).
+        let mut mode = MouseRanges::MODE_13H;
+        mode.set_position(&inputs, 301, 9);
+        assert_eq!((position(&inputs), mode.held), ((300, 9), Some((301, 9))));
     }
 
     #[test]

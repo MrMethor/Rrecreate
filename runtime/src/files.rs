@@ -43,13 +43,14 @@ pub struct InputsLine {
 
 /// What the player did up to a tick's sync point, as the original's run had it (D194): the play's time there (µs from
 /// power-on) and at the next tick's (none at the last), the keyboard controller's bytes since the tick before and the
-/// mouse's moves (in the screen's pixels, with its buttons), each at its time.
+/// mouse's moves (in the screen's pixels, to a fraction where the driver counts finer, with its buttons), each at its
+/// time.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Played {
     pub us: u64,
     pub next: Option<u64>,
     pub keys: Vec<(u64, u8)>,
-    pub mouse: Vec<(u64, i32, i32, u8)>,
+    pub mouse: Vec<(u64, f32, f32, u8)>,
 }
 
 /// A read of the pass that saw an input otherwise than the read before it there (D68, D93): the input,
@@ -238,12 +239,8 @@ impl InputsReader {
                 }
                 let mut mouse = Vec::new();
                 for m in d["mouse"].as_array().into_iter().flatten() {
-                    mouse.push((
-                        number(&m[0])? as u64,
-                        number(&m[1])? as i32,
-                        number(&m[2])? as i32,
-                        number(&m[3])? as u8,
-                    ));
+                    let pixel = |v: &Value| v.as_f64().map(|p| p as f32).ok_or("the devices' numbers");
+                    mouse.push((number(&m[0])? as u64, pixel(&m[1])?, pixel(&m[2])?, number(&m[3])? as u8));
                 }
                 // Version 6's times are in ms.
                 let scale = if d.get("us").is_some() { 1 } else { 1000 };

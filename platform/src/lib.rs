@@ -61,9 +61,12 @@ pub struct Host {
     /// The keyboard controller's bytes since the last tick, in order (scan code set 1: a key's code when it is
     /// pressed, with 80h when it is let go; a grey key's after E0h).
     pub scancodes: Vec<u8>,
-    /// The mouse in the screen's coordinates (none off the window), and the buttons held (bit 0 left, 1 right,
-    /// 2 middle).
-    pub mouse: Option<(i32, i32)>,
+    /// The mouse in the screen's coordinates, to a fraction of a pixel (D197: a driver may count finer than the
+    /// screen, as mode 13h's two across one), none off the window; whether it moved since the last frame though it may
+    /// be where it was (a scripted or a played move, which a driver takes as a move all the same: a window's mouse
+    /// moves where its position changes); and the buttons held (bit 0 left, 1 right, 2 middle).
+    pub mouse: Option<(f32, f32)>,
+    pub moved: bool,
     pub buttons: u8,
     /// Whether the digitized sound last started still plays: what a sound driver's status answers (D121).
     pub pcm_playing: bool,
@@ -284,9 +287,9 @@ impl MouseDriver {
     /// range moves no mouse, and the host's cursor on the driver's pixel (where the platform put it) is no move.
     pub fn take(&mut self, host: &Host, (sx, sy): (i32, i32)) {
         if let Some((x, y)) = host.mouse {
-            let on_pointer = (x, y) == (self.x.div_euclid(sx), self.y.div_euclid(sy));
-            let (x, y) = (x * sx, y * sy);
-            if self.host != Some((x, y)) {
+            let on_pointer = (x.floor() as i32, y.floor() as i32) == (self.x.div_euclid(sx), self.y.div_euclid(sy));
+            let (x, y) = ((x * sx as f32).floor() as i32, (y * sy as f32).floor() as i32);
+            if self.host != Some((x, y)) || host.moved {
                 self.host = Some((x, y));
                 let r = &self.ranges;
                 let (x, y) = (x.clamp(r.x.0, r.x.1), y.clamp(r.y.0, r.y.1));
@@ -523,8 +526,8 @@ struct Checked<S: Live> {
     /// The frames asked so far; the keys and moves not given yet; the mouse as it last moved.
     frames: u64,
     keys: std::collections::VecDeque<(u64, u8)>,
-    moves: std::collections::VecDeque<(u64, i32, i32, u8)>,
-    mouse: Option<(i32, i32)>,
+    moves: std::collections::VecDeque<(u64, f32, f32, u8)>,
+    mouse: Option<(f32, f32)>,
     buttons: u8,
     /// The handlers' state to give at the next tick, the first's: its keys and moves are in it already.
     given: Option<Inputs>,
@@ -569,7 +572,10 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
         let mut due = Some(played.us);
         loop {
             let frame = (self.frames + 1) * 1_000_000 / FRAMES_HZ;
-            let at_due = due.take().filter(|&d| d < frame);
+            let at_due = due.filter(|&d| d < frame);
+            if at_due.is_some() || due.is_some_and(|d| d == frame) {
+                due = None;
+            }
             let us = at_due.unwrap_or(frame);
             if us > until.max(played.us) {
                 return serde_json::json!({"wait": true});
@@ -582,11 +588,12 @@ impl<S: Live> rrc_runtime::Check<S> for Checked<S> {
                 scancodes.push(code);
                 self.keys.pop_front();
             }
+            let mut moved = false;
             while let Some(&(_, x, y, buttons)) = self.moves.front().filter(|(at, ..)| *at <= us) {
-                (self.mouse, self.buttons) = (Some((x, y)), buttons);
+                (self.mouse, self.buttons, moved) = (Some((x, y)), buttons, true);
                 self.moves.pop_front();
             }
-            let host = Host { us, scancodes, mouse: self.mouse, buttons: self.buttons, ..Host::default() };
+            let host = Host { us, scancodes, mouse: self.mouse, moved, buttons: self.buttons, ..Host::default() };
             match state.next(&mut self.devices, &host) {
                 Next::Wait => continue,
                 Next::End => return serde_json::json!({"end": true, "us": us, "due": played.us}),
@@ -724,6 +731,8 @@ pub fn play<S: Live, P: Presentation<S>>(
             us: started.elapsed().as_micros() as u64,
             scancodes: given.scancodes,
             mouse: mouse(&window, &frame),
+            // A window's mouse moves where its position changes, which the driver sees itself.
+            moved: false,
             buttons: buttons(&window, &mut pressed) | given.buttons,
             pcm_playing: audio.as_ref().is_some_and(audio::Audio::pcm_playing),
             day_ms,
@@ -759,8 +768,8 @@ pub fn play<S: Live, P: Presentation<S>>(
             host.actions.clear();
         }
         // The host's cursor where the program's pointer is, inside the window while it has the keys (D145).
-        if let (Some(at), Some(pointer)) = (host.mouse, state.pointer(&devices))
-            && at != pointer
+        if let (Some((x, y)), Some(pointer)) = (host.mouse, state.pointer(&devices))
+            && (x.floor() as i32, y.floor() as i32) != pointer
             && window.is_active()
         {
             presses::put_cursor(&window, in_window(&window, &frame, pointer));
@@ -789,10 +798,10 @@ fn in_window(window: &Window, frame: &Frame, (x, y): (i32, i32)) -> (i32, i32) {
     (at(x, frame.width, width), at(y, frame.height, height))
 }
 
-fn mouse(window: &Window, frame: &Frame) -> Option<(i32, i32)> {
+fn mouse(window: &Window, frame: &Frame) -> Option<(f32, f32)> {
     let (x, y) = window.get_unscaled_mouse_pos(MouseMode::Discard)?;
     let (width, height) = window.get_size();
-    let scale = |at: f32, of: usize, to: usize| (at * to as f32 / of.max(1) as f32) as i32;
+    let scale = |at: f32, of: usize, to: usize| at * to as f32 / of.max(1) as f32;
     Some((scale(x, width, frame.width), scale(y, height, frame.height)))
 }
 
@@ -845,10 +854,10 @@ mod tests {
     #[test]
     fn the_mouse_is_reported_as_the_driver_would() {
         let mut mouse = MouseDriver::default();
-        mouse.take(&Host { mouse: Some((10, 20)), ..Host::default() }, (2, 1));
+        mouse.take(&Host { mouse: Some((10.0, 20.0)), ..Host::default() }, (2, 1));
         mouse.read();
         // Moved 5 pixels right and 3 down, the left button pressed there.
-        mouse.take(&Host { mouse: Some((15, 23)), buttons: 1, ..Host::default() }, (2, 1));
+        mouse.take(&Host { mouse: Some((15.0, 23.0)), buttons: 1, ..Host::default() }, (2, 1));
         let state = mouse.state();
         let word = |i: usize| u16::from_le_bytes([state[2 * i], state[2 * i + 1]]);
         assert_eq!((word(0), word(1), word(2)), (1, 30, 23), "buttons, x in 640 across, y");
@@ -861,7 +870,7 @@ mod tests {
     #[test]
     fn the_program_s_calls_change_the_live_driver() {
         let mut mouse = MouseDriver::default();
-        mouse.take(&Host { mouse: Some((165, 30)), ..Host::default() }, (2, 1));
+        mouse.take(&Host { mouse: Some((165.0, 30.0)), ..Host::default() }, (2, 1));
         // The pass kept the mouse to a box (07h, 08h) and set it at the box's middle (04h).
         let state = mouse.state();
         let inputs = inputs(&[(MOUSE, &state)]);
@@ -872,14 +881,14 @@ mod tests {
         mouse.wrote(&ranges, &inputs);
         assert_eq!((mouse.x, mouse.y), (162, 114), "the driver's position as the pass left it");
         // The host's mouse still: the position holds; moved, it is the host's, kept in the ranges.
-        mouse.take(&Host { mouse: Some((165, 30)), ..Host::default() }, (2, 1));
+        mouse.take(&Host { mouse: Some((165.0, 30.0)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (162, 114));
         mouse.read();
         // The host's cursor put on the driver's pixel (D145): no move.
-        mouse.take(&Host { mouse: Some((81, 114)), ..Host::default() }, (2, 1));
+        mouse.take(&Host { mouse: Some((81.0, 114.0)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y, mouse.mickeys), (162, 114, (0, 0)));
         // Moved: the motion from the driver's position to the host's in range, as an emulator's driver counts it.
-        mouse.take(&Host { mouse: Some((300, 150)), ..Host::default() }, (2, 1));
+        mouse.take(&Host { mouse: Some((300.0, 150.0)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (471, 137));
         assert_eq!(mouse.mickeys, (471 - 162, 2 * (137 - 114)));
     }
@@ -900,7 +909,7 @@ mod tests {
         assert_eq!((mouse.x, mouse.y), (159, 114));
         // Moved: the motion from where the driver holds it.
         mouse.read();
-        mouse.take(&Host { mouse: Some((160, 114)), ..Host::default() }, (2, 1));
+        mouse.take(&Host { mouse: Some((160.0, 114.0)), ..Host::default() }, (2, 1));
         assert_eq!(mouse.mickeys, (320 - 159, 0));
     }
 }
