@@ -153,8 +153,30 @@ pub fn load(repo: &Repo, session: &Session, taken: &Taken) -> Result<(Clockwork,
     let argv = clockwork::argv_on(repo, &crate::folder::of(repo, session)?, &session.options);
     let file = cache.path(&taken.hash);
     let mut loaded = clockwork.ask("load_snapshot", json!({ "argv": argv, "file": file }))?;
+    // A play followed as it was written (D189, D192) was given its input as the file had it, up to its next mark or
+    // state hash: a snapshot taken then holds what was given by then, not the rest, which is given now (D198).
+    if let Some(replay) = &session.replay {
+        let now = clockwork::number(&clockwork.ask("regs", Value::Null)?, "cycles")?;
+        give_rest(&mut clockwork, &repo.sessions().join(replay), now)?;
+    }
     crate::places::prepare(&mut clockwork, &mut loaded, repo, session)?;
     Ok((clockwork, loaded))
+}
+
+/// The play in `play` given to a machine at cycle `now` from where the input it holds ends (Clockwork's `queued`):
+/// the events after its last one still to come, or after `now` where none is. A follower gave the play's events in
+/// order, every event of a cycle at once, so what the machine holds is the play's up to a cycle.
+fn give_rest(clockwork: &mut Clockwork, play: &std::path::Path, now: u64) -> Result<(), String> {
+    let queued = clockwork.ask("queued", Value::Null)?;
+    let cycle = |line: &str| line.split(' ').next().and_then(|c| c.parse::<u64>().ok());
+    let held = queued["events"].as_array().into_iter().flatten().filter_map(Value::as_str).filter_map(cycle).max();
+    let after = held.unwrap_or(now);
+    let text = std::fs::read_to_string(play).map_err(|e| format!("{}: {e}", play.display()))?;
+    let rest: Vec<&str> = text.lines().map(str::trim).filter(|l| cycle(l).is_some_and(|c| c > after)).collect();
+    if !rest.is_empty() {
+        clockwork.ask("input", json!({ "events": rest }))?;
+    }
+    Ok(())
 }
 
 /// What nothing had written where a based session starts (D150), as a file for Clockwork's `uninit`: what its base's run
