@@ -3,7 +3,7 @@ step 0). The log is rrc's: `RRC_PROTOCOL_LOG=FILE rrc record SESSION --run` appe
 is the recording's run again (Clockwork is deterministic, and the analysis tools never change what the machine does);
 snapshots aren't saved, and the requests after the last tick are left out.
 
-usage: replay.py CLOCKWORK LOG --ticks N [--ticks-out FILE] VARIANT...
+usage: replay.py CLOCKWORK LOG --ticks N [--ticks-out FILE] [--answers FILE] VARIANT...
 
 variants:
   full        as recorded
@@ -16,7 +16,12 @@ variants:
   run, plain-run
               no sync points: one run to where the last tick began
 --ticks-out writes each tick's start cycle and host time, a JSON line each, for stretches.py.
+Each variant's line has its wall time and Clockwork's own CPU time, which other programs running beside it move far
+less (two builds compared on a machine in use, D210).
+--answers writes each answer's request and a hash of what it holds, a line each: two builds that answered the same
+          (a change meant to make Clockwork faster, D210) write the same file.
 """
+import hashlib
 import json
 import subprocess
 import sys
@@ -26,8 +31,11 @@ from collections import defaultdict
 exe, log = sys.argv[1], sys.argv[2]
 ticks = int(sys.argv[sys.argv.index("--ticks") + 1])
 out_path = sys.argv[sys.argv.index("--ticks-out") + 1] if "--ticks-out" in sys.argv else None
-variants = [v for v in sys.argv[3:] if v not in ("--ticks", str(ticks), "--ticks-out", out_path)]
+answers_path = sys.argv[sys.argv.index("--answers") + 1] if "--answers" in sys.argv else None
+variants = [v for v in sys.argv[3:] if v not in ("--ticks", str(ticks), "--ticks-out", out_path, "--answers",
+                                                  answers_path)]
 ticks_out = open(out_path, "w", encoding="utf-8") if out_path else None
+answers = open(answers_path, "w", encoding="utf-8") if answers_path else None
 requests = [json.loads(line)["request"] for line in open(log, encoding="utf-8")]
 LEFT_OUT = ("save", "entries_end", "late_inputs_end", "frames", "take_frame_images", "sound")
 EVERYTHING = {"calls", "images", "late", "hooks", "data", "screen", "reads"}
@@ -53,6 +61,25 @@ def keep(variant, r):
     return r
 
 
+def cpu_seconds(child):
+    """The CPU time `child` has used, user and kernel, while it is still running (Windows), or once it ended
+    (elsewhere: `wait`s for it)."""
+    if sys.platform == "win32":
+        import ctypes
+        import ctypes.wintypes as wt
+        times = [wt.FILETIME() for _ in range(4)]
+        ok = ctypes.WinDLL("kernel32").GetProcessTimes(wt.HANDLE(int(child._handle)), *map(ctypes.byref, times))
+        if not ok:
+            return float("nan")
+        return sum((t.dwHighDateTime << 32 | t.dwLowDateTime) for t in times[2:]) / 1e7
+    import resource
+    child.wait()
+    r = resource.getrusage(resource.RUSAGE_CHILDREN)
+    total = r.ru_utime + r.ru_stime
+    used, cpu_seconds.before = total - getattr(cpu_seconds, "before", 0.0), total
+    return used
+
+
 def replay(variant):
     child = subprocess.Popen([exe, "serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, bufsize=1 << 20)
@@ -71,6 +98,8 @@ def replay(variant):
         if r["op"] == "tick" and ticks_out:
             ticks_out.write(json.dumps({"from": r["from"], "ms": took * 1000}) + "\n")
         a = json.loads(answer)
+        if answers:
+            answers.write(f"{r['op']} {hashlib.sha256(answer).hexdigest()[:16]}\n")
         if "error" in a:
             raise SystemExit(f"{r['op']}: {a['error']}")
         return a
@@ -99,10 +128,11 @@ def replay(variant):
         if variant == "hash" and r["op"] == "tick":
             ask({"op": "hash", "id": 0})
     wall = time.perf_counter() - start
+    used = cpu_seconds(child)
     child.stdin.close()
     child.wait()
     detail = ", ".join(f"{op} {spent[op]:.1f} s/{counts[op]}" for op in sorted(spent, key=lambda o: -spent[o])[:4])
-    print(f"{variant:10} {wall:7.1f} s  ({detail})", flush=True)
+    print(f"{variant:10} {wall:7.1f} s  cpu {used:7.1f} s  ({detail})", flush=True)
 
 
 for v in variants:

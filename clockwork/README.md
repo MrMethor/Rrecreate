@@ -156,7 +156,8 @@ tick 120 (from 4130 ms): 2 writes to +21C40
 `clockwork/tools/speed/` holds the scripts that measured how fast Clockwork follows a play (M6.5's step 0, D186), in
 Python with no packages: `measured.py` runs a command and reports its time and its processes' peak memory;
 `replay.py` replays a protocol log (`RRC_PROTOCOL_LOG=FILE rrc record SESSION --run` writes one) with what a
-recording tracks left out, one thing at a time; `stretches.py` gives the speed over a run's stretches and its
+recording tracks left out, one thing at a time, with Clockwork's own CPU time beside the wall time and, with
+`--answers`, a hash of each answer, to show two builds answer the same (D210); `stretches.py` gives the speed over a run's stretches and its
 slowest; `pacing.py` times the window's emulation frame by frame, alone or with a follower beside it; `sampler.py`
 samples where Clockwork's own time goes (Windows, no admin; a build with
 `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` gives source lines); `logsum.py` sums a log by request, and

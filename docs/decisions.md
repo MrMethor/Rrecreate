@@ -764,6 +764,23 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D210. Clockwork's loop around an instruction and its build stay as they are: the time is the CPU's core. Accepted 2026-11-19.
+Two cheap ways to a faster Clockwork were tried on the person's two-minute play (1602 ticks, the recording's requests
+replayed by `replay.py`) and neither is kept. The loop around each instruction made leaner (the instruction's address
+taken once, the analyses no recording has tested once, the call tracker's question whether the stack moved asked of the
+registers, its work out of line): a recording 110.6 s against 108.4 s before, the emulation alone 85.7 s against 84.8 s.
+The build optimized across crates (thin LTO, one codegen unit for the CPU and the machine), with the same sources:
+112.5 s of Clockwork's CPU time against 113.1 s, 87.3 s against 86.4 s. Both within the measurement's noise, and both
+answered every request the same. `replay.py` now gives Clockwork's own CPU time beside the wall time (a machine in use
+moves it far less), and with `--answers` a hash of each answer, so two builds are shown to answer the same.
+**Why:** the person asked whether Clockwork can be made faster, for a follow to keep up past 10 million instructions a
+second (D209's gap): it needs about 1.6 times. The profile put a fifth of a recording's time in the loop around the
+instruction and a tenth in the call tracker; taking that work away moved nothing, so what the profile showed there was
+the cost of the instruction's dispatch landing on the lines after it. What is left is the CPU's core (decoding, the
+dispatch, the flags: about two thirds of the time), which flags computed when read and a cache of decoded instructions
+would change: a change to the CPU, checked by its suites.
+**Extends:** D186, D187.
+
 ### D209. A port's trace holds what changed, by path; a finished play followed again keeps its length. Accepted 2026-11-19.
 A port's trace line has, of each top-level field that changed, the parts that did: where an object keeps its fields,
 each one that changed by its path (`music_driver.synth.s_note`), down to what isn't such an object (an array, a
