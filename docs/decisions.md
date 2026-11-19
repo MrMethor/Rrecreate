@@ -764,6 +764,27 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D206. M6.5 is done: the person's play followed live, on a play of 15 minutes. Accepted 2026-11-19, with the person.
+M6.5 closes on the person's word, on a play of 14:56 (Arena's `live-20261119-1236`) instead of the plan's twenty
+minutes (`docs/plans/live-comparison.md`, section 8). On it:
+- the play went from power-on through the menus and the creation into the first dungeon and past it (the character's
+  death, a game saved elsewhere loaded): 10183 ticks followed, the runs proved the same by the window's 30 state
+  hashes, no panic, each difference and each path the port noted said as it was first found;
+- the window kept 64 of its 70 frames a second on a PC of 16 million instructions a second, as on the person's
+  earlier plays (a frame's median 15 ms, 1% over 25 ms, five pauses over 100 ms);
+- the port's own input handling: 3572 ticks as the original's handlers made them and most of the rest timing, but for
+  the mouse in 29 ticks, 72 polls the port's loop didn't take by the original's next, and 207 ticks past the death,
+  where the port is in another screen.
+Not measured: each difference's lag, which `rrc play` says in its console; the play's console closed before the
+follow ended, and the follow was finished from the play's file (`rrc play --resume`).
+Left to Arena's port, not the toolkit: those input differences; the game past the first dungeon (death, a game
+saved elsewhere, other levels); the dungeon's gaps the play met (a bar button's hotkey, a creature opening a door, a
+weapon's damage and wear, a cancelled list box).
+**Why:** the person played and judged it good enough: the toolkit followed, proved and compared a play of a quarter
+of an hour end to end, past what the port knows, and what differed is the port's work, which goes on in its own
+repository as the porting workflow has it.
+**Extends:** D184.
+
 ### D205. A pass's pictures between ticks are asked after its drawing, and a played port's window shows them. Accepted 2026-11-19.
 `Presentation::between` is asked after `draw` (or `start`): a presentation makes a pass's pictures as its drawing goes,
 a fade's steps or a dissolve's as the original's code made them, and gives them then. A platform's window shows each

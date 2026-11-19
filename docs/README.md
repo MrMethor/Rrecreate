@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-19 (decisions to D205). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-19 (decisions to D206). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -132,7 +132,7 @@ kept here and nowhere else.
 | M4 A real game's logic | done | Arena's first dungeon matches from a transplant to the session's end (D100) |
 | M5 The game's data: its assets and the whole program | done | The vault port matches from power-on; Arena's assets extracted equal what it loaded (D106) |
 | M6 Faithful and playable | done | Arena's port matches its 58 sessions in every field, frame and sound, and plays from power-on in a window with sound (D183) |
-| M6.5 Live comparison | under way | |
+| M6.5 Live comparison | done | The person's play followed live from power-on into the dungeon and past it, each difference said as found, the runs proved the same (D206) |
 | M7 Modern mode | ahead | |
 | M8 32-bit games | ahead | |
 | M9 Acceptance | ahead | |
@@ -160,46 +160,23 @@ sources in its books and one lookup in 2202 commands, so each source now keeps a
 prints the lines that match at each difference, card and stuck route, or says to search first. Arena's port went through the gates to stage 4; 35 quirks are registered, and 15 of their switches are
 shown by a session.
 
-**Under way: M6.5** (D184, accepted with the person, [the plan](plans/live-comparison.md)). The person
-plays the original and the port runs alongside, every difference said within a second or two of its tick. A second
-emulator follows the play and proves its run the window's. The port runs on its own state, corrected only where it
-differs. Recording, the port's run and the comparison become one streaming pipeline, used offline too, and the
-port's own input handling is checked against the original's. The plan lists the pitfalls and what keeps each
-away. Its first step measured it (D186): Clockwork's emulation alone runs Arena at more than twice the pace of
-play, and what a recording tracks brings it under, mostly by cost rather than need; the window keeps its frame budget
-with a second emulator beside it; a play takes about 0.6 GB of disk an hour at most. Step 1's first part made
-tracking cheap (D187): a recording's run of the first dungeon went from 0.90x the pace of play to 1.83x, and
-recording Arena's 58 sessions from about 1.5 hours to 18 minutes, every trace the same. The person took that
-margin (D188: 1.83x on the dungeon, every stretch faster than play; the interpreter waits). Step 2 is done
-(D189): a recording follows a play file as it is written, never past what it holds, and proves its run the
-window's by the state hashes the window writes; a window without a window plays for the tests. Step 3 is done
-(D190): a port's run is fed through a pipe, a tick at a time when asked, and gives the same traces as from files,
-Arena's 58 sessions included. Step 4 is done (D191): the comparison takes the port's run a tick at a time, and the
-port run free, corrected only where it differs, gives lockstep's census on all of Arena's 58 sessions. Step 5 is
-done (D192, D193): `rrc play` follows the play as it goes, the port beside it, and says each difference when it is
-first found; the toy's and the vault's plays replayed through it match their offline comparisons, a planted bug is
-said at its tick, a port that panics or hangs is started again from the follower's state, and memory stays flat over
-a long play of Arena. Step 6 is done (D194, D195, D197): a played port's own input handling is checked against the
-original's handlers at virtual time, a pass at a time, offline (`rrc compare --live`) and beside a play (`rrc
-play`). Made exact on the way: the clock in microseconds, the mouse driver as an emulator's, at its own precision,
-and each pass judged at the original's moment too. Arena's, what differed fixed in its port, is as the original's on
-`cell`, the dungeon and a 12:45 play replayed through `rrc play` but for timing; the chime's at every tick, the
-vault's but for timing. Next, step 7, the person's: playing Arena twenty minutes with the port alongside (the plan's
-section 8). Then M7. The person's first play (3:01, from power-on into the dungeon) was followed to its end, its run
-proved the window's; a run from its snapshots lacked the rest of the play, and the model of the mouse driver lost a
-position's half pixel, both fixed (D198). What it found in Arena's port is the port's work (a mouse moved during the
-cinematic, read where the port's loop reads fewer times). Its sound broke up in the window, as the port's had before
-D168: the window's output now buffers as the port's does (D199). The second play stopped at its start where the
-cache's read of the program's image failed; such a read is now tried again (D200), but the cause was that an agent in
-the Claude desktop app and the person saw two caches, Windows keeping the app's writes under `AppData\Local` apart:
-the cache is outside it now (D201). The window's pace was uneven once its sound buffered in larger blocks: it paces
-by the sound still to play now (D202). The game's frames a second were low: a play's emulated PC can be faster
-(D203), within what the follower keeps up with; the window runs ahead of the rest of the play, its frames' pace
-logged (D204). Playing the port, the person found its window without the original's fades and dissolves: a pass's
-pictures between ticks are now asked after its drawing, and a played port's window shows them before the tick's
-screen, the next pass after them (D205). Arena's port draws them as the original did, and its sessions find each
-among the original's: cell's 2181 from power-on, every box's dissolve and every screen's fade; the check found two
-gaps the ticks' screens had hidden (a box's text, a read past the map).
+**M6.5 closed** (D206, the person, 2026-11-19; [the plan](plans/live-comparison.md)). The person plays the
+original in Clockwork's window and the port runs alongside: a second emulator follows the play as it is written and
+proves its run the window's by its state hashes (D189), the port runs free on its own state, corrected only where it
+differs (D190, D191), and `rrc play` says each difference when it is first found (D192, D193); the port's own input
+handling is checked against the original's handlers, offline and beside a play (D194, D195, D197). To keep pace, what
+a recording tracks was made cheap (D186 to D188: the first dungeon followed at 1.83x the pace of play). The person's
+plays shaped the rest: a play resumed from its file and the mouse driver's precision (D198), the window's sound and
+pace (D199, D202), a cache Windows had split in two (D200, D201), a faster emulated PC and a logged frame pace (D203,
+D204), and the fades and dissolves a played port's window showed without (D205: Arena's sessions now find each among
+the original's pictures, cell's 2181 from power-on). The closing play, 14:56 from power-on into the first dungeon and
+past it (the character's death, another game loaded), was followed to its end, its run proved the window's by 30
+state hashes, with no panic and the window at 64 of its 70 frames a second; the person judged it good enough for the
+plan's twenty minutes. Left to Arena's port, not the toolkit: its input handling's differences on that play (the
+mouse in 29 ticks, 72 polls its loop didn't take), the game past the first dungeon, and the dungeon's gaps the play
+met.
+
+**Next: M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept, as M6.5's was.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).

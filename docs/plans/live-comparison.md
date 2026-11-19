@@ -592,6 +592,19 @@ path in the workspace now, and the build stops if one isn't in it.
   (2572 ticks): as the original's handlers made it but for timing at every tick.
 - **Step 6's gate holds.** Next, step 7: the person plays (section 8).
 
+### What step 7 did (2026-11-19, D198 to D206)
+
+- **The person's plays** (3:01, 2:00, then 14:56): each followed to its end and proved the window's. What they met
+  became toolkit features: a play resumed from its file and the mouse driver's half pixel (D198), the window's sound
+  buffered and paced by what is left to play (D199, D202), the cache out of `AppData\Local` (D200, D201), a faster
+  emulated PC and a logged frame pace (D203, D204), a pass's pictures between ticks asked after its drawing and shown
+  by a played port's window (D205).
+- **The closing play** (`live-20261119-1236`, 10183 ticks, into the dungeon and past it): runs the same (30 state
+  hashes), no panic, the window at 64 of 70 frames a second; the port's input handling as the original's at 3572
+  ticks, timing at most of the rest, the mouse at 29, 72 polls not taken, and the screens past the death the port
+  hasn't. Each difference's lag wasn't kept: the console closed before the follow ended.
+- **Done on the person's word (D206)**, at 15 minutes rather than 20.
+
 ## 8. Done when
 
 The person plays Arena for at least twenty minutes from power-on, through the menus and the creation into the
