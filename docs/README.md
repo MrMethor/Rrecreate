@@ -157,7 +157,7 @@ next moves ([the plan](plans/porting-workflow.md) lists what was built). Above t
 first rule (D160, D163, section 4): every bug of the original that changes what the game does is reproduced with a
 switch. The outside sources are used where the work is (D185, the person's request): Arena's journal showed 13
 sources in its books and one lookup in 2202 commands, so each source now keeps a digest of what it says, and `rrc`
-prints the lines that match at each difference, card and stuck route, or says to search first. Arena's port went through the gates to stage 4; 31 quirks are registered, and 15 of their switches are
+prints the lines that match at each difference, card and stuck route, or says to search first. Arena's port went through the gates to stage 4; 35 quirks are registered, and 15 of their switches are
 shown by a session.
 
 **Under way: M6.5** (D184, accepted with the person, [the plan](plans/live-comparison.md)). The person
@@ -197,7 +197,9 @@ by the sound still to play now (D202). The game's frames a second were low: a pl
 (D203), within what the follower keeps up with; the window runs ahead of the rest of the play, its frames' pace
 logged (D204). Playing the port, the person found its window without the original's fades and dissolves: a pass's
 pictures between ticks are now asked after its drawing, and a played port's window shows them before the tick's
-screen, the next pass after them (D205).
+screen, the next pass after them (D205). Arena's port draws them as the original did, and its sessions find each
+among the original's: cell's 2181 from power-on, every box's dissolve and every screen's fade; the check found two
+gaps the ticks' screens had hidden (a box's text, a read past the map).
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).
