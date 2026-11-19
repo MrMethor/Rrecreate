@@ -779,9 +779,10 @@ ends is read as a file is; one that can't read its standard input is given the f
   at the tick (before its step).
 - **Port trace** (`--out`, written by the port): the header
   `{"format":"rrc-port-trace","version":1,"session":"play","from":1}`, then a line per tick,
-  `{"tick":1,"state":{…}}`, with what of the state changed since the line before (all at the first): a top-level
-  field whole, or where only part of an object of the same fields changed, each part by its path
-  (`"music_driver.synth.s_note":[…]`, D209), set where the lines before left the state (`rrc_runtime::apply_changes`);
+  `{"tick":1,"state":{…}}`, with what of the state changed since the line before (all at the first), the
+  corrections the port was given since set over that (`correct`, D213): a top-level field whole, or where only part
+  of an object of the same fields changed, each part by its path (`"music_driver.synth.s_note":[…]`, D209), set
+  where the lines before and the corrections left the state (`rrc_runtime::apply_changes`);
   and last `{"end":1400}`. A mapped field the port hasn't set yet is `null`: it matches while the
   original's value is the one at the first tick (D102), and while the original's is null too (memory it freed,
   its pointer null). A field a set changed (a scenario's edit, a fed field)

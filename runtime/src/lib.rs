@@ -872,6 +872,7 @@ fn run_drawn<S: Simulation>(
             for (path, v) in correct {
                 files::set_path(&mut value, path, v.clone())?;
             }
+            out.corrected(&value);
             state = S::transplant(value)?;
         }
         state.step(&Tick { number: line.tick, sync: &line.sync, inputs: &current, spun: line.spun, next });
@@ -970,6 +971,46 @@ mod tests {
         let again: Vec<Value> = again.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(again[1]["tick"], 2);
         assert_eq!(again[2]["state"], lines[3]["state"], "tick 3 as before (its first line has every field)");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A pass that sets its field whatever it held: a correction of it is undone by the step.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Reset {
+        mode: u8,
+        steps: u16,
+    }
+
+    impl Simulation for Reset {
+        fn start() -> Self {
+            Reset { mode: 0, steps: 0 }
+        }
+        fn step(&mut self, _: &Tick) {
+            self.mode = 0;
+            self.steps += 1;
+        }
+    }
+
+    #[test]
+    fn a_corrected_field_the_step_sets_back_is_written() {
+        // The comparer corrects `mode` at tick 1 (on tick 2's line, D191); the pass to tick 2 sets it back to what tick 1
+        // wrote.
+        let inputs = r#"{"format":"rrc-inputs","version":5,"session":"reset","inputs":[]}
+{"tick":1,"sync":"play","inputs":[]}
+{"tick":2,"sync":"play","inputs":[],"correct":{"mode":7}}
+{"end":"the session's end","ticks":2}
+"#;
+        let d = dir("corrected");
+        std::fs::write(d.join("inputs.jsonl"), inputs).unwrap();
+        let path = |f: &str| d.join(f).to_string_lossy().into_owned();
+        run::<Reset>(&Request { inputs: path("inputs.jsonl"), out: path("port.jsonl"), ..Request::default() }).unwrap();
+        let trace = std::fs::read_to_string(d.join("port.jsonl")).unwrap();
+        let lines: Vec<Value> = trace.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        // The comparer's copy: tick 1's state, the correction set over it, tick 2's changes (D213).
+        let mut state = lines[1]["state"].clone();
+        set_path(&mut state, "mode", serde_json::json!(7)).unwrap();
+        apply_changes(&mut state, lines[2]["state"].as_object().unwrap()).unwrap();
+        assert_eq!(state, serde_json::json!({"mode": 0, "steps": 1}), "the port's state at tick 2, its mode set back");
         std::fs::remove_dir_all(&d).ok();
     }
 

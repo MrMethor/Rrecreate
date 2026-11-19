@@ -467,6 +467,15 @@ impl TraceWriter {
         Ok(writer)
     }
 
+    /// The state the next line's changes are from, set over by a comparison's corrections before the step (D213):
+    /// the comparer sets them over its copy of the port's state too, so a field the step leaves as it was before the
+    /// correction is written, and the comparer doesn't keep the corrected value the port no longer has.
+    pub fn corrected(&mut self, state: &Value) {
+        if let (Some(_), Value::Object(fields)) = (&self.last, state) {
+            self.last = Some(fields.clone());
+        }
+    }
+
     /// What a run checked beside the comparison at the next tick (D194), for its line (`live`).
     pub fn live(&mut self, checked: Value) {
         self.live = Some(checked);

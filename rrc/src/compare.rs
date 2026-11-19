@@ -1764,25 +1764,35 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
     let saves = work.join("saves");
     write_saves(repo, &session, &k, (!from_power_on).then_some(after), &saves)?;
     let mut counting = Counting::new(name, &mapped, &sets, &cache, work.join("frames"), after, correcting, census);
-    for (i, (tick, screen)) in trace.ticks.iter().zip(&screens).enumerate() {
-        let values = original.iter().map(|column| column[i].clone()).collect();
-        counting.original(At {
-            tick: tick.tick,
-            values,
-            screen: screen.clone(),
-            sound: tick.sound.clone(),
-            sync: None,
-        });
-    }
+    // The original's ticks given as the port's lines reach them, not all at once: a long play's mapped values, each
+    // tick's whole (a level's map in it), are gigabytes (D213; D208 kept them as their changes).
+    let mut given = 0;
+    let mut on_line = |v: &Value| {
+        let upto = v["tick"].as_u64().unwrap_or(0);
+        while let Some(tick) = trace.ticks.get(given).filter(|t| t.tick <= upto) {
+            counting.original(At {
+                tick: tick.tick,
+                values: original.iter().map(|column| column[given].clone()).collect(),
+                screen: screens[given].clone(),
+                sound: tick.sound.clone(),
+                sync: None,
+            });
+            given += 1;
+        }
+        counting.line(v)
+    };
     if correcting {
-        let mut on_line = |v: &Value| counting.line(v);
         run_port(repo, &session, &port_args, Some(&saves), Some(&mut on_line))?;
     } else {
         run_port(repo, &session, &port_args, Some(&saves), None)?;
-        let port_trace = std::fs::read_to_string(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
-        for line in port_trace.lines().filter(|l| !l.trim().is_empty()) {
-            let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
-            counting.line(&v)?;
+        let port_trace = std::fs::File::open(file("port.jsonl")).map_err(|e| format!("the port's trace: {e}"))?;
+        for line in std::io::BufRead::lines(std::io::BufReader::new(port_trace)) {
+            let line = line.map_err(|e| format!("the port's trace: {e}"))?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: Value = serde_json::from_str(&line).map_err(|e| format!("the port's trace: {e}"))?;
+            on_line(&v)?;
         }
     }
     if correcting {

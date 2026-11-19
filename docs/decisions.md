@@ -764,6 +764,21 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D213. A port's next line is taken from its corrected state; a comparison is given the original a tick at a time. Accepted 2026-11-20.
+The runtime sets a comparison's corrections (D191) over the state its next trace line's changes are taken from, as
+the comparer sets them over its copy of the port's state: a corrected field that the pass sets back to its value from
+before the correction is written, where it was left out and the comparer kept the corrected value the port no longer
+had. And `rrc compare` (`--corrected`, lockstep) gives the comparer the original's ticks as the port's lines reach
+them, its trace read a line at a time, not every tick's values made whole before the port runs.
+**Why:** the person's 15-minute play, followed before and after D211, proved the original's run the same (the same
+trace) and counted some of the port's fields differently: music driver fields, `mouse.released` and `player.flags`,
+by up to 14 ticks. Not the follow's pace: the second follow's port was built after D209, whose lines hold only the
+parts of a field that changed; before it a top-level field was written whole whenever any part of it changed, which
+hid most of the stale corrections. Checked offline, `rrc compare --corrected` on the play reached 2.1 GB within a
+second (the watch stopped it with 27 MB free): it made every tick's mapped values whole before the port ran, 333
+fields over 10183 ticks, a level's map among them, which D208 had kept as their changes.
+**Extends:** D191, D208, D209.
+
 ### D212. A play can be followed again by another build of Clockwork, its run proved by the play's hashes. Accepted 2026-11-19.
 `rrc play NAME --resume --other-build` follows a play with a build of Clockwork other than the one that played it,
 where D189 refuses: the follow says both builds and goes on, and each state hash the window took is checked as the

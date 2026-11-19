@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-19 (decisions to D212). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-20 (decisions to D213). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -187,7 +187,10 @@ batches (D211), the emulation 1.64 times as fast and a recording 1.30 times. A p
 again by the faster build, its run proved by the play's hashes (D212): the 15-minute play followed in 17 minutes
 instead of 30. Live from power-on it would fall at most 2.3 minutes behind, in the intro and the character's
 creation, where what it waits for is now rrc's own reading and comparing of the port's lines, and not further: in
-the dungeon it goes at up to 1.2 times the play's pace.
+the dungeon it goes at up to 1.2 times the play's pace. The two follows counted a few of the port's fields
+differently: the comparer kept a corrected value the port's next line left out, which D209's lines made frequent;
+the port's next line is now taken from its corrected state, and a long play's comparison no longer runs the machine
+out of memory (D213).
 
 **Next: M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept, as M6.5's was.
 
