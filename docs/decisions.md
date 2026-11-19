@@ -771,7 +771,10 @@ names (`rrc play`: `.rrc/play/NAME/frames.log`): when the frame began, how long 
 the cycles it ran and the sound buffered, so a play's pace is measured, not told.
 **Why:** on a PC of 24 million instructions a second (D203) the person found the game fast but stuttering: a window
 near what a core can emulate stutters where anything takes that core for a moment, or where the emulation of a frame
-outlasts the frame. Which of them it is wants measuring.
+outlasts the frame. Measured on a play there: the window took 97% of its core while the rest of the play took about
+one of the eight, and a frame's emulation took 22.8 ms (median) for its 14.3: one core emulates Arena's dungeon at
+about 20 million instructions a second with the rest of the play running, so 24 million outran it and the frames came
+unevenly (40 a second). The person's launcher plays at 16 million, which leaves the window room.
 **Extends:** D192, D202, D203.
 
 ### D203. A play's PC can be faster. Accepted 2026-11-19.
