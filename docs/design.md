@@ -178,8 +178,10 @@ the session.
   live port's input handling (`Live`) makes the boundary values from the devices as the original's handlers
   did (checked against them at virtual time, the play's devices at each of the original's sync points, `rrc compare
   --live` and beside a play, D194, D197), and while the program waits it runs what keeps its own clock, as the PC's interrupts did (a music driver's
-  service, D176). A port plays from a start folder `rrc start` wrote: where a session's original was at a tick (D120), or
-  power-on, with the program's initial data and the inputs the session's start-up had (D141).
+  service, D176). Its window shows the pictures a pass showed between ticks (a fade's steps, a dissolve's), each for
+  its refreshes, before the tick's screen, and the next pass comes after them (D205). A port plays from a start
+  folder `rrc start` wrote: where a session's original was at a tick (D120), or power-on, with the program's initial
+  data and the inputs the session's start-up had (D141).
 
 A tick is one step of the original's main loop. Work the original did in interrupt handlers (music
 sequencing, timer counts) is a subsystem of the simulation with its own rate; its effects are part of the
@@ -315,7 +317,8 @@ which bugs it met.
   differs, its areas are listed (D113), and who drew its first differing pixel is found as who wrote a value is.
   The pictures a pass shows between its sync points (an animation, a cinematic) are compared where the port draws
   them: each of the port's must be one of the original's refreshes in that pass, in order, the others (a copy torn
-  by the display's refresh, a palette's steps) passed over (D180).
+  by the display's refresh, a palette's steps) passed over (D180). They are asked after the port's drawing that made
+  them (D205).
 - **Progress:** the share of the original's executed code exercised by sessions that match, and the share of
   its state the mapping covers (`rrc progress`, D117): the functions run in passes the port matches, and those
   of them its code names; the bytes of the data segment that change, mapped, ignored or neither.

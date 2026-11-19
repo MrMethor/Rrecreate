@@ -44,7 +44,7 @@ use std::time::Instant;
 use minifb::{MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 use rrc_runtime::actions::Action;
 use rrc_runtime::mouse::{MOUSE, MouseRanges};
-use rrc_runtime::present::{Frame, Presentation, Shows, Sounds};
+use rrc_runtime::present::{Frame, Presentation, Shown, Shows, Sounds};
 use rrc_runtime::{Inputs, Simulation, Started, Tick};
 
 /// The screen the presentation draws: VGA's 320 × 200.
@@ -754,6 +754,11 @@ pub fn play<S: Live, P: Presentation<S>>(
     }
     let mut frame = screen.unwrap_or_else(|| Frame::new(WIDTH, HEIGHT));
     presentation.start(&state.scene(), &mut frame, given);
+    // The start-up's pictures (D182), shown from the window's first frame.
+    let mut showing = Showing::default();
+    if !given && P::DRAWS {
+        presentation.between("power-on", &state.scene(), &mut showing.pictures);
+    }
     let audio = if let Some(sound) = sound.filter(|_| P::SOUNDS) {
         match audio::Audio::start(sound.frames, sound.filter) {
             Ok(audio) => Some(audio),
@@ -784,6 +789,8 @@ pub fn play<S: Live, P: Presentation<S>>(
     let started = Instant::now();
     let mut number = 0;
     let mut pixels = vec![0u32; WIDTH * HEIGHT];
+    // What the host's devices gave while a pass's pictures were shown, for the pass after them.
+    let mut carried = (Vec::new(), 0u8, Vec::new());
     'play: while window.is_open() {
         let (down, up) = keys::changed(&window);
         let given = controls.give(&down, &up);
@@ -798,8 +805,24 @@ pub fn play<S: Live, P: Presentation<S>>(
             day_ms,
             actions: given.actions,
         };
+        if showing.from.is_none() {
+            showing.from = Some(host.us);
+        }
+        // The last pass's pictures still showing (D205): its next pass came after them, the keys and the buttons
+        // pressed meanwhile with it, as the PC's handlers had kept them.
+        let held = showing.due(host.us).is_some();
+        if held {
+            carried.0.append(&mut host.scancodes);
+            carried.1 |= host.buttons;
+            carried.2.append(&mut host.actions);
+        } else {
+            host.scancodes.splice(0..0, std::mem::take(&mut carried.0));
+            host.buttons |= std::mem::take(&mut carried.1);
+            host.actions.splice(0..0, std::mem::take(&mut carried.2));
+        }
         for _ in 0..CATCH_UP {
-            let (sync, inputs) = match state.next(&mut devices, &host) {
+            let next = if showing.due(host.us).is_some() { Next::Wait } else { state.next(&mut devices, &host) };
+            let (sync, inputs) = match next {
                 Next::Wait => {
                     let mut sounds = Sounds::default();
                     state.between(&mut devices, &host, &mut sounds);
@@ -817,6 +840,9 @@ pub fn play<S: Live, P: Presentation<S>>(
             let scene = state.scene();
             if P::DRAWS {
                 presentation.draw(&sync, &scene, &mut frame);
+                // What the pass showed before its screen (D180, D205), from when it came.
+                showing = Showing { pictures: Vec::new(), from: Some(host.us) };
+                presentation.between(&sync, &scene, &mut showing.pictures);
             }
             if let Some(audio) = &audio {
                 let mut sounds = Sounds::default();
@@ -834,10 +860,33 @@ pub fn play<S: Live, P: Presentation<S>>(
         {
             presses::put_cursor(&window, in_window(&window, &frame, pointer));
         }
-        rgb(&frame, &mut pixels);
-        window.update_with_buffer(&pixels, frame.width, frame.height).map_err(|e| format!("the window: {e}"))?;
+        let shown = showing.due(host.us).unwrap_or(&frame);
+        rgb(shown, &mut pixels);
+        window.update_with_buffer(&pixels, shown.width, shown.height).map_err(|e| format!("the window: {e}"))?;
     }
     Ok(())
+}
+
+/// The pictures a pass showed between its sync points (D180), shown in turn for their refreshes from when the pass
+/// came, before the tick's screen (D205): the original's display showed them while the pass ran, and its next pass
+/// came after them. One shown for no refresh (D181) isn't shown.
+#[derive(Default)]
+struct Showing {
+    pictures: Vec<Shown>,
+    /// When (the host's µs) the pass came; none before the window's first frame.
+    from: Option<u64>,
+}
+
+impl Showing {
+    /// The picture due at `us` (the display's refreshes counted from the pass), none once they were all shown.
+    fn due(&self, us: u64) -> Option<&Frame> {
+        let refresh = us.saturating_sub(self.from?) * FRAMES_HZ / 1_000_000;
+        let mut end = 0;
+        self.pictures.iter().find_map(|s| {
+            end += u64::from(s.refreshes);
+            (refresh < end).then_some(&s.frame)
+        })
+    }
 }
 
 /// The frame in its palette's colours (6 bits to 8), as the window takes them.
@@ -889,6 +938,21 @@ mod tests {
         assert!(sound_buffer("100").is_err() && sound_buffer("lots").is_err() && sound_buffer("20000").is_err());
         // The default lasts longer than Windows' DirectSound reads ahead (D168).
         assert!(audio::BUFFER as f64 / 49_716.0 > 0.04);
+    }
+
+    #[test]
+    fn a_pass_s_pictures_are_shown_for_their_refreshes_before_its_screen() {
+        let picture = |p: u8, refreshes| {
+            let mut frame = Frame::new(1, 1);
+            frame.set(0, 0, p);
+            Shown { frame, refreshes }
+        };
+        let showing = Showing { pictures: vec![picture(1, 2), picture(2, 0), picture(3, 1)], from: Some(1_000_000) };
+        let at = |us: u64| showing.due(us).map(|f| f.pixels[0]);
+        // 70 refreshes a second from the pass: the first two, then the third (the one shown for none never is).
+        assert_eq!((at(1_000_000), at(1_000_000 + 28_000), at(1_000_000 + 29_000)), (Some(1), Some(1), Some(3)));
+        assert_eq!(at(1_000_000 + 43_000), None, "then the tick's screen, and the next pass");
+        assert_eq!(Showing::default().due(5), None);
     }
 
     #[test]

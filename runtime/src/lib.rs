@@ -784,8 +784,14 @@ fn run_drawn<S: Simulation>(
             }
         }
         let mut drawn = None;
+        if drawing.is_some() || sounding {
+            match &pass {
+                None => drawer.start(&state, &mut frame, given.is_some()),
+                Some(pass) => drawer.draw(pass, &state, &mut frame),
+            }
+        }
         // The pictures the pass showed between sync points (D180), each one that changed: `<tick>-<n>.frm`; from
-        // power-on, the start-up's pass's too (D182).
+        // power-on, the start-up's pass's too (D182). Asked after the drawing that made them (D205).
         let mut between = Vec::new();
         let showing = match &pass {
             Some(pass) => Some(pass.as_str()),
@@ -805,12 +811,6 @@ fn run_drawn<S: Simulation>(
                 std::fs::write(&path, s.frame.encode()).map_err(|e| format!("{}: {e}", path.display()))?;
                 between.push((name, s.refreshes));
                 last = Some(s.frame);
-            }
-        }
-        if drawing.is_some() || sounding {
-            match &pass {
-                None => drawer.start(&state, &mut frame, given.is_some()),
-                Some(pass) => drawer.draw(pass, &state, &mut frame),
             }
         }
         if let Some(dir) = drawing {

@@ -764,6 +764,18 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D205. A pass's pictures between ticks are asked after its drawing, and a played port's window shows them. Accepted 2026-11-19.
+`Presentation::between` is asked after `draw` (or `start`): a presentation makes a pass's pictures as its drawing goes,
+a fade's steps or a dissolve's as the original's code made them, and gives them then. A platform's window shows each
+for its refreshes from when the pass came, then the tick's screen; the next pass comes after them, and the keys and
+buttons pressed meanwhile go to it.
+**Why:** the person found the port's window without the original's fades and dissolves (Arena's "pixelation"):
+Arena's port drew only where each ended, and its comparisons passed, since they look for the port's pictures among
+the original's and the port gave none for those passes. A fade is drawn by the code that draws the rest of the screen,
+in its order, so its steps come out of `draw`; asked before it, they would need the drawing done twice. And the window
+showed no pass's pictures: only a cinematic's and a story's frames, which a port gives as ticks of their own.
+**Extends:** D119, D180.
+
 ### D204. A play's window runs ahead of the rest, and its frames' pace is logged. Accepted 2026-11-19.
 `rrc play` starts the window above normal priority (the follower and the port run below it, D192; rrc at normal), so
 the person's play is what the machine serves first. The window writes a line a frame to the file `CLOCKWORK_FRAME_LOG`
