@@ -144,18 +144,21 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     }
     let cache = Cache::open(&repo.local)?;
     let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
-    let original = {
-        // A far pointer's target is named where the session put the program (D72).
-        let places = Places::new(repo, &session);
-        let linear = |linear: u32| places.linear_id(linear).ok();
-        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
-    };
     let ticks = trace.ticks.len() as u64;
     for t in [transplant, resume, to, pair].into_iter().flatten() {
         if t > ticks {
             return Err(format!("{name} has {ticks} ticks, not {t}"));
         }
     }
+    let original = {
+        // A far pointer's target is named where the session put the program (D72). The ticks compared alone, from
+        // where the port starts to `--to` (D208): a long play's every tick is gigabytes.
+        let places = Places::new(repo, &session);
+        let linear = |linear: u32| places.linear_id(linear).ok();
+        let from = transplant.or(resume).unwrap_or(1).max(1) - 1;
+        let range = from as usize..to.unwrap_or(ticks) as usize;
+        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name, range)?
+    };
 
     let work = repo.state()?.join("compare").join(name.as_str());
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
@@ -1032,12 +1035,22 @@ fn unset_matches(path: &str, leftovers: &Value, theirs: &Value, found: &mut Vec<
 }
 
 /// Each mapped field's value at each tick of the original's trace.
-fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> Result<Vec<Column>, String> {
+fn original_values(
+    trace: &Trace,
+    mapped: &[Mapped],
+    r: &Reader,
+    name: &str,
+    range: std::ops::Range<usize>,
+) -> Result<Vec<Column>, String> {
     let mut decoding = Original::new(&trace.header, mapped, r, name)?;
-    let mut all: Vec<Column> = mapped.iter().map(|_| Column::default()).collect();
-    for tick in &trace.ticks {
-        for (column, value) in all.iter_mut().zip(decoding.values(tick)?) {
-            column.push(value);
+    let mut all: Vec<Column> = mapped.iter().map(|_| Column::starting(range.start)).collect();
+    for (i, tick) in trace.ticks.iter().enumerate().take(range.end) {
+        // Every tick decoded, as the state accumulates; those in `range` kept.
+        let values = decoding.values(tick)?;
+        if i >= range.start {
+            for (column, value) in all.iter_mut().zip(values) {
+                column.push(value);
+            }
         }
     }
     Ok(all)
@@ -1045,25 +1058,38 @@ fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> 
 
 /// A mapped field's values at every tick of a session, kept as its changes (D208): from the first tick's, each value
 /// from the tick it changed to on. A long play's thousands of ticks hold what changed, not a copy of every field a tick
-/// (a level's map and floor alone are 16384 words each): indexed by a tick's place (from 0) as a list of values is.
+/// (a level's map and floor alone are 16384 words each): indexed by a tick's place (from 0) as a list of values is. It
+/// holds the ticks a comparison needs, from `start` to `end` (D208).
 #[derive(Debug, Default)]
 pub(crate) struct Column {
     changes: Vec<(usize, Value)>,
-    len: usize,
+    start: usize,
+    end: usize,
 }
 
 impl Column {
+    /// A column whose first tick is the one at `start`.
+    fn starting(start: usize) -> Column {
+        Column { changes: Vec::new(), start, end: start }
+    }
+
     /// The next tick's value.
     fn push(&mut self, value: Value) {
         if self.changes.last().is_none_or(|(_, last)| *last != value) {
-            self.changes.push((self.len, value));
+            self.changes.push((self.end, value));
         }
-        self.len += 1;
+        self.end += 1;
     }
 
-    /// From the tick at `from` on: its value there, then each it changed to, with the tick's place.
+    /// Whether it holds the tick at `at`.
+    fn holds(&self, at: usize) -> bool {
+        (self.start..self.end).contains(&at)
+    }
+
+    /// From the tick at `from` on (or its first): its value there, then each it changed to, with the tick's place.
     fn from(&self, from: usize) -> impl Iterator<Item = (usize, &Value)> {
-        let first = (from < self.len).then(|| (from, &self[from]));
+        let from = from.max(self.start);
+        let first = (from < self.end).then(|| (from, &self[from]));
         first.into_iter().chain(self.changes.iter().filter(move |(at, _)| *at > from).map(|(at, v)| (*at, v)))
     }
 }
@@ -1072,7 +1098,7 @@ impl std::ops::Index<usize> for Column {
     type Output = Value;
 
     fn index(&self, at: usize) -> &Value {
-        assert!(at < self.len, "tick {} of a column of {}", at + 1, self.len);
+        assert!(self.holds(at), "tick {} outside the ticks kept, {} to {}", at + 1, self.start + 1, self.end);
         &self.changes[self.changes.partition_point(|(from, _)| *from <= at) - 1].1
     }
 }
@@ -1225,7 +1251,8 @@ fn edit_sets(
         else {
             continue;
         };
-        if tick <= after {
+        // Before the port starts, or past the ticks compared (`--to`).
+        if tick <= after || original.first().is_some_and(|c| !c.holds((tick - 1) as usize)) {
             continue;
         }
         let id = crate::knowledge::parse_id(at)?;
@@ -1667,7 +1694,7 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
     let original = {
         let places = Places::new(repo, &session);
         let linear = |linear: u32| places.linear_id(linear).ok();
-        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
+        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name, 0..trace.ticks.len())?
     };
     let census =
         Census { recorded: recorded.hash.clone(), port: crate::sources::fingerprint(&repo.root), ..Census::default() };
@@ -2364,7 +2391,13 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let original = {
         let places = Places::new(repo, &session);
         let linear = |linear: u32| places.linear_id(linear).ok();
-        original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name)?
+        original_values(
+            &trace,
+            &mapped,
+            &crate::values::of(&k).with_linear(&linear),
+            name,
+            (tick - 1) as usize..tick as usize,
+        )?
     };
     let values = read_given(repo, &session, &k, &carried, tick)?;
     write_start(&trace.header.session, &mapped, &original, tick, values, &file("state.json"))?;
@@ -3612,7 +3645,7 @@ mod tests {
     #[test]
     fn a_column_keeps_a_field_s_changes_and_reads_as_every_tick_s() {
         let ticks = [1, 1, 2, 2, 2, 1, 3];
-        let mut column = Column::default();
+        let mut column = Column::starting(0);
         for v in ticks {
             column.push(json!(v));
         }
