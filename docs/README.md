@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-19 (decisions to D206). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-19 (decisions to D207). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -175,6 +175,11 @@ state hashes, with no panic and the window at 64 of its 70 frames a second; the 
 plan's twenty minutes. Left to Arena's port, not the toolkit: its input handling's differences on that play (the
 mouse in 29 ticks, 72 polls its loop didn't take), the game past the first dungeon, and the dungeon's gaps the play
 met.
+
+Three gaps the closing play showed are closed (D207): a follow keeps its log beside its census, says once where the
+port is past what it knows, and counts a played mouse move to half a pixel. One is left, for the person: past about
+10 million instructions a second the follower falls behind the play (at 16 million it runs at 0.6 of its pace, the
+emulation alone at 1.2), so what differs is said later than two seconds; keeping up there needs the emulator faster.
 
 **Next: M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept, as M6.5's was.
 

@@ -31,7 +31,8 @@ ticks_out = open(out_path, "w", encoding="utf-8") if out_path else None
 requests = [json.loads(line)["request"] for line in open(log, encoding="utf-8")]
 LEFT_OUT = ("save", "entries_end", "late_inputs_end", "frames", "take_frame_images", "sound")
 EVERYTHING = {"calls", "images", "late", "hooks", "data", "screen", "reads"}
-FOR = {"calls": "calls", "frame_images": "images", "late_inputs": "late", "entries": "hooks", "read": "reads"}
+FOR = {"calls": "calls", "frame_images": "images", "late_inputs": "late", "late_inputs_take": "late", "entries": "hooks",
+       "entries_take": "hooks", "read": "reads"}
 
 
 def keep(variant, r):

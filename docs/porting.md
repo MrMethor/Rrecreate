@@ -591,7 +591,10 @@ and what differs or the port noted is said as it is first found, with the play's
 `new at 12:40: note`); at the end the play's census is listed, most passes first, with `next`: where to look first,
 and the port's own input handling judged against the play's (`live`, as `rrc compare --live`, D197).
 The play is a session like any other: compare it, watch it, peek into it. Nothing slows the window; if the
-comparison falls behind, the status line says by how much. A port that panics or hangs is counted (`panic`) and
+comparison falls behind, the status line says by how much, and once the window is closed the follow goes on to the
+play's end: its terminal stays open until the census. What it says is kept in `.rrc/play/NAME/follow.log` with how
+late each came (D207). Where the port's loop is at another screen than the original's, the follow says `lost` once
+and counts what differs there without saying it, until `back`. A port that panics or hangs is counted (`panic`) and
 started again from the original's state a tick later (D193); find why with `rrc compare NAME --transplant T` at its
 tick. `--replay FILE` follows a play recorded before with
 `clockwork play --record`; `--resume` follows a play cut short (rrc or the machine stopped) again from its file.

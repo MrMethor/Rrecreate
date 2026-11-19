@@ -764,6 +764,27 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D207. A follow keeps its log; a port past what it knows is said once; a played move counts to half a pixel. Accepted 2026-11-19.
+Three gaps the person's closing play showed (D206), closed:
+- `rrc play` writes `.rrc/play/NAME/follow.log` as it follows: each thing said, with how far behind the play it was
+  said, and every ten seconds where the play and the comparison are and each part's share of the time (the comparer
+  waiting for the follower, reading, the port and its lines; the follower making ticks and held). A follow cut short
+  keeps it. When the window closes with the follow behind, it says how far, and that its terminal must stay open.
+- The port's loop taking its passes at another sync point than the original's three ticks running is the port past
+  what it knows (a screen it hasn't): said once (`lost`, the census's `lost`), what differs there counted and logged,
+  not said, until it takes them at the original's three ticks running (`back`). More than five new things at once are
+  said in one line, each in the log.
+- The platform's mouse driver counts a played move (`Host::moved`) onto the pointer's pixel, to half a pixel: only a
+  move the platform's own cursor made there is none (D145). The check of the port's input handling had the original's
+  motion a mickey off where the person's mouse moved half a pixel onto the pointer.
+**Why:** the closing play's console closed before its follow ended, and what it said went with it; past the
+character's death the follow said over 150 differences of a port in a screen and a place it hasn't; and the input
+check's last differences were its own. Measured with the log: the follow of a play at 16 million instructions a
+second runs at 0.6 of its pace, the follower emulating at 1.28 s a second of play (0.83 for the emulation alone,
+headless; the rest what a recording tracks), so the window, at 0.83 with or without the follow beside it, keeps its
+pace, and what differs is said later than two seconds past about 10 million.
+**Extends:** D192, D193, D197, D204, D206.
+
 ### D206. M6.5 is done: the person's play followed live, on a play of 15 minutes. Accepted 2026-11-19, with the person.
 M6.5 closes on the person's word, on a play of 14:56 (Arena's `live-20261119-1236`) instead of the plan's twenty
 minutes (`docs/plans/live-comparison.md`, section 8). On it:

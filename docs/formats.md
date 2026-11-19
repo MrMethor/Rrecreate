@@ -104,7 +104,11 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has
   the recording it is of (`recorded`) and the port's code (`port`) too; `corrected.json` is the corrected run's census
   (D191), which a play followed as it goes keeps too (`.rrc/play/NAME/census.json`, D192), with `panics`, where the
-  port stopped and was started again (D193). `live.json` (`rrc compare --live`, D194) is what the port's input
+  port stopped and was started again (D193), and `lost`, the stretches where its loop took its passes at another sync
+  point than the original's (`from`, `to` or none to the end, the sync points `port` and `original`, D207). Beside
+  it, `follow.log` (D207): a line each thing said (`new`, `lost`, `back`; `counted` while lost), with the seconds since
+  the follow began and how far behind the play it was said, and every ten seconds a `pace` line (the play's time and
+  the comparison's, and each part's share of the time). `live.json` (`rrc compare --live`, D194) is what the port's input
   handling made: `ticks` checked, `same` as the original's handlers made them, and by input the ticks it made
   otherwise (`differs`) or a moment apart (`timing`), each with its first tick and byte; `waits` (its loop still
   waited, the original's next pass within two frames), `skips` (no pass by the original's next sync point), `syncs`

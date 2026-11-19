@@ -27,11 +27,22 @@ use crate::trace::{Recorder, Tick, TraceFile, Written};
 /// The follower's ticks the comparer hasn't taken yet, at most (the plan's 3.6): past that the follower waits.
 const AHEAD: usize = 4;
 
-/// How far the play is written and the follower has run (cycles), for the status line.
+/// More new things than this found at once are said in one line, each in the follow's log (D207).
+const BURST: usize = 5;
+
+/// How far the play is written and the follower has run (cycles), for the status line; and where the follower's time
+/// went (µs): making ticks, and held while the comparer hadn't taken the ones before.
 #[derive(Default)]
 pub(crate) struct Progress {
     pub written: AtomicU64,
     pub now: AtomicU64,
+    making: AtomicU64,
+    held: AtomicU64,
+}
+
+/// Microseconds since `from`, added to `to`.
+fn spent(to: &AtomicU64, from: Instant) {
+    to.fetch_add(from.elapsed().as_micros() as u64, Ordering::Relaxed);
 }
 
 /// What the follower sends the comparer: a tick with the play's input given since the tick before, or its run's end.
@@ -107,13 +118,18 @@ pub(crate) fn follow(
         let follower = s.spawn(move || {
             let ended = (|| {
                 let mut recorder = Recorder::start(repo, session, header, Some(&mut follow))?;
-                recorder.until_play_ends(to_end);
+                recorder.until_play_ends(to_end.clone());
                 let mut file = TraceFile::create(repo, recorder.header.clone())?;
                 let stopped = |_| "the comparison stopped".to_owned();
-                while let Some(tick) = recorder.next()? {
+                loop {
+                    let making = Instant::now();
+                    let Some(tick) = recorder.next()? else { break };
                     file.tick(&tick)?;
                     let came = recorder.played_until(tick.cycle);
+                    spent(&to_end.making, making);
+                    let held = Instant::now();
                     sent.send(Made::Tick(Box::new(tick), came)).map_err(stopped)?;
+                    spent(&to_end.held, held);
                     // A port that stopped starts again from the state here (D193).
                     if asked.try_recv().is_ok() {
                         let given = recorder.at_made(|clockwork, places, tick| {
@@ -129,7 +145,8 @@ pub(crate) fn follow(
             let _ = sent.send(Made::End(Box::new(ended)));
         });
         let watched = Watched { window: &mut window, done: &done };
-        let compared = compare(&taken, &ask, &mut original, &mut counting, &start, &progress, ips, watched);
+        let log = Log::open(repo, name);
+        let compared = compare(&taken, &ask, &mut original, &mut counting, &start, &progress, ips, watched, log);
         // The follower stops at its next tick once the comparison has stopped taking them.
         drop(taken);
         let _ = follower.join();
@@ -159,14 +176,83 @@ struct Watched<'w> {
 }
 
 impl Watched<'_> {
-    /// Whether the window was closed: then the play ends at its last mark.
-    fn look(&mut self) {
+    /// Whether the window was closed: then the play ends at its last mark. True the once it closes.
+    fn look(&mut self) -> bool {
         if let Some(window) = self.window.as_mut()
             && window.try_wait().ok().flatten().is_some()
         {
             self.done.store(true, Ordering::Relaxed);
             *self.window = None;
+            return true;
         }
+        false
+    }
+}
+
+/// What a follow said and how it kept pace, kept beside the census (`.rrc/play/NAME/follow.log`, D207): each line said
+/// with how far behind the play it was said, and every ten seconds where the time went. A follow cut short keeps it.
+struct Log {
+    file: Option<std::fs::File>,
+    began: Instant,
+    /// The last pace line: when, and the times then (the comparer's waits, its reading, the port; the follower's
+    /// making and held).
+    last: Instant,
+    times: [u64; 7],
+    waited: u64,
+    reading: u64,
+    port: u64,
+}
+
+impl Log {
+    fn open(repo: &Repo, name: &str) -> Log {
+        let file = repo.state().ok().map(|s| s.join("play").join(name)).and_then(|dir| {
+            std::fs::create_dir_all(&dir).ok()?;
+            std::fs::File::create(dir.join("follow.log")).ok()
+        });
+        let now = Instant::now();
+        Log { file, began: now, last: now, times: [0; 7], waited: 0, reading: 0, port: 0 }
+    }
+
+    /// A line: its label, the seconds since the follow began, its text.
+    fn line(&mut self, label: &str, text: &str) {
+        use std::io::Write as _;
+        if let Some(f) = self.file.as_mut() {
+            let _ = writeln!(f, "{label:<9} {:>8.1} s  {text}", self.began.elapsed().as_secs_f64());
+        }
+    }
+
+    /// Every ten seconds: how far the play is and the comparison, and each part's share of the time since the last.
+    fn pace(&mut self, progress: &Progress, played: f64, compared: f64, tick: u64) {
+        if self.last.elapsed() < Duration::from_secs(10) {
+            return;
+        }
+        let now = [
+            self.waited,
+            self.reading,
+            self.port,
+            progress.making.load(Ordering::Relaxed),
+            progress.held.load(Ordering::Relaxed),
+            crate::compare::PORT_TAKING.load(Ordering::Relaxed),
+            crate::compare::PORT_WAITING.load(Ordering::Relaxed),
+        ];
+        let wall = self.last.elapsed().as_micros().max(1) as f64;
+        let share = |i: usize| 100.0 * (now[i] - self.times[i]) as f64 / wall;
+        let text = format!(
+            "played {} · compared {} (tick {tick}) · {:.1} s behind · the comparer: waiting for the follower {:.0}%, \
+             reading {:.0}%, the port {:.0}% (its lines read and compared {:.0}%, waited for {:.0}%) · the follower:              making ticks {:.0}%, held {:.0}%",
+            clock(played),
+            clock(compared),
+            (played - compared).max(0.0),
+            share(0),
+            share(1),
+            share(2),
+            share(5),
+            share(6),
+            share(3),
+            share(4)
+        );
+        self.line("pace", &text);
+        (self.times, self.last) = (now, Instant::now());
     }
 }
 
@@ -197,6 +283,7 @@ fn compare(
     progress: &Progress,
     ips: u64,
     mut watched: Watched,
+    mut log: Log,
 ) -> Result<(Ended, u64, std::collections::BTreeMap<u64, Value>), String> {
     let mut status = Status::new(ips);
     let mut port = Port::Waiting(Vec::new());
@@ -242,11 +329,34 @@ fn compare(
             give(line, port, counting);
         }
     };
+    let seconds = |cycles: u64| cycles as f64 / ips.max(1) as f64;
+    // The window closed: what is left to follow said, and that this terminal must stay open for it.
+    let closed = |log: &mut Log,
+                  status: &mut Status,
+                  compared: u64,
+                  cycles: &std::collections::BTreeMap<u64, u64>,
+                  start: u64| {
+        let written = progress.written.load(Ordering::Relaxed);
+        let at = cycles.get(&compared).copied().unwrap_or(start);
+        let text = format!(
+            "the window is closed; the rest of the play followed now, {} behind: leave this window open until the \
+             census (closed sooner, rrc play NAME --resume goes on)",
+            clock(seconds(written.saturating_sub(at)))
+        );
+        status.clear();
+        say("follow", &text);
+        log.line("follow", &text);
+    };
     let ended = loop {
-        let made = match taken.recv_timeout(Duration::from_millis(250)) {
+        let waiting = Instant::now();
+        let made = taken.recv_timeout(Duration::from_millis(250));
+        log.waited += waiting.elapsed().as_micros() as u64;
+        let made = match made {
             Ok(made) => made,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                watched.look();
+                if watched.look() {
+                    closed(&mut log, &mut status, counting.compared(), &cycles, start_cycle);
+                }
                 status.show(progress, counting, &cycles, start_cycle);
                 continue;
             }
@@ -280,13 +390,21 @@ fn compare(
                 started(start.spawn(Begin::PowerOn)?, held, &mut port, counting);
             }
         } else {
+            let reading = Instant::now();
             let values = original.values(&tick)?;
             if tick.screen.is_some() {
                 screen.clone_from(&tick.screen);
             }
             cycles.insert(tick.tick, tick.cycle);
-            counting.original(At { tick: tick.tick, values, screen: screen.clone(), sound: tick.sound.clone() });
+            counting.original(At {
+                tick: tick.tick,
+                values,
+                screen: screen.clone(),
+                sound: tick.sound.clone(),
+                sync: Some(tick.sync.clone()),
+            });
             ticks = tick.tick;
+            log.reading += reading.elapsed().as_micros() as u64;
         }
         // A tick's line has the next tick's skipped hits (D130) and time: it goes once that tick is made.
         if let Some((before, given)) = previous.take() {
@@ -297,7 +415,9 @@ fn compare(
             if before.tick > 0 {
                 played.insert(before.tick, devices(&mut line, &before, &given, Some(tick.cycle)));
             }
+            let giving = Instant::now();
             give(line, &mut port, counting);
+            log.port += giving.elapsed().as_micros() as u64;
         }
         // Started again (the tick before's line dropped) at the tick the follower's state was read at: from there, as from a transplant (D193).
         if let Port::Again(given) = &port
@@ -323,16 +443,56 @@ fn compare(
         }
         let given = if tick.tick > 0 { std::mem::take(&mut came) } else { Vec::new() };
         previous = Some((tick, given));
-        for (kind, key, seen) in said.new_in(&counting.census) {
+        let written = progress.written.load(Ordering::Relaxed);
+        let when = |t: u64| cycles.get(&t).map(|c| clock(seconds(c - start_cycle))).unwrap_or_default();
+        // The port past what it knows, or back (D207): said once; what differs meanwhile is counted, not said.
+        let (before, now) = (said.lost.last(), counting.census.lost.last());
+        if now != before
+            && let Some(lost) = now
+        {
+            let (label, at) = match lost.to {
+                None => ("lost", lost.from),
+                Some(to) => ("back", to),
+            };
+            let text = format!("at {}: {}", when(at), lost.text(counting.name()));
+            status.clear();
+            say(label, &text);
+            log.line(label, &text);
+        }
+        let lost = counting.is_lost();
+        let new = said.new_in(&counting.census);
+        // Many at once (the port off what the original does: a screen or a place it hasn't): one line for them, each in
+        // the log (D207).
+        let burst = new.len() > BURST;
+        for (i, &(kind, key, seen)) in new.iter().enumerate() {
             let (kind, text) = Census::line(kind, key, seen, counting.census.passes);
-            let when = cycles.get(&seen.tick).map(|c| clock((c - start_cycle) as f64 / ips as f64)).unwrap_or_default();
+            let at = cycles.get(&seen.tick).copied();
+            // How late it is said: the play written since its tick.
+            let behind = at.map_or(0.0, |c| seconds(written.saturating_sub(c)));
+            let when = when(seen.tick);
+            if lost {
+                log.line("counted", &format!("at {when}, past what the port knows: {kind} {text}"));
+                continue;
+            }
+            log.line("new", &format!("at {when}, said {behind:.1} s behind: {kind} {text}"));
+            if burst && i > 0 {
+                continue;
+            }
             status.clear();
             say("new", format!("at {when}: {kind} {text}"));
+            if burst {
+                say("many", format!("at {when}: {} more things new at once, in follow.log", new.len() - 1));
+            }
         }
         said = counting.census.clone();
         let keep = counting.compared();
+        if let Some(&at) = cycles.get(&keep) {
+            log.pace(progress, seconds(written.saturating_sub(start_cycle)), seconds(at - start_cycle), keep);
+        }
         cycles.retain(|t, _| *t + 64 >= keep);
-        watched.look();
+        if watched.look() {
+            closed(&mut log, &mut status, keep, &cycles, start_cycle);
+        }
         status.show(progress, counting, &cycles, start_cycle);
     };
     status.clear();
@@ -352,7 +512,9 @@ fn compare(
     for (kind, key, seen) in said.new_in(&counting.census) {
         let (kind, text) = Census::line(kind, key, seen, counting.census.passes);
         say("new", format!("at the end: {kind} {text}"));
+        log.line("new", &format!("at the end: {kind} {text}"));
     }
+    log.line("end", &format!("{ticks} ticks followed"));
     Ok((ended, start_cycle, played))
 }
 

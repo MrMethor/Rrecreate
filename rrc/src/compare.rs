@@ -1138,6 +1138,8 @@ pub(crate) struct At {
     pub values: Vec<Value>,
     pub screen: Option<String>,
     pub sound: serde_json::Map<String, Value>,
+    /// The tick's sync point, where the original's loop took the pass that ended at the next (a play followed: D207).
+    pub sync: Option<String>,
 }
 
 /// A pointer's bytes (`own`, of `kind`) read as the index of the element it points to in the array `into` names,
@@ -1431,6 +1433,65 @@ pub(crate) struct Census {
     /// its slowest tick took; each time started again from the original's state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub panics: Vec<Seen>,
+    /// Where a play followed went past what the port knows (D207): its loop took its passes at another sync point than
+    /// the original's, `LOST` ticks running; until it took them at the original's again as many.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lost: Vec<Lost>,
+}
+
+/// A stretch of a play followed where the port's loop was at another screen than the original's (D207): from which
+/// tick, to which (none: to the end), and the sync points it was found lost at, the port's and the original's.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Lost {
+    pub from: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<u64>,
+    pub port: String,
+    pub original: String,
+}
+
+impl Lost {
+    /// Its line: from where, why, to where.
+    pub(crate) fn text(&self, name: &str) -> String {
+        let to = match self.to {
+            Some(to) => format!("to tick {to}, where it took them at the original's again"),
+            None => "to the end".to_owned(),
+        };
+        format!(
+            "the port past what it knows from {name}'s tick {}: its loop took its passes from {} where the original's \
+             took them from {}, {to}; what differs there is counted, not said",
+            self.from, self.port, self.original
+        )
+    }
+}
+
+/// The ticks running a port's loop takes its passes at another sync point than the original's, or at the original's
+/// again, before it is taken to be lost, or back (D207).
+pub(crate) const LOST: u32 = 3;
+
+/// Tick `t`'s pass in `lost`'s stretches (D207): `runs` the ticks running at another sync point and at the original's.
+fn lost_at(lost: &mut Vec<Lost>, runs: &mut [u32; 2], t: u64, port: Option<&str>, original: Option<&str>) {
+    let (Some(port), Some(original)) = (port, original) else { return };
+    let open = lost.last().is_some_and(|l| l.to.is_none());
+    if port == original {
+        *runs = [0, runs[1] + 1];
+        if open
+            && runs[1] == LOST
+            && let Some(last) = lost.last_mut()
+        {
+            last.to = Some(t + 1 - u64::from(LOST));
+        }
+    } else {
+        *runs = [runs[0] + 1, 0];
+        if !open && runs[0] == LOST {
+            lost.push(Lost {
+                from: t + 1 - u64::from(LOST),
+                to: None,
+                port: port.to_owned(),
+                original: original.to_owned(),
+            });
+        }
+    }
 }
 
 impl Census {
@@ -1503,6 +1564,9 @@ impl Census {
         for seen in &self.panics {
             let (kind, text) = Census::line("panic", "", seen, self.passes);
             say(&kind, text);
+        }
+        for lost in &self.lost {
+            say("lost", lost.text(name));
         }
         let notes = ranked(&self.notes);
         for (key, seen) in notes.iter().take(limit) {
@@ -1645,7 +1709,13 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
     let mut counting = Counting::new(name, &mapped, &sets, &cache, work.join("frames"), after, correcting, census);
     for (i, (tick, screen)) in trace.ticks.iter().zip(&screens).enumerate() {
         let values = original.iter().map(|column| column[i].clone()).collect();
-        counting.original(At { tick: tick.tick, values, screen: screen.clone(), sound: tick.sound.clone() });
+        counting.original(At {
+            tick: tick.tick,
+            values,
+            screen: screen.clone(),
+            sound: tick.sound.clone(),
+            sync: None,
+        });
     }
     if correcting {
         let mut on_line = |v: &Value| counting.line(v);
@@ -1957,6 +2027,10 @@ pub(crate) struct Counting<'a> {
     corrected: Corrections,
     /// The last tick of the port's trace.
     compared: u64,
+    /// The ticks running the port's loop took its pass at another sync point than the original's, and at the
+    /// original's again (D207).
+    off: u32,
+    on: u32,
 }
 
 /// What a corrected run set (D191).
@@ -1997,7 +2071,28 @@ impl<'a> Counting<'a> {
             census,
             corrected: Corrections::default(),
             compared: 0,
+            off: 0,
+            on: 0,
         }
+    }
+
+    /// Tick `t`'s pass as the port's loop took it (its `Live`'s sync point, `port`) against the original's: `LOST` ticks
+    /// running at another, the port is past what it knows from the first (D207); as many at the original's again, it
+    /// is back. A tick the port's loop took no pass at, or without either, counts neither way.
+    fn lost(&mut self, t: u64, port: Option<&str>, original: Option<&str>) {
+        let mut runs = [self.off, self.on];
+        lost_at(&mut self.census.lost, &mut runs, t, port, original);
+        [self.off, self.on] = runs;
+    }
+
+    /// The session compared.
+    pub(crate) fn name(&self) -> &str {
+        self.name
+    }
+
+    /// Whether the port is past what it knows now (D207).
+    pub(crate) fn is_lost(&self) -> bool {
+        self.census.lost.last().is_some_and(|l| l.to.is_none())
     }
 
     /// The port started again at tick `from` (D193): its passes to there aren't its own, and its state is what it
@@ -2063,6 +2158,8 @@ impl<'a> Counting<'a> {
         while self.ticks.front().is_some_and(|at| at.tick < t) {
             self.ticks.pop_front();
         }
+        let original = self.ticks.front().filter(|at| at.tick == t).and_then(|at| at.sync.clone());
+        self.lost(t, v["live"]["sync"].as_str(), original.as_deref());
         if let (Some(changed), Value::Object(own)) = (v["state"].as_object(), &mut self.own) {
             for (key, value) in changed {
                 own.insert(key.clone(), value.clone());
@@ -3021,6 +3118,10 @@ pub(crate) struct Feeder {
     slowest: std::time::Duration,
 }
 
+/// Where a fed port's time goes (µs): its lines read and compared (`take`), and waited for.
+pub(crate) static PORT_TAKING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static PORT_WAITING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The least a port may take over a tick before it is taken to hang (D193).
 const HANG_FLOOR: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -3087,7 +3188,9 @@ impl Feeder {
                 false => STREAM_WAIT,
             };
             loop {
+                let taking = std::time::Instant::now();
                 self.take(correct)?;
+                PORT_TAKING.fetch_add(taking.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
                 if self.port.ended {
                     return Ok(false);
                 }
@@ -3110,7 +3213,9 @@ impl Feeder {
                         ),
                     });
                 }
+                let waiting = std::time::Instant::now();
                 std::thread::sleep(std::time::Duration::from_millis(1));
+                PORT_WAITING.fetch_add(waiting.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
             }
             self.slowest = self.slowest.max(started.elapsed());
             if let Some(fix) = self.port.corrections.remove(&before) {
@@ -3467,6 +3572,32 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_port_past_what_it_knows_is_lost_from_three_ticks_and_back_after_three() {
+        let (mut lost, mut runs) = (Vec::new(), [0, 0]);
+        let ticks: [(u64, &str); 9] = [
+            (1, "play"),
+            // One tick at another sync point (timing) isn't lost; three running are, from the first.
+            (2, "button_wait"),
+            (3, "play"),
+            (4, "button_wait"),
+            (5, "button_wait"),
+            (6, "button_wait"),
+            (7, "button_wait"),
+            (8, "play"),
+            (9, "play"),
+        ];
+        for (t, original) in ticks {
+            lost_at(&mut lost, &mut runs, t, Some("play"), Some(original));
+        }
+        assert_eq!(lost.len(), 1);
+        assert_eq!((lost[0].from, lost[0].to, lost[0].port.as_str()), (4, None, "play"));
+        lost_at(&mut lost, &mut runs, 10, Some("play"), Some("play"));
+        assert_eq!(lost[0].to, Some(8), "back from the first of three at the original's");
+        lost_at(&mut lost, &mut runs, 11, None, Some("play"));
+        assert_eq!(lost.len(), 1);
+    }
 
     #[test]
     fn the_port_s_pictures_between_ticks_are_the_original_s_in_order() {

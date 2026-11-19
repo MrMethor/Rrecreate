@@ -286,7 +286,8 @@ impl MouseDriver {
     ///
     /// The motion is counted from the driver's position to the host's (in range), as an emulator's driver takes a
     /// host's cursor (Clockwork's, DOSBox's: what the original's run counted, D197): a position the program set or a
-    /// range moves no mouse, and the host's cursor on the driver's pixel (where the platform put it) is no move.
+    /// range moves no mouse, and the host's cursor on the driver's pixel (where the platform put it) is no move; but a
+    /// played move (`host.moved`: a recorded play's, which no platform's cursor made) is one, to half a pixel (D207).
     pub fn take(&mut self, host: &Host, (sx, sy): (i32, i32)) {
         if let Some((x, y)) = host.mouse {
             let on_pointer = (x.floor() as i32, y.floor() as i32) == (self.x.div_euclid(sx), self.y.div_euclid(sy));
@@ -295,7 +296,7 @@ impl MouseDriver {
                 self.host = Some((x, y));
                 let r = &self.ranges;
                 let (x, y) = (x.clamp(r.x.0, r.x.1), y.clamp(r.y.0, r.y.1));
-                if !on_pointer {
+                if !on_pointer || host.moved {
                     self.mickeys.0 += x - self.x;
                     self.mickeys.1 += 2 * (y - self.y);
                     (self.x, self.y) = (x, y);
@@ -1011,6 +1012,12 @@ mod tests {
         // The host's cursor put on the driver's pixel (D145): no move.
         mouse.take(&Host { mouse: Some((81.0, 114.0)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y, mouse.mickeys), (162, 114, (0, 0)));
+        // A played move there, half a pixel over, is one (D207), as the original's driver counted it.
+        mouse.take(&Host { mouse: Some((81.5, 114.0)), moved: true, ..Host::default() }, (2, 1));
+        assert_eq!((mouse.x, mouse.y, mouse.mickeys), (163, 114, (1, 0)));
+        mouse.take(&Host { mouse: Some((81.0, 114.0)), moved: true, ..Host::default() }, (2, 1));
+        assert_eq!((mouse.x, mouse.mickeys), (162, (0, 0)));
+        mouse.read();
         // Moved: the motion from the driver's position to the host's in range, as an emulator's driver counts it.
         mouse.take(&Host { mouse: Some((300.0, 150.0)), ..Host::default() }, (2, 1));
         assert_eq!((mouse.x, mouse.y), (471, 137));
