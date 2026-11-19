@@ -67,11 +67,15 @@ pub fn identity(path: &Path, seconds: f64) -> Result<String, String> {
 /// A play's length while it is played: a year.
 const PLAYING: f64 = 365.0 * 24.0 * 3600.0;
 
-/// `rrc play NAME [--from SESSION --tick N] [--replay FILE]`, or `rrc play NAME --resume`.
+/// `rrc play NAME [--from SESSION --tick N] [--replay FILE]`, or `rrc play NAME --resume [--other-build]`.
 pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--from", "--tick", "--replay", "--sound-buffer", "--ips"], &["--resume"])?;
-    let usage =
-        "play NAME [--from SESSION --tick N] [--replay FILE] [--ips N] [--sound-buffer FRAMES] | play NAME --resume";
+    let a = Args::parse(
+        args,
+        &["--from", "--tick", "--replay", "--sound-buffer", "--ips"],
+        &["--resume", "--other-build"],
+    )?;
+    let usage = "play NAME [--from SESSION --tick N] [--replay FILE] [--ips N] [--sound-buffer FRAMES] | play NAME \
+                 --resume [--other-build]";
     // The emulated PC's speed (D203): the game's frames a second follow it, and the follower must keep up with it.
     let speed = match a.value("--ips") {
         Some(n) => Some(
@@ -100,6 +104,12 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let file = format!("{name}.session");
     let path = repo.sessions().join(&file);
     let resume = a.has("--resume");
+    // A play followed again by a build of Clockwork other than the one that played it (D212): its run proved the same
+    // by the play's state hashes.
+    let other_build = a.has("--other-build");
+    if other_build && !resume {
+        return Err("--other-build follows a play again: with --resume".into());
+    }
     let mut session = if resume {
         // A play cut short (rrc or the machine stopped): followed again from its file, to its last mark.
         if a.value("--from").is_some() || a.value("--replay").is_some() || speed.is_some() {
@@ -204,7 +214,8 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if window.is_some() {
         say("window", "play in it; close it to stop. What the port does otherwise shows here as it is found");
     }
-    let followed = crate::sources::held_still(&repo.root, || crate::live::follow(repo, name, &session, window))?;
+    let followed =
+        crate::sources::held_still(&repo.root, || crate::live::follow(repo, name, &session, window, other_build))?;
     // The play is the session: as long as the play, its trace the follower's.
     session.seconds = seconds(followed.end, followed.ips);
     let identity = crate::trace::identity(repo, &session)?;

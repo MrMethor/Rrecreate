@@ -483,7 +483,7 @@ pub(crate) fn record(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let header = header(repo, &k, name, &exe, crate::edits::listed(&crate::edits::resolve(&k, &session.edits)?))?;
     // A play still being written, followed (D189): from its first mark, by the Clockwork that played it.
     let mut follow = match a.has("--follow") {
-        true => Some(follow_play(repo, &session, &exe)?),
+        true => Some(follow_play(repo, &session, &exe, false)?),
         false => None,
     };
     // The run asked for: the last recording's only if its input, options and length are the same (D123); a
@@ -933,11 +933,12 @@ fn data_ranges(
 }
 
 /// A followed play's start (D189): the session's play file once it has its first mark, refused if another
-/// Clockwork played it or if it is a part of a play (D124's, recorded whole).
+/// Clockwork played it (unless `other_build`, D212) or if it is a part of a play (D124's, recorded whole).
 pub(crate) fn follow_play(
     repo: &Repo,
     session: &Session,
     exe: &std::path::Path,
+    other_build: bool,
 ) -> Result<crate::follow::Follow, String> {
     let replay = session.replay.as_ref().ok_or("--follow follows a recorded play: the session has no replay")?;
     if let Some(from) = &session.from
@@ -951,9 +952,17 @@ pub(crate) fn follow_play(
     let ours = clockwork::source(exe)?;
     let ours = ours.strip_prefix("source ").unwrap_or(&ours);
     if let Some(theirs) = follow.source.as_ref().filter(|theirs| *theirs != ours) {
-        return Err(format!(
-            "the play was played by another Clockwork (source {theirs}), this one is {ours}: follow it with the same build"
-        ));
+        if !other_build {
+            return Err(format!(
+                "the play was played by another Clockwork (source {theirs}), this one is {ours}: follow it with the \
+                 same build, or with --other-build to have the play's state hashes prove the run the same"
+            ));
+        }
+        // Each state hash the window took is checked as the run reaches it: a run that differs stops there.
+        say(
+            "build",
+            format!("played by Clockwork {theirs}, followed by {ours}: the run proved the same by its hashes"),
+        );
     }
     Ok(follow)
 }

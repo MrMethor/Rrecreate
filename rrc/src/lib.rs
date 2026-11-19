@@ -217,7 +217,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          makes judged against what the original's pass read: the same, timing (a pass early
                          or late, its loop waiting a moment more) or a difference, by input
                          (.rrc/compare/SESSION/live.json). Exits 1 if anything differs
-  play NAME [--from SESSION --tick N] [--replay FILE] [--ips N] [--sound-buffer FRAMES] | play NAME --resume
+  play NAME [--from SESSION --tick N] [--replay FILE] [--ips N] [--sound-buffer FRAMES] | play NAME --resume [--other-build]
                          the person plays the original in Clockwork's window, from the session's tick N
                          (or power-on), recorded as the session NAME (sessions/NAME.session) and followed
                          as it goes (D192): a second Clockwork records it, the port runs beside it free and

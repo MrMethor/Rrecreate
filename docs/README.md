@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-19 (decisions to D211). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-19 (decisions to D212). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -183,8 +183,9 @@ by path (D209). One is left, for the person: past about
 10 million instructions a second the follower falls behind the play (at 16 million it runs at 0.6 of its pace, the
 emulation alone at 1.2), so what differs is said later than two seconds; keeping up there needs the emulator faster.
 The cheap ways to that give nothing (D210); the CPU's core did: it keeps the instructions it decodes and runs them in
-batches (D211), the emulation 1.64 times as fast and a recording 1.30 times. Whether a follow now keeps up at 16
-million is for a play to show.
+batches (D211), the emulation 1.64 times as fast and a recording 1.30 times. A play recorded before can be followed
+again by the faster build, its run proved by the play's hashes (D212); whether a follow now keeps up at 16 million is
+for a play to show.
 
 **Next: M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept, as M6.5's was.
 

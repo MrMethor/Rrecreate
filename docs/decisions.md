@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D212. A play can be followed again by another build of Clockwork, its run proved by the play's hashes. Accepted 2026-11-19.
+`rrc play NAME --resume --other-build` follows a play with a build of Clockwork other than the one that played it,
+where D189 refuses: the follow says both builds and goes on, and each state hash the window took is checked as the
+run reaches it, as for every follow, so a run that differs stops there as a Clockwork bug (D9). Without the option a
+follow by another build is refused as before.
+**Why:** the person asked to follow their 15-minute play again with the faster Clockwork (D211), and every change to
+Clockwork left the plays recorded before unfollowable. The hashes, not the build's name, prove a run the window's
+(D189); D211 changes no state, which its answers and the re-recorded sessions show.
+**Extends:** D189, D211.
+
 ### D211. Clockwork keeps the instructions it decoded, and runs them in batches. Accepted 2026-11-19.
 The CPU keeps each instruction it decodes by its linear address (`cpu/src/exec/decoded.rs`). Those programs run most
 (on Arena's play, 45 opcodes are 93% of 1.5 billion instructions) have handlers that do what the interpreter does,

@@ -597,7 +597,9 @@ late each came (D207). Where the port's loop is at another screen than the origi
 and counts what differs there without saying it, until `back`. A port that panics or hangs is counted (`panic`) and
 started again from the original's state a tick later (D193); find why with `rrc compare NAME --transplant T` at its
 tick. `--replay FILE` follows a play recorded before with
-`clockwork play --record`; `--resume` follows a play cut short (rrc or the machine stopped) again from its file.
+`clockwork play --record`; `--resume` follows a play cut short (rrc or the machine stopped) again from its file,
+and with `--other-build` follows a play with a build of Clockwork other than the one that played it (after a change
+to Clockwork), its run proved the same by the play's state hashes (D212).
 Where the window's sound breaks up, `--sound-buffer 4096` (or more) gives its output larger buffers (D199). `--ips N`
 plays on a faster PC (D203): the game draws more frames a second, and past what the follower keeps up with (about 14
 million for Arena on an i5-8300H), the comparison says what differs later than it happens.

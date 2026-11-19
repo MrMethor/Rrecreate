@@ -76,19 +76,21 @@ pub(crate) struct Followed {
 }
 
 /// Follows the play of session `name` (`session`) to its end as its file is written by `window` (none: the file is
-/// written, or as far as it will be), comparing the port with it as it goes.
+/// written, or as far as it will be), comparing the port with it as it goes; by another build of Clockwork than the
+/// one that played it if `other_build` (D212).
 pub(crate) fn follow(
     repo: &Repo,
     name: &str,
     session: &Session,
     mut window: Option<std::process::Child>,
+    other_build: bool,
 ) -> Result<Followed, String> {
     let k = Knowledge::load(&repo.knowledge())?;
     let exe = crate::clockwork::find(&repo.local)?;
     let header = crate::trace::header(repo, &k, name, &exe, Vec::new())?;
     // Once the window is closed (or there is none), the play ends at its last mark, written to its end or not.
     let done = Arc::new(AtomicBool::new(window.is_none()));
-    let mut follow = crate::trace::follow_play(repo, session, &exe)?;
+    let mut follow = crate::trace::follow_play(repo, session, &exe, other_build)?;
     follow.finished_when(done.clone());
     let ips = follow.ips;
     let mapping = Mapping::load(repo)?;
