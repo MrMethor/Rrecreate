@@ -114,6 +114,11 @@ impl LiveAudio {
         (samples / 2) as u64 * NANOS_PER_SECOND / u64::from(SAMPLE_RATE_HZ)
     }
 
+    /// The sound buffered: queued, and what the device took last still to play (the frame log's, D204).
+    pub fn buffered_ns(&self) -> u64 {
+        self.queued_ns() + self.playing_ns()
+    }
+
     /// What the device took last that is still to play.
     fn playing_ns(&self) -> u64 {
         let since = (self.epoch.elapsed().as_nanos() as u64).saturating_sub(self.taken.load(Ordering::Relaxed));

@@ -189,6 +189,11 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             if let Some(frames) = sound_buffer {
                 command.env("CLOCKWORK_SOUND_BUFFER", frames.to_string());
             }
+            // Ahead of the rest of the play (D204), and its frames' pace logged.
+            crate::clockwork::raised(&mut command);
+            let dir = repo.state()?.join("play").join(name.as_str());
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            command.env("CLOCKWORK_FRAME_LOG", dir.join("frames.log"));
             Some(command.spawn().map_err(|e| format!("clockwork play: {e}"))?)
         }
     };

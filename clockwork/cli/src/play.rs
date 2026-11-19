@@ -6,7 +6,10 @@
 //!
 //! From a snapshot (`--load-snapshot`, a session's tick), the input it still had to come is dropped but the
 //! releases of keys held then, as for a session started there (D118): the person's play takes its place.
-//! `--record` writes the play as it goes ([`Recording`]), so a tool can follow it.
+//! `--record` writes the play as it goes ([`Recording`]), so a tool can follow it. With
+//! `CLOCKWORK_FRAME_LOG` set to a file, the window writes a line a frame there (D204): when it began (ms
+//! from the window's start), the ms its emulation took and its drawing and wait for the next refresh
+//! took, the cycles it ran, and the sound buffered (ms): what a play's pace was, measured.
 //!
 //! `--headless FILE` is the same loop without a window (D189), for tests and tools: a recorded play's input (or an
 //! input script's, `MS:KEYS` lines as `--input-file` reads them, D192) given as the window gives what the person does,
@@ -103,6 +106,10 @@ fn windowed(
         recording.as_mut().map_or(Ok(()), |r| r.input(cycle, &input))
     };
     let mut last_mouse = None;
+    let mut frame_log = std::env::var_os("CLOCKWORK_FRAME_LOG")
+        .and_then(|path| std::fs::File::create(path).ok())
+        .map(std::io::BufWriter::new);
+    let started = std::time::Instant::now();
     while window.is_open() && limit.is_none_or(|limit| m.cpu.cycles < limit) {
         let now = m.cpu.cycles;
         // The machine's state now, before this frame's input, for a follower to prove its run this one (D189).
@@ -133,15 +140,30 @@ fn windowed(
             recording.at(now)?;
         }
         let cycles = audio.as_ref().map_or(cycles_per_frame, |a| a.frame_cycles(cycles_per_frame));
+        let begun = started.elapsed();
         match m.run(cycles) {
             Stop::CycleLimit | Stop::WaitingForInput => {}
             other => return Ok(Some(other)),
         }
+        let emulated = started.elapsed();
         if let Some(audio) = &mut audio {
             audio.update(m);
         }
         render(m, &mut buffer);
         window.update_with_buffer(&buffer, WIDTH, HEIGHT).map_err(|e| e.to_string())?;
+        if let Some(log) = frame_log.as_mut() {
+            use std::io::Write as _;
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+            let buffered = audio.as_ref().map_or(0.0, |a| a.buffered_ns() as f64 / 1e6);
+            let shown = started.elapsed();
+            let _ = writeln!(
+                log,
+                "{:.1} {:.2} {:.2} {cycles} {buffered:.1}",
+                ms(begun),
+                ms(emulated - begun),
+                ms(shown - emulated)
+            );
+        }
     }
     Ok(None)
 }

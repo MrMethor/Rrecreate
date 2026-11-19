@@ -36,6 +36,19 @@ pub fn below_normal(on: bool) {
     BELOW_NORMAL.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// `command` started above normal priority (on Windows; elsewhere as it is): the play's window, ahead of the
+/// follower, the port and rrc (D204).
+pub fn raised(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const ABOVE_NORMAL_PRIORITY_CLASS: u32 = 0x0000_8000;
+        command.creation_flags(ABOVE_NORMAL_PRIORITY_CLASS);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 /// `command` started below normal priority (on Windows; elsewhere as it is).
 pub fn lowered(command: &mut Command) {
     #[cfg(windows)]

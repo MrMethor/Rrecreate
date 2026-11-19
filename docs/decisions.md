@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D204. A play's window runs ahead of the rest, and its frames' pace is logged. Accepted 2026-11-19.
+`rrc play` starts the window above normal priority (the follower and the port run below it, D192; rrc at normal), so
+the person's play is what the machine serves first. The window writes a line a frame to the file `CLOCKWORK_FRAME_LOG`
+names (`rrc play`: `.rrc/play/NAME/frames.log`): when the frame began, how long its emulation and its drawing took,
+the cycles it ran and the sound buffered, so a play's pace is measured, not told.
+**Why:** on a PC of 24 million instructions a second (D203) the person found the game fast but stuttering: a window
+near what a core can emulate stutters where anything takes that core for a moment, or where the emulation of a frame
+outlasts the frame. Which of them it is wants measuring.
+**Extends:** D192, D202, D203.
+
 ### D203. A play's PC can be faster. Accepted 2026-11-19.
 `rrc play NAME --ips N` plays on an emulated PC of N instructions a second (Clockwork's `--ips`, 8 million by
 default), kept in the session's options, so the window and the follower run the same PC; a recorded play
