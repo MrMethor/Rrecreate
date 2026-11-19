@@ -3185,6 +3185,9 @@ pub(crate) struct Feeder {
     /// A port that writes no line for ten times its slowest tick so far hangs (D193); the slowest so far.
     hangs: bool,
     slowest: std::time::Duration,
+    /// The original's pass from the last line given (its devices' `us` to `next`): a port that follows its reads one by
+    /// one may take as long, and gets three times it (D208).
+    pass: std::time::Duration,
 }
 
 /// Where a fed port's time goes (µs): its lines read and compared (`take`), and waited for.
@@ -3212,6 +3215,7 @@ impl Feeder {
             written: None,
             hangs: false,
             slowest: std::time::Duration::ZERO,
+            pass: std::time::Duration::ZERO,
         }
     }
 
@@ -3253,7 +3257,7 @@ impl Feeder {
         if let (Some(_), Some(before)) = (tick, self.written) {
             let started = std::time::Instant::now();
             let limit = match self.hangs && !self.slowest.is_zero() {
-                true => (self.slowest * 10).clamp(HANG_FLOOR, STREAM_WAIT),
+                true => (self.slowest * 10).max(self.pass * 3).clamp(HANG_FLOOR, STREAM_WAIT),
                 false => STREAM_WAIT,
             };
             loop {
@@ -3274,7 +3278,8 @@ impl Feeder {
                 if started.elapsed() > limit {
                     return Err(match self.hangs {
                         true => format!(
-                            "it hangs: no line for tick {before} in {} s, ten times its slowest tick",
+                            "it hangs: no line for tick {before} in {} s, ten times its slowest tick or three times the \
+                             original's pass",
                             limit.as_secs()
                         ),
                         false => format!(
@@ -3297,6 +3302,11 @@ impl Feeder {
             return Ok(false);
         }
         self.written = tick.or(self.written);
+        let us = |key: &str| v["devices"][key].as_u64();
+        self.pass = match (us("us"), us("next")) {
+            (Some(from), Some(to)) => std::time::Duration::from_micros(to.saturating_sub(from)),
+            _ => std::time::Duration::ZERO,
+        };
         Ok(true)
     }
 

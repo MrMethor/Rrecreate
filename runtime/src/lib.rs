@@ -141,8 +141,9 @@ pub struct Inputs {
     /// By the ID of the instruction that read it: the reads that saw an input otherwise than the read
     /// before, in order of their numbers.
     late: BTreeMap<String, Vec<files::LateRead>>,
-    /// The reads made at each site so far this round of the pass, by input ([`Inputs::at_site`]).
-    reads: std::cell::RefCell<BTreeMap<(String, String), u32>>,
+    /// The reads made at each site so far this round of the pass, by site, then input ([`Inputs::at_site`]): a pass
+    /// that polls a long while reads at a site a million times, each without an allocation once both are there (D208).
+    reads: std::cell::RefCell<BTreeMap<String, BTreeMap<String, u32>>>,
     /// Each input's round of the pass: the hits of gated waits it went round, none counted (D130).
     rounds: std::cell::RefCell<BTreeMap<String, u32>>,
     /// The inputs whose ticks only some sync points' hits start, with those points (else every point's).
@@ -247,18 +248,22 @@ impl Inputs {
     /// polls), and the n-th call gets the original's n-th read (D93), counted within the pass's round (a gated
     /// wait the pass went round starts another, D130). (A live platform reads its clock or device again here.)
     pub fn at_site(&self, site: &str) -> Inputs {
-        let mut names: std::collections::BTreeSet<String> = self.values.keys().cloned().collect();
-        names.extend(self.late.get(site).into_iter().flatten().map(|l| l.name.clone()));
-        let mut made = BTreeMap::new();
-        {
-            let mut reads = self.reads.borrow_mut();
-            for name in names {
-                let n = reads.entry((site.to_owned(), name.clone())).or_default();
-                *n += 1;
-                made.insert(name, *n);
+        let mut names: std::collections::BTreeSet<&str> = self.values.keys().map(String::as_str).collect();
+        names.extend(self.late.get(site).into_iter().flatten().map(|l| l.name.as_str()));
+        let mut reads = self.reads.borrow_mut();
+        if !reads.contains_key(site) {
+            reads.insert(site.to_owned(), BTreeMap::new());
+        }
+        let Some(at) = reads.get_mut(site) else { unreachable!("inserted above") };
+        for name in names {
+            match at.get_mut(name) {
+                Some(n) => *n += 1,
+                None => {
+                    at.insert(name.to_owned(), 1);
+                }
             }
         }
-        self.at_reads(site, |name| made.get(name).copied().unwrap_or(1))
+        self.at_reads(site, |name| at.get(name).copied().unwrap_or(1))
     }
 
     /// The inputs as the original's instruction `site` read them at its `n`-th read in the pass's round (from
@@ -280,7 +285,9 @@ impl Inputs {
                 continue;
             }
             *rounds.entry(name.clone()).or_default() += 1;
-            reads.retain(|(_, input), _| input != name);
+            for at in reads.values_mut() {
+                at.remove(name.as_str());
+            }
         }
     }
 
@@ -400,7 +407,7 @@ impl Inputs {
             .into_iter()
             .flatten()
             .filter(|l| l.round == self.round(&l.name))
-            .all(|l| reads.get(&(site.to_owned(), l.name.clone())).copied().unwrap_or(0) >= l.read)
+            .all(|l| reads.get(site).and_then(|at| at.get(&l.name)).copied().unwrap_or(0) >= l.read)
     }
 
     /// An input's bytes now, as far as the pass knows: as it last read it changed (a late read, D132), else the

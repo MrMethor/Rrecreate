@@ -772,7 +772,12 @@ judge of a port's input handling (`rrc compare --live`, the end of `rrc play`) r
 decoded at every tick (333 of them, a level's map and floor 16384 words each) is several gigabytes, and the port's
 traces of the follow, read whole, a gigabyte. The 58 recorded sessions (25 to 750 ticks) never showed it. Kept as
 changes, a field holds what the game changed; read a line at a time, the traces hold one line.
-**Extends:** D171, D191, D197.
+A comparison decodes the ticks it compares alone, to `--to`, kept from where the port starts. And a long pass costs
+no more than its reads: the runtime counts a port's read at an instruction (`Inputs::at_site`) without allocating
+once the site and the input are known, and a fed port gets three times the original's pass (its line's `us` to
+`next`) before it is taken to hang. The play's 19-second pass of the race's story boxes, which a port follows a read
+at a time (a million of them at 16 million instructions a second), had a port taken to hang there each time.
+**Extends:** D171, D191, D193, D197.
 
 ### D207. A follow keeps its log; a port past what it knows is said once; a played move counts to half a pixel. Accepted 2026-11-19.
 Three gaps the person's closing play showed (D206), closed:
