@@ -42,7 +42,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-pub use files::{InputsFile, InputsReader, Played, PortState, StartState, set_path};
+pub use files::{InputsFile, InputsReader, Played, PortState, StartState, apply_changes, set_path};
 /// The knowledge's types and the original's memory read and written as their values: what a port reads and
 /// writes the original's memory images with (its saved games, D126).
 pub use rrc_types as types;
@@ -949,7 +949,13 @@ mod tests {
         assert_eq!(lines[1], serde_json::json!({"tick": 1, "state": {"count": 0, "keys": [], "player": {"x": 5}}}));
         assert_eq!(lines[2], serde_json::json!({"tick": 2, "state": {"count": 1, "keys": [0]}}), "what changed");
         assert_eq!(lines[3]["state"]["count"], 2, "elapsed holds until it changes");
-        assert_eq!(lines[3]["state"]["player"], serde_json::json!({"x": 6}));
+        // An object's part that changed, by its path (D209); applied, the state is the port's.
+        assert_eq!(lines[3]["state"]["player.x"], 6);
+        let mut state = lines[1]["state"].clone();
+        for line in &lines[2..4] {
+            apply_changes(&mut state, line["state"].as_object().unwrap()).unwrap();
+        }
+        assert_eq!(state, serde_json::json!({"count": 2, "keys": [0, 1], "player": {"x": 6}}));
         assert_eq!(lines[4], serde_json::json!({"end": 3}));
 
         // Resumed from the state saved at tick 2, the port goes on the same.

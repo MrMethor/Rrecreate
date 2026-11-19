@@ -273,8 +273,8 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     for line in lines {
         let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
         let Some(t) = v["tick"].as_u64() else { continue };
-        for (key, value) in v["state"].as_object().into_iter().flatten() {
-            state[key] = value.clone();
+        if let Some(changed) = v["state"].as_object() {
+            rrc_runtime::apply_changes(&mut state, changed)?;
         }
         noted_last.clear();
         for (what, n) in v["notes"].as_object().into_iter().flatten() {
@@ -2223,10 +2223,8 @@ impl<'a> Counting<'a> {
         }
         let original = self.ticks.front().filter(|at| at.tick == t).and_then(|at| at.sync.clone());
         self.lost(t, v["live"]["sync"].as_str(), original.as_deref());
-        if let (Some(changed), Value::Object(own)) = (v["state"].as_object(), &mut self.own) {
-            for (key, value) in changed {
-                own.insert(key.clone(), value.clone());
-            }
+        if let (Some(changed), Value::Object(_)) = (v["state"].as_object(), &self.own) {
+            rrc_runtime::apply_changes(&mut self.own, changed)?;
         }
         let (name, census) = (self.name, &mut self.census);
         let seen_at = |t: u64, what: String| Seen { ticks: 1, session: name.to_owned(), tick: t, what };

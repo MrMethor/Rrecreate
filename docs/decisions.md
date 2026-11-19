@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D209. A port's trace holds what changed, by path; a finished play followed again keeps its length. Accepted 2026-11-19.
+A port's trace line has, of each top-level field that changed, the parts that did: where an object keeps its fields,
+each one that changed by its path (`music_driver.synth.s_note`), down to what isn't such an object (an array, a
+number), written whole; rrc sets each where the lines before left the state (`rrc_runtime::apply_changes`). A plain
+field's name is a whole field as before. And `rrc play NAME --resume` of a play that ended leaves the session's length as
+it is (it follows to the file's end anyway): only a play cut short is a year long until it ends.
+**Why:** the follow of the person's 15-minute play wrote 510 MB of port trace, 50 KB a tick, 41 KB of it the music
+driver's whole state, rewritten for a timer's count in it; a gigabyte an hour of disk and of the file cache the
+person's machine needs. And each follow I stopped early left that play's session a year long.
+**Extends:** D190, D196, D207.
+
 ### D208. A session's mapped values are kept as their changes; a port's traces are read a line at a time. Accepted 2026-11-19.
 `rrc compare` (plain, lockstep, a state written at a tick) keeps the original's mapped fields for every tick of the
 session as each field's changes (`Column`): a value from the tick it changed to on, indexed by tick as before. The

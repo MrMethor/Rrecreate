@@ -167,10 +167,14 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     crate::compare::build_port(repo)?;
     let start_ms = based.as_ref().map_or(0, |(_, ms)| *ms);
     // As long as the play, which is known once it ends; until then, longer than any play (what reads the session's run
-    // as it goes, as the port's start from a session's tick does, isn't cut short).
-    session.seconds = PLAYING;
-    // Kept before the window opens, so that a play cut short goes on (--resume).
-    session.save(repo, name)?;
+    // as it goes, as the port's start from a session's tick does, isn't cut short). A play that ended, followed again
+    // (--resume), keeps its length: its file's end is where the follow ends, and a follow cut short leaves the session as
+    // it was (D209).
+    if !(resume && session.seconds < PLAYING) {
+        session.seconds = PLAYING;
+        // Kept before the window opens, so that a play cut short goes on (--resume).
+        session.save(repo, name)?;
+    }
     let window = match (a.value("--replay"), resume) {
         // A play recorded before: followed as if played now.
         (Some(recorded), _) => {

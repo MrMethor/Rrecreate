@@ -333,6 +333,44 @@ enum Step<'a> {
 
 /// Sets `value` at `path` (`player.x`, `enemies[2].alive`) in a serialized state, making the objects
 /// on the way; an element must be there already.
+/// What changed from `old` to `new` at `path`, into `out` (D209): of an object with the same fields, each field that
+/// changed, by its path (`music_driver.synth.s_note`); anything else whole. A port's trace line so holds what its pass
+/// changed, not every field holding it (a music driver's tables, rewritten for a timer's count).
+fn changes(path: &str, old: &Value, new: &Value, out: &mut Map<String, Value>) {
+    match (old, new) {
+        (Value::Object(o), Value::Object(n))
+            if o.len() == n.len() && n.keys().all(|k| plain(k) && o.contains_key(k)) =>
+        {
+            for (k, v) in n {
+                if o[k] != *v {
+                    changes(&format!("{path}.{k}"), &o[k], v, out);
+                }
+            }
+        }
+        _ => {
+            out.insert(path.to_owned(), new.clone());
+        }
+    }
+}
+
+/// A field's name that can be a step of a path.
+fn plain(key: &str) -> bool {
+    !key.is_empty() && !key.contains(['.', '[', ']'])
+}
+
+/// A port's trace line's `state` applied to the state the lines before left (D209): a field's whole value, or a part of
+/// one by its path.
+pub fn apply_changes(state: &mut Value, changed: &Map<String, Value>) -> Result<(), String> {
+    for (key, value) in changed {
+        if key.contains('.') {
+            set_path(state, key, value.clone())?;
+        } else {
+            state[key.as_str()] = value.clone();
+        }
+    }
+    Ok(())
+}
+
 pub fn set_path(state: &mut Value, path: &str, value: Value) -> Result<(), String> {
     let steps = steps(path)?;
     set(state, &steps, value).map_err(|()| format!("{path}: the port's state has no place there"))
@@ -460,7 +498,17 @@ impl TraceWriter {
         let changed: Map<String, Value> = match &self.last {
             None => state.clone(),
             Some(last) => {
-                state.iter().filter(|(k, v)| last.get(*k) != Some(*v)).map(|(k, v)| (k.clone(), v.clone())).collect()
+                let mut changed = Map::new();
+                for (k, v) in &state {
+                    match last.get(k) {
+                        Some(old) if old == v => {}
+                        Some(old) if plain(k) => changes(k, old, v, &mut changed),
+                        _ => {
+                            changed.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                changed
             }
         };
         self.last = Some(state);

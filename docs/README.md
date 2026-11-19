@@ -120,7 +120,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-19 (decisions to D208). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-19 (decisions to D209). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -178,7 +178,8 @@ met.
 
 Three gaps the closing play showed are closed (D207): a follow keeps its log beside its census, says once where the
 port is past what it knows, and counts a played mouse move to half a pixel. Comparing a play that long no longer runs the machine out of memory: a
-session's values are kept as their changes, a port's traces read a line at a time (D208). One is left, for the person: past about
+session's values are kept as their changes, a port's traces read a line at a time (D208), and written as what changed,
+by path (D209). One is left, for the person: past about
 10 million instructions a second the follower falls behind the play (at 16 million it runs at 0.6 of its pace, the
 emulation alone at 1.2), so what differs is said later than two seconds; keeping up there needs the emulator faster.
 
