@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D208. A session's mapped values are kept as their changes; a port's traces are read a line at a time. Accepted 2026-11-19.
+`rrc compare` (plain, lockstep, a state written at a tick) keeps the original's mapped fields for every tick of the
+session as each field's changes (`Column`): a value from the tick it changed to on, indexed by tick as before. The
+judge of a port's input handling (`rrc compare --live`, the end of `rrc play`) reads the port's traces a line at a time.
+**Why:** on the person's 15-minute play (10183 ticks) both ran the 8 GB machine out of memory: every mapped field
+decoded at every tick (333 of them, a level's map and floor 16384 words each) is several gigabytes, and the port's
+traces of the follow, read whole, a gigabyte. The 58 recorded sessions (25 to 750 ticks) never showed it. Kept as
+changes, a field holds what the game changed; read a line at a time, the traces hold one line.
+**Extends:** D171, D191, D197.
+
 ### D207. A follow keeps its log; a port past what it knows is said once; a played move counts to half a pixel. Accepted 2026-11-19.
 Three gaps the person's closing play showed (D206), closed:
 - `rrc play` writes `.rrc/play/NAME/follow.log` as it follows: each thing said, with how far behind the play it was

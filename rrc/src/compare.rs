@@ -1032,15 +1032,49 @@ fn unset_matches(path: &str, leftovers: &Value, theirs: &Value, found: &mut Vec<
 }
 
 /// Each mapped field's value at each tick of the original's trace.
-fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> Result<Vec<Vec<Value>>, String> {
+fn original_values(trace: &Trace, mapped: &[Mapped], r: &Reader, name: &str) -> Result<Vec<Column>, String> {
     let mut decoding = Original::new(&trace.header, mapped, r, name)?;
-    let mut all: Vec<Vec<Value>> = mapped.iter().map(|_| Vec::with_capacity(trace.ticks.len())).collect();
+    let mut all: Vec<Column> = mapped.iter().map(|_| Column::default()).collect();
     for tick in &trace.ticks {
         for (column, value) in all.iter_mut().zip(decoding.values(tick)?) {
             column.push(value);
         }
     }
     Ok(all)
+}
+
+/// A mapped field's values at every tick of a session, kept as its changes (D208): from the first tick's, each value
+/// from the tick it changed to on. A long play's thousands of ticks hold what changed, not a copy of every field a tick
+/// (a level's map and floor alone are 16384 words each): indexed by a tick's place (from 0) as a list of values is.
+#[derive(Debug, Default)]
+pub(crate) struct Column {
+    changes: Vec<(usize, Value)>,
+    len: usize,
+}
+
+impl Column {
+    /// The next tick's value.
+    fn push(&mut self, value: Value) {
+        if self.changes.last().is_none_or(|(_, last)| *last != value) {
+            self.changes.push((self.len, value));
+        }
+        self.len += 1;
+    }
+
+    /// From the tick at `from` on: its value there, then each it changed to, with the tick's place.
+    fn from(&self, from: usize) -> impl Iterator<Item = (usize, &Value)> {
+        let first = (from < self.len).then(|| (from, &self[from]));
+        first.into_iter().chain(self.changes.iter().filter(move |(at, _)| *at > from).map(|(at, v)| (*at, v)))
+    }
+}
+
+impl std::ops::Index<usize> for Column {
+    type Output = Value;
+
+    fn index(&self, at: usize) -> &Value {
+        assert!(at < self.len, "tick {} of a column of {}", at + 1, self.len);
+        &self.changes[self.changes.partition_point(|(from, _)| *from <= at) - 1].1
+    }
 }
 
 /// The original's mapped fields decoded a tick at a time, as a trace's ticks come (D192): each field's value from the
@@ -1181,7 +1215,7 @@ fn edit_sets(
     name: &str,
     trace: &Trace,
     mapped: &[Mapped],
-    original: &[Vec<Value>],
+    original: &[Column],
     types: &Types,
     after: u64,
 ) -> Result<BTreeMap<u64, serde_json::Map<String, Value>>, String> {
@@ -1265,7 +1299,7 @@ fn edited_leaves(
 fn feed(
     feeds: &mut BTreeMap<u64, serde_json::Map<String, Value>>,
     mapped: &[Mapped],
-    original: &[Vec<Value>],
+    original: &[Column],
     fields: &str,
     after: u64,
 ) -> Result<Vec<String>, String> {
@@ -1288,13 +1322,9 @@ fn feed(
 
 /// The original's values of `m` from the tick after `after` on, as the inputs file feeds them (D124): where
 /// they changed, each holding until it changes.
-fn feed_field(feeds: &mut BTreeMap<u64, serde_json::Map<String, Value>>, m: &Mapped, values: &[Value], after: u64) {
-    let mut last: Option<&Value> = None;
-    for (i, value) in values.iter().enumerate().skip(after as usize) {
-        if last != Some(value) {
-            feeds.entry(i as u64 + 1).or_default().insert(m.field.clone(), value.clone());
-            last = Some(value);
-        }
+fn feed_field(feeds: &mut BTreeMap<u64, serde_json::Map<String, Value>>, m: &Mapped, values: &Column, after: u64) {
+    for (i, value) in values.from(after as usize) {
+        feeds.entry(i as u64 + 1).or_default().insert(m.field.clone(), value.clone());
     }
 }
 
@@ -1890,18 +1920,24 @@ pub(crate) fn judge(
     let names: BTreeMap<&str, usize> =
         trace.header.inputs.iter().enumerate().map(|(i, item)| (item.name.as_str(), i)).collect();
     let values: Vec<Vec<Option<String>>> = (0..trace.header.inputs.len()).map(|i| trace.input_values(i)).collect();
-    let mut text = String::new();
-    for port in ports {
-        text += &std::fs::read_to_string(port).map_err(|e| format!("{}: {e}", port.display()))?;
-        text.push('\n');
-    }
+    // The port's traces a line at a time (D208): a long play's are a gigabyte.
+    let readers = ports
+        .iter()
+        .map(|port| {
+            std::fs::File::open(port).map(std::io::BufReader::new).map_err(|e| format!("{}: {e}", port.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut lived = Lived::default();
     let seen = |slot: &mut Option<Seen>, t: u64, what: String| match slot {
         Some(seen) => seen.ticks += 1,
         None => *slot = Some(Seen { ticks: 1, session: trace.header.session.clone(), tick: t, what }),
     };
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        let v: Value = serde_json::from_str(line).map_err(|e| format!("the port's trace: {e}"))?;
+    for line in readers.into_iter().flat_map(std::io::BufRead::lines) {
+        let line = line.map_err(|e| format!("the port's trace: {e}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let v: Value = serde_json::from_str(&line).map_err(|e| format!("the port's trace: {e}"))?;
         let (Some(t), Some(live)) = (v["tick"].as_u64(), v.get("live")) else { continue };
         let Some(tick) = trace.ticks.get((t as usize).wrapping_sub(1)) else { continue };
         lived.ticks += 1;
@@ -2445,7 +2481,7 @@ fn write_files(files: Vec<crate::peek::ChangedFile>, dir: &std::path::Path) -> R
 fn write_start(
     session: &str,
     mapped: &[Mapped],
-    original: &[Vec<Value>],
+    original: &[Column],
     tick: u64,
     carried: serde_json::Map<String, Value>,
     path: &str,
@@ -3572,6 +3608,22 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_column_keeps_a_field_s_changes_and_reads_as_every_tick_s() {
+        let ticks = [1, 1, 2, 2, 2, 1, 3];
+        let mut column = Column::default();
+        for v in ticks {
+            column.push(json!(v));
+        }
+        assert_eq!(column.changes.len(), 4, "what changed, not a value a tick");
+        let every: Vec<Value> = (0..ticks.len()).map(|i| column[i].clone()).collect();
+        assert_eq!(every, ticks.map(|v| json!(v)));
+        // Fed from the fourth tick on: its value there, then each change.
+        let fed: Vec<(usize, Value)> = column.from(3).map(|(i, v)| (i, v.clone())).collect();
+        assert_eq!(fed, vec![(3, json!(2)), (5, json!(1)), (6, json!(3))]);
+        assert_eq!(column.from(7).count(), 0);
+    }
 
     #[test]
     fn a_port_past_what_it_knows_is_lost_from_three_ticks_and_back_after_three() {
