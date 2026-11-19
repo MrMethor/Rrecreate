@@ -217,7 +217,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          makes judged against what the original's pass read: the same, timing (a pass early
                          or late, its loop waiting a moment more) or a difference, by input
                          (.rrc/compare/SESSION/live.json). Exits 1 if anything differs
-  play NAME [--from SESSION --tick N] [--replay FILE] [--sound-buffer FRAMES] | play NAME --resume
+  play NAME [--from SESSION --tick N] [--replay FILE] [--ips N] [--sound-buffer FRAMES] | play NAME --resume
                          the person plays the original in Clockwork's window, from the session's tick N
                          (or power-on), recorded as the session NAME (sessions/NAME.session) and followed
                          as it goes (D192): a second Clockwork records it, the port runs beside it free and
@@ -225,7 +225,10 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          first found; at the end, the play's census and the port's input handling judged
                          beside it (its Live, as compare --live: .rrc/play/NAME/). --replay: a play
                          recorded before (clockwork play --record), followed at full speed; --resume: a
-                         play cut short, followed again from its file to its last mark; --sound-buffer:
+                         play cut short, followed again from its file to its last mark; --ips: the
+                         emulated PC's instructions a second (8000000 by default; the game's frames a
+                         second follow it, and past what the follower keeps up with, the comparison falls
+                         behind); --sound-buffer:
                          the window's sound output, samples a channel at a time (256 to 16384, 2048 by
                          default), more where its sound breaks up
   start SESSION --tick N [--out DIR]

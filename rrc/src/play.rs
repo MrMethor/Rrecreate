@@ -23,6 +23,15 @@ fn ips(text: &str) -> Option<u64> {
     text.lines().find_map(|l| l.trim().strip_prefix("ips ").and_then(|n| n.trim().parse().ok())).filter(|&n| n > 0)
 }
 
+/// Clockwork's speed where none is given (`clockwork run --ips`'s default).
+const DEFAULT_IPS: u64 = 8_000_000;
+
+/// The speed of the play recorded in `path` (its `ips` line), if it says.
+fn played_ips(path: &Path) -> Result<Option<u64>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(ips(&text))
+}
+
 /// The cycle a session of `seconds` from power-on ends at, at `ips`.
 pub fn end_cycle(seconds: f64, ips: u64) -> u64 {
     (seconds * ips as f64).round() as u64
@@ -60,8 +69,19 @@ const PLAYING: f64 = 365.0 * 24.0 * 3600.0;
 
 /// `rrc play NAME [--from SESSION --tick N] [--replay FILE]`, or `rrc play NAME --resume`.
 pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--from", "--tick", "--replay", "--sound-buffer"], &["--resume"])?;
-    let usage = "play NAME [--from SESSION --tick N] [--replay FILE] [--sound-buffer FRAMES] | play NAME --resume";
+    let a = Args::parse(args, &["--from", "--tick", "--replay", "--sound-buffer", "--ips"], &["--resume"])?;
+    let usage =
+        "play NAME [--from SESSION --tick N] [--replay FILE] [--ips N] [--sound-buffer FRAMES] | play NAME --resume";
+    // The emulated PC's speed (D203): the game's frames a second follow it, and the follower must keep up with it.
+    let speed = match a.value("--ips") {
+        Some(n) => Some(
+            n.parse::<u64>()
+                .ok()
+                .filter(|n| (1_000_000..=100_000_000).contains(n))
+                .ok_or_else(|| format!("--ips {n}: instructions a second, 1000000 to 100000000"))?,
+        ),
+        None => None,
+    };
     // The window's sound output, samples a channel at a time (D199): Clockwork's own default is a played port's.
     let sound_buffer = match a.value("--sound-buffer") {
         Some(frames) => Some(
@@ -82,7 +102,7 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let resume = a.has("--resume");
     let mut session = if resume {
         // A play cut short (rrc or the machine stopped): followed again from its file, to its last mark.
-        if a.value("--from").is_some() || a.value("--replay").is_some() {
+        if a.value("--from").is_some() || a.value("--replay").is_some() || speed.is_some() {
             return Err("--resume goes on with a play as it was begun: alone".into());
         }
         let session = Session::load(repo, name)?;
@@ -111,6 +131,19 @@ pub(crate) fn play(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         // From power-on: the game's folder as it is now, which the play runs on (D170).
         if session.from.is_none() {
             session.files = crate::folder::take(repo)?;
+        }
+        // The PC's speed, the window's and the follower's (D203): a recorded play's own, which it replays only at.
+        let speed = match a.value("--replay") {
+            Some(recorded) => {
+                if speed.is_some() {
+                    return Err("--ips: a recorded play runs at the speed it was played (its file's ips)".into());
+                }
+                played_ips(Path::new(recorded))?
+            }
+            None => speed,
+        };
+        if let Some(ips) = speed.filter(|&ips| ips != DEFAULT_IPS) {
+            session.options.extend(["--ips".to_owned(), ips.to_string()]);
         }
         session
     };

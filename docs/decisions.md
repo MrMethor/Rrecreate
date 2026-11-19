@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D203. A play's PC can be faster. Accepted 2026-11-19.
+`rrc play NAME --ips N` plays on an emulated PC of N instructions a second (Clockwork's `--ips`, 8 million by
+default), kept in the session's options, so the window and the follower run the same PC; a recorded play
+(`--replay`) is followed at its file's own speed, which it replays only at. A game draws as many frames a second as
+its PC lets it: Arena's dungeon about 5 at 8 million. Measured on the person's machine, Clockwork runs Arena at 3.9
+times the pace of play over five minutes (3.3 in the dungeon) and the follower, which records the run, at 1.8 (D187):
+past about 14 million the follower falls behind the play, and what differs is said later than it happens.
+**Why:** the person found the game's frames a second low while playing step 7: the emulated PC is a slow 386's
+speed. The vault's test plays its walk at 16 million and follows it to every state hash.
+**Extends:** D189, D192.
+
 ### D202. Clockwork's window paces by the sound still to play, not the queue alone. Accepted 2026-11-19.
 `clockwork play` runs each frame a little more or less of the game's time to keep its sound queued near a target
 (the sound card's clock, not the host's, sets the pace). It measured the queue alone, which falls by a whole block

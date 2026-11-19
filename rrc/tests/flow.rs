@@ -986,6 +986,19 @@ fn a_port_from_power_on_loads_the_game_s_files() {
         .output()
         .unwrap();
     assert!(window.status.success(), "{}", String::from_utf8_lossy(&window.stderr));
+    // A play on a faster PC (D203): followed at its own speed, its run proved the window's at each state hash.
+    let fast = dir.join("fast.session");
+    let window = Command::new(&rrc.clockwork)
+        .args(["play", dir.join("game").to_str().unwrap(), "VAULT.EXE", "--headless", script.to_str().unwrap()])
+        .args(["--record", fast.to_str().unwrap(), "--seconds", "3", "--hash-every", "1", "--no-audio"])
+        .args(["--ips", "16000000"])
+        .output()
+        .unwrap();
+    assert!(window.status.success(), "{}", String::from_utf8_lossy(&window.stderr));
+    let (refused, ok) = rrc.run(&["play", "fast", "--replay", fast.to_str().unwrap(), "--ips", "16000000"]);
+    assert!(!ok && refused.contains("runs at the speed it was played"), "{refused}");
+    let followed = rrc.ok(&["play", "fast", "--replay", fast.to_str().unwrap()]);
+    assert!(followed.contains("the runs the same (3 state hashes of the window's)"), "{followed}");
     let walked = rrc.ok(&["play", "walk", "--replay", played.to_str().unwrap()]);
     assert!(walked.contains("play      walk: 0:06 played from power-on, "), "{walked}");
     assert!(walked.contains("state hashes of the window's)"), "{walked}");
