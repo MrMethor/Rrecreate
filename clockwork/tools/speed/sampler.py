@@ -1,6 +1,7 @@
 """A sampling profiler for Clockwork on Windows, without admin rights: starts replay.py VARIANT, finds its clockwork
 child, samples the instruction pointer of its busiest thread for SECONDS, and prints the functions and the source lines
-it was in. SYMBOLS is the folder of clockwork.pdb (a build with `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` gives
+it was in, and the innermost inlined function and line (the interpreter is one function inlined into `Cpu::step`: its
+own lines are there, D210). SYMBOLS is the folder of clockwork.pdb (a build with `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` gives
 the lines). dbghelp is the Windows Kits' (the system's is too old for Rust's PDBs), else `DBGHELP`.
 
 usage: [SAMPLE_AFTER=SECONDS] sampler.py CLOCKWORK LOG VARIANT SECONDS SYMBOLS
@@ -20,6 +21,14 @@ dbghelp = ctypes.WinDLL(os.environ.get("DBGHELP", KITS), use_last_error=True)
 dbghelp.SymInitializeW.argtypes = [wt.HANDLE, wt.LPCWSTR, wt.BOOL]
 dbghelp.SymFromAddrW.argtypes = [wt.HANDLE, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64), ctypes.c_void_p]
 dbghelp.SymGetLineFromAddr64.argtypes = [wt.HANDLE, ctypes.c_uint64, ctypes.POINTER(wt.DWORD), ctypes.c_void_p]
+dbghelp.SymAddrIncludeInlineTrace.argtypes = [wt.HANDLE, ctypes.c_uint64]
+dbghelp.SymAddrIncludeInlineTrace.restype = wt.DWORD
+dbghelp.SymQueryInlineTrace.argtypes = [wt.HANDLE, ctypes.c_uint64, wt.DWORD, ctypes.c_uint64, ctypes.c_uint64,
+                                        ctypes.POINTER(wt.DWORD), ctypes.POINTER(wt.DWORD)]
+dbghelp.SymFromInlineContextW.argtypes = [wt.HANDLE, ctypes.c_uint64, wt.ULONG, ctypes.POINTER(ctypes.c_uint64),
+                                          ctypes.c_void_p]
+dbghelp.SymGetLineFromInlineContext.argtypes = [wt.HANDLE, ctypes.c_uint64, wt.ULONG, ctypes.c_uint64,
+                                                ctypes.POINTER(wt.DWORD), ctypes.c_void_p]
 k32.SuspendThread.argtypes = [wt.HANDLE]
 k32.ResumeThread.argtypes = [wt.HANDLE]
 k32.GetThreadContext.argtypes = [wt.HANDLE, ctypes.c_void_p]
@@ -131,7 +140,33 @@ class LINE64(ctypes.Structure):
                 ("FileName", ctypes.c_char_p), ("Address", ctypes.c_uint64)]
 
 
+def source(line):
+    return line.FileName.decode(errors="replace").replace("\\", "/").split("/src/")[-1] + f":{line.LineNumber}"
+
+
+def innermost(addr):
+    """The innermost inlined function at `addr` and its line, if code was inlined there."""
+    if not dbghelp.SymAddrIncludeInlineTrace(process, ctypes.c_uint64(addr)):
+        return None
+    context, index = wt.DWORD(), wt.DWORD()
+    if not dbghelp.SymQueryInlineTrace(process, addr, 0, addr, addr, ctypes.byref(context), ctypes.byref(index)):
+        return None
+    s = SYMBOL_INFOW()
+    s.SizeOfStruct = 88
+    s.MaxNameLen = 1024
+    disp = ctypes.c_uint64()
+    name = s.Name if dbghelp.SymFromInlineContextW(process, addr, context.value, ctypes.byref(disp),
+                                                   ctypes.byref(s)) else "?"
+    line = LINE64()
+    line.SizeOfStruct = ctypes.sizeof(LINE64)
+    d32 = wt.DWORD()
+    at = source(line) if dbghelp.SymGetLineFromInlineContext(process, addr, context.value, 0, ctypes.byref(d32),
+                                                             ctypes.byref(line)) else "?"
+    return name, at
+
+
 by_function, by_line = collections.Counter(), collections.Counter()
+by_inlined, by_inlined_line = collections.Counter(), collections.Counter()
 for addr, n in samples.items():
     s = SYMBOL_INFOW()
     s.SizeOfStruct = 88
@@ -144,8 +179,13 @@ for addr, n in samples.items():
     line.SizeOfStruct = ctypes.sizeof(LINE64)
     d32 = wt.DWORD()
     if dbghelp.SymGetLineFromAddr64(process, ctypes.c_uint64(addr), ctypes.byref(d32), ctypes.byref(line)):
-        file = line.FileName.decode(errors="replace").replace("\\", "/").split("/src/")[-1]
-        by_line[f"{file}:{line.LineNumber}"] += n
+        by_line[source(line)] += n
+    inlined = innermost(addr)
+    by_inlined[inlined[0] if inlined else name] += n
+    if inlined:
+        by_inlined_line[inlined[1]] += n
+    elif line.LineNumber:
+        by_inlined_line[source(line)] += n
 replay.kill()
 for p, _ in children(replay.pid):
     subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
@@ -156,4 +196,11 @@ for name, n in by_function.most_common(25):
 if by_line:
     print("lines:")
     for name, n in by_line.most_common(25):
+        print(f"{100 * n / total:5.1f}%  {name}")
+print("innermost functions, inlined ones included:")
+for name, n in by_inlined.most_common(40):
+    print(f"{100 * n / total:5.1f}%  {name[:150]}")
+if by_inlined_line:
+    print("their lines:")
+    for name, n in by_inlined_line.most_common(60):
         print(f"{100 * n / total:5.1f}%  {name}")

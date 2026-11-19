@@ -160,7 +160,7 @@ recording tracks left out, one thing at a time, with Clockwork's own CPU time be
 `--answers`, a hash of each answer, to show two builds answer the same (D210); `stretches.py` gives the speed over a run's stretches and its
 slowest; `pacing.py` times the window's emulation frame by frame, alone or with a follower beside it; `sampler.py`
 samples where Clockwork's own time goes (Windows, no admin; a build with
-`CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` gives source lines); `logsum.py` sums a log by request, and
+`CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` gives source lines, and the innermost inlined function at each); `logsum.py` sums a log by request, and
 `disk.py` counts what a recorded trace keeps on disk; `rerecord.py` records every session of a port again, each
 after its base, and says whether each trace came out the same (after a change to Clockwork that should change nothing
 it records). Each script's head says how to run it.
@@ -206,7 +206,9 @@ git -C reference/SingleStepTests/80386 sparse-checkout set v1_ex_real_mode
 cargo run --release -p cpu --example singlestep -- reference/SingleStepTests/80386/v1_ex_real_mode --skip-limit-faults
 ```
 
-A name filter (`D3`, `660FA4`) runs some files only; `--show N` and `--detail` show failures. Known
+Each test's instruction runs as the machine runs it: from the cache of decoded instructions when it has a handler
+there (D211), else through the interpreter; `--fetched` runs every one through the interpreter, and both give the
+same results. A name filter (`D3`, `660FA4`) runs some files only; `--show N` and `--detail` show failures. Known
 differences: real-mode segment-limit faults (not enforced, as in DOSBox; counted apart), an 8-bit IDIV quirk
 (10 tests where an overflowing division returns AL=80h instead of #DE), and two tests where an address wraps at
 a segment's end or above 1 MB (669A, C2). Anything else failing is a regression.

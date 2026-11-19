@@ -15,6 +15,10 @@
 //! doesn't check. Instructions that read I/O ports are skipped: their results
 //! depend on the bus data the recording captured, which this runner doesn't replay.
 //!
+//! Each test's instruction runs as Clockwork's machine runs it: decoded into the CPU's cache of decoded
+//! instructions when it has a handler there (D211), else fetched by the interpreter. `--fetched` runs every
+//! instruction through the interpreter.
+//!
 //! The suites are large and not part of the repository; see README.md for where to put them.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -22,6 +26,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use cpu::{Bus, Cpu, Exit, Model, SegmentCache, flags, reg, seg};
+
+/// `--fetched`: no code stamps, so no instruction runs decoded.
+static FETCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // ---- MOO files ----
 
@@ -209,6 +216,15 @@ impl Bus for Memory {
     fn write_u8(&mut self, addr: u32, value: u8) {
         self.bytes.insert(addr & 0xFF_FFFF, value);
     }
+    fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
+        Some(std::array::from_fn(|i| self.read_u8(addr.wrapping_add(i as u32))))
+    }
+
+    // Each test has a new CPU, its cache empty: memory doesn't change before its one instruction is decoded.
+    fn code_stamp(&mut self, _addr: u32, _len: u32) -> Option<u64> {
+        (!FETCHED.load(std::sync::atomic::Ordering::Relaxed)).then_some(0)
+    }
+
     fn port_in_u8(&mut self, _port: u16) -> u8 {
         0xFF
     }
@@ -442,6 +458,8 @@ fn main() {
             skip_limit_faults = true;
         } else if arg == "--detail" {
             detail = true;
+        } else if arg == "--fetched" {
+            FETCHED.store(true, std::sync::atomic::Ordering::Relaxed);
         } else if arg == "--show" {
             show = args.next().and_then(|n| n.parse().ok()).expect("--show needs a count");
         } else if folder.is_none() {
@@ -450,8 +468,9 @@ fn main() {
             filter = Some(arg.to_ascii_uppercase());
         }
     }
-    let folder =
-        folder.expect("usage: singlestep <suite folder> [name filter] [--show N] [--detail] [--skip-limit-faults]");
+    let folder = folder.expect(
+        "usage: singlestep <suite folder> [name filter] [--show N] [--detail] [--skip-limit-faults] [--fetched]",
+    );
     // The 80386 suite's table of undefined flags; the 80286 suite has none, and the same
     // architectural rules apply, so it borrows the 386's when that suite sits beside it.
     let root = folder.parent().unwrap_or(&folder);

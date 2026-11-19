@@ -76,7 +76,9 @@ never contains Clockwork code, so a port doesn't inherit the GPL.
 An IBM PC with DOS, emulated in Rust: our own 486 CPU (real, protected and virtual-8086 mode, paging) with an
 FPU, VGA and SVGA (S3 with VESA), Sound Blaster, OPL, MPU-401, PC speaker, PIT/PIC/keyboard, CMOS and RTC,
 EMS and XMS, CD-ROM with MSCDEX, a DPMI host, DOS with child processes and a COMMAND.COM. It runs DOS extenders
-that bring their own host (CauseWay so far). Its role is the original's controlled environment.
+that bring their own host (CauseWay so far). Its role is the original's controlled environment. Its CPU keeps the
+instructions it decodes, checked against stamps of the memory written since, and runs them in batches between the
+machine's looks (D211).
 
 Rules:
 - **Deterministic:** time is virtual, derived from executed instructions; no wall clock, no randomness, no

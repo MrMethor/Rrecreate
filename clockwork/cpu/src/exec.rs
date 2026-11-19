@@ -10,6 +10,11 @@ use crate::regs::reg::{AX, BP, BX, CX, DI, DX, SI, SP};
 use crate::regs::seg::{CS, DS, ES, FS, GS, SS};
 use crate::{Abort, Bus, Cpu, Exit, Fault, Model, Res, TableRegister, vector};
 
+mod decoded;
+
+pub use decoded::Batch;
+pub(crate) use decoded::DecodeCache;
+
 /// Longest run of prefixes accepted before the instruction is treated as invalid.
 const MAX_PREFIXES: usize = 14;
 
@@ -838,10 +843,23 @@ impl Cpu {
     fn group3<B: Bus>(&mut self, bus: &mut B, op: u8, p: &Prefixes) -> Res<()> {
         let w = p.width(op);
         let m = self.modrm(bus, p)?;
+        self.group3_on(bus, w, m, |cpu, bus| cpu.fetch(bus, w))
+    }
+
+    /// Group 3 on its operand, `imm` giving TEST's immediate after the operand is read (fetched by the interpreter,
+    /// decoded before by the cache of decoded instructions).
+    #[inline]
+    fn group3_on<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        w: Width,
+        m: ModRm,
+        imm: impl FnOnce(&mut Self, &mut B) -> Res<u32>,
+    ) -> Res<()> {
         match m.reg {
             0 | 1 => {
                 let a = self.read_rm(bus, m.rm, w)?;
-                let b = self.fetch(bus, w)?;
+                let b = imm(self, bus)?;
                 self.logic(w, a & b);
             }
             2 => {

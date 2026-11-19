@@ -34,6 +34,7 @@ mod regs;
 
 use std::fmt;
 
+pub use exec::Batch;
 pub use fpu::Fpu;
 pub use regs::{Regs, reg, seg};
 
@@ -86,6 +87,22 @@ pub trait Bus {
     fn code_window(&mut self, _addr: u32) -> Option<[u8; 16]> {
         None
     }
+
+    /// For the CPU's cache of decoded instructions (D211): a value that changes whenever any of the `len` bytes at
+    /// `addr` changes after it was asked for, or `None` when the bytes aren't ordinary memory the bus keeps one for
+    /// (their instructions then run as fetched, byte by byte). Asking marks the bytes as code. The default keeps none:
+    /// a bus that sees each fetch (a probe that records them) leaves it so.
+    fn code_stamp(&mut self, _addr: u32, _len: u32) -> Option<u64> {
+        None
+    }
+
+    /// A count that changes whenever a code stamp ([`Bus::code_stamp`]) does, or the addresses' mapping to memory
+    /// (A20): while it stays, every stamp asked for before is unchanged, and the cache doesn't ask again. `None`: ask
+    /// for the stamp each time.
+    fn code_writes(&mut self) -> Option<u64> {
+        None
+    }
+
     fn port_in_u8(&mut self, port: u16) -> u8;
     fn port_out_u8(&mut self, port: u16, value: u8);
 
@@ -362,6 +379,9 @@ pub struct Cpu {
     string_restart: Option<(u32, u32, u32)>,
     /// Code fetch state for the current instruction (not part of the CPU's state).
     fetch: FetchState,
+    /// Instructions decoded before, by address (not part of the CPU's state, D211).
+    #[serde(skip)]
+    decoded: exec::DecodeCache,
 }
 
 /// What instruction fetches need: CS base and EIP wrap mask (computed per instruction), and with
@@ -446,6 +466,7 @@ impl Cpu {
             irq_inhibit: false,
             string_restart: None,
             fetch: FetchState::default(),
+            decoded: exec::DecodeCache::default(),
         }
     }
 
@@ -494,6 +515,12 @@ impl Cpu {
         self.fetch.buf_len = 0;
     }
 
+    /// Forgets the instructions decoded so far (D211). The host calls this when the memory the bus reads may have been
+    /// replaced, not written (a snapshot loaded): writes change the bus's code stamps, which the cache checks.
+    pub fn forget_decoded(&mut self) {
+        self.decoded.forget();
+    }
+
     /// The CPU wrote physical address `physical`: code read ahead from that page is stale.
     #[inline]
     pub(crate) fn wrote(&mut self, physical: u32) {
@@ -521,7 +548,22 @@ impl Cpu {
         } else {
             None
         };
-        let result = if self.paging() { self.exec(&mut Paged(bus), start_ip) } else { self.exec(bus, start_ip) };
+        let result =
+            if self.paging() { self.exec(&mut Paged(bus), start_ip) } else { self.exec_decoded(bus, start_ip) };
+        self.conclude(bus, result, start_ip, checkpoint, trap)
+    }
+
+    /// The end of an instruction that started at `start_ip`: counted, and an exception it raised entered (undone to
+    /// `checkpoint` in protected mode), or a trap after it.
+    #[inline(always)]
+    fn conclude<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        result: Res<()>,
+        start_ip: u32,
+        checkpoint: Option<Checkpoint>,
+        trap: bool,
+    ) -> Result<(), Exit> {
         match result {
             Ok(()) => {
                 self.cycles += 1;

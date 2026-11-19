@@ -11,6 +11,9 @@ pub const ROM_START: u32 = 0xF_0000;
 /// Extended memory is stored in pages of this size, created on first write.
 const PAGE_SIZE: usize = 4096;
 
+/// The blocks code stamps are kept for ([`Memory::code_stamp`]): 256 bytes.
+const CODE_BITS: u32 = 8;
+
 /// `Clone` is a full snapshot: the 1.1 MB real-mode image plus the extended pages written so far.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Memory {
@@ -28,6 +31,14 @@ pub struct Memory {
     /// before. For watches, around what the host does (services, devices).
     #[serde(skip)]
     log: Option<Vec<(u32, u8)>>,
+    /// For the CPU's cache of decoded instructions (D211): a stamp per block of physical memory, odd while code was
+    /// decoded from it since it was last written; a write makes it even ([`Memory::code_stamp`]). Not the memory's
+    /// contents; empty until code is first asked for.
+    #[serde(skip)]
+    code: Vec<u32>,
+    /// How many times a block holding code was written, or the A20 gate moved ([`Memory::code_writes`]).
+    #[serde(skip)]
+    code_writes: u64,
 }
 
 /// A bit per byte of physical memory: written since tracking began (or initialized then).
@@ -94,6 +105,8 @@ impl Memory {
             extended: vec![None; (size as usize).div_ceil(PAGE_SIZE)],
             written: None,
             log: None,
+            code: Vec::new(),
+            code_writes: 0,
         }
     }
 
@@ -153,6 +166,41 @@ impl Memory {
         self.written.as_deref().is_none_or(|w| w.get(self.gate(addr)))
     }
 
+    /// A stamp of the `len` bytes the CPU reads at `addr` (through the A20 gate) that changes when any of them is
+    /// written, by the CPU or the host, after this asked for it, if they lie in one block; for the CPU's cache of
+    /// decoded instructions (D211). The block is marked as holding code.
+    pub fn code_stamp(&mut self, addr: u32, len: u32) -> Option<u64> {
+        let (first, last) = (self.gate(addr), self.gate(addr.wrapping_add(len.max(1) - 1)));
+        let block = first >> CODE_BITS;
+        if last >> CODE_BITS != block || last < first {
+            return None;
+        }
+        if self.code.is_empty() {
+            self.code = vec![0; (self.size as usize).div_ceil(1 << CODE_BITS)];
+        }
+        let stamp = self.code.get_mut(block as usize)?;
+        *stamp |= 1;
+        Some(u64::from(block) << 32 | u64::from(*stamp))
+    }
+
+    /// Physical address `addr` is written: code decoded from its block is stale.
+    #[inline(always)]
+    fn code_written(&mut self, addr: u32) {
+        if let Some(stamp) = self.code.get_mut((addr >> CODE_BITS) as usize)
+            && *stamp & 1 != 0
+        {
+            *stamp += 1;
+            self.code_writes += 1;
+        }
+    }
+
+    /// A count that changes whenever a code stamp does, or the A20 gate moves (D211): while it stays, every code
+    /// stamp asked for before holds.
+    #[inline]
+    pub fn code_writes(&self) -> u64 {
+        self.code_writes
+    }
+
     /// Before a write to physical address `addr`.
     #[inline(always)]
     fn mark(&mut self, addr: u32) {
@@ -195,6 +243,7 @@ impl Memory {
     /// A physical write. Writes to the BIOS ROM and beyond the end of memory are ignored.
     pub fn write_phys(&mut self, addr: u32, value: u8) {
         self.mark(addr);
+        self.code_written(addr);
         if (addr as usize) < self.bytes.len() {
             if !(ROM_START as usize..CONVENTIONAL_SPACE).contains(&(addr as usize)) {
                 self.bytes[addr as usize] = value;
@@ -220,6 +269,9 @@ impl Memory {
     }
 
     pub fn set_a20(&mut self, enabled: bool) {
+        if self.a20 != enabled {
+            self.code_writes += 1;
+        }
         self.a20 = enabled;
     }
 
@@ -250,6 +302,7 @@ impl Memory {
     pub fn write_u8(&mut self, addr: u32, value: u8) {
         let addr = self.gate(addr);
         self.mark(addr);
+        self.code_written(addr);
         if (addr as usize) < self.bytes.len() {
             if !(ROM_START as usize..CONVENTIONAL_SPACE).contains(&(addr as usize)) {
                 self.bytes[addr as usize] = value;
@@ -337,13 +390,17 @@ impl Memory {
                 if self.written.is_some() || self.log.is_some() {
                     (0..N as u32).for_each(|i| self.mark(at as u32 + i));
                 }
+                self.code_written(at as u32);
+                self.code_written((at + N - 1) as u32);
                 self.bytes[at..at + N].copy_from_slice(&value)
             }
             Some((Some(page), at)) => {
+                let start = (page * PAGE_SIZE + at) as u32;
                 if self.written.is_some() || self.log.is_some() {
-                    let start = (page * PAGE_SIZE + at) as u32;
                     (0..N as u32).for_each(|i| self.mark(start + i));
                 }
+                self.code_written(start);
+                self.code_written(start + N as u32 - 1);
                 let data = self.extended[page].get_or_insert_with(|| vec![0; PAGE_SIZE].into_boxed_slice());
                 data[at..at + N].copy_from_slice(&value);
             }
@@ -370,12 +427,16 @@ impl Memory {
         // Below 1 MB, with no writes tracked: one copy, as the loop below would leave it.
         let start = addr as usize;
         if start + data.len() <= CONVENTIONAL_SPACE && self.written.is_none() && self.log.is_none() {
+            for block in (start >> CODE_BITS)..(start + data.len()).div_ceil(1 << CODE_BITS) {
+                self.code_written((block << CODE_BITS) as u32);
+            }
             self.bytes[start..start + data.len()].copy_from_slice(data);
             return;
         }
         for (i, &b) in data.iter().enumerate() {
             let at = self.index(addr + i as u32);
             self.mark(at as u32);
+            self.code_written(at as u32);
             self.bytes[at] = b;
         }
     }

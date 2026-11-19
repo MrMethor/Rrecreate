@@ -764,6 +764,31 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D211. Clockwork keeps the instructions it decoded, and runs them in batches. Accepted 2026-11-19.
+The CPU keeps each instruction it decodes by its linear address (`cpu/src/exec/decoded.rs`). Those programs run most
+(on Arena's play, 45 opcodes are 93% of 1.5 billion instructions) have handlers that do what the interpreter does,
+through the same helpers and in the same order of reads and writes, without fetching or parsing prefixes and ModR/M
+again; the rest run in the interpreter as before. Memory keeps a stamp per 256-byte block, changed by every write to
+a block that holds decoded code (the CPU's, a service's, DMA, EMS), and a count of such writes and of the A20 gate's
+moves: while the count stays, a kept instruction holds; when it moves, its block's stamp says whether it does. Only
+without paging, on a bus that keeps stamps (the machine's, the late reads', the probes'); a bus without them runs
+every instruction as fetched. And with nothing to look at between instructions but the sync points, the hooks'
+entries, the call tracker and the late reads (a recording's), the machine has the CPU run decoded instructions in
+batches (`Cpu::run_batch`): before a sync point or an entry, at the next event or the cycle limit, at an instruction
+it has no handler for, and after an exception, it returns to the machine's loop, which looks at each instruction as
+before; within a batch it tracks calls and late reads as that loop does.
+Measured on the person's two-minute play (1602 ticks, `replay.py`, Clockwork's CPU time): the emulation alone 47.6 s
+against 77.9 s (1.64 times as fast), a recording 76.0 s against 99.1 s (1.30 times), and every one of the 8055
+answers the same. The 80386 and 80286 suites give the same results decoded and fetched (`singlestep --fetched`), a
+test runs 3000 random instructions of the set decoded and fetched, twice each, and compares them, and code the
+program or the host writes is decoded again.
+**Why:** D210 found the time in the CPU's core. Profiled with the interpreter's inlined code resolved (`sampler.py`
+now resolves inlined frames), a quarter to a third went to decoding (prefixes, ModR/M, fetches, the dispatch) and a
+third to the loop around each instruction; the flags took a twentieth and are left as they are. The cache alone gave
+a tenth, its lookup taking much of what it saved; the batches, the rest. The design is Bochs' and DOSBox's dynamic
+core's (decoded code checked against stamps of the memory written); nothing was taken from either.
+**Extends:** D187, D210.
+
 ### D210. Clockwork's loop around an instruction and its build stay as they are: the time is the CPU's core. Accepted 2026-11-19.
 Two cheap ways to a faster Clockwork were tried on the person's two-minute play (1602 ticks, the recording's requests
 replayed by `replay.py`) and neither is kept. The loop around each instruction made leaner (the instruction's address

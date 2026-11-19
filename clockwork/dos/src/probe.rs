@@ -260,6 +260,16 @@ impl Bus for ProbeBus<'_, '_> {
         self.inner.code_window(addr)
     }
 
+    // Code fetches are plain reads here (`fetch_u8`): what the cache of decoded instructions leaves out, nothing sees.
+    fn code_stamp(&mut self, addr: u32, len: u32) -> Option<u64> {
+        self.inner.code_stamp(addr, len)
+    }
+
+    #[inline(always)]
+    fn code_writes(&mut self) -> Option<u64> {
+        self.inner.code_writes()
+    }
+
     fn port_in_u8(&mut self, port: u16) -> u8 {
         if let Some(log) = self.log.as_deref_mut() {
             log.push(Access::Port);
@@ -295,7 +305,8 @@ impl Bus for ProbeBus<'_, '_> {
 pub(crate) struct LateBus<'a, 'b> {
     pub(crate) inner: PcBus<'a>,
     pub(crate) late: &'b mut LateInputs,
-    pub(crate) calls: Option<&'b Calls>,
+    /// Mutable for a batch of decoded instructions, which tracks calls through the bus (D211).
+    pub(crate) calls: Option<&'b mut Calls>,
     /// The instruction running (linear), and when.
     pub(crate) at: u32,
     pub(crate) now: u64,
@@ -310,15 +321,15 @@ impl LateBus<'_, '_> {
     #[cold]
     #[inline(never)]
     fn read_late(&mut self, addr: u32, value: u8) {
-        if !self.calls.is_some_and(Calls::in_hardware_interrupt) {
-            self.late.memory_read(addr, value, late_read(self.now, self.at, self.calls));
+        if !self.calls.as_deref().is_some_and(Calls::in_hardware_interrupt) {
+            self.late.memory_read(addr, value, late_read(self.now, self.at, self.calls.as_deref()));
         }
     }
 
     #[cold]
     #[inline(never)]
     fn write_late(&mut self, addr: u32, value: u8) {
-        if !self.calls.is_some_and(Calls::in_hardware_interrupt) {
+        if !self.calls.as_deref().is_some_and(Calls::in_hardware_interrupt) {
             self.late.memory_written(addr, value);
         }
     }
@@ -388,9 +399,19 @@ impl Bus for LateBus<'_, '_> {
         self.inner.code_window(addr)
     }
 
+    #[inline(always)]
+    fn code_stamp(&mut self, addr: u32, len: u32) -> Option<u64> {
+        self.inner.code_stamp(addr, len)
+    }
+
+    #[inline(always)]
+    fn code_writes(&mut self) -> Option<u64> {
+        self.inner.code_writes()
+    }
+
     fn port_in_u8(&mut self, port: u16) -> u8 {
-        if port == crate::joystick::PORT && !self.calls.is_some_and(Calls::in_hardware_interrupt) {
-            let read = late_read(self.now, self.at, self.calls);
+        if port == crate::joystick::PORT && !self.calls.as_deref().is_some_and(Calls::in_hardware_interrupt) {
+            let read = late_read(self.now, self.at, self.calls.as_deref());
             self.late.device_read(crate::Device::Joystick, &self.inner.joystick_state(), read);
         }
         self.inner.port_in_u8(port)

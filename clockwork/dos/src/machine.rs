@@ -399,6 +399,12 @@ fn plain_ram(addr: u32, len: u32) -> bool {
     last < vga::GRAPHICS_BASE || (addr >= 0xC_0000 && last >= addr && last < ABOVE_RAM)
 }
 
+/// [`Machine::peek_linear_u8`] from the parts it reads, for the call tracker beside the rest of the machine.
+fn peek_linear(cpu: &Cpu, mem: &Memory, dev: &Devices, linear: u32) -> Option<u8> {
+    let physical = cpu.peek_translate(|at| mem.read_u32(at), linear)?;
+    Some(peek_device_u8(mem, dev, physical))
+}
+
 /// A byte at a physical address the way the CPU sees it (the video window, the linear frame
 /// buffer, RAM), without side effects.
 fn peek_device_u8(mem: &Memory, dev: &Devices, addr: u32) -> u8 {
@@ -503,6 +509,19 @@ impl Bus for PcBus<'_> {
     #[inline(always)]
     fn code_window(&mut self, addr: u32) -> Option<[u8; 16]> {
         plain_ram(addr, 16).then(|| self.mem.read_n(addr))
+    }
+
+    #[inline(always)]
+    fn code_stamp(&mut self, addr: u32, len: u32) -> Option<u64> {
+        if !plain_ram(addr, len) {
+            return None;
+        }
+        self.mem.code_stamp(addr, len)
+    }
+
+    #[inline(always)]
+    fn code_writes(&mut self) -> Option<u64> {
+        Some(self.mem.code_writes())
     }
 
     #[inline(always)]
@@ -711,6 +730,14 @@ impl Machine {
         let late_only = !probes && self.probes.late.is_some();
         let probes = probes || self.probes.late.is_some();
         let entries = self.probes.entries.as_deref().map_or(0, |e| e.mask);
+        // With nothing to look at between instructions but the sync points, the hooks' entries, the call tracker and
+        // the late reads (a recording's), the CPU runs the instructions it has decoded in batches, stopping before
+        // those points and entries, and tracking calls and late reads as it goes (D211).
+        let batches = (!probes || late_only)
+            && (self.probes.calls.is_none() || late_only)
+            && self.probes.exec_watch.is_none()
+            && self.probes.coverage.is_none()
+            && self.probes.contracts.is_none();
         loop {
             if let Some(code) = self.exit_code {
                 return Stop::Exited(code);
@@ -750,6 +777,51 @@ impl Machine {
                     return stop;
                 }
                 continue;
+            }
+            // A batch makes progress, or the instruction runs below.
+            if batches && self.cpu.batches() && limit.min(self.next_event) > self.cpu.cycles {
+                let until = limit.min(self.next_event);
+                let points = &self.syncs;
+                let stops = |at: u32| {
+                    (syncs && points.is_point(at)) || (entries != 0 && entries & crate::probe::entry_bit(at) != 0)
+                };
+                let now = self.cpu.cycles;
+                let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
+                let ran = if late_only {
+                    // What the instruction by instruction way below does around each: the call tracker before and
+                    // after it, the late reads' instruction and count of the program's instructions.
+                    let late = self.probes.late.as_deref_mut().expect("late reads are looked for");
+                    let calls = self.probes.calls.as_deref_mut();
+                    let mut bus = crate::probe::LateBus { inner, late, calls, at: 0, now };
+                    let before = |cpu: &Cpu, bus: &mut crate::probe::LateBus, at: u32| {
+                        if stops(at) {
+                            return true;
+                        }
+                        if let Some(calls) = bus.calls.as_deref_mut() {
+                            calls.before(cpu);
+                        }
+                        (bus.at, bus.now) = (at, cpu.cycles);
+                        false
+                    };
+                    let after = |cpu: &Cpu, bus: &mut crate::probe::LateBus| {
+                        if let Some(calls) = bus.calls.as_deref_mut() {
+                            let (mem, dev) = (&*bus.inner.mem, &*bus.inner.dev);
+                            calls.after(cpu, |at| peek_linear(cpu, mem, dev, at));
+                            if !calls.in_hardware_interrupt() {
+                                bus.late.step();
+                            }
+                        }
+                    };
+                    self.cpu.run_batch(&mut bus, until, before, after)
+                } else {
+                    let mut bus = inner;
+                    self.cpu.run_batch(&mut bus, until, |_, _, at| stops(at), |_, _| {})
+                };
+                match ran {
+                    Ok(cpu::Batch::Again) => continue,
+                    Ok(cpu::Batch::Step) => {}
+                    Err(fault) => return Stop::Fault(fault),
+                }
             }
             if syncs {
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
@@ -801,7 +873,7 @@ impl Machine {
                 let mut bus = crate::probe::LateBus {
                     inner: PcBus { mem: &mut self.mem, dev: &mut self.devices, now },
                     late,
-                    calls: self.probes.calls.as_deref(),
+                    calls: self.probes.calls.as_deref_mut(),
                     at,
                     now,
                 };
@@ -1218,8 +1290,7 @@ impl Machine {
     /// A byte at a linear address (through the page tables when paging is on), without side
     /// effects; `None` on a page that isn't present.
     pub fn peek_linear_u8(&self, linear: u32) -> Option<u8> {
-        let physical = self.cpu.peek_translate(|at| self.mem.read_u32(at), linear)?;
-        Some(self.peek_u8(physical))
+        peek_linear(&self.cpu, &self.mem, &self.devices, linear)
     }
 
     /// An input device's state now, as bytes ([`Device`]).
