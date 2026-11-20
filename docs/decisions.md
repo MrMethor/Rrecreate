@@ -62,7 +62,7 @@ Arena's port is wanted for itself. Arena already runs in Clockwork to its first 
 (`testdata/inputs/arena-first-dungeon.inputs`), with its mouse as a boundary value (D49).
 **Supersedes:** D3.
 
-### D70. The goal is the complete toolkit; Arena is a game it is tested on. Accepted 2026-10-27, with the person; its milestones: D71.
+### D70. The goal is the complete toolkit; Arena is a game it is tested on. Accepted 2026-10-27, with the person; its milestones: D71; Arena's port whole, as the test of the toolkit in full: D214.
 Rrecreate's goal is the toolkit: everything an agent needs to port a DOS game whose source was never released,
 from analysis to a faithful port and its modern mode. No game's port is a goal of its own. Arena is where M4 to
 M6 test the toolkit, because it has no source release and already runs in Clockwork; like Wolf3D's (D52), its
@@ -763,6 +763,33 @@ tick early, the difference D165 removed from plain comparisons. Leaving the edit
 change of them: the toy's lockstep then differed after its edit. Measured on Arena: the lock and pass sessions'
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
+
+### D215. The playbook's chapter on playing alongside, and three rules for plays. Accepted 2026-11-20.
+`docs/porting.md` gets "Playing alongside: the live comparison", the manual of M6.5's features as a port uses them:
+what runs (the window, the follower proved by the play's hashes, the port free and corrected, its `Live` judged),
+starting a play and its options, what it says and keeps, reading a play's census and its `live`, from a play to the
+work (transplants with `--to`, short sessions cut from the play's tick), following again, and how it fits stages 2,
+4 to 6 and 7. Stage 2 and stage 7 say what they ask and point to it; the work loop reads a play's census beside
+lockstep's; "Where to start", "When the port differs" and the recipes get its rows (so `rrc how` gives them). And
+the rules (`rrc rules` prints them) get three: 15, the person plays and the agent reads the play (rule 2 stands);
+16, a play is evidence, committed with the port, never deleted, and followed again after the port or Clockwork
+changes; 17, a long session is heavy in every command: compared from a transplant with `--to`, cut into short
+sessions, kept out of the scope once its items are, one heavy command at a time.
+**Why:** the person asked, before porting Arena whole (D214), for a manual of M6.5's features and how they fit the
+rest, with rules, so that an agent works a play as the toolkit means it to. The playbook had a paragraph on `rrc
+play` in stage 2 and nothing on reading what a play found. The rules come from what this work met: plays left
+uncommitted in the port, a play's census read after the port had changed (D213's two follows), and commands on a
+fifteen-minute play that ran the machine out of memory (D208, D213).
+**Extends:** D77, D154, D184.
+
+### D214. Arena is ported whole before M7, as the test of the toolkit in full. Accepted 2026-11-20, with the person.
+Before M7, the agent ports Arena whole by the playbook: from power-on through the game the person plays, every
+stretch the person's plays reach, matched and playable, with the person's play-tests followed alongside (D215).
+**Why:** the person wants the toolkit tested in full, on a whole game, before the modern mode is built on it: what a
+whole port needs that the toolkit lacks is found there, and fixed in the toolkit as it is met (D10). It goes past
+D70's "a game is ported only as far as a toolkit feature needs testing" for Arena, at the person's word; D70 stands
+for the other games, and the toolkit stays the goal: each gap the port meets is a feature with a test of its own.
+**Extends:** D70, D71.
 
 ### D213. A port's next line is taken from its corrected state; a comparison is given the original a tick at a time. Accepted 2026-11-20.
 The runtime sets a comparison's corrections (D191) over the state its next trace line's changes are taken from, as

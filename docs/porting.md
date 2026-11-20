@@ -100,6 +100,16 @@ on what it wrote: nothing reads it, or what reads it goes the same).
     learned and why, never the state of the work.
 14. **A gap in the toolkit is fixed in the toolkit,** as a general feature with a test of its own, never worked
     around in the port (D10). Then the item goes on.
+15. **The person plays; the agent reads the play.** A play followed alongside ("Playing alongside") finds what no
+    script reached and checks the port's input handling; its census is a work list like lockstep's, worked from
+    transplants and short sessions cut from it. The agent never plays to find things (rule 2): it asks the person
+    for a play of the stretch, from power-on or a session's tick.
+16. **A play is evidence: kept, and followed again rather than trusted.** Commit its session with the port and
+    never delete it. Its census counts for the port's code that made it: after the port changes, follow it again
+    (`rrc play NAME --resume`); after Clockwork changes, with `--other-build`.
+17. **A long session is heavy in every command.** A play of minutes is thousands of ticks: compare it from a
+    transplant with `--to`, cut what the work comes back to into short sessions, keep a long play out of the scope
+    once its items are, and run one heavy command at a time.
 
 **Where to start, by question:**
 
@@ -112,6 +122,8 @@ on what it wrote: nothing reads it, or what reads it goes the same).
 | Why does the port differ? | `rrc compare`: the original's writer and the port's code | the writer's `--c` | `rrc watch`, `rrc trace` |
 | What is this memory at tick N? | `rrc peek SESSION --tick N ID...` (no naming or recording needed) | `rrc show ID`: who writes it | `rrc watch` across ticks |
 | What does a pass run, in what order? | `rrc pass SESSION --tick N`, `--in FUNCTION` | the loop's `--c` | `rrc watch` of a value it changes |
+| What did the person's play find? | its census and `follow.log` (`.rrc/play/NAME/`), most passes first | `rrc compare NAME --transplant T --to T+N` at an item's first tick | a short session cut from the play's tick |
+| Does the port's input handling do what the original's does? | the play's `live` (`live.json`), by input | the original's handler (`rrc show ID --c`) and the port's `Live` | `rrc compare NAME --live` |
 
 A stretch whose screens aren't drawn yet (the logic first) is compared field by field alone:
 `rrc compare SESSION --fields` (D136) stops at the first field that differs and at no screen or sound.
@@ -159,6 +171,8 @@ censuses of the scope's sessions count (`rrc compare SESSION --lockstep`, D124),
 fields first, then the paths noted as not ported, then the frames, then the sound, the most passes first. `rrc work
 --run` counts again each session whose census the port's code as it is now didn't make, and compares again each
 that nothing compared since (the fields alone before stage 6), so one command brings every gate up to the code.
+A play the person made alongside the port ("Playing alongside") has a census of its own (`.rrc/play/NAME/`): its
+items are taken the same way, and worked from transplants and short sessions cut from it (rules 15 to 17).
 
 1. **Take** the top item, with a card: `rrc work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]`.
    The question, the route chosen, one other route considered, and after how many comparisons (6 unless said) the
@@ -194,6 +208,9 @@ where none says anything of it. The table is the same thing for reading:
 | The port does what the code means and the original doesn't | A bug of the original's: `rrc suspects`, then a quirk |
 | The state matches and the frame doesn't | The drawing code's own state at the transplant (`[[present]]`), then who drew the pixel |
 | The state matches and the sound doesn't | The order of events (`rrc trace SESSION --tick N`), then a driver's answer the port needs a hook for |
+| A play says `lost` | Where the port's loop takes its passes at the first tick of the stretch: the pass from another sync point, and what the original's took |
+| A play's `live` says `differs` | The original's handler for that input (keyboard, timer, mouse driver), then the port's `Live` |
+| A play says `panic` | `rrc compare NAME --transplant T` at its tick: the port's own failure |
 | Three tries with no progress | Another kind of source: the code instead of runs, an outside source, the game's file. Then fresh eyes, below |
 
 **When stuck.** Three tries of one route that leave the first difference where it was mean the route has stopped
@@ -236,6 +253,10 @@ both, with the questions of "Where to start"; `rrc how` alone lists what they ar
 | A sound that differs | `rrc trace SESSION --tick N`: the events; `rrc ports` for who wrote the device; a driver's answer, a hook | seconds |
 | A bug of the original's | `rrc suspects SESSION`; its code; `rrc quirk`; `keeps`; `rrc compare --fix NAME` | one run a session |
 | What no session runs | `rrc unrun`; a session from a tick that reaches it, or a reading against the code | seconds |
+| What a stretch no script reaches does | Ask the person for a play of it (`rrc play NAME --from SESSION --tick N`); read its census and `follow.log`; cut the items into short sessions | the person's minutes, then one follow |
+| A difference a play found | `rrc compare NAME --transplant T --to T+N` at its first tick; then the table "When the port differs" | seconds |
+| The port's input handling | The play's `live` by input; the original's handler; fix `Live`; `rrc compare NAME --live` | one run |
+| A play's census after the port changed | `rrc play NAME --resume` (`--other-build` after a change to Clockwork) | a follow, no window |
 
 ## Stage 0: Set up
 
@@ -585,26 +606,10 @@ from another session's tick, and a scenario's edits for a state play rarely reac
 
 Scripts reach what an agent can plan; the person reaches the rest. `rrc play NAME --from SESSION --tick N` opens
 Clockwork's window on the original from that tick (or power-on without `--from`): the person plays it, and the
-play is recorded as the session `NAME`. While they play, rrc follows it as it goes (D192): a second Clockwork records
-the play as it is written, the port runs beside it, free and corrected where it differs (`rrc compare --corrected`),
-and what differs or the port noted is said as it is first found, with the play's time (`new at 3:51: differs`,
-`new at 12:40: note`); at the end the play's census is listed, most passes first, with `next`: where to look first,
-and the port's own input handling judged against the play's (`live`, as `rrc compare --live`, D197).
-The play is a session like any other: compare it, watch it, peek into it. Nothing slows the window; if the
-comparison falls behind, the status line says by how much, and once the window is closed the follow goes on to the
-play's end: its terminal stays open until the census. What it says is kept in `.rrc/play/NAME/follow.log` with how
-late each came (D207). Where the port's loop is at another screen than the original's, the follow says `lost` once
-and counts what differs there without saying it, until `back`. A port that panics or hangs is counted (`panic`) and
-started again from the original's state a tick later (D193); find why with `rrc compare NAME --transplant T` at its
-tick. `--replay FILE` follows a play recorded before with
-`clockwork play --record`; `--resume` follows a play cut short (rrc or the machine stopped) again from its file,
-and with `--other-build` follows a play with a build of Clockwork other than the one that played it (after a change
-to Clockwork), its run proved the same by the play's state hashes (D212).
-Where the window's sound breaks up, `--sound-buffer 4096` (or more) gives its output larger buffers (D199). `--ips N`
-plays on a faster PC (D203): the game draws more frames a second, and past what the follower keeps up with (about 14
-million for Arena on an i5-8300H), the comparison says what differs later than it happens.
-A play keeps little on disk (D196): the pictures between its ticks by their hashes alone, a snapshot a minute;
-`rrc record NAME --run` makes the pictures again where a comparison wants them.
+play is recorded as the session `NAME`, followed as it goes with the port beside it (D192): what differs is said
+as it is first found, and at the end the play's census and the port's input handling are listed. How it runs, what
+it says and keeps, and how a play becomes work: "Playing alongside" below. A play is a session like any other;
+commit it with the port (rule 16), and cut the stretches the work comes back to into short sessions of their own.
 
 ### A session from another's tick
 
@@ -843,6 +848,11 @@ sample, which `Live::next` answers with (`Inputs::with_calls`).
 
 ## Stage 7: Play
 
+The play-test has two sides: the person plays the original with the port followed beside it from power-on
+(`rrc play`, "Playing alongside" below), which says where the port's logic, frames, sound and input handling differ
+from the original's as the person plays; and the person plays the port in its own window (`PORT play`, below),
+which only a person can judge. What either finds becomes a session or an item of the work list.
+
 A port that draws and sounds plays in a window (D119): `rrc_platform` owns the loop, shows the presentation's
 frames, gives the host's keyboard as the PC's (scan codes, set 1) and the mouse in the screen's coordinates,
 and plays the sound (the OPL3 by Nuked OPL3, the speaker, digitized sound). What a comparison gives the port
@@ -876,6 +886,99 @@ takes what a pass wrote into its own inputs (a keyboard queue the program emptie
 saves goes through `rrc_runtime::original::save` and `saved` (the port's saves, `.rrc/saves` of its repository
 or `RRC_SAVES`; the person's in the game's folder are read, never written). `examples/vault` and
 `examples/chime` play so (`cargo run -p vault-port -- play --game testbins/bin`).
+
+## Playing alongside: the live comparison
+
+The person plays the original; the port runs beside it, and what it does otherwise is said as the play goes (M6.5,
+D184; `docs/plans/live-comparison.md` has the design and what each step found). It is the toolkit's way to the
+stretches no script reaches and the check of the port's own input handling, which nothing else runs. It doesn't
+replace the work loop: a play finds; a difference is then worked from the play's session like any other.
+
+**What runs.** `rrc play NAME` builds the port first (no build slows the window), then opens Clockwork's window on the
+original and records the play into `sessions/NAME.session` as it is played: the input at its cycles, a mark every
+100 ms ("all is in to here") and the machine's state hash every 30 s. A second Clockwork, the follower, runs the
+same run behind the marks and checks each hash as it reaches it (D189): its run is proved the window's, not assumed,
+and a hash that differs stops the follow as a Clockwork bug (D9). The follower records the run as `rrc record` would,
+tick by tick; the port runs beside it, fed the play's input a tick at a time, free on its own state and corrected
+where a tick differs (`rrc compare --corrected`, D191), so each difference is counted where it arises without the
+cascade a free run has after it; and the port's own input handling (`Live`) is given the play's keys and mouse at
+the play's moments and judged against what the original's handlers made (D194, D197). Nothing waits on the window:
+when the checking falls behind, it says by how much and catches up where it can.
+
+**Starting one.** The person plays; the agent prepares and reads. From power-on, or from a session's tick:
+
+```bash
+rrc play first-run
+rrc play dungeon-2 --from cell --tick 1200
+```
+
+- `--ips N` plays on a faster emulated PC (D203; 8 million by default): the game draws more frames a second, and
+  the follower has more to do. At 8 million it keeps up; at 16 million it falls behind in the heaviest stretches
+  (D211: on Arena, up to about two minutes early in a fifteen-minute play, held from there): what differs is then
+  said later than it happens, never lost.
+- `--sound-buffer 4096` (or more) where the window's sound breaks up (D199).
+- `--replay FILE` follows a play recorded before with `clockwork play --record`, at its own speed.
+- `--resume` follows a play again from its file, to its end: one cut short (the window, rrc or the machine stopped),
+  or one to check again once the port's code changed. With `--other-build` it follows a play that another build
+  of Clockwork played (after a change to Clockwork), its run proved the same by the play's hashes (D212).
+
+**What it says.** In the terminal, as it is first found, with the play's time: `new at 3:51: differs ...`, `new at
+12:40: note ...` (what the port noted, D115); `many` for a burst of more than five at once, each kept in the log;
+`lost` once where the port's loop takes its passes at another sync point than the original's (another screen, or
+waiting where the original took a pass), what differs then counted but not said, until `back` (D207); `port started
+again at tick N` where the port panicked or hung (counted as `panic`, D193; ten times at most, then the port is
+compared no more). A status line, rewritten each second, says how far the comparison is behind the play. Once the
+window is closed the follow goes on to the play's end: leave its terminal open until the census. At the end: the
+play's census, most passes first, with `next` (where to look first, as `rrc compare` gives it), and `live`: the
+port's input handling judged against the play's ticks.
+
+**What it keeps** (`docs/formats.md`): the play's session (`sessions/NAME.toml` and `.session`, small: commit them
+with the port); `.rrc/play/NAME/census.json`, the corrected run's census with its `panics` and `lost` stretches;
+`live.json`, the input handling's judgement; `follow.log`, each thing said with how late it was said (`new`; `counted`
+while lost; `lost`, `back`) and every ten seconds a `pace` line: the play's time and the comparison's, and where the
+time went (the comparer waiting for the follower, reading, the port; the follower making ticks or held). A play keeps
+little on disk (D196): the pictures between its ticks by their hashes alone, a snapshot a minute; `rrc record NAME
+--run` makes the pictures again where a comparison wants them.
+
+**Reading a play's census.** The same census as lockstep's (`rrc compare --lockstep`), counted on a free run kept
+on the original's track: each field the port's pass left otherwise, with its first tick and both values; the fields
+it left unset; the frames and the sound that differ; the notes. The most passes first is the order of the work, as
+in `rrc work`. A `lost` stretch is one item, not its many differences: what the port's loop does where the
+original's went on (its first tick, the two sync points). A `panic` is the port's own failure: `rrc compare NAME
+--transplant T` at its tick.
+
+**Reading the input handling (`live`).** For each input, the ticks the port's `Live` made as the original's handlers
+did (`same`), a moment apart (`timing`: a key or a move a pass early or late, its handlers making the original's at
+the original's moment; or its loop still waiting where the original's took a pass, `waits`), and otherwise
+(`differs`: its handlers made something else, with the first tick and byte); and the passes its loop would take from
+another sync point (`syncs`) or not take at all (`skips`, `ends`). Timing is a moment's phase and is expected; a
+difference is a fix to `Live`, read from the original's handler (the keyboard's, the timer's, the mouse driver's
+answers). `rrc compare NAME --live` checks it again on the play's session.
+
+**From a play to the work.** A play is a session: compare it, watch it, peek into it, trace it, as any other. Its
+census items are worked by the loop: take the item, then compare from a transplant just before its first tick, kept
+short with `--to` (a play is thousands of ticks: rule 17):
+
+```bash
+rrc compare first-run --transplant 2432 --to 2460
+rrc watch first-run player_health --tick 2420 --ticks 20
+rrc session add sheet-2 --from first-run --tick 1660 --seconds 60 --inputs sheet-2.inputs
+```
+
+A stretch the work comes back to is cut into a session of its own from the play's tick (`rrc session add --from`,
+with a script for what follows): short sessions are what the scope and `rrc work --run` should count. A long play in
+the scope makes every `rrc work --run` count its thousands of ticks again: put it there only while its census is
+the work list, and take it out once its items are short sessions.
+
+**Following again.** A play's census counts for the port's code that made it. After the port's code changes, follow
+the play again (`rrc play NAME --resume`) rather than reading the old census as current; after a change to
+Clockwork, with `--other-build`. A follow of a play already made needs no window: the person needn't be there.
+
+**How it fits the workflow.** Stage 2: the person's plays are the scope's first sessions, from power-on and from
+the sessions' ticks, minutes each, and the agent's scripted sessions fill what they missed. Stages 4 to 6: a play's
+census is a work list beside lockstep's; its items are worked from transplants and short sessions cut from it.
+Stage 7: the play-test is a play followed from power-on to as far as the person goes, and the port played in its own
+window (`PORT play`); what either finds becomes a session or an item, and the person closes the gate.
 
 ## Quirks
 

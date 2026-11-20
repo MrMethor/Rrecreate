@@ -472,6 +472,8 @@ disregarded (D69): nothing more is taken from it, and nothing is read from it.
 | M8 32-bit games | The whole flow on protected-mode programs (LE/LX objects) under CauseWay and DOS/4GW: analysis, sessions, mapping, transplant, comparison, frames. Tested on Daggerfall and Ultimate Doom (a test bench: its source is released, D52) | A session of each game's play matches tick by tick from a transplant |
 | M9 Acceptance | An agent with `docs/porting.md` alone, as in the blind tests (D46), ports a stretch of a game without a source release that the toolkit wasn't developed on, chosen by the person (D71) | Its port matches a session of play, state and frames, and plays; what the agent needed and didn't find is in the toolkit: the toolkit is complete |
 
-The games are where the toolkit is tested: their ports go only as far as the tests need (D70). M9's game stays
+Between M6.5 and M7, Arena is ported whole by the playbook, as the test of the toolkit in full (D214, the
+person's). The games are where the toolkit is tested: their ports go only as far as the tests need (D70), Arena's
+whole at the person's word. M9's game stays
 out of the toolkit's development until then. 32-bit protected-mode programs are designed in from M1 (IDs,
 protocol, mapping).

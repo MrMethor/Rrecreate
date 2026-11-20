@@ -18,7 +18,8 @@
 
 It is finished when an agent with the playbook alone ports a stretch of a game the toolkit wasn't developed on, and
 the port matches and plays (M9, section 5). **No game's port is a goal:** Wolf3D, Arena and Daggerfall are where the
-toolkit is tested, and their ports go only as far as a test needs.
+toolkit is tested, and their ports go only as far as a test needs; Arena's goes whole, as the test of the toolkit in
+full, at the person's word (D214).
 
 Who does what:
 
@@ -83,7 +84,8 @@ piece of work is closed, and refuses a commit that names a bug without registeri
 **What the work serves**
 
 1. **The toolkit is the goal** (D70). Judge every step by what it adds to the toolkit. A game is ported only as far
-   as a toolkit feature needs testing; a small test program is preferred where it tests as well.
+   as a toolkit feature needs testing (Arena whole, as the test of the toolkit in full: D214, the person's); a small
+   test program is preferred where it tests as well.
 2. **Fidelity first** (D39). A port is as identical to the original as can be checked; where that is unreasonable,
    the closest thing that is still well built for modernizing.
 3. **Games only reveal gaps** (D10). Each gap becomes a general feature with a test of its own, never a
@@ -120,7 +122,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-20 (decisions to D213). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-20 (decisions to D215). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -192,7 +194,10 @@ differently: the comparer kept a corrected value the port's next line left out, 
 the port's next line is now taken from its corrected state, and a long play's comparison no longer runs the machine
 out of memory (D213).
 
-**Next: M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept, as M6.5's was.
+**Next: Arena ported whole** (D214, the person's call, 2026-11-20): before M7, the agent ports the whole game by the
+playbook, the person's plays followed alongside, as the test of the toolkit in full; each gap it meets is fixed in the
+toolkit. The playbook has the manual of the live comparison for it, "Playing alongside", and three rules for plays
+(D215). **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).
