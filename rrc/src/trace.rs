@@ -655,6 +655,20 @@ pub(crate) fn identity(repo: &Repo, session: &Session) -> Result<String, String>
     Ok(crate::cache::sha256(format!("{run}\n{}", session.seconds).as_bytes()))
 }
 
+/// Why an item, by what it is, is never in the memory a recording keeps (D92): read through a pointer, a device's,
+/// or in expanded memory, whose pages Clockwork finds wherever the program has them (D172, D217).
+fn not_kept(item: &Item) -> Option<&'static str> {
+    if item.via.is_some() {
+        Some("is read through a pointer")
+    } else if !item.device.is_empty() {
+        Some("is a device's")
+    } else if crate::knowledge::parse_id(&item.at).is_ok_and(|id| id.is_expanded()) {
+        Some("is in expanded memory")
+    } else {
+        None
+    }
+}
+
 /// The sync points, inputs and state items of a trace.
 pub(crate) type Items = (Vec<SyncPoint>, Vec<Item>, Vec<Item>);
 
@@ -812,8 +826,8 @@ pub(crate) fn sync_points(k: &Knowledge) -> Result<Vec<SyncPoint>, String> {
 /// The trace of a recording that only added items to the last one's state, all in the memory kept with
 /// it (D92): the last trace's ticks with the new items read from that memory. Else why the session runs
 /// (empty: nothing recorded before): the run would differ (another Clockwork, sync points, inputs or
-/// edits), an item isn't in the kept memory (a device, an item read through a pointer, memory outside
-/// the data segment), or nothing was kept.
+/// edits), an item isn't in the kept memory (a device, an item read through a pointer, expanded memory,
+/// memory outside the data segment), or nothing was kept.
 fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<Trace, String>, String> {
     let Some(before) = &session.trace else { return Ok(Err(String::new())) };
     let Some(memory) = &before.memory else { return Ok(Err("its last recording kept no memory".into())) };
@@ -867,8 +881,8 @@ fn from_kept(repo: &Repo, session: &Session, header: &Header) -> Result<Result<T
             sources.push(Source::Old(i));
             continue;
         }
-        if item.via.is_some() || !item.device.is_empty() {
-            return Ok(Err(format!("{} is read through a pointer or a device, not kept", item.name)));
+        if let Some(why) = not_kept(item) {
+            return Ok(Err(format!("{} {why}, not kept", item.name)));
         }
         let linear = places.linear(&places.address(&item.at)?)?;
         let range = ranges.iter().position(|&(start, len)| {
@@ -2211,6 +2225,15 @@ fn short(hex: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_item_in_expanded_memory_is_never_in_the_memory_kept() {
+        let item = |at: &str| super::Item { name: "x".into(), at: at.into(), size: 4, ..Default::default() };
+        assert_eq!(super::not_kept(&item("EMS#1+11F000")), Some("is in expanded memory"));
+        assert_eq!(super::not_kept(&item("PROG.EXE+0100")), None);
+        let device = super::Item { device: "mouse".into(), ..item("") };
+        assert_eq!(super::not_kept(&device), Some("is a device's"));
+    }
+
     use super::*;
 
     #[test]

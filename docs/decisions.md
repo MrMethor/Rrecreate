@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D217. A recording without a run runs the session for an item in expanded memory. Accepted 2026-11-20.
+`rrc record` reads items named since the last recording from the data segment that recording kept (D92); an item in
+expanded memory (`EMS#<handle>+<offset>`, D172) is never in it, so, like an item read through a pointer or a device,
+it makes the recording run the session, which says why (`runs  the session: wild_grid is in expanded memory, not
+kept`).
+**Why:** Arena's port mapped the wilderness's grid of chunks, which the game keeps in EMS (D214's work), and the
+recording stopped with an error (`"EMS#1+11F000" has no linear address`): the check for what isn't kept knew pointers
+and devices only, and asked an expanded-memory address for a linear one, which it has none of (Clockwork finds the
+page wherever the program has it).
+**Extends:** D92, D172.
+
 ### D216. Ghidra is given its projects by a path without a folder starting with a dot. Accepted 2026-11-20.
 `rrc analyze` keeps Ghidra's project of an analysis in the cache (`ghidra/<key>/`). Where the cache's path has a
 folder whose name starts with a dot, as the default's has (`.cache`, D201), rrc gives Ghidra a link to the cache's

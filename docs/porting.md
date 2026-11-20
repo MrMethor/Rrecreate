@@ -574,8 +574,8 @@ A value is shown as the data's type reads it; an access to part of an element (`
 doubleword) as the number the instruction wrote, in hex (`57E9h`: the bytes E9 57). `rrc frame` writes what the screen showed by the end of a tick as a PNG, to look at.
 Name data as you learn it (`rrc data ID NAME --size N --evidence "..."`) and record again: the trace follows
 every named data item. A recording keeps the data segment at every tick (D92), so recording again after naming
-more of it takes seconds (`from the run recorded before`): only an item read through a pointer, a device, a
-change to the sync points, inputs, the session or Clockwork runs it again (`--run` always does). With nothing to
+more of it takes seconds (`from the run recorded before`): only an item read through a pointer, a device, an
+item in expanded memory (D217), a change to the sync points, inputs, the session or Clockwork runs it again (`--run` always does). With nothing to
 add (a mapping or a type changed, the items not), it records nothing (`kept`, D111); a changed input, option
 or length always runs again (D123). Recording a session
 again with `--run` must give the same run (`same`); after a knowledge change
