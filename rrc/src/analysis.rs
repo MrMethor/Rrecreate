@@ -91,7 +91,7 @@ pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
     let key = sha256(format!("{original_hash}\n{decompile}\n{EXPORT_SCRIPT}").as_bytes());
     let again = a.has("--again");
     // Ghidra's project of the analysis under `key`, kept for adding functions to it.
-    let project = cache.dir().join("ghidra").join(&key);
+    let project = ghidra_folder(&cache)?.join(&key);
     let analyse = || run_ghidra(repo, &cache, &original, &original_hash, decompile, &project);
     let mut index = kept_or_run(repo, &cache, &key, again, analyse)?;
     let mut analysis = Analysis::parse(&index.records(&cache)?, &module, index.entry, &index.objects)?;
@@ -265,8 +265,8 @@ fn run_ghidra(
     let _ = std::fs::remove_file(&export);
     let script = work.join("scripts").join("RecExport.java");
     std::fs::write(&script, EXPORT_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
-    // Ghidra's project is in the cache, not in `.rrc`: Ghidra refuses project paths with a folder
-    // starting with a dot.
+    // Ghidra's project is in the cache, not in `.rrc`, and given to Ghidra by a path without a folder
+    // starting with a dot (`ghidra_folder`).
     let _ = std::fs::remove_dir_all(project);
     std::fs::create_dir_all(project).map_err(|e| format!("{}: {e}", project.display()))?;
     let mut command = headless(&ghidra);
@@ -366,6 +366,52 @@ fn add_functions(
         return Err(format!("Ghidra couldn't add the functions (its log: {})", log.display()));
     }
     cache.put(&std::fs::read(&out).map_err(|e| format!("{}: {e}", out.display()))?)
+}
+
+/// The cache's folder of Ghidra's projects as Ghidra is given it. Ghidra refuses a project path with a folder
+/// starting with a dot, which the default cache's has (`.cache`, D201): then a link to the folder from the system's
+/// temporary folder, made once (a junction on Windows, a symbolic link elsewhere; D216).
+fn ghidra_folder(cache: &Cache) -> Result<std::path::PathBuf, String> {
+    let folder = cache.dir().join("ghidra");
+    std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    if !dotted(&folder) {
+        return Ok(folder);
+    }
+    let name = format!("rrecreate-ghidra-{}", &sha256(folder.to_string_lossy().as_bytes())[..12]);
+    let link = std::env::temp_dir().join(name);
+    if dotted(&link) {
+        return Err(format!(
+            "Ghidra refuses project paths with a folder starting with a dot ({}): set RRC_CACHE to a folder without",
+            folder.display()
+        ));
+    }
+    if link.is_dir() {
+        return Ok(link);
+    }
+    let made = if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&folder)
+            .output()
+            .map_err(|e| e.to_string())
+            .and_then(|o| {
+                if o.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().to_owned()) }
+            })
+    } else {
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&folder, &link).map_err(|e| e.to_string());
+        #[cfg(not(unix))]
+        let made = Err("no symbolic links here".to_owned());
+        made
+    };
+    made.map_err(|e| format!("{} as a link to {} for Ghidra: {e}", link.display(), folder.display()))?;
+    Ok(link)
+}
+
+/// Whether a path has a folder whose name starts with a dot.
+fn dotted(path: &Path) -> bool {
+    path.components().any(|c| matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().starts_with('.')))
 }
 
 fn headless(ghidra: &Path) -> Command {
@@ -751,6 +797,14 @@ impl Packs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_starting_with_a_dot_is_one_ghidra_refuses() {
+        assert!(dotted(Path::new("/home/someone/.cache/rrecreate/ghidra")));
+        assert!(dotted(Path::new("C:/Users/someone/.cache/rrecreate")));
+        assert!(!dotted(Path::new("/tmp/rrecreate-ghidra-0123456789ab")));
+        assert!(!dotted(Path::new("C:/Users/someone/AppData/Local/Temp/x.y")));
+    }
 
     const EXPORT: &str = r#"{"record":"program","name":"GAME.EXE","entry":{"linear":66576,"text":"1000:0410"},"ghidra":"12.1.4"}
 {"record":"function","address":{"linear":65552,"text":"1000:0010"},"name":"entry","source":"IMPORTED","fid":null,"body":[[{"linear":65552},16],[{"linear":65600},4]]}

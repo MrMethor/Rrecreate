@@ -122,7 +122,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-20 (decisions to D215). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-20 (decisions to D216). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -197,7 +197,9 @@ out of memory (D213).
 **Next: Arena ported whole** (D214, the person's call, 2026-11-20): before M7, the agent ports the whole game by the
 playbook, the person's plays followed alongside, as the test of the toolkit in full; each gap it meets is fixed in the
 toolkit. The playbook has the manual of the live comparison for it, "Playing alongside", and three rules for plays
-(D215). **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
+(D215). The first gap it met is closed: Ghidra refused the default cache's path, so `rrc analyze` gives it a link
+without the dot (D216). **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
+accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).

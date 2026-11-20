@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D216. Ghidra is given its projects by a path without a folder starting with a dot. Accepted 2026-11-20.
+`rrc analyze` keeps Ghidra's project of an analysis in the cache (`ghidra/<key>/`). Where the cache's path has a
+folder whose name starts with a dot, as the default's has (`.cache`, D201), rrc gives Ghidra a link to the cache's
+`ghidra` folder from the system's temporary folder instead (`rrecreate-ghidra-<12 hex digits of the folder's path's
+hash>`: a junction on Windows, a symbolic link elsewhere), made once; the projects stay in the cache. A temporary
+folder with such a folder too is refused with what to do: set `RRC_CACHE` to a folder without.
+**Why:** Ghidra 12 refuses a project's path with a folder starting with a dot ("Path element starting with '.' is
+not permitted"), the reason the project was in the cache and not in `.rrc`; D201 moved the default cache to
+`%USERPROFILE%\.cache\rrecreate`, and the first analysis after it, Arena's port asking for the functions its town
+session called (D214), failed there. A junction keeps the projects where D201 put the cache, shared by the person's
+and the agent's processes; Ghidra checks the path it is given, and the link's has no such folder.
+**Extends:** D79, D201.
+
 ### D215. The playbook's chapter on playing alongside, and three rules for plays. Accepted 2026-11-20.
 `docs/porting.md` gets "Playing alongside: the live comparison", the manual of M6.5's features as a port uses them:
 what runs (the window, the follower proved by the play's hashes, the port free and corrected, its `Live` judged),

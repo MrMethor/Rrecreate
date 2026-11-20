@@ -153,7 +153,8 @@ A folder of files named by their SHA-256: `objects/<first 2 hex digits>/<the oth
 what an earlier run made from given inputs:
 - `index/analysis/<key>`: the `analysis.toml` of a program analysed by the same export script, keyed by the
   program's hash, the script and whether it decompiled; Ghidra's project of that analysis is kept in
-  `ghidra/<key>/`, to add functions to it without analysing it again;
+  `ghidra/<key>/`, to add functions to it without analysing it again (where the cache's path has a folder starting
+  with a dot, which Ghidra refuses, Ghidra is given it through a link from the system's temporary folder, D216);
 - `index/additions/<key>`: the records of the functions added to an analysis, keyed by the analysis and the
   functions' offsets;
 - `index/snapshots/<key>`: the Clockwork snapshots `rrc record` kept of a session (`[[snapshot]]` with `tick`,
