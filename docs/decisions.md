@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D218. A mapped field can be compared only while another's bits are set. Accepted 2026-11-21.
+A mapping's `while = "FIELD & MASK"` (`FIELD` another mapped field, an unsigned number of the original's own) makes
+the comparison, the lockstep's and the census's, pass the field over at the ticks the original's value of `FIELD` has
+none of those bits set; the port keeps its own value meanwhile, and the field is given with a transplant as it is.
+**Why:** Arena keeps the wilderness's grid of chunks in expanded memory (D172, D217) that a town uses for something
+else (the pages the scratch buffer draws boxes into: in Winterhold the arrival's box left its pixels there), and the
+wilderness makes the grid again as it is entered. The field was compared everywhere, so a town's first passes
+differed in memory that changes nothing the game does. A field that is a pointer's target can be null where the
+pointer is (D122), but this memory isn't freed: it holds the grid while the player is in the wilderness alone.
+**Extends:** D16, D95, D172.
+
 ### D217. A recording without a run runs the session for an item in expanded memory. Accepted 2026-11-20.
 `rrc record` reads items named since the last recording from the data segment that recording kept (D92); an item in
 expanded memory (`EMS#<handle>+<offset>`, D172) is never in it, so, like an item read through a pointer or a device,

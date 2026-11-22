@@ -122,7 +122,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-20 (decisions to D217). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-21 (decisions to D218). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -202,11 +202,14 @@ without the dot (D216). So is the second: a recording without a run stopped at a
 wilderness's grid), and now runs the session for it (D217). By 2026-11-21 the port, by its roadmap's phases, goes
 from the start dungeon into the village, its streets, houses and shops (buying, selling), a tavern (a job offered, a
 room rented and slept in), a temple (healing, the blessing), the wilderness and a dungeon made there, loot and a new
-level, and by the world map on journeys of a day and of 44, to the next town; 80 short sessions match in every mapped
-field but four known differences, and 49 bugs of the original are registered with their switches. The port met no
-gap in the toolkit since D217. Left by the roadmap: the mages' guild and the palaces, the citizens' talk, the main
-quest and its jobs, the game's texts' codes, the towns' and the wilderness's pictures and songs, the rest of the
-program. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
+level, and by the world map on journeys of a day and of 44, to the next town; then the mages' guild (its stock,
+potions, magic items, identifying), the citizens' talk, saving and loading in towns and the wilderness, and the main
+quest's first steps: the vision at a rest's end, a guild's favour asked and taken, the journey to its dungeon, its
+item taken on the dungeon's second level, and the way out by the world map to the guild's city in the snow. 95 short
+sessions match in every mapped field but four known differences, and 57 bugs of the original are registered with
+their switches. The third gap: the wilderness's grid, kept in expanded memory a town draws into, is now compared only
+in the wilderness (D218). Left by the roadmap: the palaces, the main quest's rest and its jobs, the game's texts'
+codes, the towns' and the wilderness's pictures and songs, the rest of the program. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
 accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

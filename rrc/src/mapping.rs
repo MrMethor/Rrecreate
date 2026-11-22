@@ -71,6 +71,10 @@ pub struct Map {
     /// (an array through a pointer; another item is an array of one: D178): null where it points elsewhere (D122).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub into: String,
+    /// Compared only while another mapped field (an unsigned number) has bits set (D218): `field` or `field & mask`:
+    /// memory that holds the item there alone (expanded memory another place uses as a buffer).
+    #[serde(default, rename = "while", skip_serializing_if = "String::is_empty")]
+    pub while_: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -112,6 +116,22 @@ pub struct Mapped {
     pub set: bool,
     /// The array it is an index into ([`Map::into`]).
     pub into: Option<Into>,
+    /// While what it is compared ([`Map::while_`]).
+    pub when: Option<When>,
+}
+
+/// A mapped field compared only while another's bits are set (D218): that field's place among the mapped, the bits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct When {
+    pub field: usize,
+    pub mask: u64,
+}
+
+impl When {
+    /// Whether the field is compared, by the condition's field's value (the original's at the tick).
+    pub fn holds(&self, value: &serde_json::Value) -> bool {
+        value.as_u64().is_some_and(|n| n & self.mask != 0)
+    }
 }
 
 /// The array a pointer is read as an index into (D122, D178): its field, its elements' size and how many, and the
@@ -234,6 +254,12 @@ impl Mapping {
             let into = into(k, &mapped[i], &m.into, &targets).map_err(at)?;
             mapped[i].into = Some(into);
         }
+        // Compared while another field's bits are set (D218).
+        for (i, m) in self.maps.iter().enumerate().filter(|(_, m)| !m.while_.is_empty()) {
+            let at = |e: String| format!("{MAPPING}: {}: {e}", m.field);
+            let when = when(&m.while_, &mapped).map_err(at)?;
+            mapped[i].when = Some(when);
+        }
         Ok(mapped)
     }
 
@@ -314,7 +340,17 @@ fn carried(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     }
     let id = item(k, &m.at)?;
     let size = values::size(&m.ty, &k.types)?;
-    Ok(Mapped { field: m.field.clone(), id, ty: m.ty.clone(), size, via: None, mask: None, set: false, into: None })
+    Ok(Mapped {
+        field: m.field.clone(),
+        id,
+        ty: m.ty.clone(),
+        size,
+        via: None,
+        mask: None,
+        set: false,
+        into: None,
+        when: None,
+    })
 }
 
 impl Mapping {
@@ -362,7 +398,7 @@ fn direct(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
     if !m.then.is_empty() || m.next.is_some() {
         return Err("then and next go with via: the pointers to follow".into());
     }
-    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None, mask: None, set: false, into: None })
+    Ok(Mapped { field: m.field.clone(), id, ty, size, via: None, mask: None, set: false, into: None, when: None })
 }
 
 /// A field mapped to what a pointer points to (D72).
@@ -411,7 +447,30 @@ fn via(k: &Knowledge, m: &Map) -> Result<Mapped, String> {
         mask: None,
         set: false,
         into: None,
+        when: None,
     })
+}
+
+/// A mapping's `while` (D218): a mapped field, an unsigned number, and its bits (`& mask`: hex with 0x, or decimal;
+/// none, all).
+fn when(text: &str, mapped: &[Mapped]) -> Result<When, String> {
+    let (name, mask) = match text.split_once('&') {
+        Some((name, mask)) => {
+            let mask = mask.trim();
+            let parsed = match mask.strip_prefix("0x").or_else(|| mask.strip_prefix("0X")) {
+                Some(hex) => u64::from_str_radix(hex, 16),
+                None => mask.parse(),
+            };
+            (name.trim(), parsed.map_err(|_| format!("while: {mask:?} isn't a number"))?)
+        }
+        None => (text.trim(), u64::MAX),
+    };
+    let field =
+        mapped.iter().position(|m| m.field == name).ok_or_else(|| format!("while: {name:?} isn't a mapped field"))?;
+    if !matches!(mapped[field].ty.as_str(), "u8" | "u16" | "u32") || mapped[field].via.is_some() {
+        return Err(format!("while: {name} isn't an unsigned number of the original's own (u8, u16, u32)"));
+    }
+    Ok(When { field, mask })
 }
 
 /// The ID a mapping (or an edit) names: an ID, or a data name.
@@ -494,6 +553,27 @@ mod tests {
         let mapped = Mapping { maps: vec![flags("")], ..Mapping::default() }.resolve(&k).unwrap();
         assert_eq!(mapped[0].masked(&serde_json::json!(3)), serde_json::json!(1), "bit 1 isn't the field's");
         assert_eq!(mapped[0].masked(&serde_json::json!([3])), serde_json::json!([3]), "a number's bits only");
+    }
+
+    #[test]
+    fn a_field_is_compared_while_another_s_bits_are_set() {
+        // D218: `while` names a mapped unsigned number and its bits; the field is compared while they are set.
+        let k = knowledge();
+        let grid = |cond: &str| Map { while_: cond.into(), ..map("grid", "GAME.EXE+00104", "u32") };
+        let m = Mapping { maps: vec![map("flags", "score", ""), grid("flags & 0x200")], ..Mapping::default() };
+        let mapped = m.resolve(&k).unwrap();
+        let when = mapped[1].when.expect("a condition");
+        assert_eq!((when.field, when.mask), (0, 0x200));
+        assert!(when.holds(&serde_json::json!(0x201)) && !when.holds(&serde_json::json!(0x1FF)));
+        assert!(!when.holds(&serde_json::Value::Null), "no value, not compared");
+        let all = Mapping { maps: vec![map("flags", "score", ""), grid("flags")], ..Mapping::default() };
+        assert_eq!(all.resolve(&k).unwrap()[1].when.map(|w| w.mask), Some(u64::MAX));
+        let wrong = |cond: &str, first: Map| {
+            Mapping { maps: vec![first, grid(cond)], ..Mapping::default() }.resolve(&k).unwrap_err()
+        };
+        assert!(wrong("nothing & 1", map("flags", "score", "")).contains("isn't a mapped field"));
+        assert!(wrong("flags & 0xZZ", map("flags", "score", "")).contains("isn't a number"));
+        assert!(wrong("x", map("x", "player_x", "i16")).contains("isn't an unsigned number"));
     }
 
     #[test]
