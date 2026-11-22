@@ -3623,22 +3623,27 @@ fn keep_pair(
     Ok(())
 }
 
-/// Says which named data the mapping neither maps nor ignores: the state not compared yet.
+/// Says which named data the mapping neither maps, carries nor ignores: the state not accounted for yet.
 fn unmapped(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<(), String> {
     let left = unmapped_names(k, mapped, repo)?;
     if !left.is_empty() {
         let shown: Vec<&str> = left.iter().take(10).map(String::as_str).collect();
         let more = if left.len() > 10 { format!(" and {} more", left.len() - 10) } else { String::new() };
-        say("unmapped", format!("{} named data not mapped or ignored: {}{more}", left.len(), shown.join(", ")));
+        say(
+            "unmapped",
+            format!("{} named data not mapped, carried or ignored: {}{more}", left.len(), shown.join(", ")),
+        );
     }
     Ok(())
 }
 
-/// The named data the mapping neither maps nor ignores, and no input is: the state nothing compares yet.
+/// The named data the mapping neither maps, presents, carries (D126: kept as it was on purpose, through its pointer
+/// too) nor ignores, and no input is: the state nothing accounts for yet.
 pub(crate) fn unmapped_names(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> Result<Vec<String>, String> {
     let mapping = Mapping::load(repo)?;
     let ignored = mapping.ignored(k)?;
-    let presented = mapping.resolve_present(k)?;
+    let mut presented = mapping.resolve_present(k)?;
+    presented.extend(mapping.resolve_carried(k)?);
     let covered = |id: &Id, size: u32| {
         let inside = |at: &Id, n: u32| {
             at.module() == id.module()

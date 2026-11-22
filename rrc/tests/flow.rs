@@ -1932,5 +1932,14 @@ into = "carried.table"
     let sixty = state("60");
     assert_eq!(xs(&sixty), vec![60, 130, 260], "{sixty}");
     assert_eq!(sixty["current"].as_i64(), Some(4), "(60 × 3) & 7: {sixty}");
+    // A named datum carried at its ID is accounted for, as a mapped or ignored one: stage 3's gate leaves it out.
+    rrc.ok(&["data", "LIST.EXE+02536", "spare", "--size", "2", "--type", "u16", "--by", "human"]);
+    let gate = "named data neither mapped nor ignored: spare";
+    assert!(rrc.ok(&["status", "--all"]).contains(gate), "named, not mapped");
+    let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
+    let spare = "\n[[carry]]\nfield = \"carried.spare\"\nat = \"spare\"\ntype = \"u16\"\n";
+    std::fs::write(rrc.repo.join("mapping.toml"), format!("{mapping}{spare}")).unwrap();
+    let status = rrc.ok(&["status", "--all"]);
+    assert!(!status.contains(gate), "carried: {status}");
     std::fs::remove_dir_all(&dir).ok();
 }

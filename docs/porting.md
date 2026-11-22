@@ -152,7 +152,7 @@ wrong in an earlier one is fixed there first (rule 12). Stages 4 to 6 repeat one
 | **0 Set up** | The repository, the game's version, the tools, the person's rules | The game's copy is a recorded version; Clockwork is found; `RULES.md` has no question left |
 | **1 Survey** | Know the program before porting any of it | The analysis is in; there is a session, a sync point and a boundary value, and the session is recorded as the knowledge is now; the outside sources are swept, each kind found or looked for |
 | **2 Sessions** | Fix what is to be reproduced | The scope is set and names sessions; each is recorded as the knowledge is now |
-| **3 Skeleton** | A port that compares before it does anything | Something is mapped and the port's program named; every session has a census of its recording; no named datum is neither mapped nor ignored |
+| **3 Skeleton** | A port that compares before it does anything | Something is mapped and the port's program named; every session has a census of its recording; no named datum is neither mapped, carried nor ignored |
 | **4 Logic** | The simulation, subsystem by subsystem | No census has a field the port leaves otherwise or unset, or a path noted as not ported; every session matches in its mapped fields to its end with nothing fed; `rrc check` refuses nothing; every quirk's switch has been shown by a session |
 | **5 Data and start-up** | The port loads the game itself | Every session that starts at power-on matches in its fields from the port's own start |
 | **6 Presentation** | Frames, then sound | Every session matches from its start in state, frames and each device the original sounds in it; no census has a frame or a sound that differs |

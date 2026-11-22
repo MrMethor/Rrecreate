@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D218. A named datum carried is accounted for, as a mapped or ignored one. Accepted 2026-11-23.
+Stage 3's gate (D158) and `rrc compare`'s list of named data not mapped count a datum `[[carry]]` names (at its ID,
+or the pointer it is reached through) as accounted for, as they count a presentation's item, a mapped one and an
+ignored one.
+**Why:** Arena's port carries the flats' frame counts (`flat_frames`, D126): the table holds what the port can't
+make (a missing file's allocation, heap the port doesn't model), so it is given at a transplant and not compared,
+and what it gives (`view.flat_look`) is. The gate still named it as forgotten state, and the only way out was an
+`[[ignore]]` beside the carry, a workaround in the port for what the toolkit should know (rule 14). A carry is the
+mapping's own decision about that memory, as an ignore is.
+
 ### D217. A recording without a run runs the session for an item in expanded memory. Accepted 2026-11-20.
 `rrc record` reads items named since the last recording from the data segment that recording kept (D92); an item in
 expanded memory (`EMS#<handle>+<offset>`, D172) is never in it, so, like an item read through a pointer or a device,

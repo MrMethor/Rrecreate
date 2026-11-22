@@ -244,7 +244,7 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         if !unmapped.is_empty() {
             let what =
                 format!("{} named data neither mapped nor ignored: {}", unmapped.len(), some(&unmapped, String::clone));
-            skeleton.push(lack(what, format!("{}: map each, or [[ignore]] it", crate::mapping::MAPPING)));
+            skeleton.push(lack(what, format!("{}: map each, carry it, or [[ignore]] it", crate::mapping::MAPPING)));
         }
     }
     lacks.push(skeleton);
