@@ -206,10 +206,15 @@ level, and by the world map on journeys of a day and of 44, to the next town; th
 potions, magic items, identifying), the citizens' talk, saving and loading in towns and the wilderness, and the main
 quest's whole cycle for its second piece: the vision at a rest's end, a guild's favour asked and taken, the journey
 to its dungeon, its item, the way out by the world map to the guild's city in the snow, the item given, the journey to
-the staff's dungeon and its piece. 98 short sessions match in every mapped field but three known differences, and 58
-bugs of the original are registered with their switches. A divergence's report now says that an item in expanded
-memory can't be watched rather than failing. Left by the roadmap: the palaces, the main quest's rest and its jobs,
-the game's texts' codes, the towns' and the wilderness's pictures and songs, the rest of the program. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
+the staff's dungeon and its piece. Since: the game's texts' codes (the text engine and its handlers, the names
+made from the game's chunks), so a job's Yes or No box is laid out as the original's; the jobs done and paid (an
+escort taken at a tavern and delivered at a temple); a palace entered and its ruler, the main quest's third step
+taken at Eldenroot's queen; the towns' ground, sky rows and fog drawn. 103 short sessions match in every mapped
+field but three known differences, and 58 bugs of the original are registered with their switches. Two gaps became
+toolkit features: a divergence's report says that an item in expanded memory can't be watched rather than failing,
+and `rrc show` prints the program's own texts and bytes from a place. Left by the roadmap: the palaces' jobs, the main
+quest's rest, the towns' upper walls, sun, moons, horizon and the wilderness's pictures and songs, the rest of the
+program. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
 accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
