@@ -121,6 +121,7 @@ on what it wrote: nothing reads it, or what reads it goes the same).
 | Where are things in a level? | the level's file (`rrc files --file`) and the code that loads it | maps and walkthroughs | frames, the state at the place |
 | Why does the port differ? | `rrc compare`: the original's writer and the port's code | the writer's `--c` | `rrc watch`, `rrc trace` |
 | What is this memory at tick N? | `rrc peek SESSION --tick N ID...` (no naming or recording needed) | `rrc show ID`: who writes it | `rrc watch` across ticks |
+| What does the program's own data hold (a list of names, a table)? | `rrc show ID --texts N` (N NUL-ended texts from there) or `--bytes N`, from the program's image | the code that indexes it (`--c`) | `rrc peek` at a tick, where the run writes it |
 | What does a pass run, in what order? | `rrc pass SESSION --tick N`, `--in FUNCTION` | the loop's `--c` | `rrc watch` of a value it changes |
 | What did the person's play find? | its census and `follow.log` (`.rrc/play/NAME/`), most passes first | `rrc compare NAME --transplant T --to T+N` at an item's first tick | a short session cut from the play's tick |
 | Does the port's input handling do what the original's does? | the play's `live` (`live.json`), by input | the original's handler (`rrc show ID --c`) and the port's `Live` | `rrc compare NAME --live` |

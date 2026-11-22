@@ -110,7 +110,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
   hook [ID NAME --part TEXT --registers A,B]
                          the calls a part not ported makes into ported code, or one: each run of the
                          entry ID in a pass with those registers, given the port (D98); --remove NAME
-  show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]]
+  show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]] [--bytes N] [--texts N]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
                          its DAT_SEG_OFF names): its name and evidence, the outside sources that cover
                          it, the port's fields mapped to it and code that names it, the quirks and
@@ -122,7 +122,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          code (--c), with the knowledge's names for Ghidra's FUN_ and DAT_ names;
                          --all: every function that refers to data, not the first ten; --session:
                          code made at run time, from the session's memory (by tick N, or its last
-                         snapshot)
+                         snapshot); --bytes N, --texts N: the program's file image from there, N bytes
+                         in hex, or N NUL-ended texts one after another (a list of names)
   session [add NAME --seconds N (--inputs FILE | --replay FILE | --from SESSION --tick N [--inputs FILE])
           [--description TEXT] [--clockwork OPTIONS]]
                          the sessions, or a new one: an input script (clockwork run --input-file) or

@@ -210,8 +210,9 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 }
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--session", "--tick"], &["--asm", "--c", "--listing", "--all"])?;
-    let usage = "show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]]";
+    let a = Args::parse(args, &["--session", "--tick", "--bytes", "--texts"], &["--asm", "--c", "--listing", "--all"])?;
+    let usage =
+        "show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]] [--bytes N] [--texts N]";
     let [what] = a.positionals(1, 1, usage)? else { unreachable!() };
     let k = Knowledge::load(&repo.knowledge())?;
     let analysis = Analysis::load(repo)?;
@@ -313,7 +314,58 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             }
         }
     }
+    let (bytes, texts) = (a.value("--bytes"), a.value("--texts"));
+    if bytes.is_some() || texts.is_some() {
+        let analysis = analysis.as_ref().ok_or("--bytes and --texts read the analyzed program: rrc analyze")?;
+        if !analysis.objects.is_empty() || id.is_memory() || id.part().is_some() || id.module() != repo.module() {
+            return Err(format!(
+                "{id}: --bytes and --texts read a 16-bit program's file image; memory as a run has it: rrc peek"
+            ));
+        }
+        let image = file_image(repo, analysis)?;
+        let from = usize::try_from(id.offset()).unwrap_or(usize::MAX);
+        let rest = image.get(from..).ok_or_else(|| format!("{id} is past the program's file image"))?;
+        let at = |k: usize| {
+            Id::new(id.module(), None, id.offset() + k as u32).map_or_else(|_| "?".into(), |i| i.to_string())
+        };
+        if let Some(n) = bytes {
+            let n: usize = n.parse().map_err(|_| "--bytes is a number")?;
+            for (k, line) in byte_lines(rest, n) {
+                say("bytes", format!("{} {line}", at(k)));
+            }
+        }
+        if let Some(n) = texts {
+            let n: usize = n.parse().map_err(|_| "--texts is a number")?;
+            for (i, (k, text)) in texts_at(rest, n).into_iter().enumerate() {
+                say("text", format!("{i} {} \"{}\"", at(k), text.escape_ascii()));
+            }
+        }
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The first `n` bytes of `image` (fewer at its end) in lines of 16, each its place from the start and the bytes in
+/// hex.
+fn byte_lines(image: &[u8], n: usize) -> Vec<(usize, String)> {
+    let shown = &image[..n.min(image.len())];
+    shown
+        .chunks(16)
+        .enumerate()
+        .map(|(i, line)| (i * 16, line.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")))
+        .collect()
+}
+
+/// The first `n` NUL-ended texts of `image` one after another (as a program's lists of names are, the n-th found by
+/// counting NULs): each its place from the start and its bytes; the last one unended at the image's end.
+fn texts_at(image: &[u8], n: usize) -> Vec<(usize, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while out.len() < n && at < image.len() {
+        let end = image[at..].iter().position(|&b| b == 0).map_or(image.len(), |e| at + e);
+        out.push((at, image[at..end].to_vec()));
+        at = end + 1;
+    }
+    out
 }
 
 /// What else the toolkit holds about the place (D159), so that it is met without being asked for: the port's fields
@@ -398,7 +450,10 @@ fn file_image(repo: &Repo, analysis: &Analysis) -> Result<Vec<u8>, String> {
     if !analysis.objects.is_empty() {
         return Ok(program);
     }
-    let header = program.get(8..10).map_or(0, |w| usize::from(u16::from_le_bytes([w[0], w[1]])) * 16);
+    // An MZ program's load image is past its header; a COM program is its image whole.
+    let mz = program.starts_with(b"MZ") || program.starts_with(b"ZM");
+    let header =
+        if mz { program.get(8..10).map_or(0, |w| usize::from(u16::from_le_bytes([w[0], w[1]])) * 16) } else { 0 };
     Ok(program.get(header..).ok_or("the analyzed program is shorter than its header")?.to_vec())
 }
 
@@ -690,6 +745,21 @@ fn note(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_s_texts_and_bytes_are_read_from_a_place() {
+        let image = b"Breton\0Redguard\0\0Nord";
+        let texts = texts_at(image, 5);
+        assert_eq!(
+            texts,
+            vec![(0, b"Breton".to_vec()), (7, b"Redguard".to_vec()), (16, vec![]), (17, b"Nord".to_vec())]
+        );
+        assert_eq!(texts_at(image, 1), vec![(0, b"Breton".to_vec())]);
+        let lines = byte_lines(&[0u8; 20], 18);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1], (16, "00 00".to_owned()));
+        assert_eq!(byte_lines(&[1, 0xAB], 99), vec![(0, "01 AB".to_owned())]);
+    }
 
     #[test]
     fn an_address_inside_a_function_lists_from_its_instruction() {
