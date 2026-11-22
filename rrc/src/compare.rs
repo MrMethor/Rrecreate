@@ -284,9 +284,6 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         for (path, own) in v["overrode"].as_object().into_iter().flatten() {
             let Some(i) = mapped.iter().position(|m| m.field == *path && fed.contains(path)) else { continue };
             let (m, theirs) = (&mapped[i], &original[i][(t.max(1) - 1) as usize]);
-            if m.when.is_some_and(|w| !w.holds(&original[w.field][(t.max(1) - 1) as usize])) {
-                continue;
-            }
             let mut differ = Vec::new();
             differences(&m.field, theirs, &m.masked(own), 1, &mut differ);
             if let Some((at, _, _)) = differ.first() {
@@ -304,10 +301,6 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         let mut found = Vec::new();
         for (m, values) in mapped.iter().zip(&original) {
             let theirs = &values[(t - 1) as usize];
-            // Compared only while its condition holds (D218).
-            if m.when.is_some_and(|w| !w.holds(&original[w.field][(t - 1) as usize])) {
-                continue;
-            }
             match at_path(&state, &m.field) {
                 // None in both: memory the original freed (a pointer null), the port's field none.
                 Some(Value::Null) if theirs.is_null() => {}
@@ -2284,10 +2277,6 @@ impl<'a> Counting<'a> {
         let mut fixed: Vec<String> = Vec::new();
         for (i, own) in own {
             let (m, theirs) = (&self.mapped[i], &at.values[i]);
-            // Compared only while its condition holds (D218).
-            if m.when.is_some_and(|w| !w.holds(&at.values[w.field])) {
-                continue;
-            }
             if own.is_null() {
                 // None in both: memory the original freed (a pointer null), the port's field none.
                 if self.free && theirs.is_null() {
@@ -3782,7 +3771,6 @@ mod tests {
             mask: None,
             set: false,
             into: None,
-            when: None,
         };
         let image: Vec<u8> = (0..16).collect();
         let items = [
@@ -3822,7 +3810,6 @@ mod tests {
             mask: None,
             set: false,
             into: None,
-            when: None,
         };
         let types = Types::default();
         let value = json!([10, 11, 12, 13]);
@@ -3923,7 +3910,6 @@ mod tests {
             mask: None,
             set: false,
             into: None,
-            when: None,
         };
         let m = mapped("enemies", "GAME.EXE+00100", "enemy[6]", 60);
         assert_eq!(locate(&m, "enemies[3].y", &types), Some((32, 2)));

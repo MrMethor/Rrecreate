@@ -411,11 +411,6 @@ at = "world_flags"
 mask = 0xFFFD                   # optional: the bits of an unsigned number that are the field (D95)
 
 [[map]]
-field = "wild.grid"
-at = "wild_grid"
-while = "flags.world2 & 0x200"  # optional: compared only while that mapped field's bits are set (D218)
-
-[[map]]
 field = "level.cells"
 via = "level_map"               # or: a pointer (named data, an ID, a path into one: world.level); the item
 offset = 0                      # is where it points at each tick, this many bytes past (optional)
@@ -476,10 +471,6 @@ it, to a null one (D122).
 A `mask` (on a `u8`, `u16` or `u32`) keeps those bits of the original's value: the others are a part's the port
 doesn't have (a renderer's scratch in a flags word), so neither the transplant nor the comparison takes them,
 and the comparison takes the port's value with the same mask.
-A field with `while` (another mapped field, an unsigned number of the original's own, and `& mask`, hex with `0x` or
-decimal; none, all its bits) is compared only at the ticks the original's value of that field has those bits set: its
-memory holds the item there alone, and something else elsewhere (expanded memory another place draws into, D218). It
-is given with a transplant as it is, and the port keeps its own value meanwhile.
 `rrc record` traces every mapped item (one that isn't named data under its field's name, and an item via a
 pointer as `*POINTER`, with the pointer). `rrc check` checks the mapping.
 `[[present]]` items are the presentation's own state (an off-screen buffer, what it drew last, an animation's
