@@ -3416,6 +3416,10 @@ fn report(
         return Ok(());
     };
     say("wrote", format!("{path} ({id}), between the sync points of ticks {} and {t}:", t - 1));
+    if id.is_expanded() {
+        say("wrote", "in expanded memory, which a watch can't follow (D172): its pages show in the frame while mapped");
+        return Ok(());
+    }
     let args: Vec<String> =
         [name, &id.to_string(), "--len", &size.to_string(), "--tick", &t.to_string(), "--ticks", "1", "--lines", "6"]
             .iter()

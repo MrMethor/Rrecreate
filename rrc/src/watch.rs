@@ -154,6 +154,11 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     let k = Knowledge::load(&repo.knowledge())?;
     let analysis = Analysis::load(repo)?;
     let id = crate::naming::resolve(repo, &k, analysis.as_ref(), what)?;
+    if id.is_expanded() {
+        return Err(format!(
+            "{id} is in expanded memory, which a watch can't follow (D172): watch the frame's segment while its page is              mapped"
+        ));
+    }
     let len: u32 = match a.value("--len") {
         Some(n) => n.parse().map_err(|_| "--len is a number of bytes")?,
         None => k.data.get(&id).and_then(|d| d.size).unwrap_or(2),
