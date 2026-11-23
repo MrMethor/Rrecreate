@@ -216,8 +216,11 @@ to its dungeon, its item, the way out by the world map to the guild's city in th
 the staff's dungeon and its piece. Since: the game's texts' codes (the text engine and its handlers, the names
 made from the game's chunks), so a job's Yes or No box is laid out as the original's; the jobs done and paid (an
 escort taken at a tavern and delivered at a temple); a palace entered and its ruler, the main quest's third step
-taken at Eldenroot's queen; the towns' ground, sky rows and fog drawn. 103 short sessions match in every mapped
-field but three known differences, and 58 bugs of the original are registered with their switches. Two gaps became
+taken at Eldenroot's queen; the towns' ground, sky rows and fog drawn; Elden Grove's piece, and the creatures'
+spells thrown at the player; the services' screens drawn (their banners, the bar's gold, messages and questions),
+so a tavern's offer, a guild's menu and a temple's heal match in every field, frame and sound. By 2026-11-23 107
+short sessions match in every mapped field but one known difference (a shop's actor two units off), and 60 bugs of
+the original are registered with their switches. Two gaps became
 toolkit features: a divergence's report says that an item in expanded memory can't be watched rather than failing,
 and `rrc show` prints the program's own texts and bytes from a place. Left by the roadmap: the palaces' jobs, the main
 quest's rest, the towns' upper walls, sun, moons, horizon and the wilderness's pictures and songs, the rest of the
