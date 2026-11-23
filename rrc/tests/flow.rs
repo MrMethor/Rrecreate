@@ -418,6 +418,9 @@ fn quirk_candidates_are_found_and_registered() {
         "{found}"
     );
     assert!(found.contains("uninit    1 byte by T.COM+0000C: T.COM+00300 first (it held 00)"), "{found}");
+    // Its run's coverage is kept: nothing in the scope is left unlooked (D219).
+    let unlooked = rrc.ok(&["suspects", "--unlooked"]);
+    assert!(unlooked.contains("looked    0 sessions"), "{unlooked}");
     // What the port's code names and no session ran (D151): +00005 ran, +00012 is the exit and ran, +00014 didn't.
     std::fs::create_dir_all(rrc.repo.join("src")).unwrap();
     std::fs::write(rrc.repo.join("src/named.rs"), "// T.COM+00005, +00012 and T.COM+00014\n").unwrap();

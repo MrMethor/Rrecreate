@@ -380,11 +380,40 @@ fn say_sites(repo: &Repo, name: &str) {
 /// instructions that reach past named data's ends, and its reads of memory nothing wrote. They're kept
 /// (`suspects.toml`, D148) until judged; `--judge ID` judges one.
 pub(crate) fn suspects(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--lines", "--judge", "--quirk", "--not-a-bug", "--changes-nothing", "--by"], &[])?;
+    let a = Args::parse(
+        args,
+        &["--lines", "--judge", "--quirk", "--not-a-bug", "--changes-nothing", "--by"],
+        &["--unlooked"],
+    )?;
     if let Some(at) = a.value("--judge") {
         return judge(repo, &a, at);
     }
-    let [name] = a.positionals(1, 1, "suspects SESSION [--lines N]")? else { unreachable!() };
+    // Each session of the scope whose run no look kept what it executed (D219: never spared), looked through.
+    if a.has("--unlooked") {
+        a.positionals(0, 0, "suspects --unlooked")?;
+        let cache = crate::cache::Cache::open(&repo.local)?;
+        let (scope, _) = crate::session::in_scope(repo)?;
+        let mut looked = 0;
+        for name in scope {
+            let session = Session::load(repo, &name)?;
+            if session.trace.is_none() {
+                continue;
+            }
+            let run = crate::snapshots::run_identity(repo, &session)?;
+            if cache.recall("coverage", &run).is_some() {
+                continue;
+            }
+            let started = std::time::Instant::now();
+            match crate::quietly(|| suspects(repo, std::slice::from_ref(&name))) {
+                Ok(_) => say("looked", format!("{name}: {:.0} s", started.elapsed().as_secs_f64())),
+                Err(e) => say("unlooked", format!("{name}: {e}")),
+            }
+            looked += 1;
+        }
+        say("looked", format!("{looked} sessions; rrc check names any suspect left to judge"));
+        return Ok(ExitCode::SUCCESS);
+    }
+    let [name] = a.positionals(1, 1, "suspects SESSION [--lines N] | suspects --unlooked")? else { unreachable!() };
     let shown: usize = a.value("--lines").map_or(Ok(SHOWN), str::parse).map_err(|_| "--lines is a count")?;
     let session = Session::load(repo, name)?;
     let k = Knowledge::load(&repo.knowledge())?;

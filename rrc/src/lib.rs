@@ -271,10 +271,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          original that changes what the game does is registered when found: the first rule
                          (D163: one that changes nothing is said so and left). --shown: how its switch was
                          shown where no comparison reaches it (the port's own test, by name)
-  suspects SESSION [--lines N]
+  suspects SESSION [--lines N] | suspects --unlooked
                          quirk candidates in the session's run: the original's instructions that
                          reach past named data's ends, and that read memory nothing wrote; kept in
-                         suspects.toml until judged
+                         suspects.toml until judged; --unlooked: each session of the scope whose run's
+                         coverage isn't kept (rrc status: unlooked, never spared by a change, D219)
   suspects --judge ID (--quirk NAME | --not-a-bug WHY | --changes-nothing WHY) [--by WHO]
                          what a suspect turned out to be
   unrun [--lines N]      the places in the original's code that the port's code names and no session's
