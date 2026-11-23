@@ -773,8 +773,9 @@ A change is checked where it can make a difference, and everything is checked at
   item that names some elsewhere, nothing of its own, which the core sessions and the counts at fixed points stand
   for), so an edit in one block of a long function reaches what that block
   follows (in a type, a field's line reaches only what it and its own doc comment name: a field does nothing until
-  code uses it, and that code is a change of its own); a changed item that names none a session runs stands for the
-  items that use it, three deep. A session whose run executed none of those places (`rrc suspects`' coverage, D151) is spared: what
+  code uses it, and that code is a change of its own; so for an item added or removed, which reaches what it names
+  alone, and a `mod NAME;` line, which holds no code); a changed item that names none a session runs stands for the
+  items that use it, three deep, its uses found outside comments and, for an item that isn't `pub`, in its own file. A session whose run executed none of those places (`rrc suspects`' coverage, D151) is spared: what
   is kept of it holds for the new code (`rrc status`: `spared`). `rrc work --run` counts and compares again only the
   sessions a change touches, and the core sessions (`[port] core`, `rrc scope --core`), at every change; `rrc work
   --run --all` counts every one, before a stage's gate is taken as held and at the end of a day's work. What can't be

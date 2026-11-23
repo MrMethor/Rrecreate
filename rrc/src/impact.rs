@@ -110,7 +110,9 @@ fn items(path: &str, text: &str, module: &str) -> Vec<(String, Item, String)> {
     for (k, (start, sig)) in starts.iter().enumerate() {
         let next = starts.get(k + 1).map_or(lines.len(), |(s, _)| *s);
         let (kind, name) = sig.split_once(' ').unwrap_or((sig.as_str(), ""));
-        push(format!("{path}:{sig}"), name.to_owned(), kind == "impl", &lines[*start..next]);
+        // An `impl` line, and a `mod NAME;` (its file's items are its own), hold no code.
+        let declared = kind == "mod" && lines[*start..next].iter().any(|l| !is_lead(l) && l.trim_end().ends_with(';'));
+        push(format!("{path}:{sig}"), name.to_owned(), kind == "impl" || declared, &lines[*start..next]);
     }
     out
 }
@@ -211,10 +213,12 @@ pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code, module: &str) -> 
             _ => None,
         };
         let own: BTreeSet<String> = a.into_iter().chain(b).flat_map(|i| i.ids.iter().cloned()).collect();
-        let nowhere = near.as_ref().is_some_and(BTreeSet::is_empty) && !own.is_empty();
+        let added_or_removed = a.is_none() || b.is_none();
+        let nowhere =
+            (near.as_ref().is_some_and(BTreeSet::is_empty) && !own.is_empty()) || (added_or_removed && own.is_empty());
         let ids = near.unwrap_or(own);
         let name = b.or(a).map(|i| i.name.clone()).unwrap_or_default();
-        let (users, used) = users(now, key, &name);
+        let (users, used) = if added_or_removed { (BTreeSet::new(), false) } else { users(now, key, &name) };
         items.push(Changed { key: key.clone(), ids, users, used, nowhere });
     }
     Change { items }
@@ -279,13 +283,22 @@ fn near_changes(old: &str, new: &str, module: &str, a_type: bool) -> Option<BTre
 /// none, `USERS_DEEP` deep; and whether anything uses it.
 fn users(now: &Code, key: &str, name: &str) -> (BTreeSet<String>, bool) {
     let mut seen = BTreeSet::from([key.to_owned()]);
-    let mut names = vec![name.to_owned()];
+    let mut names = vec![(key.to_owned(), name.to_owned())];
     let (mut found, mut used) = (BTreeSet::new(), false);
+    // Its code, its comments left out: a name in a comment uses nothing.
+    let code = |text: &str| text.lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
     for _ in 0..USERS_DEEP {
         let mut next = Vec::new();
-        for n in names.iter().filter(|n| !n.is_empty()) {
+        for (of, n) in names.iter().filter(|(_, n)| !n.is_empty()) {
+            // A private item is used in its own file alone.
+            let file = of.split_once(':').map_or("", |(f, _)| f);
+            let private =
+                !now.texts.get(of).is_some_and(|t| t.lines().any(|l| !is_lead(l) && l.trim_start().starts_with("pub")));
             for (k, text) in &now.texts {
-                if seen.contains(k) || !crate::sources::names_word(text, n) {
+                if seen.contains(k) || (private && !k.starts_with(&format!("{file}:"))) {
+                    continue;
+                }
+                if !crate::sources::names_word(&code(text), n) {
                     continue;
                 }
                 seen.insert(k.clone());
@@ -296,7 +309,7 @@ fn users(now: &Code, key: &str, name: &str) -> (BTreeSet<String>, bool) {
                 used = true;
                 found.extend(item.ids.iter().cloned());
                 if item.ids.is_empty() {
-                    next.push(item.name.clone());
+                    next.push((k.clone(), item.name.clone()));
                 }
             }
         }
@@ -517,6 +530,20 @@ mod tests {
         let ran = BTreeSet::from(["GAME.EXE+0C0F1".to_owned()]);
         let now = code_of(&[("src/main.rs", &long.replace("last(1)", "last(2)"))]);
         assert!(change(&old, &now, "GAME.EXE").touched(&ran).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_new_file_s_items_reach_what_they_name_and_a_mod_line_nothing() {
+        let main = "mod view;\n\n/// `+0C0F1`: the word's user.\nfn drawn() {\n    word(1);\n}\n";
+        let old = code_of(&[("src/main.rs", main)]).items;
+        let ran = BTreeSet::from(["GAME.EXE+0C0F1".to_owned(), "GAME.EXE+0E41A".to_owned()]);
+        let sky = "const DS: u32 = 1;\n\nfn word() -> u32 {\n    DS\n}\n\n/// `+0E41A`: the sky.\npub fn draw() {\n    word();\n}\n";
+        let main_now = main.replace("mod view;", "mod view;\nmod sky;");
+        let now = code_of(&[("src/main.rs", &main_now), ("src/sky.rs", sky)]);
+        assert_eq!(
+            change(&old, &now, "GAME.EXE").touched(&ran).unwrap(),
+            BTreeSet::from(["GAME.EXE+0E41A".to_owned()])
+        );
     }
 
     #[test]
