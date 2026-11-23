@@ -230,8 +230,8 @@ fn is_type(key: &str) -> bool {
 }
 
 /// The places named near what changed between two versions of an item's text: for each line one version has more of
-/// than the other (as trimmed), those named on it or within three lines of it, else on the nearest line above that
-/// names one, at most 12 lines up (further is another block's: a long function's or a long `match`'s). In a type, a field's line
+/// than the other (as trimmed), those named on it, else on the nearest line that names some (above before below)
+/// within three lines, else above, at most 12 lines up (further is another block's: a long function's or `match`'s). In a type, a field's line
 /// reaches only what it and its own doc comment name: a field added or changed does nothing until code uses it, and
 /// that code is a change of its own.
 fn near_changes(old: &str, new: &str, module: &str, a_type: bool) -> Option<BTreeSet<String>> {
@@ -265,7 +265,9 @@ fn near_changes(old: &str, new: &str, module: &str, a_type: bool) -> Option<BTre
                 ids.extend(named(&lines[first..=i]));
                 continue;
             }
-            let mut found = named(&lines[i.saturating_sub(3)..(i + 4).min(lines.len())]);
+            // The line's own; else the nearest line naming some, above before below, within three; else above.
+            let near = (0..=3usize).flat_map(|d| [i.checked_sub(d), Some(i + d).filter(|&j| d > 0 && j < lines.len())]);
+            let mut found = near.flatten().map(|j| named(&lines[j..=j])).find(|s| !s.is_empty()).unwrap_or_default();
             if found.is_empty() {
                 found = (i.saturating_sub(12)..i)
                     .rev()
@@ -346,13 +348,25 @@ impl Change {
     }
 }
 
+/// What a change of the port's code spares: the sessions whose kept census and comparisons hold for the new code;
+/// why the others can't be spared, when something can't be told; and what each changed item reaches (its places and
+/// how many sessions run them), the most first.
+#[derive(Default)]
+pub(crate) struct Spared {
+    pub sessions: BTreeSet<String>,
+    pub unsure: Option<String>,
+    pub reach: Vec<(String, usize, usize)>,
+    /// The sessions no run of `rrc suspects` looked through (no coverage kept): what they run can't be told.
+    pub unlooked: Vec<String>,
+}
+
 /// The sessions of `held` whose kept census and comparisons, made of other code than `port`'s, hold for it all the
-/// same: the change since touches nothing their runs executed. With why the others can't be spared, when none is.
-pub(crate) fn spared(repo: &Repo, held: &[Held], port: &str) -> Result<(BTreeSet<String>, Option<String>), String> {
+/// same: the change since touches nothing their runs executed.
+pub(crate) fn spared(repo: &Repo, held: &[Held], port: &str) -> Result<Spared, String> {
     let cache = Cache::open(&repo.local)?;
     let olds: BTreeSet<String> = held.iter().flat_map(|h| old_ports(h, port)).collect();
     if olds.is_empty() {
-        return Ok((BTreeSet::new(), None));
+        return Ok(Spared::default());
     }
     let now = code(&repo.root, &repo.module());
     let mut changes = BTreeMap::new();
@@ -393,7 +407,25 @@ pub(crate) fn spared(repo: &Repo, held: &[Held], port: &str) -> Result<(BTreeSet
             spared.insert(h.name.clone());
         }
     }
-    Ok((spared, why))
+    // What each changed item reaches, over every kept code: its places a session runs, and those sessions.
+    let mut reach: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
+    for change in changes.values() {
+        for c in change.items.iter().filter(|c| !c.nowhere) {
+            let places = if c.ids.iter().any(|id| ran.contains(id)) { &c.ids } else { &c.users };
+            let entry = reach.entry(c.key.clone()).or_default();
+            for (name, hits) in &runs {
+                if hits.as_ref().is_some_and(|h| !h.is_disjoint(places)) {
+                    entry.1.insert(name.clone());
+                }
+            }
+            entry.0.extend(places.iter().filter(|p| ran.contains(*p)).cloned());
+        }
+    }
+    let mut reach: Vec<(String, usize, usize)> =
+        reach.into_iter().filter(|(_, (_, s))| !s.is_empty()).map(|(k, (p, s))| (k, p.len(), s.len())).collect();
+    reach.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+    let unlooked = runs.iter().filter(|(_, hits)| hits.is_none()).map(|(name, _)| name.clone()).collect();
+    Ok(Spared { sessions: spared, unsure: why, reach, unlooked })
 }
 
 /// The other code than `port`'s that made what is kept of a session: its census's, and its comparisons' when none

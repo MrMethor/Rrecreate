@@ -93,6 +93,10 @@ pub(crate) struct Standing {
     pub spared: Vec<String>,
     /// Why every session the change made stale counts as touched, when something can't be told.
     pub unsure: Option<String>,
+    /// What each changed item reaches: its places a session runs, and how many sessions (`impact::Spared::reach`).
+    pub reach: Vec<(String, usize, usize)>,
+    /// The sessions whose runs no `rrc suspects` looked through: never spared.
+    pub unlooked: Vec<String>,
 }
 
 impl Standing {
@@ -165,7 +169,8 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
     }
     let port = crate::impact::fingerprint(repo)?;
     // What a change of the code since what is kept spares (D219); never a core session.
-    let (spared, unsure) = match held.iter().any(|h| h.stale(&port)) {
+    let crate::impact::Spared { sessions: spared, unsure, reach, unlooked } = match held.iter().any(|h| h.stale(&port))
+    {
         true => crate::impact::spared(repo, &held, &port)?,
         false => Default::default(),
     };
@@ -388,7 +393,7 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
          play-test",
         "PORT play (docs/porting.md, stage 7); what the person's play finds becomes sessions",
     )]);
-    Ok(Standing { lacks, held, stale, spared, unsure })
+    Ok(Standing { lacks, held, stale, spared, unsure, reach, unlooked })
 }
 
 /// 0 Set up: the game's copy as a recorded version, Clockwork, the person's rules.
@@ -509,6 +514,21 @@ pub(crate) fn status(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     if let Some(why) = standing.unsure.as_ref().filter(|_| !standing.stale.is_empty()) {
         say("touched", format!("every session the change could reach: {why}"));
+    }
+    if !standing.unlooked.is_empty() && !standing.stale.is_empty() {
+        let names = some(&standing.unlooked, String::clone);
+        say(
+            "unlooked",
+            format!(
+                "{} whose runs no rrc suspects looked through, so never spared: {names} (rrc suspects SESSION)",
+                of(standing.unlooked.len(), standing.held.len())
+            ),
+        );
+    }
+    // What the change reaches, item by item, the most sessions first (D219): all of it with --all.
+    let shown = if a.has("--all") { standing.reach.len() } else { 3 };
+    for (item, places, sessions) in standing.reach.iter().take(shown) {
+        say("reaches", format!("{item}: {places} places, run by {}", of(*sessions, standing.held.len())));
     }
     // What a commit is refused for (D148), whatever the stage: named here unless the stage's own gate just did.
     if at != 4 {
@@ -636,6 +656,8 @@ mod tests {
             stale: Vec::new(),
             spared: Vec::new(),
             unsure: None,
+            reach: Vec::new(),
+            unlooked: Vec::new(),
         };
         assert_eq!(standing.stage(), 2);
         let done = Standing {
@@ -644,6 +666,8 @@ mod tests {
             stale: Vec::new(),
             spared: Vec::new(),
             unsure: None,
+            reach: Vec::new(),
+            unlooked: Vec::new(),
         };
         assert_eq!(done.stage(), 7);
         assert_eq!(some(&["a", "b", "c", "d", "e"], |s| s.to_string()), "a, b, c and 2 more");

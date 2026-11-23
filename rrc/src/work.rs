@@ -482,6 +482,8 @@ mod tests {
             stale: Vec::new(),
             spared: Vec::new(),
             unsure: None,
+            reach: Vec::new(),
+            unlooked: Vec::new(),
         };
         let items = list(&standing);
         let names: Vec<&str> = items.iter().map(Item::name).collect();

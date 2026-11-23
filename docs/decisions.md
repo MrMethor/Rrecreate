@@ -768,8 +768,8 @@ every field, frame and sound.
 A change is checked where it can make a difference, and everything is checked at fixed points, not at every change:
 - **A port's sessions:** the port's code is cut into items (a function, a type, a constant, each from its doc
   comment), and each item's hash, its text and the original's places it names are kept with the code's fingerprint
-  (the cache's `code`). A change reaches the places named near its changed lines (on them or within three lines, else
-  the nearest named at most 12 lines above; an item kept without its text, its own places; a line near none in an
+  (the cache's `code`). A change reaches the places named near its changed lines (on them, else on the nearest line that
+  names some within three lines, else at most 12 lines above; an item kept without its text, its own places; a line near none in an
   item that names some elsewhere, nothing of its own, which the core sessions and the counts at fixed points stand
   for), so an edit in one block of a long function reaches what that block
   follows (in a type, a field's line reaches only what it and its own doc comment name: a field does nothing until

@@ -175,7 +175,8 @@ again each session whose census the port's code as it is now didn't make and the
 again each that nothing compared since (the fields alone before stage 6), so one command brings every gate up to the
 code (D219). A change reaches a session when its run executed a place the changed code names (or, for a helper or a
 constant naming none, the code that uses it): `rrc suspects` keeps what each run executed, so judge every session's
-suspects early. The rest are `spared`, their censuses holding; the core sessions (`rrc scope --core`: the start from
+suspects early; `rrc status` names the sessions none looked through (`unlooked`: never spared) and what the change
+reaches, item by item (`reaches`: its places and how many sessions run them; all of it with `--all`). The rest are `spared`, their censuses holding; the core sessions (`rrc scope --core`: the start from
 power-on and a session of each main system) are counted at every change; `rrc work --run --all` counts every session,
 before a stage's gate is taken as held and at the end of a day's work.
 A play the person made alongside the port ("Playing alongside") has a census of its own (`.rrc/play/NAME/`): its
