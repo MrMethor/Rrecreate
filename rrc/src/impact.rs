@@ -407,18 +407,21 @@ pub(crate) fn spared(repo: &Repo, held: &[Held], port: &str) -> Result<Spared, S
             spared.insert(h.name.clone());
         }
     }
-    // What each changed item reaches, over every kept code: its places a session runs, and those sessions.
+    // What each changed item reaches: for each session, the items its own kept code changed in, their places its run
+    // executed; so an item changed since one session's comparison counts that session alone.
     let mut reach: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
-    for change in changes.values() {
-        for c in change.items.iter().filter(|c| !c.nowhere) {
-            let places = if c.ids.iter().any(|id| ran.contains(id)) { &c.ids } else { &c.users };
-            let entry = reach.entry(c.key.clone()).or_default();
-            for (name, hits) in &runs {
-                if hits.as_ref().is_some_and(|h| !h.is_disjoint(places)) {
-                    entry.1.insert(name.clone());
+    for h in held {
+        let Some(Some(hits)) = runs.get(&h.name) else { continue };
+        for change in old_ports(h, port).iter().filter_map(|old| changes.get(old)) {
+            for c in change.items.iter().filter(|c| !c.nowhere) {
+                let places = if c.ids.iter().any(|id| ran.contains(id)) { &c.ids } else { &c.users };
+                if places.is_disjoint(hits) {
+                    continue;
                 }
+                let entry = reach.entry(c.key.clone()).or_default();
+                entry.0.extend(places.intersection(hits).cloned());
+                entry.1.insert(h.name.clone());
             }
-            entry.0.extend(places.iter().filter(|p| ran.contains(*p)).cloned());
         }
     }
     let mut reach: Vec<(String, usize, usize)> =

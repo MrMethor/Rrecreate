@@ -177,7 +177,8 @@ code (D219). A change reaches a session when its run executed a place the change
 constant naming none, the code that uses it): `rrc suspects` keeps what each run executed, so judge every session's
 suspects early; `rrc status` names the sessions none looked through (`unlooked`: never spared; `rrc suspects --unlooked` looks
 through each) and what the change
-reaches, item by item (`reaches`: its places and how many sessions run them; all of it with `--all`). The rest are `spared`, their censuses holding; the core sessions (`rrc scope --core`: the start from
+reaches, item by item (`reaches`: its places and how many sessions run them that their kept censuses and comparisons
+were made before it changed; all of it with `--all`). The rest are `spared`, their censuses holding; the core sessions (`rrc scope --core`: the start from
 power-on and a session of each main system) are counted at every change; `rrc work --run --all` counts every session,
 before a stage's gate is taken as held and at the end of a day's work.
 A play the person made alongside the port ("Playing alongside") has a census of its own (`.rrc/play/NAME/`): its
