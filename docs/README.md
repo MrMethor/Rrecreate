@@ -125,7 +125,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-23 (decisions to D219). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-23 (decisions to D220). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -222,7 +222,8 @@ so a tavern's offer, a guild's menu and a temple's heal match in every field, fr
 short sessions match in every mapped field but one known difference (a shop's actor two units off), and 60 bugs of
 the original are registered with their switches. Two gaps became
 toolkit features: a divergence's report says that an item in expanded memory can't be watched rather than failing,
-and `rrc show` prints the program's own texts and bytes from a place. Left by the roadmap: the palaces' jobs, the main
+and `rrc show` prints the program's own texts and bytes from a place; a far pointer read from a run's memory is
+written as that run's address and named by the toolkit (D220). Left by the roadmap: the palaces' jobs, the main
 quest's rest, the towns' upper walls, sun, moons, horizon and the wilderness's pictures and songs, the rest of the
 program. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
 accept.

@@ -153,7 +153,7 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     let session = Session::load(repo, name)?;
     let k = Knowledge::load(&repo.knowledge())?;
     let analysis = Analysis::load(repo)?;
-    let id = crate::naming::resolve(repo, &k, analysis.as_ref(), what)?;
+    let id = crate::naming::resolve_in(repo, &k, analysis.as_ref(), what, Some(&session))?;
     if id.is_expanded() {
         return Err(format!(
             "{id} is in expanded memory, which a watch can't follow (D172): watch the frame's segment while its page is              mapped"
@@ -431,7 +431,7 @@ fn scan_inputs(repo: &Repo, a: &Args, session: &Session) -> Result<ExitCode, Str
     let ranges: Vec<(String, u32)> = match a.value("--at") {
         Some(at) => {
             let analysis = Analysis::load(repo)?;
-            let id = crate::naming::resolve(repo, &k, analysis.as_ref(), at)?;
+            let id = crate::naming::resolve_in(repo, &k, analysis.as_ref(), at, Some(session))?;
             let len: u32 = a.required("--len")?.parse().map_err(|_| "--len is a number of bytes")?;
             vec![(Places::new(repo, session).address(&id.to_string())?, len)]
         }

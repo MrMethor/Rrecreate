@@ -12,6 +12,7 @@ use crate::clockwork::Clockwork;
 use crate::knowledge::{Datum, Decision, Knowledge, is_name, parse_id};
 use crate::repo::Repo;
 use crate::say;
+use crate::session::Session;
 
 pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
     let k = Knowledge::load(&repo.knowledge())?;
@@ -211,12 +212,13 @@ pub(crate) fn data(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 
 pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &["--session", "--tick", "--bytes", "--texts"], &["--asm", "--c", "--listing", "--all"])?;
-    let usage =
-        "show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]] [--bytes N] [--texts N]";
+    let usage = "show ID|NAME|SEG:OFF|@SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]] [--bytes N] \
+                 [--texts N]";
     let [what] = a.positionals(1, 1, usage)? else { unreachable!() };
     let k = Knowledge::load(&repo.knowledge())?;
     let analysis = Analysis::load(repo)?;
-    let id = resolve(repo, &k, analysis.as_ref(), what)?;
+    let session = a.value("--session").map(|name| Ok::<_, String>((name, Session::load(repo, name)?))).transpose()?;
+    let id = resolve_in(repo, &k, analysis.as_ref(), what, session.as_ref().map(|(_, s)| s))?;
     let about = |d: &Decision| {
         let confidence = d.confidence.map(|c| format!(", {c}")).unwrap_or_default();
         format!("{id} {} ({}{confidence})", d.name, d.provenance)
@@ -243,6 +245,19 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     if let Some(offset) = analysis.as_ref().and_then(|a| a.ds_offset(&id)).filter(|_| !k.functions.contains_key(&id)) {
         say("address", format!("DS:{offset:04X}, in the data segment"));
+    }
+    // A SEG:OFF is Ghidra's (D90), read as one of its addresses: said, so a run's far pointer isn't taken for it.
+    if what.contains(':') && !what.starts_with('@') && !is_ds(what) && parse_id(what).is_err() {
+        say(
+            "address",
+            format!("{what} is Ghidra's, its segments from 1000h; a run's far pointer: @{what} --session NAME"),
+        );
+    }
+    // Where the session's run has it, as a far pointer there holds it (D220).
+    if let Some((name, session)) = &session {
+        if id.module() == repo.module() && !id.is_memory() && !id.is_expanded() {
+            say("run", format!("{} in {name}'s run", run_address(repo, analysis.as_ref(), session, &id)?));
+        }
     }
     // What the outside sources say of it (D156, D185), met where the question is: by the words of its name.
     let named = k.functions.get(&id).map(|d| &d.name).or_else(|| k.data.get(&id).map(|d| &d.decision.name));
@@ -276,8 +291,10 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             && u64::from(id.offset()) >= file_size;
         let image = match a.value("--session") {
             Some(session) if made => Some(session_image(repo, session, a.value("--tick"))?),
-            Some(_) => return Err(format!("{id} is in the program's file: --session is for code made at run time")),
-            None => None,
+            Some(_) if a.value("--tick").is_some() => {
+                return Err(format!("{id} is in the program's file: --tick is for code made at run time"));
+            }
+            _ => None,
         };
         if made && image.is_none() && (a.has("--asm") || a.has("--listing")) {
             return Err(format!(
@@ -632,6 +649,50 @@ fn with_object_ids(text: &str, name: impl Fn(u64) -> Option<String>) -> String {
 }
 
 /// The ID `what` stands for: an ID, a name, or Ghidra's `SEG:OFF`.
+/// What a command given a session names: as [`resolve`], or one of the run's addresses (D220), `@SEG:OFF` (a far
+/// pointer as the run's memory holds it) or `@LINEAR`: the ID where the session's run has it, the program where the
+/// run loaded it, not where Ghidra's addresses count from (1000h).
+pub(crate) fn resolve_in(
+    repo: &Repo,
+    k: &Knowledge,
+    analysis: Option<&Analysis>,
+    what: &str,
+    session: Option<&Session>,
+) -> Result<Id, String> {
+    let Some(run) = what.strip_prefix('@') else { return resolve(repo, k, analysis, what) };
+    let session = session.ok_or_else(|| format!("{what}: one of a run's addresses, read in a session's run"))?;
+    let hex = |t: &str| u32::from_str_radix(t, 16).ok().filter(|&n| n <= 0xFFFF);
+    let linear = match run.split_once(':') {
+        Some(_) if crate::places::is_le(repo) => {
+            return Err(format!("{what}: an LE program's run is flat, its addresses @LINEAR"));
+        }
+        Some((segment, offset)) => hex(segment).zip(hex(offset)).map(|(s, o)| s * 16 + o),
+        None => u32::from_str_radix(run, 16).ok(),
+    }
+    .ok_or_else(|| format!("{what:?}: a run's address is @SEG:OFF or @LINEAR, in hex"))?;
+    crate::places::Places::new(repo, session).linear_id(linear)
+}
+
+/// Where a session's run has `id`, one of the program's: in a 16-bit program, as `SEG:OFF` in its block's segment
+/// (Ghidra's, moved to where the run loaded the program; else the load segment's, in the first 64K), with its linear
+/// address; in an LE program, its linear address.
+fn run_address(repo: &Repo, analysis: Option<&Analysis>, session: &Session, id: &Id) -> Result<String, String> {
+    let places = crate::places::Places::new(repo, session);
+    let linear = places.linear(&places.address(&id.to_string())?)?;
+    let offset = id.offset();
+    let segment = match id.part() {
+        Some(_) => None,
+        None => analysis.and_then(|a| a.segment_of(offset)).or((offset <= 0xFFFF).then_some(0)),
+    };
+    Ok(match segment {
+        Some(s) => {
+            let load = linear.wrapping_sub(offset) >> 4;
+            format!("@{:04X}:{:04X} (@{linear:X})", load + s, offset - s * 16)
+        }
+        None => format!("@{linear:X}"),
+    })
+}
+
 pub(crate) fn resolve(repo: &Repo, k: &Knowledge, analysis: Option<&Analysis>, what: &str) -> Result<Id, String> {
     if parse_id(what).is_ok() || is_ds(what) {
         return place_in(repo, analysis, what);

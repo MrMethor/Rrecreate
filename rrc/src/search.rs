@@ -200,7 +200,7 @@ fn read(
     let ranges: Vec<(String, u32)> = match a.value("--at") {
         Some(at) => {
             let analysis = crate::analysis::Analysis::load(repo)?;
-            let id = crate::naming::resolve(repo, k, analysis.as_ref(), at)?;
+            let id = crate::naming::resolve_in(repo, k, analysis.as_ref(), at, Some(session))?;
             let len: u32 = a.required("--len")?.parse().map_err(|_| "--len is a number of bytes")?;
             vec![(places.address(&id.to_string())?, len)]
         }

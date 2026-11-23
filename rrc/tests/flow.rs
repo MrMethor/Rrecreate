@@ -616,6 +616,14 @@ fn memory_outside_the_image_is_mem() {
     assert!(span.contains("256 bytes, from 100 ms to 300 ms") && span.contains("bios_ticks"), "{span}");
     let path = rrc.ok(&["trace", "wait", "--path"]);
     assert!(Path::new(path.trim()).is_file(), "the path alone: {path}");
+    // The run's addresses (D220): where the session's run has an ID, and the ID a far pointer there names.
+    let shown = rrc.ok(&["show", "T.COM+0000E", "--session", "wait"]);
+    let far = shown.lines().find_map(|l| l.strip_prefix("run       ")).expect(&shown).split(' ').next().unwrap();
+    assert!(far.ends_with(":000E") && far != "@1000:000E", "the run's load segment: {shown}");
+    assert!(rrc.ok(&["show", far, "--session", "wait"]).contains("unnamed   T.COM+0000E"));
+    assert!(rrc.ok(&["show", "@0040:006C", "--session", "wait"]).contains("bios_ticks"));
+    let (refused, _) = rrc.run(&["show", "@0040:006C"]);
+    assert!(refused.contains("read in a session's run"), "{refused}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

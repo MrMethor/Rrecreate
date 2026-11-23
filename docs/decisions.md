@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D220. A run's addresses are written `@SEG:OFF` and `@LINEAR`, and the toolkit names their IDs. Accepted 2026-11-23.
+`rrc show`, `rrc peek`, `rrc watch` and `rrc inputs --at` take a session's run's address, `@SEG:OFF` (a far pointer as
+the run's memory holds it) or `@LINEAR`, and name it by its ID, through where the session's run loads the program
+(D55, D57); `rrc show ID --session NAME` says where the run has an ID (`run`: in its block's segment, moved to the
+run's load segment, and its linear address). `SEG:OFF` without `@` stays Ghidra's address (D90), and `rrc show` says
+it read one so; `MEM+LINEAR` is memory outside the program (D53).
+**Why:** met on Arena's port (2026-11-23): a far pointer read from the run's memory (the sky's palette table,
+`23AC:03A1`) was looked up as one of Ghidra's addresses, whose segments count from 1000h, and named the wrong place
+without a word; the run loads ACD.EXE at segment 118h. The agent translated it by hand and got it wrong first. The
+toolkit knows where each session's run puts the program, so it says it, in the protocol's notation for the
+machine's addresses.
+**Extends:** D55, D90.
+
 ### D219. What is checked after a change is what the change can reach. Accepted 2026-11-23, with the person.
 A change is checked where it can make a difference, and everything is checked at fixed points, not at every change:
 - **A port's sessions:** the port's code is cut into items (a function, a type, a constant, each from its doc

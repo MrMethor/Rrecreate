@@ -113,9 +113,11 @@ usage: rrc <command> [arguments]     (inside a port repository)
   hook [ID NAME --part TEXT --registers A,B]
                          the calls a part not ported makes into ported code, or one: each run of the
                          entry ID in a pass with those registers, given the port (D98); --remove NAME
-  show ID|NAME|SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]] [--bytes N] [--texts N]
+  show ID|NAME|SEG:OFF|@SEG:OFF [--asm] [--c] [--listing] [--all] [--session NAME [--tick N]] [--bytes N] [--texts N]
                          what is known about a function or data (SEG:OFF: Ghidra's address, as in
-                         its DAT_SEG_OFF names): its name and evidence, the outside sources that cover
+                         its DAT_SEG_OFF names; @SEG:OFF or @LINEAR: the session's run's, as a far
+                         pointer in its memory holds it, and --session says where the run has an ID):
+                         its name and evidence, the outside sources that cover
                          it, the port's fields mapped to it and code that names it, the quirks and
                          suspects in it, what Ghidra found (size,
                          calls, callers; the function an address is inside; who reads and writes
@@ -167,7 +169,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          of it (3) (start: before the first sync point hit); at most --limit
                          accesses (10000, at most 100000), --lines lines; --program: the program's
                          own, the host's copies (a DOS read, an EMS page mapped) only counted.
-                         SEG:OFF is Ghidra's address; MEM+LINEAR the machine's
+                         SEG:OFF is Ghidra's address; @SEG:OFF or @LINEAR the run's (a far pointer
+                         read from its memory); MEM+LINEAR the machine's outside the program
   peek SESSION --tick N ID|NAME|SEG:OFF... [--len N]
                          memory at the end of tick N (its sync point), named or not, without
                          recording: as its type reads it, else as a number or bytes (--len: 2, or
