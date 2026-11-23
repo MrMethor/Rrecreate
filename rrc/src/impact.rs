@@ -204,7 +204,7 @@ pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code, module: &str) -> 
         }
         // Both versions' texts: the places near what changed; else, or a changed line near none, the item's own.
         let near = match (a, now.texts.get(key)) {
-            (Some(a), Some(text)) if !a.text.is_empty() => near_changes(&a.text, text, module),
+            (Some(a), Some(text)) if !a.text.is_empty() => near_changes(&a.text, text, module, is_type(key)),
             _ => None,
         };
         let ids: BTreeSet<String> = match near {
@@ -218,10 +218,17 @@ pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code, module: &str) -> 
     Change { items }
 }
 
+/// Whether an item's key is a type's (a struct, an enum, a union): its lines are fields, each its own.
+fn is_type(key: &str) -> bool {
+    key.rsplit_once(':').is_some_and(|(_, sig)| ["struct ", "enum ", "union "].iter().any(|k| sig.starts_with(k)))
+}
+
 /// The places named near what changed between two versions of an item's text: for each line one version has more of
 /// than the other (as trimmed), those named on it or within three lines of it, else on the nearest line above that
-/// names one. None where a changed line has neither: the item's own places stand for it.
-fn near_changes(old: &str, new: &str, module: &str) -> Option<BTreeSet<String>> {
+/// names one. None where a changed line has neither: the item's own places stand for it. In a type, a field's line
+/// reaches only what it and its own doc comment name: a field added or changed does nothing until code uses it, and
+/// that code is a change of its own.
+fn near_changes(old: &str, new: &str, module: &str, a_type: bool) -> Option<BTreeSet<String>> {
     let (a, b): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
     let named = |lines: &[&str]| {
         let mut ids = BTreeSet::new();
@@ -242,6 +249,14 @@ fn near_changes(old: &str, new: &str, module: &str) -> Option<BTreeSet<String>> 
                 continue;
             }
             if line.trim().is_empty() {
+                continue;
+            }
+            if a_type {
+                let mut first = i;
+                while first > 0 && lines[first - 1].trim_start().starts_with("//") {
+                    first -= 1;
+                }
+                ids.extend(named(&lines[first..=i]));
                 continue;
             }
             let mut found = named(&lines[i.saturating_sub(3)..(i + 4).min(lines.len())]);
@@ -485,5 +500,20 @@ mod tests {
         let bare: BTreeMap<String, Item> =
             old.into_iter().map(|(k, i)| (k, Item { text: String::new(), ..i })).collect();
         assert_eq!(change(&bare, &now, "GAME.EXE").touched(&ran).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_field_added_to_a_type_reaches_only_what_its_own_docs_name() {
+        let ty = "/// The view.\nstruct View {\n    /// `+0C0F1`'s records.\n    records: u8,\n    /// The last face's steps.\n    \
+                  steps: u16,\n}\n";
+        let old = code_of(&[("src/view.rs", ty)]).items;
+        let ran = BTreeSet::from(["GAME.EXE+0C0F1".to_owned(), "GAME.EXE+0AFD6".to_owned()]);
+        let added = ty.replace("    steps: u16,\n", "    steps: u16,\n    /// Kept between passes.\n    kept: u16,\n");
+        assert!(change(&old, &code_of(&[("src/view.rs", &added)]), "GAME.EXE").touched(&ran).unwrap().is_empty());
+        let named = ty.replace("/// The last face's steps.", "/// The last face's steps (`+0AFD6`).");
+        assert_eq!(
+            change(&old, &code_of(&[("src/view.rs", &named)]), "GAME.EXE").touched(&ran).unwrap(),
+            BTreeSet::from(["GAME.EXE+0AFD6".to_owned()])
+        );
     }
 }
