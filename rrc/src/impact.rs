@@ -192,6 +192,9 @@ pub(crate) struct Changed {
     pub users: BTreeSet<String>,
     /// Whether anything uses it at all.
     pub used: bool,
+    /// Told by its lines and none near them names a place, in an item that names some elsewhere: it reaches nothing
+    /// of its own (the core sessions and `--all` stand for it).
+    pub nowhere: bool,
 }
 
 pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code, module: &str) -> Change {
@@ -207,13 +210,12 @@ pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code, module: &str) -> 
             (Some(a), Some(text)) if !a.text.is_empty() => near_changes(&a.text, text, module, is_type(key)),
             _ => None,
         };
-        let ids: BTreeSet<String> = match near {
-            Some(near) => near,
-            None => a.into_iter().chain(b).flat_map(|i| i.ids.iter().cloned()).collect(),
-        };
+        let own: BTreeSet<String> = a.into_iter().chain(b).flat_map(|i| i.ids.iter().cloned()).collect();
+        let nowhere = near.as_ref().is_some_and(BTreeSet::is_empty) && !own.is_empty();
+        let ids = near.unwrap_or(own);
         let name = b.or(a).map(|i| i.name.clone()).unwrap_or_default();
         let (users, used) = users(now, key, &name);
-        items.push(Changed { key: key.clone(), ids, users, used });
+        items.push(Changed { key: key.clone(), ids, users, used, nowhere });
     }
     Change { items }
 }
@@ -225,7 +227,7 @@ fn is_type(key: &str) -> bool {
 
 /// The places named near what changed between two versions of an item's text: for each line one version has more of
 /// than the other (as trimmed), those named on it or within three lines of it, else on the nearest line above that
-/// names one. None where a changed line has neither: the item's own places stand for it. In a type, a field's line
+/// names one, at most 12 lines up (further is another block's: a long function's or a long `match`'s). In a type, a field's line
 /// reaches only what it and its own doc comment name: a field added or changed does nothing until code uses it, and
 /// that code is a change of its own.
 fn near_changes(old: &str, new: &str, module: &str, a_type: bool) -> Option<BTreeSet<String>> {
@@ -261,7 +263,11 @@ fn near_changes(old: &str, new: &str, module: &str, a_type: bool) -> Option<BTre
             }
             let mut found = named(&lines[i.saturating_sub(3)..(i + 4).min(lines.len())]);
             if found.is_empty() {
-                found = (0..i).rev().map(|j| named(&lines[j..=j])).find(|s| !s.is_empty())?;
+                found = (i.saturating_sub(12)..i)
+                    .rev()
+                    .map(|j| named(&lines[j..=j]))
+                    .find(|s| !s.is_empty())
+                    .unwrap_or_default();
             }
             ids.extend(found);
         }
@@ -313,7 +319,7 @@ impl Change {
     /// something uses it, or nothing it names was ever looked for), which touches every session; with the item.
     fn touched(&self, ran: &BTreeSet<String>) -> Result<BTreeSet<String>, String> {
         let mut places = BTreeSet::new();
-        for c in &self.items {
+        for c in self.items.iter().filter(|c| !c.nowhere) {
             if c.ids.iter().any(|id| ran.contains(id)) {
                 places.extend(c.ids.iter().cloned());
             } else if c.users.iter().any(|id| ran.contains(id)) {
@@ -500,6 +506,17 @@ mod tests {
         let bare: BTreeMap<String, Item> =
             old.into_iter().map(|(k, i)| (k, Item { text: String::new(), ..i })).collect();
         assert_eq!(change(&bare, &now, "GAME.EXE").touched(&ran).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn an_edit_far_from_any_place_in_a_long_function_reaches_nothing_of_its_own() {
+        let mut long = String::from("/// `+0C0F1`: drawn.\nfn drawn() {\n");
+        long.push_str(&"    pad();\n".repeat(20));
+        long.push_str("    last(1);\n}\n");
+        let old = code_of(&[("src/main.rs", &long)]).items;
+        let ran = BTreeSet::from(["GAME.EXE+0C0F1".to_owned()]);
+        let now = code_of(&[("src/main.rs", &long.replace("last(1)", "last(2)"))]);
+        assert!(change(&old, &now, "GAME.EXE").touched(&ran).unwrap().is_empty());
     }
 
     #[test]
