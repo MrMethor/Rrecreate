@@ -767,9 +767,10 @@ every field, frame and sound.
 ### D219. What is checked after a change is what the change can reach. Accepted 2026-11-23, with the person.
 A change is checked where it can make a difference, and everything is checked at fixed points, not at every change:
 - **A port's sessions:** the port's code is cut into items (a function, a type, a constant, each from its doc
-  comment), and each item's hash and the original's places it names are kept with the code's fingerprint (the cache's
-  `code`). A change's items name places; a changed item that names none a session runs stands for the items that use
-  it, three deep. A session whose run executed none of those places (`rrc suspects`' coverage, D151) is spared: what
+  comment), and each item's hash, its text and the original's places it names are kept with the code's fingerprint
+  (the cache's `code`). A change reaches the places named near its changed lines (on them or within three lines, else
+  the nearest named above; else the item's own), so an edit in one block of a long function reaches what that block
+  follows; a changed item that names none a session runs stands for the items that use it, three deep. A session whose run executed none of those places (`rrc suspects`' coverage, D151) is spared: what
   is kept of it holds for the new code (`rrc status`: `spared`). `rrc work --run` counts and compares again only the
   sessions a change touches, and the core sessions (`[port] core`, `rrc scope --core`), at every change; `rrc work
   --run --all` counts every one, before a stage's gate is taken as held and at the end of a day's work. What can't be

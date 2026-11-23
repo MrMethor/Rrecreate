@@ -507,6 +507,9 @@ pub(crate) fn status(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if !standing.spared.is_empty() {
         say("spared", spared_text(&standing.spared, standing.held.len()));
     }
+    if let Some(why) = standing.unsure.as_ref().filter(|_| !standing.stale.is_empty()) {
+        say("touched", format!("every session the change could reach: {why}"));
+    }
     // What a commit is refused for (D148), whatever the stage: named here unless the stage's own gate just did.
     if at != 4 {
         let open = crate::quirks::refused(repo)?;

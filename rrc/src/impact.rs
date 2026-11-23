@@ -1,8 +1,10 @@
 //! What a change of the port's code touches (D219), so `rrc work --run` counts again only the sessions it can change.
 //!
 //! The port's code is cut into items: a function, a type, a constant, each from its doc comment to the next item's.
-//! Each item's hash and the original's places it names are kept by the code's fingerprint (`code` in the cache).
-//! Two versions compared give the items that changed, and the places they name; a changed item that names none the
+//! Each item's hash, its text and the original's places it names are kept by the code's fingerprint (`code` in the
+//! cache). Two versions compared give the items that changed, and the places named near the lines that changed in
+//! them (an edit in a long function reaches what its own block follows, not all the function names); a changed item
+//! that names none the
 //! sessions run (a helper, a constant of the data's) stands for the items that use it, three deep. A session whose
 //! run executed none of those places (`rrc suspects`' coverage, D151) is spared: its census and comparisons hold for
 //! the new code. What can't be told (an item nothing names a place for, a session never looked through, code kept
@@ -29,6 +31,9 @@ pub(crate) struct Item {
     /// What holds no code of its own (a file's head: its uses and its docs; an `impl` line): its change is its items'.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub frame: bool,
+    /// Its text, as kept with its code's fingerprint: what changed in it is told by its lines.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 /// The port's code by item (`path:kind name`, `#2` on for another of the same), with each item's text (not kept).
@@ -42,7 +47,8 @@ pub(crate) struct Code {
 pub(crate) fn code(root: &Path, module: &str) -> Code {
     let mut code = Code::default();
     crate::sources::each_file(root, root, &mut |relative, text| {
-        for (key, item, text) in items(relative, text, module) {
+        for (key, mut item, text) in items(relative, text, module) {
+            item.text.clone_from(&text);
             code.texts.insert(key.clone(), text);
             code.items.insert(key, item);
         }
@@ -97,7 +103,7 @@ fn items(path: &str, text: &str, module: &str) -> Vec<(String, Item, String)> {
         let n = seen.entry(key.clone()).or_insert(0);
         *n += 1;
         let key = if *n == 1 { key } else { format!("{key}#{n}") };
-        let item = Item { hash: crate::cache::sha256(text.as_bytes()), ids, name, frame };
+        let item = Item { hash: crate::cache::sha256(text.as_bytes()), ids, name, frame, text: String::new() };
         out.push((key, item, text));
     };
     push(format!("{path}:"), String::new(), true, &lines[..head_end]);
@@ -188,7 +194,7 @@ pub(crate) struct Changed {
     pub used: bool,
 }
 
-pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code) -> Change {
+pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code, module: &str) -> Change {
     let keys: BTreeSet<&String> = old.keys().chain(now.items.keys()).collect();
     let mut items = Vec::new();
     for key in keys {
@@ -196,12 +202,56 @@ pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code) -> Change {
         if a.map(|i| &i.hash) == b.map(|i| &i.hash) || a.or(b).is_some_and(|i| i.frame) {
             continue;
         }
-        let ids: BTreeSet<String> = a.into_iter().chain(b).flat_map(|i| i.ids.iter().cloned()).collect();
+        // Both versions' texts: the places near what changed; else, or a changed line near none, the item's own.
+        let near = match (a, now.texts.get(key)) {
+            (Some(a), Some(text)) if !a.text.is_empty() => near_changes(&a.text, text, module),
+            _ => None,
+        };
+        let ids: BTreeSet<String> = match near {
+            Some(near) => near,
+            None => a.into_iter().chain(b).flat_map(|i| i.ids.iter().cloned()).collect(),
+        };
         let name = b.or(a).map(|i| i.name.clone()).unwrap_or_default();
         let (users, used) = users(now, key, &name);
         items.push(Changed { key: key.clone(), ids, users, used });
     }
     Change { items }
+}
+
+/// The places named near what changed between two versions of an item's text: for each line one version has more of
+/// than the other (as trimmed), those named on it or within three lines of it, else on the nearest line above that
+/// names one. None where a changed line has neither: the item's own places stand for it.
+fn near_changes(old: &str, new: &str, module: &str) -> Option<BTreeSet<String>> {
+    let (a, b): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+    let named = |lines: &[&str]| {
+        let mut ids = BTreeSet::new();
+        for line in lines {
+            crate::sources::ids_in(line, module, &mut ids);
+        }
+        ids
+    };
+    let mut ids = BTreeSet::new();
+    for (lines, other) in [(&a, &b), (&b, &a)] {
+        let mut left: BTreeMap<&str, usize> = BTreeMap::new();
+        for line in other.iter() {
+            *left.entry(line.trim()).or_default() += 1;
+        }
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(n) = left.get_mut(line.trim()).filter(|n| **n > 0) {
+                *n -= 1;
+                continue;
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
+            let mut found = named(&lines[i.saturating_sub(3)..(i + 4).min(lines.len())]);
+            if found.is_empty() {
+                found = (0..i).rev().map(|j| named(&lines[j..=j])).find(|s| !s.is_empty())?;
+            }
+            ids.extend(found);
+        }
+    }
+    Some(ids)
 }
 
 /// The places named by the items that use `name` (a word of their text), and those that use them while they name
@@ -276,7 +326,7 @@ pub(crate) fn spared(repo: &Repo, held: &[Held], port: &str) -> Result<(BTreeSet
     for old in &olds {
         match kept(&cache, old) {
             Some(items) => {
-                changes.insert(old.clone(), change(&items, &now));
+                changes.insert(old.clone(), change(&items, &now, &repo.module()));
             }
             None => why = Some("code kept before what changed could be told".to_owned()),
         }
@@ -337,7 +387,8 @@ mod tests {
     fn code_of(files: &[(&str, &str)]) -> Code {
         let mut code = Code::default();
         for (path, text) in files {
-            for (key, item, text) in items(path, text, "GAME.EXE") {
+            for (key, mut item, text) in items(path, text, "GAME.EXE") {
+                item.text.clone_from(&text);
                 code.texts.insert(key.clone(), text);
                 code.items.insert(key, item);
             }
@@ -386,25 +437,53 @@ mod tests {
         let ran = BTreeSet::from(["GAME.EXE+0D18E".to_owned(), "GAME.EXE+0C746".to_owned()]);
         // A function naming a place: that place.
         let now = code_of(&[("src/view.rs", &V1.replace("step(1)", "step(2)"))]);
-        let c = change(&old, &now);
+        let c = change(&old, &now, "GAME.EXE");
         assert_eq!(c.touched(&ran).unwrap(), BTreeSet::from(["GAME.EXE+0D18E".to_owned()]));
         // A helper naming none: its user's place.
         let now = code_of(&[("src/view.rs", &V1.replace("let _ = n;", "let _ = n + 1;"))]);
-        assert_eq!(change(&old, &now).touched(&ran).unwrap(), BTreeSet::from(["GAME.EXE+0D18E".to_owned()]));
+        assert_eq!(
+            change(&old, &now, "GAME.EXE").touched(&ran).unwrap(),
+            BTreeSet::from(["GAME.EXE+0D18E".to_owned()])
+        );
         // A constant: its users'.
         let now = code_of(&[("src/view.rs", &V1.replace("= 16;", "= 17;"))]);
-        assert_eq!(change(&old, &now).touched(&ran).unwrap(), BTreeSet::from(["GAME.EXE+0C746".to_owned()]));
+        assert_eq!(
+            change(&old, &now, "GAME.EXE").touched(&ran).unwrap(),
+            BTreeSet::from(["GAME.EXE+0C746".to_owned()])
+        );
         // A file's head (a use, its docs) and its tests: nothing.
         let now = code_of(&[("src/view.rs", &V1.replace("use x;", "use y;").replace("fn t() {}", "fn t() { }"))]);
-        assert!(change(&old, &now).touched(&ran).unwrap().is_empty());
+        assert!(change(&old, &now, "GAME.EXE").touched(&ran).unwrap().is_empty());
         // A function naming no place, used by nothing that does: every session.
         let lone = format!("{V1}\nfn main() {{\n    run();\n}}\n").replace("#[cfg(test)]", "");
         let older = code_of(&[("src/view.rs", &lone)]).items;
         let now = code_of(&[("src/view.rs", &lone.replace("run();", "run(); run();"))]);
-        assert!(change(&older, &now).touched(&ran).is_ok(), "nothing uses main: what it names is nothing run");
+        assert!(
+            change(&older, &now, "GAME.EXE").touched(&ran).is_ok(),
+            "nothing uses main: what it names is nothing run"
+        );
         let used = format!("{lone}\nfn caller() {{\n    main();\n}}\n");
         let older = code_of(&[("src/view.rs", &used)]).items;
         let now = code_of(&[("src/view.rs", &used.replace("run();", "run(); run();"))]);
-        assert_eq!(change(&older, &now).touched(&ran).unwrap_err(), "src/view.rs:fn main");
+        assert_eq!(change(&older, &now, "GAME.EXE").touched(&ran).unwrap_err(), "src/view.rs:fn main");
+    }
+
+    #[test]
+    fn an_edit_in_one_block_of_a_long_function_reaches_that_block_s_places() {
+        let long = "/// `+0C0F1`: a record drawn.\nfn listed() {\n    // +0C241: the frame steps.\n    step();\n    \
+                    other();\n    one();\n    two();\n    three();\n    four();\n    // +0C29E: it moves.\n    \
+                    moved(1);\n}\n";
+        let old = code_of(&[("src/view.rs", long)]).items;
+        let ran =
+            BTreeSet::from(["GAME.EXE+0C0F1".to_owned(), "GAME.EXE+0C241".to_owned(), "GAME.EXE+0C29E".to_owned()]);
+        let now = code_of(&[("src/view.rs", &long.replace("moved(1)", "moved(2)"))]);
+        assert_eq!(
+            change(&old, &now, "GAME.EXE").touched(&ran).unwrap(),
+            BTreeSet::from(["GAME.EXE+0C29E".to_owned()])
+        );
+        // Kept without its text (code kept before): the whole item's places.
+        let bare: BTreeMap<String, Item> =
+            old.into_iter().map(|(k, i)| (k, Item { text: String::new(), ..i })).collect();
+        assert_eq!(change(&bare, &now, "GAME.EXE").touched(&ran).unwrap().len(), 3);
     }
 }
