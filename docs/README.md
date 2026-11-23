@@ -104,8 +104,11 @@ piece of work is closed, and refuses a commit that names a bug without registeri
    added, and the design updated, in the same commit. Nothing describes a superseded decision.
 10. **A document changes with what it describes**, in the same commit: the protocol, the formats, the playbook, and
     this page (section 8).
-11. **Checks before every commit:** format, lint, tests (`CLAUDE.md` has the commands); after a change to Clockwork,
-    the test games still reach their screenshots. CI runs the checks on Windows and Linux.
+11. **Checks of what a change reaches** (D219, the person's): before a commit, format, lint and the tests of what the
+    change touches (`CLAUDE.md` has the commands); after a change to Clockwork, the test games still reach their
+    screenshots. CI runs every test on Windows and Linux after the push. In a port, `rrc work --run` counts the
+    sessions a change reaches and the core ones; every session is counted before a stage's gate is taken as held and
+    at the end of a day's work.
 12. **Straight to `main`:** commit and push after each feature, no pull requests, no asking; under the person's git
     identity, with the agent's co-author line. Check CI afterwards.
 13. **Keep going; ask only for what is the person's:** a decision marked "with the person", what to port, a
@@ -122,7 +125,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-23 (decisions to D218). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-23 (decisions to D219). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -200,7 +203,10 @@ toolkit. The playbook has the manual of the live comparison for it, "Playing alo
 (D215). The first gap it met is closed: Ghidra refused the default cache's path, so `rrc analyze` gives it a link
 without the dot (D216). So is the second: a recording without a run stopped at an item in expanded memory (the
 wilderness's grid), and now runs the session for it (D217). A third: stage 3's gate named a carried datum as
-forgotten state, and now counts it as the mapping's own decision (D218). By 2026-11-22 the port, by its roadmap's phases, goes
+forgotten state, and now counts it as the mapping's own decision (D218). And at the person's word the waits were
+cut (D219): `rrc work --run` records what the knowledge left stale and counts only the sessions a change of the
+port's code can reach, by what their runs executed, with a core set at every change and every session at fixed points;
+Rrecreate's own checks run the tests of what a change touches, CI the rest. By 2026-11-22 the port, by its roadmap's phases, goes
 from the start dungeon into the village, its streets, houses and shops (buying, selling), a tavern (a job offered, a
 room rented and slept in), a temple (healing, the blessing), the wilderness and a dungeon made there, loot and a new
 level, and by the world map on journeys of a day and of 44, to the next town; then the mages' guild (its stock,

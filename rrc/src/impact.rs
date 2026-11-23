@@ -1,0 +1,410 @@
+//! What a change of the port's code touches (D219), so `rrc work --run` counts again only the sessions it can change.
+//!
+//! The port's code is cut into items: a function, a type, a constant, each from its doc comment to the next item's.
+//! Each item's hash and the original's places it names are kept by the code's fingerprint (`code` in the cache).
+//! Two versions compared give the items that changed, and the places they name; a changed item that names none the
+//! sessions run (a helper, a constant of the data's) stands for the items that use it, three deep. A session whose
+//! run executed none of those places (`rrc suspects`' coverage, D151) is spared: its census and comparisons hold for
+//! the new code. What can't be told (an item nothing names a place for, a session never looked through, code kept
+//! before) touches every session.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+use crate::cache::Cache;
+use crate::repo::Repo;
+use crate::stage::Held;
+
+/// How deep a changed item that names none of the places run is followed to the items that use it.
+const USERS_DEEP: usize = 3;
+
+/// An item of the port's code: its text's hash, the original's places it names, and its name (what a use says).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Item {
+    pub hash: String,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub ids: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// What holds no code of its own (a file's head: its uses and its docs; an `impl` line): its change is its items'.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frame: bool,
+}
+
+/// The port's code by item (`path:kind name`, `#2` on for another of the same), with each item's text (not kept).
+#[derive(Debug, Default)]
+pub(crate) struct Code {
+    pub items: BTreeMap<String, Item>,
+    pub texts: BTreeMap<String, String>,
+}
+
+/// The port's code now, cut into items.
+pub(crate) fn code(root: &Path, module: &str) -> Code {
+    let mut code = Code::default();
+    crate::sources::each_file(root, root, &mut |relative, text| {
+        for (key, item, text) in items(relative, text, module) {
+            code.texts.insert(key.clone(), text);
+            code.items.insert(key, item);
+        }
+        true
+    });
+    code
+}
+
+/// The port's code's fingerprint (`sources::fingerprint`), its items kept under it for a later change to be told by.
+pub(crate) fn fingerprint(repo: &Repo) -> Result<String, String> {
+    let port = crate::sources::fingerprint(&repo.root);
+    let cache = Cache::open(&repo.local)?;
+    if cache.recall("code", &port).is_none() {
+        let items = code(&repo.root, &repo.module()).items;
+        let text = serde_json::to_string(&items).map_err(|e| e.to_string())?;
+        cache.remember("code", &port, &text)?;
+    }
+    Ok(port)
+}
+
+/// The items kept for the code of fingerprint `port`, if any.
+fn kept(cache: &Cache, port: &str) -> Option<BTreeMap<String, Item>> {
+    serde_json::from_str(&cache.recall("code", port)?).ok()
+}
+
+/// A file's items: what is before its first item (its head), then each item from its doc comment and attributes
+/// on; a file's tests (from a `#[cfg(test)]` at its margin) are left out.
+fn items(path: &str, text: &str, module: &str) -> Vec<(String, Item, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let end = lines.iter().position(|l| l.trim_end() == "#[cfg(test)]").unwrap_or(lines.len());
+    let lines = &lines[..end];
+    // Each item's first line (its docs' and attributes' first) and its kind and name.
+    let mut starts: Vec<(usize, String)> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let Some(sig) = signature(line) else { continue };
+        let floor = starts.last().map_or(0, |(s, _)| s + 1);
+        let mut first = i;
+        while first > floor && is_lead(lines[first - 1]) {
+            first -= 1;
+        }
+        starts.push((first, sig));
+    }
+    let mut out = Vec::new();
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let head_end = starts.first().map_or(lines.len(), |(s, _)| *s);
+    let mut push = |key: String, name: String, frame: bool, body: &[&str]| {
+        let text = body.join("\n");
+        let mut ids = BTreeSet::new();
+        for line in body {
+            crate::sources::ids_in(line, module, &mut ids);
+        }
+        let n = seen.entry(key.clone()).or_insert(0);
+        *n += 1;
+        let key = if *n == 1 { key } else { format!("{key}#{n}") };
+        let item = Item { hash: crate::cache::sha256(text.as_bytes()), ids, name, frame };
+        out.push((key, item, text));
+    };
+    push(format!("{path}:"), String::new(), true, &lines[..head_end]);
+    for (k, (start, sig)) in starts.iter().enumerate() {
+        let next = starts.get(k + 1).map_or(lines.len(), |(s, _)| *s);
+        let (kind, name) = sig.split_once(' ').unwrap_or((sig.as_str(), ""));
+        push(format!("{path}:{sig}"), name.to_owned(), kind == "impl", &lines[*start..next]);
+    }
+    out
+}
+
+/// A doc comment, a comment or an attribute: what goes with the item after it.
+fn is_lead(line: &str) -> bool {
+    let t = line.trim_start();
+    (t.starts_with("//") && !t.starts_with("//!")) || t.starts_with("#[")
+}
+
+/// The item a line begins, as `kind name`: a function at any depth; a type, a constant, a static, a trait, a module,
+/// a macro or an `impl` at the margin.
+fn signature(line: &str) -> Option<String> {
+    let indent = line.len() - line.trim_start().len();
+    let mut rest = line.trim_start();
+    for visibility in ["pub(crate) ", "pub(super) ", "pub(self) ", "pub "] {
+        if let Some(r) = rest.strip_prefix(visibility) {
+            rest = r;
+            break;
+        }
+    }
+    loop {
+        let before = rest;
+        for qualifier in ["const ", "async ", "unsafe ", "extern \"C\" "] {
+            if let Some(r) = rest.strip_prefix(qualifier)
+                && (r.starts_with("fn ") || ["async ", "unsafe ", "extern "].iter().any(|q| r.starts_with(q)))
+            {
+                rest = r;
+            }
+        }
+        if rest == before {
+            break;
+        }
+    }
+    let ident = |s: &str| s.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>();
+    if let Some(r) = rest.strip_prefix("fn ") {
+        let name = ident(r);
+        return (!name.is_empty()).then(|| format!("fn {name}"));
+    }
+    if indent > 0 {
+        return None;
+    }
+    if let Some(r) = rest.strip_prefix("impl") {
+        if r.starts_with([' ', '<']) {
+            let head = r.split('{').next().unwrap_or("").trim();
+            // `impl<T> Name<T>` and `impl Trait for Name`: the type's name.
+            let head = head.trim_start_matches(|c| c != ' ' && head.starts_with('<')).trim();
+            let ty = head.rsplit(" for ").next().unwrap_or(head);
+            return Some(format!("impl {}", ident(ty.trim())));
+        }
+        return None;
+    }
+    if let Some(r) = rest.strip_prefix("macro_rules! ") {
+        return Some(format!("macro {}", ident(r)));
+    }
+    for kind in ["struct", "enum", "type", "trait", "const", "static", "mod", "union"] {
+        if let Some(r) = rest.strip_prefix(kind).and_then(|r| r.strip_prefix(' ')) {
+            let r = r.strip_prefix("mut ").unwrap_or(r);
+            let name = ident(r);
+            if !name.is_empty() {
+                return Some(format!("{kind} {name}"));
+            }
+        }
+    }
+    None
+}
+
+/// What a change from the items `old` to the code `now` touches: each changed item, with the places it names and
+/// those its users name (three deep, for one that names none a session runs).
+pub(crate) struct Change {
+    pub items: Vec<Changed>,
+}
+
+pub(crate) struct Changed {
+    pub key: String,
+    /// The places it names (its old version's too).
+    pub ids: BTreeSet<String>,
+    /// The places the items that use it name, three deep through users that name none.
+    pub users: BTreeSet<String>,
+    /// Whether anything uses it at all.
+    pub used: bool,
+}
+
+pub(crate) fn change(old: &BTreeMap<String, Item>, now: &Code) -> Change {
+    let keys: BTreeSet<&String> = old.keys().chain(now.items.keys()).collect();
+    let mut items = Vec::new();
+    for key in keys {
+        let (a, b) = (old.get(key), now.items.get(key));
+        if a.map(|i| &i.hash) == b.map(|i| &i.hash) || a.or(b).is_some_and(|i| i.frame) {
+            continue;
+        }
+        let ids: BTreeSet<String> = a.into_iter().chain(b).flat_map(|i| i.ids.iter().cloned()).collect();
+        let name = b.or(a).map(|i| i.name.clone()).unwrap_or_default();
+        let (users, used) = users(now, key, &name);
+        items.push(Changed { key: key.clone(), ids, users, used });
+    }
+    Change { items }
+}
+
+/// The places named by the items that use `name` (a word of their text), and those that use them while they name
+/// none, `USERS_DEEP` deep; and whether anything uses it.
+fn users(now: &Code, key: &str, name: &str) -> (BTreeSet<String>, bool) {
+    let mut seen = BTreeSet::from([key.to_owned()]);
+    let mut names = vec![name.to_owned()];
+    let (mut found, mut used) = (BTreeSet::new(), false);
+    for _ in 0..USERS_DEEP {
+        let mut next = Vec::new();
+        for n in names.iter().filter(|n| !n.is_empty()) {
+            for (k, text) in &now.texts {
+                if seen.contains(k) || !crate::sources::names_word(text, n) {
+                    continue;
+                }
+                seen.insert(k.clone());
+                let item = &now.items[k];
+                if item.frame {
+                    continue;
+                }
+                used = true;
+                found.extend(item.ids.iter().cloned());
+                if item.ids.is_empty() {
+                    next.push(item.name.clone());
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        names = next;
+    }
+    (found, used)
+}
+
+impl Change {
+    /// Every place a session's run would have to have executed for the change to touch it, as `touched` reads them.
+    fn candidates(&self) -> BTreeSet<String> {
+        self.items.iter().flat_map(|c| c.ids.iter().chain(&c.users).cloned()).collect()
+    }
+
+    /// The places the change touches, given what any session ran (`ran`, of the candidates): each changed item's
+    /// own where a session runs one, else its users'. None: one can't be told (nothing it names or uses runs, and
+    /// something uses it, or nothing it names was ever looked for), which touches every session; with the item.
+    fn touched(&self, ran: &BTreeSet<String>) -> Result<BTreeSet<String>, String> {
+        let mut places = BTreeSet::new();
+        for c in &self.items {
+            if c.ids.iter().any(|id| ran.contains(id)) {
+                places.extend(c.ids.iter().cloned());
+            } else if c.users.iter().any(|id| ran.contains(id)) {
+                places.extend(c.users.iter().cloned());
+            } else if c.ids.is_empty() && c.users.is_empty() && c.used {
+                return Err(c.key.clone());
+            }
+            // Else what it names, and what uses it names, no session runs: it touches none.
+        }
+        Ok(places)
+    }
+}
+
+/// The sessions of `held` whose kept census and comparisons, made of other code than `port`'s, hold for it all the
+/// same: the change since touches nothing their runs executed. With why the others can't be spared, when none is.
+pub(crate) fn spared(repo: &Repo, held: &[Held], port: &str) -> Result<(BTreeSet<String>, Option<String>), String> {
+    let cache = Cache::open(&repo.local)?;
+    let olds: BTreeSet<String> = held.iter().flat_map(|h| old_ports(h, port)).collect();
+    if olds.is_empty() {
+        return Ok((BTreeSet::new(), None));
+    }
+    let now = code(&repo.root, &repo.module());
+    let mut changes = BTreeMap::new();
+    let mut why = None;
+    for old in &olds {
+        match kept(&cache, old) {
+            Some(items) => {
+                changes.insert(old.clone(), change(&items, &now));
+            }
+            None => why = Some("code kept before what changed could be told".to_owned()),
+        }
+    }
+    let candidates: BTreeSet<String> = changes.values().flat_map(Change::candidates).collect();
+    // What each session's run executed, of the candidates; none for a session never looked through.
+    let mut runs: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
+    for h in held {
+        let run = crate::snapshots::run_identity(repo, &h.session)?;
+        let hits = cache
+            .recall("coverage", &run)
+            .map(|text| text.lines().filter(|l| candidates.contains(*l)).map(str::to_owned).collect());
+        runs.insert(h.name.clone(), hits);
+    }
+    let ran: BTreeSet<String> = runs.values().flatten().flatten().cloned().collect();
+    let mut touched = BTreeMap::new();
+    for (old, change) in &changes {
+        match change.touched(&ran) {
+            Ok(places) => {
+                touched.insert(old.clone(), places);
+            }
+            Err(item) => why = Some(format!("{item} changed and names nothing a session runs, nor what uses it")),
+        }
+    }
+    let mut spared = BTreeSet::new();
+    for h in held {
+        let olds = old_ports(h, port);
+        let Some(Some(hits)) = runs.get(&h.name) else { continue };
+        if !olds.is_empty() && olds.iter().all(|o| touched.get(o).is_some_and(|t| t.is_disjoint(hits))) {
+            spared.insert(h.name.clone());
+        }
+    }
+    Ok((spared, why))
+}
+
+/// The other code than `port`'s that made what is kept of a session: its census's, and its comparisons' when none
+/// is of `port`'s (as `Held::stale` reads them).
+fn old_ports(h: &Held, port: &str) -> BTreeSet<String> {
+    let mut olds = BTreeSet::new();
+    if let Some(c) = h.census.as_ref().filter(|c| c.port != port) {
+        olds.insert(c.port.clone());
+    }
+    if !h.outcomes.is_empty() && h.outcomes.values().all(|o| o.port != port) {
+        olds.extend(h.outcomes.values().map(|o| o.port.clone()));
+    }
+    olds
+}
+
+/// Whether `name` is one of the core sessions (`[port] core`, by name, `*` and `?` as wildcards): always counted.
+pub(crate) fn core(repo: &Repo, name: &str) -> bool {
+    repo.settings.port.core.iter().any(|p| crate::setup::matches(p.as_bytes(), name.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn code_of(files: &[(&str, &str)]) -> Code {
+        let mut code = Code::default();
+        for (path, text) in files {
+            for (key, item, text) in items(path, text, "GAME.EXE") {
+                code.texts.insert(key.clone(), text);
+                code.items.insert(key, item);
+            }
+        }
+        code
+    }
+
+    const V1: &str = "//! The view.\nuse x;\n\n/// `+0D18E`: a flat.\nfn flat() {\n    step(1);\n}\n\n\
+                      /// A helper.\nfn step(n: u8) {\n    let _ = n;\n}\n\nconst SIDE: u16 = 16;\n\n\
+                      /// `+0C746` draws with the side.\nfn still() -> u16 {\n    SIDE\n}\n\n\
+                      #[cfg(test)]\nmod tests {\n    fn t() {}\n}\n";
+
+    #[test]
+    fn a_file_is_cut_into_items_from_their_docs_its_tests_left_out() {
+        let code = code_of(&[("src/view.rs", V1)]);
+        let keys: Vec<&String> = code.items.keys().collect();
+        assert_eq!(
+            keys,
+            [
+                "src/view.rs:",
+                "src/view.rs:const SIDE",
+                "src/view.rs:fn flat",
+                "src/view.rs:fn step",
+                "src/view.rs:fn still"
+            ]
+        );
+        assert!(code.texts["src/view.rs:fn flat"].starts_with("/// `+0D18E`"), "an item starts at its docs");
+        assert_eq!(code.items["src/view.rs:fn flat"].ids, BTreeSet::from(["GAME.EXE+0D18E".to_owned()]));
+        assert!(code.items["src/view.rs:"].frame && code.items["src/view.rs:fn step"].ids.is_empty());
+    }
+
+    #[test]
+    fn the_signatures_of_items() {
+        assert_eq!(signature("    pub(crate) fn walk(&mut self) {").as_deref(), Some("fn walk"));
+        assert_eq!(signature("pub const fn size() -> u8 {").as_deref(), Some("fn size"));
+        assert_eq!(signature("impl Default for Level {").as_deref(), Some("impl Level"));
+        assert_eq!(signature("impl<'a> Walk<'a> {").as_deref(), Some("impl Walk"));
+        assert_eq!(signature("pub struct Level {").as_deref(), Some("struct Level"));
+        assert_eq!(signature("    const LOCAL: u8 = 1;"), None, "a constant in a body is its item's");
+        assert_eq!(signature("let fn_name = 1;"), None);
+    }
+
+    #[test]
+    fn a_change_touches_what_its_items_name_or_what_uses_them() {
+        let old = code_of(&[("src/view.rs", V1)]).items;
+        let ran = BTreeSet::from(["GAME.EXE+0D18E".to_owned(), "GAME.EXE+0C746".to_owned()]);
+        // A function naming a place: that place.
+        let now = code_of(&[("src/view.rs", &V1.replace("step(1)", "step(2)"))]);
+        let c = change(&old, &now);
+        assert_eq!(c.touched(&ran).unwrap(), BTreeSet::from(["GAME.EXE+0D18E".to_owned()]));
+        // A helper naming none: its user's place.
+        let now = code_of(&[("src/view.rs", &V1.replace("let _ = n;", "let _ = n + 1;"))]);
+        assert_eq!(change(&old, &now).touched(&ran).unwrap(), BTreeSet::from(["GAME.EXE+0D18E".to_owned()]));
+        // A constant: its users'.
+        let now = code_of(&[("src/view.rs", &V1.replace("= 16;", "= 17;"))]);
+        assert_eq!(change(&old, &now).touched(&ran).unwrap(), BTreeSet::from(["GAME.EXE+0C746".to_owned()]));
+        // A file's head (a use, its docs) and its tests: nothing.
+        let now = code_of(&[("src/view.rs", &V1.replace("use x;", "use y;").replace("fn t() {}", "fn t() { }"))]);
+        assert!(change(&old, &now).touched(&ran).unwrap().is_empty());
+        // A function naming no place, used by nothing that does: every session.
+        let lone = format!("{V1}\nfn main() {{\n    run();\n}}\n").replace("#[cfg(test)]", "");
+        let older = code_of(&[("src/view.rs", &lone)]).items;
+        let now = code_of(&[("src/view.rs", &lone.replace("run();", "run(); run();"))]);
+        assert!(change(&older, &now).touched(&ran).is_ok(), "nothing uses main: what it names is nothing run");
+        let used = format!("{lone}\nfn caller() {{\n    main();\n}}\n");
+        let older = code_of(&[("src/view.rs", &used)]).items;
+        let now = code_of(&[("src/view.rs", &used.replace("run();", "run(); run();"))]);
+        assert_eq!(change(&older, &now).touched(&ran).unwrap_err(), "src/view.rs:fn main");
+    }
+}

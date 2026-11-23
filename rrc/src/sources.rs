@@ -203,7 +203,7 @@ pub fn held_still<T>(root: &Path, run: impl FnOnce() -> Result<T, String>) -> Re
 
 /// The port's code files under `dir`, in path order, each given to `f` with its path from `root` (with `/`)
 /// until it says to stop; whether it did not.
-fn each_file(root: &Path, dir: &Path, f: &mut dyn FnMut(&str, &str) -> bool) -> bool {
+pub(crate) fn each_file(root: &Path, dir: &Path, f: &mut dyn FnMut(&str, &str) -> bool) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else { return true };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
     entries.sort();
@@ -243,7 +243,7 @@ fn bare(line: &str, short: &str) -> bool {
 
 /// The IDs in `line`: each `+` and 5 to 8 uppercase hex digits, with the module written before it, else
 /// `module`'s.
-fn ids_in(line: &str, module: &str, found: &mut BTreeSet<String>) {
+pub(crate) fn ids_in(line: &str, module: &str, found: &mut BTreeSet<String>) {
     for (at, _) in line.match_indices('+') {
         let rest = &line[at + 1..];
         let digits = rest.chars().take_while(|c| c.is_ascii_digit() || ('A'..='F').contains(c)).count();
@@ -259,6 +259,11 @@ fn ids_in(line: &str, module: &str, found: &mut BTreeSet<String>) {
             found.insert(id.to_string());
         }
     }
+}
+
+/// Whether `text` has `what` as a word of its own anywhere (`names`).
+pub(crate) fn names_word(text: &str, what: &str) -> bool {
+    names(text, what)
 }
 
 /// Whether `line` has `what` as a word of its own (`GAME.EXE+0A2F0` isn't in `GAME.EXE+0A2F01` or

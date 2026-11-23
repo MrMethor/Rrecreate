@@ -170,8 +170,14 @@ and each layer stands on the one below.
 **The work loop** (stages 4 to 6), once for each item of the work list. `rrc work` is the list (D158): what the
 censuses of the scope's sessions count (`rrc compare SESSION --lockstep`, D124), merged over the sessions: the mapped
 fields first, then the paths noted as not ported, then the frames, then the sound, the most passes first. `rrc work
---run` counts again each session whose census the port's code as it is now didn't make, and compares again each
-that nothing compared since (the fields alone before stage 6), so one command brings every gate up to the code.
+--run` records first each session the knowledge left stale (bases first, mostly without the emulator), then counts
+again each session whose census the port's code as it is now didn't make and the change can reach, and compares
+again each that nothing compared since (the fields alone before stage 6), so one command brings every gate up to the
+code (D219). A change reaches a session when its run executed a place the changed code names (or, for a helper or a
+constant naming none, the code that uses it): `rrc suspects` keeps what each run executed, so judge every session's
+suspects early. The rest are `spared`, their censuses holding; the core sessions (`rrc scope --core`: the start from
+power-on and a session of each main system) are counted at every change; `rrc work --run --all` counts every session,
+before a stage's gate is taken as held and at the end of a day's work.
 A play the person made alongside the port ("Playing alongside") has a census of its own (`.rrc/play/NAME/`): its
 items are taken the same way, and worked from transplants and short sessions cut from it (rules 15 to 17).
 
@@ -187,7 +193,7 @@ items are taken the same way, and worked from transplants and short sessions cut
    path left out noted where it would be (`rrc_runtime::note`).
 5. **Compare** from a transplant just before the item's first difference; at each divergence, the table below. When
    the card's comparisons are spent `rrc` says so (`budget`): change the route, and take the card again with it.
-6. **Close:** `rrc work --run`, the item gone from the list; the suspects of the sessions it touched judged; `rrc
+6. **Close:** `rrc work --run` (what the change reaches, and the core), the item gone from the list; the suspects of the sessions it touched judged; `rrc
    check`; `rrc work done --bugs none` (or `--bugs NAME,...`): closing asks which bugs of the original the item met,
    each one registered (the first rule), and says what the item took (it goes in the journal); a route found the
    hard way written as a recipe; commit.

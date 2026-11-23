@@ -398,7 +398,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         fields_only,
         drew: seen.compared > 0,
         unsounded,
-        port: crate::sources::fingerprint(&repo.root),
+        port: crate::impact::fingerprint(repo)?,
     };
     if fixed.is_none() {
         outcome.save(&work)?;
@@ -1697,7 +1697,7 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
         original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name, 0..trace.ticks.len())?
     };
     let census =
-        Census { recorded: recorded.hash.clone(), port: crate::sources::fingerprint(&repo.root), ..Census::default() };
+        Census { recorded: recorded.hash.clone(), port: crate::impact::fingerprint(repo)?, ..Census::default() };
     let ticks = trace.ticks.len() as u64;
     if ticks < 2 {
         return Ok((census, None));

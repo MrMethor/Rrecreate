@@ -47,11 +47,15 @@ pub struct Port {
     /// port. The workflow's gates are measured over them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<String>,
+    /// The core sessions (D219), by name as the scope: `rrc work --run` counts them again whenever the port's code
+    /// changed, whatever the change touches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub core: Vec<String>,
 }
 
 impl Default for Port {
     fn default() -> Self {
-        Port { imports: true, command: Vec::new(), build: Vec::new(), scope: Vec::new() }
+        Port { imports: true, command: Vec::new(), build: Vec::new(), scope: Vec::new(), core: Vec::new() }
     }
 }
 

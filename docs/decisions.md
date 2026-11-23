@@ -764,6 +764,33 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D219. What is checked after a change is what the change can reach. Accepted 2026-11-23, with the person.
+A change is checked where it can make a difference, and everything is checked at fixed points, not at every change:
+- **A port's sessions:** the port's code is cut into items (a function, a type, a constant, each from its doc
+  comment), and each item's hash and the original's places it names are kept with the code's fingerprint (the cache's
+  `code`). A change's items name places; a changed item that names none a session runs stands for the items that use
+  it, three deep. A session whose run executed none of those places (`rrc suspects`' coverage, D151) is spared: what
+  is kept of it holds for the new code (`rrc status`: `spared`). `rrc work --run` counts and compares again only the
+  sessions a change touches, and the core sessions (`[port] core`, `rrc scope --core`), at every change; `rrc work
+  --run --all` counts every one, before a stage's gate is taken as held and at the end of a day's work. What can't be
+  told touches every session: a session no run of `rrc suspects` looked through, code kept before this, a changed item
+  that names nothing a session runs while something uses it.
+- **Recordings:** `rrc work --run` first records each session of the scope that isn't recorded as the knowledge is now,
+  bases first; a name or a mapping added records from the run recorded before and the memory it kept (D92), a second
+  a session.
+- **Rrecreate's own checks before a commit:** format, lint, and the tests of what the change touches: the unit tests of
+  the crates it changes and, of `rrc/tests/flow.rs`, the tests that run the part changed. CI runs every test on
+  Windows and Linux after the push, and a red CI is fixed before anything else.
+**Why:** the person's call (2026-11-23): the waits had become the work. A whole census of Arena's 107 sessions takes
+half an hour and every change of the port's code made all of them stale; `rrc/tests/flow.rs` takes over seven
+minutes; and the person's machine runs one heavy job at a time. Measured on Arena: a re-recording after a name or a
+mapping is about a second a session without the emulator, and the hour a round took came from running the recordings
+by hand (two loops at once, plays outside the scope), which `rrc work --run` now does itself. The emulator already
+knows what each session ran and the port's code already names what it follows (D151), so the toolkit can tell which
+sessions a change reaches instead of counting them all; the fixed points keep what a heuristic misses from staying
+hidden.
+**Extends:** D158, D151, D92.
+
 ### D218. A named datum carried is accounted for, as a mapped or ignored one. Accepted 2026-11-23.
 Stage 3's gate (D158) and `rrc compare`'s list of named data not mapped count a datum `[[carry]]` names (at its ID,
 or the pointer it is reached through) as accounted for, as they count a presentation's item, a mapped one and an

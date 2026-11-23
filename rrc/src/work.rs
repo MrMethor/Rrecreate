@@ -24,7 +24,7 @@ const SHOWN: usize = 10;
 /// Comparisons a route gets unless the card says.
 const BUDGET: usize = 6;
 const CARD: &str = "card.json";
-const USAGE: &str = "work [--run] [--lines N] | work take ITEM --question TEXT --route TEXT --other TEXT [--budget N] | \
+const USAGE: &str = "work [--run [--all]] [--lines N] | work take ITEM --question TEXT --route TEXT --other TEXT [--budget N] | \
                      work done --bugs none|NAME,... | work drop";
 /// What closing an item asks (D160).
 const BUGS: &str = "the first rule: every bug of the original that changes what the game does is reproduced and has \
@@ -209,7 +209,8 @@ pub(crate) fn show(items: &[Item], shown: usize) {
 
 /// `rrc work`: the list, the censuses counted again, or the card taken, closed or dropped.
 pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &["--lines", "--question", "--route", "--other", "--budget", "--bugs"], &["--run"])?;
+    let a =
+        Args::parse(args, &["--lines", "--question", "--route", "--other", "--budget", "--bugs"], &["--run", "--all"])?;
     match a.positionals(0, 2, USAGE)? {
         [] => {}
         [verb, item] if verb == "take" => return take(repo, &a, item),
@@ -223,14 +224,24 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     }
     let shown: usize = a.value("--lines").map_or(Ok(SHOWN), str::parse).map_err(|_| "--lines is a count")?;
     let mut standing = crate::stage::standing(repo)?;
+    if a.has("--all") && !a.has("--run") {
+        return Err(format!("--all goes with --run: rrc {USAGE}"));
+    }
     if a.has("--run") {
-        // Each session of the scope whose census isn't of its recording and the port's code as they are now is
-        // counted again.
-        let port = crate::sources::fingerprint(&repo.root);
+        // What isn't recorded as the knowledge is now is recorded first, bases first (D219): mostly from the run
+        // recorded before and the memory it kept, a second a session (D92).
+        record_stale(repo, &standing)?;
+        standing = crate::stage::standing(repo)?;
+        // Each session of the scope whose census isn't of its recording and the port's code as they are now, and that
+        // the change since could touch, is counted again (D219); with --all, each.
+        let port = crate::impact::fingerprint(repo)?;
+        let all = a.has("--all");
+        let touched = |name: &str| all || !standing.spared.iter().any(|s| s == name);
         let again: Vec<String> = standing
             .held
             .iter()
             .filter(|h| h.unrecorded.is_none() && h.census.as_ref().is_none_or(|c| c.port != port))
+            .filter(|h| h.census.is_none() || touched(&h.name))
             .map(|h| h.name.clone())
             .collect();
         for name in &again {
@@ -254,6 +265,7 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             .held
             .iter()
             .filter(|h| h.unrecorded.is_none() && !h.outcomes.values().any(|o| o.port == port))
+            .filter(|h| h.outcomes.is_empty() || touched(&h.name))
             .map(|h| (h.name.clone(), h.starts_at_power_on()))
             .collect();
         for (name, from_start) in &compare {
@@ -271,7 +283,19 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             say("compared", format!("{name}: {}", found.unwrap_or_else(|| "nothing kept of it".to_owned())));
         }
         if again.is_empty() && compare.is_empty() {
-            say("counted", "nothing: every census and comparison is of its recording and the port's code as they are");
+            let spared = if standing.spared.is_empty() { "" } else { ", or spared by the change" };
+            say(
+                "counted",
+                format!(
+                    "nothing: every census and comparison is of its recording and the port's code as they are{spared}"
+                ),
+            );
+        }
+        if let Some(why) = standing.unsure.as_ref().filter(|_| !all) {
+            say("touched", format!("every session the change could reach: {why}"));
+        }
+        if !all && !standing.spared.is_empty() {
+            say("spared", crate::stage::spared_text(&standing.spared, standing.held.len()));
         }
         standing = crate::stage::standing(repo)?;
     }
@@ -310,6 +334,32 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         (None, None) => {}
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The sessions of the scope not recorded as the knowledge is now, recorded: a based one after its base (D219).
+fn record_stale(repo: &Repo, standing: &Standing) -> Result<(), String> {
+    let depth = |h: &crate::stage::Held| -> usize {
+        let (mut n, mut from) = (0, h.session.from.as_ref().map(|f| f.session.clone()));
+        while let Some(base) = from {
+            n += 1;
+            from = crate::session::Session::load(repo, &base).ok().and_then(|s| s.from.map(|f| f.session));
+            if n > 64 {
+                break;
+            }
+        }
+        n
+    };
+    let mut stale: Vec<(usize, &crate::stage::Held)> =
+        standing.held.iter().filter(|h| h.unrecorded.is_some()).map(|h| (depth(h), h)).collect();
+    stale.sort_by_key(|(d, h)| (*d, h.name.clone()));
+    for (_, h) in stale {
+        let started = std::time::Instant::now();
+        match crate::quietly(|| crate::trace::record(repo, std::slice::from_ref(&h.name))) {
+            Ok(_) => say("recorded", format!("{}: {:.1} s", h.name, started.elapsed().as_secs_f64())),
+            Err(e) => say("unrecorded", format!("{}: {e}", h.name)),
+        }
+    }
+    Ok(())
 }
 
 /// `rrc work take ITEM`: the card written.
@@ -426,7 +476,13 @@ mod tests {
         b.fields.insert("player.x".into(), seen("b", 7, 8));
         b.unset.insert("map".into(), seen("b", 1, 30));
         b.sound = Some(seen("b", 5, 2));
-        let standing = Standing { lacks: Vec::new(), held: vec![held("a", a), held("b", b)], stale: Vec::new() };
+        let standing = Standing {
+            lacks: Vec::new(),
+            held: vec![held("a", a), held("b", b)],
+            stale: Vec::new(),
+            spared: Vec::new(),
+            unsure: None,
+        };
         let items = list(&standing);
         let names: Vec<&str> = items.iter().map(Item::name).collect();
         assert_eq!(names, ["map", "player.x", "score", "a door not opened (G+00100)", "screen", "sound"]);

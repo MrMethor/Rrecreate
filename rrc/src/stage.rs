@@ -86,8 +86,13 @@ impl Held {
 pub(crate) struct Standing {
     pub lacks: Vec<Vec<Lack>>,
     pub held: Vec<Held>,
-    /// The sessions with something kept that the port's code as it is now didn't make.
+    /// The sessions with something kept that the port's code as it is now didn't make, and the change since could
+    /// touch (D219).
     pub stale: Vec<String>,
+    /// Those whose kept census and comparisons hold all the same: the change touches nothing their runs executed.
+    pub spared: Vec<String>,
+    /// Why every session the change made stale counts as touched, when something can't be told.
+    pub unsure: Option<String>,
 }
 
 impl Standing {
@@ -104,6 +109,16 @@ fn some<T>(items: &[T], text: impl Fn(&T) -> String) -> String {
         0 => shown.join(", "),
         more => format!("{} and {more} more", shown.join(", ")),
     }
+}
+
+/// What `spared` says of the sessions a change of the port's code spared (D219).
+pub(crate) fn spared_text(spared: &[String], held: usize) -> String {
+    format!(
+        "{} the port's code changed in nothing their runs executed, so what is kept of them holds: {} (rrc work --run \
+         --all counts them again)",
+        of(spared.len(), held),
+        some(spared, String::clone)
+    )
 }
 
 /// `n of m sessions`, or `the session` when there is one.
@@ -148,8 +163,15 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         outcomes.retain(|_, o| current(&o.recorded));
         held.push(Held { unrecorded: unrecorded(name, &session)?, name: name.clone(), session, census, outcomes });
     }
-    let port = crate::sources::fingerprint(&repo.root);
-    let stale = held.iter().filter(|h| h.stale(&port)).map(|h| h.name.clone()).collect();
+    let port = crate::impact::fingerprint(repo)?;
+    // What a change of the code since what is kept spares (D219); never a core session.
+    let (spared, unsure) = match held.iter().any(|h| h.stale(&port)) {
+        true => crate::impact::spared(repo, &held, &port)?,
+        false => Default::default(),
+    };
+    let spared_ = |h: &&Held| spared.contains(&h.name) && !crate::impact::core(repo, &h.name);
+    let stale = held.iter().filter(|h| h.stale(&port) && !spared_(h)).map(|h| h.name.clone()).collect();
+    let spared: Vec<String> = held.iter().filter(|h| h.stale(&port) && spared_(h)).map(|h| h.name.clone()).collect();
 
     let mut lacks = vec![set_up(repo)];
 
@@ -366,7 +388,7 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
          play-test",
         "PORT play (docs/porting.md, stage 7); what the person's play finds becomes sessions",
     )]);
-    Ok(Standing { lacks, held, stale })
+    Ok(Standing { lacks, held, stale, spared, unsure })
 }
 
 /// 0 Set up: the game's copy as a recorded version, Clockwork, the person's rules.
@@ -481,6 +503,9 @@ pub(crate) fn status(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 some(&standing.stale, String::clone)
             ),
         );
+    }
+    if !standing.spared.is_empty() {
+        say("spared", spared_text(&standing.spared, standing.held.len()));
     }
     // What a commit is refused for (D148), whatever the stage: named here unless the stage's own gate just did.
     if at != 4 {
@@ -602,9 +627,21 @@ mod tests {
     #[test]
     fn the_stage_is_the_first_whose_gate_lacks_something() {
         let l = || vec![lack("x", "y")];
-        let standing = Standing { lacks: vec![vec![], vec![], l(), vec![], l()], held: Vec::new(), stale: Vec::new() };
+        let standing = Standing {
+            lacks: vec![vec![], vec![], l(), vec![], l()],
+            held: Vec::new(),
+            stale: Vec::new(),
+            spared: Vec::new(),
+            unsure: None,
+        };
         assert_eq!(standing.stage(), 2);
-        let done = Standing { lacks: vec![Vec::new(); 8], held: Vec::new(), stale: Vec::new() };
+        let done = Standing {
+            lacks: vec![Vec::new(); 8],
+            held: Vec::new(),
+            stale: Vec::new(),
+            spared: Vec::new(),
+            unsure: None,
+        };
         assert_eq!(done.stage(), 7);
         assert_eq!(some(&["a", "b", "c", "d", "e"], |s| s.to_string()), "a, b, c and 2 more");
         assert_eq!((of(1, 1), of(2, 5)), ("the session".into(), "2 of 5 sessions".into()));

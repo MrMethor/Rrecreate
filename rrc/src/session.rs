@@ -198,17 +198,22 @@ pub fn in_scope(repo: &Repo) -> Result<(Vec<String>, Vec<String>), String> {
 
 /// Writes the scope into `rrc.toml` where it is, the rest of the file (its comments among it) as it was.
 fn save_scope(repo: &Repo) -> Result<(), String> {
+    save_list(repo, "scope")
+}
+
+/// Writes a list of `[port]`'s (`scope`, `core`) into `rrc.toml` where it is, the rest of the file as it was.
+fn save_list(repo: &Repo, key: &str) -> Result<(), String> {
     let path = repo.root.join(crate::repo::SETTINGS);
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let scope = &repo.settings.port.scope;
+    let scope = if key == "core" { &repo.settings.port.core } else { &repo.settings.port.scope };
     let names: Vec<toml::Value> = scope.iter().cloned().map(toml::Value::String).collect();
     let value = (!scope.is_empty()).then(|| toml::Value::Array(names).to_string());
-    let new = crate::repo::with_port_key(&text, "scope", value.as_deref());
+    let new = crate::repo::with_port_key(&text, key, value.as_deref());
     // It has to read back as what was set, and nothing else changed.
     let read: Result<crate::repo::Settings, _> = toml::from_str(&new);
     if read.as_ref().ok() != Some(&repo.settings) {
         return Err(format!(
-            "{}: its [port] table couldn't be changed in place; write scope = [...] in it by hand",
+            "{}: its [port] table couldn't be changed in place; write {key} = [...] in it by hand",
             path.display()
         ));
     }
@@ -217,9 +222,28 @@ fn save_scope(repo: &Repo) -> Result<(), String> {
 
 /// `rrc scope`: the port's scope, or it set to the sessions named.
 pub(crate) fn scope(repo: &mut Repo, args: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(args, &[], &["--clear"])?;
+    let a = Args::parse(args, &[], &["--clear", "--core"])?;
+    // The core sessions (D219): set, or cleared with --clear.
+    if a.has("--core") {
+        repo.settings.port.core = if a.has("--clear") { Vec::new() } else { a.positional.clone() };
+        save_list(repo, "core")?;
+        let (inside, _) = in_scope(repo)?;
+        let core: Vec<String> = inside.into_iter().filter(|n| crate::impact::core(repo, n)).collect();
+        match repo.settings.port.core.is_empty() {
+            true => say("core", "none: rrc work --run counts what a change touches alone"),
+            false => say(
+                "core",
+                format!(
+                    "{}: {} sessions counted again at every change of the port's code",
+                    core.join(", "),
+                    core.len()
+                ),
+            ),
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     if a.has("--clear") {
-        a.positionals(0, 0, "scope [SESSION...] [--clear]")?;
+        a.positionals(0, 0, "scope [SESSION...] [--clear] [--core]")?;
         repo.settings.port.scope.clear();
         save_scope(repo)?;
     } else if !a.positional.is_empty() {

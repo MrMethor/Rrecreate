@@ -20,10 +20,12 @@ What the hub leaves out because a person doesn't need it: commands, helpers and 
 - `docs/design.md` is the design, `docs/decisions.md` the decisions and their reasons. Read the sections you need.
   A changed decision is marked `superseded by Dn`; decisions and commit messages that name what is disregarded
   (Recreate, D69) are history and stay.
-- Tests: `cargo test --workspace -j 2 -- --test-threads=1` on the person's machine (8 GB: the flow tests run in
-  parallel, each with its own Clockwork and port, took it down); one heavy job at a time, never beside a build or a
-  recording; while working, the unit tests and the flow test the change touches. Lint: `cargo clippy --workspace
-  --all-targets -- -D warnings`. Format: `cargo fmt --all` (`rustfmt.toml`). CI runs all three on Windows and Linux.
+- Checks before a commit (D219): `cargo fmt --all` (`rustfmt.toml`); `cargo clippy -p CRATE --all-targets -j 2 --
+  -D warnings` and `cargo test -p CRATE -j 2 --lib` for each crate the change touches, and of `rrc/tests/flow.rs`
+  only the tests that run the part changed (`cargo test -p rrc -j 2 --test flow NAME`: the whole file takes over seven
+  minutes). The whole set, `cargo test --workspace -j 2 -- --test-threads=1` (8 GB: the flow tests run in parallel,
+  each with its own Clockwork and port, took the machine down), is CI's on Windows and Linux after the push, or
+  local before a milestone; one heavy job at a time, never beside a build or a recording.
 - To check Clockwork on a real program: `cargo build --release -p clockwork`, then
   `target/release/clockwork run <dir> <program> --json`. When a program misbehaves, use `--hotspots 10` (where it
   loops), `--trace FILE` (which service call went wrong), `--disasm SEG:OFF` and `--dump SEG:OFF:LEN` before

@@ -1435,18 +1435,37 @@ fn the_workflow_s_stages_are_walked() {
         "{all}"
     );
     assert!(all.contains("next      the port's presentation draws no frames yet: Presentation::draw"), "{all}");
-    // The port's code changed since: what was compared before it is said to be, and counted again.
+    // The port's code changed since in what the session's run doesn't execute (its tests): what is kept of it holds
+    // (D219), and --all counts it all the same.
     let main = rrc.repo.join("src/main.rs");
-    std::fs::write(&main, std::fs::read_to_string(&main).unwrap() + "\n// A change.\n").unwrap();
+    let code = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(&main, format!("{code}\n// A change.\n")).unwrap();
     let s = status(&rrc);
+    assert!(!s.contains("stale     ") && s.contains("spared    the session the port's code changed in nothing"), "{s}");
+    let kept = rrc.ok(&["work", "--run"]);
+    assert!(kept.contains("counted   nothing: every census and comparison is of its recording and the port's code"));
+    assert!(kept.contains("or spared by the change") && kept.contains("spared    the session"), "{kept}");
+    let again = rrc.ok(&["work", "--run", "--all"]);
+    assert!(again.contains("counted   play: 208 passes, 0 fields, 0 notes"), "{again}");
+    assert!(again.contains("compared  play: ticks 1-209 of 209 match, from the port's start, no feed"), "{again}");
+    // Changed in a helper naming no place of the original's, which update (+00114) uses: the run executes that, so
+    // the session is stale, and one command brings every gate up to the code.
+    let helper = "if a > b { a.wrapping_sub(b) } else { b.wrapping_sub(a) }";
+    let code = std::fs::read_to_string(&main).unwrap();
+    assert!(code.contains(helper));
+    std::fs::write(&main, code.replace(helper, "if a >= b { a.wrapping_sub(b) } else { b.wrapping_sub(a) }")).unwrap();
     let stale = "stale     the session with a census or a comparison made before the port's code changed: play";
-    assert!(s.contains(stale), "{s}");
-    // One command brings every gate up to the code: the census counted again, the session compared again.
+    assert!(status(&rrc).contains(stale));
     let again = rrc.ok(&["work", "--run"]);
     assert!(again.contains("counted   play: 208 passes, 0 fields, 0 notes"), "{again}");
     assert!(again.contains("compared  play: ticks 1-209 of 209 match, from the port's start, no feed"), "{again}");
     assert!(!status(&rrc).contains("stale     "));
     assert!(rrc.ok(&["work", "--run"]).contains("counted   nothing: every census and comparison is of its recording"));
+    // A knowledge changed since: --run records it again first (from what the last recording kept), then counts.
+    rrc.ok(&["data", "TOY.EXE+01438", "spare", "--size", "1"]);
+    assert!(status(&rrc).contains("isn't recorded as the knowledge is now"));
+    let recorded = rrc.ok(&["work", "--run"]);
+    assert!(recorded.contains("recorded  play: "), "{recorded}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

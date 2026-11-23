@@ -19,6 +19,7 @@ mod follow;
 pub mod formats;
 pub mod frames;
 pub mod game;
+mod impact;
 mod journal;
 pub mod knowledge;
 mod live;
@@ -64,11 +65,13 @@ usage: rrc <command> [arguments]     (inside a port repository)
   status [--all]         the stage of the workflow the port is at (0 set up to 7 play), what its gate lacks and
                          the next step, worked out from the repository; the card that is open; --all: every
                          stage's gate, and each session of the scope that doesn't match in everything
-  work [--run] [--lines N]
+  work [--run [--all]] [--lines N]
                          the work list: what the censuses of the scope's sessions count, merged, the fields
-                         first, then paths not ported, frames, sound, the most passes first; --run counts
-                         again (in lockstep) each session whose census the port's code as it is didn't make,
-                         and compares again each that nothing compared since (the fields alone before stage 6)
+                         first, then paths not ported, frames, sound, the most passes first; --run records
+                         each session the knowledge left stale, counts again (in lockstep) each whose census
+                         the port's code as it is didn't make and the change reaches (what its run executed,
+                         D219) and the core sessions, and compares again each that nothing compared since
+                         (the fields alone before stage 6); --all: every session, the spared too
   work take ITEM --question TEXT --route TEXT --other TEXT [--budget N]
                          take an item: the question, the route chosen, one other considered, and after how
                          many comparisons (6) the route changes; rrc says when they are spent
@@ -142,6 +145,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          the sessions the port is to reproduce, as the person said (rrc.toml, [port] scope),
                          or those set (names, * and ? as wildcards): what the workflow's gates are measured
                          over; every session while none is set
+  scope --core SESSION... | scope --core --clear
+                         the core sessions ([port] core): counted by rrc work --run at every change of the
+                         port's code, whatever it reaches
   record SESSION [--follow]
                          run the session through Clockwork and trace it: at each tick (a sync point
                          hit) the boundary values, the named data that changed, frames and sound;
