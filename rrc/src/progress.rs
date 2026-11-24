@@ -377,7 +377,13 @@ fn state(
             }
         }
     };
-    let linear = |id: &Id| places.linear(&places.address(&id.to_string())?);
+    // An item in expanded memory (D172) has no linear address, and is in none of what is kept: not placed here.
+    let linear = |id: &Id| -> Result<Option<u32>, String> {
+        match id.is_expanded() {
+            true => Ok(None),
+            false => places.linear(&places.address(&id.to_string())?).map(Some),
+        }
+    };
     let mapping = Mapping::load(repo)?;
     // A field through a pointer covers each place the pointer pointed to at a tick (D72), as the trace has it;
     // those outside what is kept are counted apart.
@@ -385,7 +391,9 @@ fn state(
     let mut through = 0;
     for m in mapping.resolve(k)?.iter().chain(&mapping.resolve_present(k)?) {
         let Some(via) = &m.via else {
-            cover(linear(&m.id)?, m.size, 2);
+            if let Some(at) = linear(&m.id)? {
+                cover(at, m.size, 2);
+            }
             continue;
         };
         // Through more pointers, or a list (D122): not placed here.
@@ -399,7 +407,10 @@ fn state(
         let mut targets: Vec<u32> = Vec::new();
         for hex in pointer.map(|i| trace.values(i)).unwrap_or_default().into_iter().flatten() {
             let target = match via.pointer.target(&crate::trace::unhex(&hex), via.offset) {
-                Some(crate::values::Target::Id(id)) => linear(&id)?,
+                Some(crate::values::Target::Id(id)) => match linear(&id)? {
+                    Some(at) => at,
+                    None => continue,
+                },
                 Some(crate::values::Target::Linear(at)) => at,
                 None => continue,
             };
@@ -416,7 +427,9 @@ fn state(
         }
     }
     for (id, size) in mapping.ignored(k)? {
-        cover(linear(&id)?, size, 1);
+        if let Some(at) = linear(&id)? {
+            cover(at, size, 1);
+        }
     }
     let (mut state, mut left) = (State { changing: 0, mapped: 0, ignored: 0, left: Vec::new(), through }, Vec::new());
     for (r, changing) in changing.iter().enumerate() {
