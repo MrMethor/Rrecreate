@@ -1072,6 +1072,39 @@ refuses to start alone). Start the launcher (`program`) and name the game's prog
 about a session runs it once to find where the game's program goes (kept afterwards); from then on IDs work as
 if the game had started alone, and the launcher's code is memory outside it (`MEM+...`).
 
+## Working in a cloud session
+
+Where the person's machine has no room for the work beside their own use (Arena's: 8 GB, in use while the agent
+works), the work runs in a Claude Code cloud session (claude.ai/code: a Linux machine of about 16 GB that starts
+empty), and the person's machine keeps what needs a window (D221). Arena's port has the whole setup:
+`tools/cloud-setup.sh` and `notes/cloud.md`.
+
+**Once for a port**, with the person (publishing and their files are their calls):
+
+1. The port's repository on GitHub, private.
+2. The game's files: the person's own copy, zipped, as a release asset of a private repository of theirs (Arena's:
+   `arena-files`), never a commit. Another release of the game only if `rrc game` finds it the port's version.
+3. `tools/cloud-setup.sh` in the port: the libraries the platform links (as Rrecreate's CI installs them), Rrecreate
+   cloned beside the port and `rrc` and `clockwork` built in release, the game fetched through GitHub's REST API
+   (`gh api repos/OWNER/REPO/releases/...`: the cloud's GitHub proxy refuses GraphQL, which `gh release download`
+   uses) and checked by its SHA-256, Ghidra from its GitHub release, `rrc.local.toml`, and `rrc game` to say the
+   version. It skips what is there already.
+4. `notes/cloud.md` (what a session needs and what it costs), a line in `AGENTS.md` (in a cloud session,
+   `CLAUDE_CODE_REMOTE` is `true`: run the setup first), and the person's rules that a machine's memory held put
+   into `RULES.md` (where to push, as whom, what not to format).
+
+**A session:** the person starts it with the port's repository, the game's files' repository and Rrecreate
+attached; an agent can't attach one. The agent runs the setup, `rrc analyze` and `rrc work --run` (it records every
+session first: an hour or two on an empty machine), then works the loop as anywhere, toolkit fixes included
+(pushed to Rrecreate's `main` with the checks of what they touch).
+
+- **Keep one session for a stretch of work:** its machine keeps its files between pauses; a new one starts empty.
+- **No session talks to another:** the repository is the handover. Commit and push before stopping; `rrc status`,
+  the card and the journal say where the work stands, and `notes/handoff.md` what the next session needs.
+- **One writer:** while a cloud session works on the port, no other session does; each pulls before it starts.
+- **The person's plays stay on their machine** (`rrc play` needs a window): a play is committed and pushed with its
+  session, and the cloud session counts and compares it as any other.
+
 ## An honest test bench
 
 A port of a game whose source is released, made to test the toolkit with the source as its grade (Wolf3D's,

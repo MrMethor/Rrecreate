@@ -65,6 +65,7 @@ sources and the game's files first, then runs to confirm.
 |---|---|---|
 | **Rrecreate** (this one) | `clockwork/`: the emulator. `rrc`: the toolkit CLI. `runtime/`: the crates a Rust port builds on. `ghidra/`: the Ghidra export script. Test programs. | MIT, except `clockwork/`: GPL-2.0-or-later (it contains code ported from DOSBox) |
 | **One per game port** (e.g. `wolf3d-port`) | The port, its knowledge files (§9), its sessions and quirk register | The person's choice per game |
+| **The person's store of the game's files** (private, where a port's work runs in the cloud) | Their own copy, as a release asset, never a commit (D221) | Theirs |
 
 The toolkit talks to Clockwork only through its control protocol (§4.2), never by linking it, and the runtime
 never contains Clockwork code, so a port doesn't inherit the GPL.
@@ -438,6 +439,11 @@ refuses (D148). The playbook also says where to look first for each kind of diff
 stops paying, and the best-known route for the problems every port meets.
 
 Subagents work in parallel on separate subsystems. Output is short: agents read it.
+
+**Where it runs** (D221): on the person's machine, or, where it has no room for the work beside their use, in a
+Claude Code cloud session on the port's repository with Rrecreate and the person's store of the game's files attached.
+The port keeps the setup (`tools/cloud-setup.sh`); the repository is the whole handover between sessions, one writing
+at a time; the person's machine keeps their plays, which need a window.
 
 ## 11. Taken over from Recreate
 

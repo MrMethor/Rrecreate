@@ -96,6 +96,7 @@ piece of work is closed, and refuses a commit that names a bug without registeri
 6. **Licences** (D12): everything is MIT except Clockwork, which is GPL. GPL code goes into Clockwork only, and the
    toolkit and the runtime reach Clockwork as a separate program, never as a library.
 7. **Game files are never committed** (D33, D82), nor anything extracted from them. Each port is its own repository.
+   A port's work that runs in a cloud session fetches the person's own copy from their private store (D221).
 8. **Recreate and the person's earlier Arena project are disregarded** (D66, D69): not read, not used.
 
 **How the work is done**
@@ -125,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-23 (decisions to D220). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-24 (decisions to D221). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -218,21 +219,25 @@ made from the game's chunks), so a job's Yes or No box is laid out as the origin
 escort taken at a tavern and delivered at a temple); a palace entered and its ruler, the main quest's third step
 taken at Eldenroot's queen; the towns' ground, sky rows and fog drawn; Elden Grove's piece, and the creatures'
 spells thrown at the player; the services' screens drawn (their banners, the bar's gold, messages and questions),
-so a tavern's offer, a guild's menu and a temple's heal match in every field, frame and sound. By 2026-11-23 107
-short sessions match in every mapped field but one known difference (a shop's actor two units off), and 60 bugs of
-the original are registered with their switches. Two gaps became
+so a tavern's offer, a guild's menu and a temple's heal match in every field, frame and sound; the sun, the moons
+and the stars, and a noon light's fog in place of the ceiling. By 2026-11-23 all 107 short sessions match in every
+mapped field (frames differ in 36), and 61 bugs of the original are registered with their switches. Two gaps became
 toolkit features: a divergence's report says that an item in expanded memory can't be watched rather than failing,
 and `rrc show` prints the program's own texts and bytes from a place; a far pointer read from a run's memory is
 written as that run's address and named by the toolkit (D220). Left by the roadmap: the palaces' jobs, the main
-quest's rest, the towns' upper walls, sun, moons, horizon and the wilderness's pictures and songs, the rest of the
-program. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
+quest's rest, the towns' upper walls, the wilderness's pictures and songs, the rest of the program. **Where the work
+runs** (D221, the person's call, 2026-11-24): the person's machine, 8 GB and in use, kept stopping the censuses for
+memory, so the port's work moves to a Claude Code cloud session, the port private on GitHub and the person's own copy
+of the game in a private store of theirs; their machine keeps the plays. Set up and tried as far as the game's
+download; the first census in the cloud is next. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
 accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).
 
-The test games' own state is in their repositories on the person's machine (Arena's: `rrc status` there; its
-`notes/handoff.md` says how to pick it up).
+The test games' own state is in their repositories on the person's machine (Arena's, private on GitHub too since
+D221: `rrc status` there; its `notes/handoff.md` says how to pick it up, `notes/cloud.md` how to run it in the
+cloud).
 
 ## 6. What was decided
 

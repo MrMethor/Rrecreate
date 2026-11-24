@@ -764,6 +764,35 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D221. A port's work runs in a cloud session; the person's machine keeps the plays. Accepted 2026-11-24, with the person.
+Where the person's machine has no room for the work beside their own use, a port's work (the loop, its recordings,
+censuses and comparisons, and the toolkit fixes it meets) runs in a Claude Code cloud session (claude.ai/code) on the
+port's repository, with Rrecreate and the person's store of the game's files attached. The person's machine keeps
+what needs a window: their plays (`rrc play`), each committed and pushed with its session for the cloud to count.
+- **The port's repository is private on GitHub** (publishing is the person's call). **The game's files** are the
+  person's own copy, zipped, as a release asset of a private repository of theirs: never a commit, never public, so
+  D33 and D82 hold. Another release of the game (a freeware build, another store's) is used only if `rrc game` finds
+  it the version the port records, byte for byte.
+- **Each port keeps its setup:** `tools/cloud-setup.sh` (the libraries the platform links, Rrecreate beside the port
+  and its release build, the game checked by its hash, Ghidra, `rrc.local.toml`, `rrc game`'s check) and
+  `notes/cloud.md`; `AGENTS.md` tells an agent in a cloud session to run it first. The rules a machine's memory held
+  go into `RULES.md`.
+- **The person attaches the repositories** when starting the session: the cloud's GitHub proxy serves only those
+  attached, and an agent's request to attach one is refused. The proxy refuses GraphQL, so the game is fetched
+  through GitHub's REST API.
+- **Sessions don't talk to each other:** the repository is the whole handover (`rrc status`, the work list and its
+  card, the journal, the notes). One writer at a time on a port: no other session works on it while a cloud session
+  does, and each pulls before it starts and pushes before it stops.
+- **A cloud machine starts empty:** the analysis and every recording are made again (Clockwork is deterministic, so
+  they equal the person's), an hour or two, so one session is kept for a stretch of work.
+**Why:** the person's call (2026-11-23 and 24). Their machine has 8 GB and is in use while the agent works: Arena's
+censuses were stopped by the memory guard again and again, and the waits D219 cut came back as waiting for memory. A
+cloud machine has about 16 GB and 4 cores. Tried on Arena: the setup's libraries, clone and build took 130 s; the
+proxy's refusal of GraphQL and of an agent's attach were found there and the setup fixed; Bethesda's freeware Arena is
+the 1.06 floppy build, not the CD 1.07 the port records, and Steam's and GOG's need a login, so the person's own copy
+is the one stored. Not shown yet: a census in the cloud.
+**Extends:** D33, D82, D219.
+
 ### D220. A run's addresses are written `@SEG:OFF` and `@LINEAR`, and the toolkit names their IDs. Accepted 2026-11-23.
 `rrc show`, `rrc peek`, `rrc watch` and `rrc inputs --at` take a session's run's address, `@SEG:OFF` (a far pointer as
 the run's memory holds it) or `@LINEAR`, and name it by its ID, through where the session's run loads the program
