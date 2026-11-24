@@ -1936,6 +1936,11 @@ field = "carried_index"
 at = "current"
 type = "far"
 into = "carried.table"
+
+[[present]]
+field = "drawn.table"
+via = "table"
+type = "i16[8]"
 "#;
     std::fs::write(rrc.repo.join("mapping.toml"), format!("{mapping}{carry}")).unwrap();
     rrc.ok(&["session", "add", "run", "--seconds", "2"]);
@@ -1961,6 +1966,10 @@ into = "carried.table"
     assert_eq!((ten["carried_current"].as_i64(), ten["first"].as_i64()), (Some(6), Some(0)), "{ten}");
     assert_eq!(ten["has_actors"], serde_json::json!(true), "the list's pointer is set: {ten}");
     assert_eq!(ten["carried_index"].as_i64(), Some(6), "a carried pointer as an index (D179): {ten}");
+    // The presentation's own state found through a pointer (D223): the array's bytes at the tick, given apart.
+    let presented = std::fs::read_to_string(dir.join("start-10/presentation.json")).unwrap();
+    let presented: serde_json::Value = serde_json::from_str(&presented).unwrap();
+    assert_eq!(presented["state"]["drawn.table"], ten["table"], "{presented}");
     // At pass 50 the third left the list: three, the last now third.
     let sixty = state("60");
     assert_eq!(xs(&sixty), vec![60, 130, 260], "{sixty}");

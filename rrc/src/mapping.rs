@@ -287,18 +287,18 @@ fn given(k: &Knowledge, items: &[Map], section: &str, what: &str) -> Result<Vec<
         if mapped.iter().any(|other| other.field == m.field) {
             return Err(at("mapped twice".into()));
         }
-        // A carried item may be found through a pointer (D177): memory on the heap the port carries.
-        if (!m.via.is_empty() && section != "carry") || m.mask.is_some() {
-            return Err(at(format!("{what} is at an ID or a name, not via a pointer or masked (yet)")));
+        // A carried item or a presentation's may be found through a pointer (D177, D223): memory on the heap.
+        if m.mask.is_some() {
+            return Err(at(format!("{what} is at an ID, a name or through a pointer, not masked (yet)")));
         }
         match (m.at.is_empty(), m.via.is_empty()) {
-            (true, true) => return Err(at("no at: the original's item (or, carried, via: a pointer to it)".into())),
+            (true, true) => return Err(at("no at: the original's item (or via: a pointer to it)".into())),
             (false, false) => return Err(at("at or via, not both".into())),
             _ => {}
         }
         // A carried item is a range of memory: it may run past the datum it starts at.
         let item = match section {
-            "carry" if !m.via.is_empty() => via(k, m),
+            _ if !m.via.is_empty() => via(k, m),
             "carry" => carried(k, m),
             _ => direct(k, m),
         };
@@ -498,18 +498,24 @@ mod tests {
 
     #[test]
     fn a_presentation_s_own_state_is_named_as_the_simulation_s() {
-        // D110: an item at an ID or a name, in a type; not through a pointer or masked.
+        // D110: an item at an ID or a name, in a type, or through a pointer (D223: a block on the heap the drawing
+        // code keeps); not masked.
         let k = knowledge();
         let m = Mapping {
-            presents: vec![map("drawn.score", "score", ""), map("blink", "GAME.EXE+00104", "u8")],
+            presents: vec![
+                map("drawn.score", "score", ""),
+                map("blink", "GAME.EXE+00104", "u8"),
+                via("drawn.trail", "trail", 0, "i16[32]"),
+            ],
             ..Mapping::default()
         };
         let presented = m.resolve_present(&k).unwrap();
         assert_eq!((presented[0].field.as_str(), presented[1].size), ("drawn.score", 1));
+        assert_eq!((presented[2].id.to_string(), presented[2].size), ("GAME.EXE+00110".into(), 64));
+        assert_eq!(presented[2].via.as_ref().map(|v| v.pointer.clone()), Some(PointerKind::Far));
         assert!(m.resolve(&k).unwrap().is_empty(), "not the simulation's");
         let wrong = |presents| Mapping { presents, ..Mapping::default() }.resolve_present(&k).unwrap_err();
-        assert!(wrong(vec![via("trail", "trail", 0, "i16[32]")]).contains("not via a pointer or masked"));
-        assert!(wrong(vec![Map { mask: Some(1), ..map("b", "score", "") }]).contains("not via a pointer or masked"));
+        assert!(wrong(vec![Map { mask: Some(1), ..map("b", "score", "") }]).contains("not masked"));
         assert!(wrong(vec![map("a", "score", ""), map("a", "score", "")]).contains("present a: mapped twice"));
     }
 

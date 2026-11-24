@@ -764,6 +764,18 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D223. A presentation's item may be found through a pointer. Accepted 2026-11-24.
+A `[[present]]` item (D110) may be `via` a pointer, with `offset` and `then` as a `[[map]]` item's, as a
+`[[carry]]` item may (D177): at a transplant's or a resume's tick it is the memory where the pointer points, as long
+as its type, null where the pointer is; it is still neither traced nor compared.
+**Why:** Arena's sky colours outdoors are set from a block the game allocates on the heap at its start (DS:43C0's
+segment, 318h bytes) and reads its colour file into; the step sets eight of the palette's colours from it whenever the
+time moves them, also before the place's file is read (in 20 sessions, a dungeon's first pass among them), from
+what the block held. The presentation needs the block's bytes where it starts, and the block is reached only through
+its segment. The reading at a start already followed a carried item's pointer; only the mapping refused it for the
+presentation's.
+**Extends:** D110, D177.
+
 ### D222. The card and the journal are the work's own record, committed with the port. Accepted 2026-11-24.
 The card `rrc work take` writes (D158) and the journal of the commands `rrc` ran (D157) are kept in the port's
 repository, in `work/` (`card.json`, `journal.jsonl`), and committed with the work; `.rrc/` keeps what is the

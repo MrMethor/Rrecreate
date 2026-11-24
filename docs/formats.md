@@ -446,7 +446,8 @@ into = "table"                  # read as the index of the element of the mapped
 
 [[present]]                     # the presentation's own state (D110): what the drawing code keeps
 field = "drawn.blink"           # a path in what the presentation is given
-at = "blink"                    # the original's item: a data name, or an ID (not via a pointer or masked)
+at = "blink"                    # the original's item: a data name, or an ID; or via a pointer, as [[map]]'s
+                                # (D223: a block on the heap the drawing code keeps); not masked
 type = "u8"                     # optional, as for [[map]]
 
 [[carry]]                       # the original's memory the port carries as it was, not modeling it (D126): the
@@ -480,7 +481,9 @@ and the comparison takes the port's value with the same mask.
 pointer as `*POINTER`, with the pointer). `rrc check` checks the mapping.
 `[[present]]` items are the presentation's own state (an off-screen buffer, what it drew last, an animation's
 frame): neither traced nor compared, but read at a transplant's or a resume's tick and given to the
-presentation (`--presentation`, below).
+presentation (`--presentation`, below). One found through a pointer (`via`, with `offset` and `then` as a
+`[[map]]` item's) is the memory where the pointer points at that tick, as long as its type, and null where the
+pointer is (D223).
 
 ## `suspects.toml`: what `rrc suspects` found
 
