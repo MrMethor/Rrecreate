@@ -388,9 +388,9 @@ writes or reads a value, with the call chain), `search` (memory by how it behave
 `frame`, `trace`, `compare`, `quirk`, `suspects` (quirk candidates), `sigs`, `scope` (the sessions the port is to
 reproduce), `sources` (the outside sources, by what they cover), `how` (the best-known routes, by a word) and
 `journal` (what the work was made of). A comparison's difference ends with the next moves for it, of more than one
-kind (D159). It keeps
-each command it ran in the port (D157), and a comparison that ends at the same first difference a third time
-running says so, with the kinds of evidence not looked at since.
+kind (D159). It keeps each command it ran in the port (D157), with the card, in the port's repository (D222), and a
+comparison that ends at the same first difference a third time running says so, with the kinds of evidence not
+looked at since.
 
 **Analysis** (`rrc analyze`) takes the program's image from Clockwork (D27). For a real-mode program it is
 the program as Clockwork unpacks it (an MZ file with the relocations it recovered, so Ghidra's MZ loader sees

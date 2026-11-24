@@ -41,6 +41,16 @@ What an agent meets first in it is written by `rrc init` too, and by `rrc hooks`
 - `notes/`: what was learned about the game and why, one file a subject; never the state of the work.
   `notes/recipes.md` holds the port's own recipes, a table `| Problem | Route | Cost |` like the playbook's, which
   `rrc how` reads with it (D159).
+- `work/`: the work's own record (D222), committed with the port so that another machine picks it up; `rrc` moves
+  a machine's older ones here from `.rrc/` the first time, where none came with the repository.
+  - `card.json`: the item taken with `rrc work take` (D158): `item`, `question`, `route`, `other`, `budget`
+    (comparisons), and where the journal was then (`taken`, `t`).
+  - `journal.jsonl`: each command `rrc` ran in the port (D157), a JSON object a line: `t` (seconds since 1970, the
+    host's), `cmd`, `args`, `ok`, and for a comparison its `session` and `end` (`match`, or its first difference:
+    `tick 194: enemies[1].hits`, `tick 102: the screen`, `tick 36: the sound`; a lockstep's `census: N things
+    differ`), with `stuck` on the one that ended there the third time running, and `sourced`, how many digest
+    lines it printed where a move was chosen (D185). Not kept: `init`, `rules`, `status`, `doctor`, `journal`.
+    Nothing the port is judged by.
 - `.claude/settings.local.json`, not committed: this machine's session hook, which runs the two commands at an
   agent's session start and after a summary, as the `rrc` that wrote it. Settings that aren't `rrc`'s are left
   alone.
@@ -118,8 +128,6 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   (a pass from another sync point), `ends` (its loop ended). The workflow's gates read these. What was
   kept before them counts as other code's (stale): an `outcome.json` alone as a comparison of the fields, a census
   without `recorded` as one of the recording there is.
-- `work/card.json`: the item taken with `rrc work take` (D158): `item`, `question`, `route`, `other`, `budget`
-  (comparisons), and where the journal was then (`taken`, `t`).
 - `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).
 - `start/<session>-<tick>/`: where `rrc start` left a session's original for the port to play from (D120):
   `state.json` (the mapped fields' values, as a transplant's `rrc-state`), `presentation.json` (the
@@ -132,12 +140,6 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
 - `saves/`: the games the port saved while played (`rrc_runtime::original::save`, D119), in the original's own
   format and names. A comparison's run has its own (`compare/<session>/saves/`, D131).
 - `frames/`: the pictures `rrc frame` wrote; `snapshot-<process>.tmp`: a snapshot `rrc record` is saving.
-- `journal.jsonl`: each command `rrc` ran in the port (D157), a JSON object a line: `t` (seconds since 1970, the
-  host's), `cmd`, `args`, `ok`, and for a comparison its `session` and `end` (`match`, or its first difference:
-  `tick 194: enemies[1].hits`, `tick 102: the screen`, `tick 36: the sound`; a lockstep's `census: N things
-  differ`), with `stuck` on the one that ended there the third time running, and `sourced`, how many digest
-  lines it printed where a move was chosen (D185). Not kept: `init`, `rules`, `status`, `doctor`, `journal`.
-  Nothing the port is judged by.
 
 ## Ghidra's export
 

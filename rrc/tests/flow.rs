@@ -1387,6 +1387,9 @@ fn the_workflow_s_stages_are_walked() {
     let taken = rrc.ok(&[&take[..], &["--other", "a watch of hits over the session", "--budget", "2"]].concat());
     assert!(taken.contains("card      enemies: who counts a bounce?"), "{taken}");
     assert!(taken.contains("budget    2 comparisons, then the route changes"), "{taken}");
+    // The card and the journal are the work's own record, committed with the port (D222).
+    let work = rrc.repo.join("work");
+    assert!(work.join("card.json").is_file() && work.join("journal.jsonl").is_file(), "{}", work.display());
     let (first, _) = rrc.run(&["compare", "play", "--fields"]);
     assert!(first.contains("diverges  at tick 194") && !first.contains("budget    "), "{first}");
     let (second, _) = rrc.run(&["compare", "play", "--fields"]);

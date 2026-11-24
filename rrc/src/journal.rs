@@ -1,4 +1,4 @@
-//! The journal (D157): each command `rrc` ran in the port, in `.rrc/journal.jsonl` on this machine, with how a
+//! The journal (D157): each command `rrc` ran in the port, in `work/journal.jsonl`, committed (D222), with how a
 //! comparison ended. From it the toolkit says what an agent can't see from inside: that a comparison has ended at the
 //! same first difference for the third time running (`stuck`), with the kinds of evidence not looked at since it
 //! first showed; how the commands spent on an item divide between comparing and looking (`mix`); and, for a test of
@@ -115,7 +115,7 @@ pub(crate) fn ended(session: &str, end: impl Into<String>) {
 }
 
 fn path(repo: &Repo) -> Result<std::path::PathBuf, String> {
-    Ok(repo.state()?.join(JOURNAL))
+    Ok(repo.work()?.join(JOURNAL))
 }
 
 /// The journal's entries, oldest first; a line that isn't one is left out.

@@ -9,6 +9,10 @@ pub const SETTINGS: &str = "rrc.toml";
 pub const LOCAL: &str = "rrc.local.toml";
 /// This machine's state for the port.
 pub const STATE: &str = ".rrc";
+/// The work's own record, committed with the port so another machine picks it up (D222): the card and the journal.
+pub const WORK: &str = "work";
+/// What moved there from this machine's state (`STATE`): each file's place there, and its name.
+const MOVED: [(&str, &str); 2] = [("journal.jsonl", "journal.jsonl"), ("work/card.json", "card.json")];
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
@@ -211,6 +215,20 @@ impl Repo {
         self.root.join("sessions")
     }
 
+    /// The work's own record (D222), committed: the card taken and the journal, created on first use. A file this
+    /// machine's state held before is moved here once, where none is here yet; one that is stays as it was.
+    pub fn work(&self) -> Result<PathBuf, String> {
+        let dir = self.root.join(WORK);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        for (old, name) in MOVED {
+            let (old, new) = (self.root.join(STATE).join(old), dir.join(name));
+            if old.is_file() && !new.exists() {
+                std::fs::rename(&old, &new).map_err(|e| format!("{} to {}: {e}", old.display(), new.display()))?;
+            }
+        }
+        Ok(dir)
+    }
+
     /// This machine's state for the port, created on first use.
     pub fn state(&self) -> Result<PathBuf, String> {
         let dir = self.root.join(STATE);
@@ -277,6 +295,30 @@ pub fn write_toml<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The card and the journal are the work's own, committed (D222): this machine's old ones move there once, and
+    /// don't replace what came with the repository.
+    #[test]
+    fn the_card_and_the_journal_move_to_the_work_s_record_once() {
+        let root = std::env::temp_dir().join(format!("rrc-work-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(STATE).join("work")).unwrap();
+        std::fs::write(root.join(STATE).join("journal.jsonl"), "{\"t\":1}\n").unwrap();
+        std::fs::write(root.join(STATE).join("work/card.json"), "{}").unwrap();
+        let settings = toml::from_str("[game]\nname = \"t\"\n\n[original]\nprogram = \"T.COM\"\n").unwrap();
+        let repo = Repo { root: root.clone(), settings, local: Local::default() };
+        let work = repo.work().unwrap();
+        assert_eq!(work, root.join("work"));
+        assert_eq!(std::fs::read_to_string(work.join("journal.jsonl")).unwrap(), "{\"t\":1}\n");
+        assert_eq!(std::fs::read_to_string(work.join("card.json")).unwrap(), "{}");
+        assert!(!root.join(STATE).join("journal.jsonl").exists() && !root.join(STATE).join("work/card.json").exists());
+        // Another machine's old journal stays where it is: the one that came with the repository is the record.
+        std::fs::write(root.join(STATE).join("journal.jsonl"), "{\"t\":2}\n").unwrap();
+        repo.work().unwrap();
+        assert_eq!(std::fs::read_to_string(work.join("journal.jsonl")).unwrap(), "{\"t\":1}\n");
+        assert!(root.join(STATE).join("journal.jsonl").is_file());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn settings_read_back_as_written() {

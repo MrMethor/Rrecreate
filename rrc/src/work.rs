@@ -122,9 +122,7 @@ struct Card {
 
 impl Card {
     fn path(repo: &Repo) -> Result<std::path::PathBuf, String> {
-        let dir = repo.state()?.join("work");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        Ok(dir.join(CARD))
+        Ok(repo.work()?.join(CARD))
     }
 
     fn load(repo: &Repo) -> Result<Option<Card>, String> {

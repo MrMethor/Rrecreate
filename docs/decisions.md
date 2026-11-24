@@ -764,6 +764,21 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D222. The card and the journal are the work's own record, committed with the port. Accepted 2026-11-24.
+The card `rrc work take` writes (D158) and the journal of the commands `rrc` ran (D157) are kept in the port's
+repository, in `work/` (`card.json`, `journal.jsonl`), and committed with the work; `.rrc/` keeps what is the
+machine's own (the analysis's files, the comparisons, the game's hashes, the starts and the saves). Where a machine's
+`.rrc/` still holds them, `rrc` moves each into `work/` the first time it uses it, if none came with the repository;
+if one came, the machine's own stays where it was, untouched. Neither is code: the port's fingerprint leaves them
+out, so a command journaled while a comparison runs doesn't change what the run was of (D167).
+**Why:** D221 made the repository the whole handover between sessions on different machines and named the card and
+the journal in it, but both were in `.rrc/`, which isn't committed: the first cloud session on Arena found no card
+where the person's machine had left one open (a weapon's picture, its census stopped by the memory guard), and none
+of the commands that machine's journal held. A card's `taken` counts into the journal, so the two go together. The
+journal adds a few dozen lines to an item's commit; the record of what the work was made of, which a blind test of
+the playbook reports (D157), is worth more than a quieter diff.
+**Extends:** D157, D158, D221.
+
 ### D221. A port's work runs in a cloud session; the person's machine keeps the plays. Accepted 2026-11-24, with the person.
 Where the person's machine has no room for the work beside their own use, a port's work (the loop, its recordings,
 censuses and comparisons, and the toolkit fixes it meets) runs in a Claude Code cloud session (claude.ai/code) on the
@@ -1719,7 +1734,7 @@ way from being learned twice. The sources' exemption was wrong on the first real
 imports (`rrc sigs name`) and does read wikis, so the two are separate statements.
 **Extends:** D73, D154, D156, D157.
 
-### D158. Where a port stands is worked out by `rrc status`; the work list and the card. Accepted 2026-11-11.
+### D158. Where a port stands is worked out by `rrc status`; the work list and the card. Accepted 2026-11-11; the card's place on the machine: superseded by D222.
 `rrc status` names the stage of the workflow (D154) the port is at, the first whose gate lacks something, with what
 it lacks and the next step; `--all` lists every stage's gate, each session of the scope that doesn't match in
 everything, the top of the work list, what parts not ported still give the port, the quirks and what the work was
@@ -1755,7 +1770,7 @@ draws. The card asks for a second route before the work, the one moment an agent
 its budget is in comparisons because that is the tool an agent repeats.
 **Extends:** D117 (`rrc progress`, the outcome kept), D124 (the census), D148.
 
-### D157. The journal: the toolkit says when a route is stuck. Accepted 2026-11-11.
+### D157. The journal: the toolkit says when a route is stuck. Accepted 2026-11-11; its place on the machine: superseded by D222.
 `rrc` keeps each command it runs in a port in `.rrc/journal.jsonl` (this machine's, not committed): when, the
 command, whether it failed, and for a comparison its session and how it ended (`match`, or its first difference: the
 tick and the field, the screen or the sound). A comparison that ends at the same first difference as its session's

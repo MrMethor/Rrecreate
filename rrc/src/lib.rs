@@ -297,7 +297,7 @@ usage: rrc <command> [arguments]     (inside a port repository)
   sources remove NAME    take a source out of the list
   sources none --why TEXT
                          no outside source is read for this port (an honest test bench): no sweep is asked
-  journal [--lines N]    what the work in this port was made of (.rrc/journal.jsonl): the commands rrc ran, how
+  journal [--lines N]    what the work in this port was made of (work/journal.jsonl): the commands rrc ran, how
                          they divide between comparing and each kind of looking (the code, outside sources,
                          the game's files, runs), how often a comparison was stuck, the last ones
   sigs build MAP --name NAME --compiler TEXT --source TEXT [--out FILE]

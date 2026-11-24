@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-24 (decisions to D221). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-24 (decisions to D222). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -228,9 +228,12 @@ written as that run's address and named by the toolkit (D220). Left by the roadm
 quest's rest, the towns' upper walls, the wilderness's pictures and songs, the rest of the program. **Where the work
 runs** (D221, the person's call, 2026-11-24): the person's machine, 8 GB and in use, kept stopping the censuses for
 memory, so the port's work moves to a Claude Code cloud session, the port private on GitHub and the person's own copy
-of the game in a private store of theirs; their machine keeps the plays. Set up and tried as far as the game's
-download; the first census in the cloud is next. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to
-accept.
+of the game in a private store of theirs; their machine keeps the plays. The first census in the cloud ran on
+2026-11-24: from an empty machine, the analysis in under a minute, the 107 sessions recorded in 21 minutes and counted
+in 16, every one matching in every mapped field. Its first gap is closed: the card and the journal were the
+machine's, so the card the person's machine left open never reached the cloud; they are now the work's own record,
+committed with the port (D222). **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the
+person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
 A play followed live keeps as little on disk as it can (D196, the person's call, 2026-11-18).

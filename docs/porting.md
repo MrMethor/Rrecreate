@@ -1100,7 +1100,8 @@ session first: an hour or two on an empty machine), then works the loop as anywh
 
 - **Keep one session for a stretch of work:** its machine keeps its files between pauses; a new one starts empty.
 - **No session talks to another:** the repository is the handover. Commit and push before stopping; `rrc status`,
-  the card and the journal say where the work stands, and `notes/handoff.md` what the next session needs.
+  the card and the journal (`work/`, committed: D222) say where the work stands, and `notes/handoff.md` what the
+  next session needs.
 - **One writer:** while a cloud session works on the port, no other session does; each pulls before it starts.
 - **The person's plays stay on their machine** (`rrc play` needs a window): a play is committed and pushed with its
   session, and the cloud session counts and compares it as any other.
