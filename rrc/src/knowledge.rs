@@ -313,6 +313,12 @@ impl Knowledge {
     }
 
     /// The function or data item named `name`.
+    /// A datum's size: as the knowledge gives it, else its type's (a `u32` with no size given is 4 bytes, D228).
+    pub fn data_size(&self, id: &Id) -> Option<u32> {
+        let datum = self.data.get(id)?;
+        datum.size.or_else(|| rrc_types::values::size(&datum.ty, &self.types).ok().filter(|&n| n > 0))
+    }
+
     pub fn named(&self, name: &str) -> Option<&Id> {
         let function = self.functions.iter().find(|(_, d)| d.name == name);
         function.map(|(id, _)| id).or_else(|| self.data.iter().find(|(_, d)| d.decision.name == name).map(|(id, _)| id))
@@ -560,6 +566,18 @@ mod tests {
 
     fn decision(name: &str) -> Decision {
         Decision { name: name.into(), provenance: "human".into(), confidence: Some(0.8), evidence: String::new() }
+    }
+
+    #[test]
+    fn a_datum_without_a_size_has_its_type_s() {
+        let mut k = Knowledge::default();
+        k.data.insert(id("GAME.EXE+20000"), Datum { decision: decision("minutes"), size: None, ty: "u32".into() });
+        k.data.insert(id("GAME.EXE+20004"), Datum { decision: decision("block"), size: Some(6), ty: "u32".into() });
+        k.data.insert(id("GAME.EXE+20010"), Datum { decision: decision("unknown"), size: None, ty: String::new() });
+        assert_eq!(k.data_size(&id("GAME.EXE+20000")), Some(4));
+        assert_eq!(k.data_size(&id("GAME.EXE+20004")), Some(6), "the size given wins");
+        assert_eq!(k.data_size(&id("GAME.EXE+20010")), None);
+        assert_eq!(k.data_size(&id("GAME.EXE+20020")), None);
     }
 
     #[test]

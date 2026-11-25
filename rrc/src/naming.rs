@@ -284,7 +284,7 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             Some(entry) if a.has("--c") => show_analysis(&k, analysis, entry, true),
             _ => show_analysis(&k, analysis, &id, a.has("--c")),
         }
-        let size = k.data.get(&id).and_then(|d| d.size).unwrap_or(1);
+        let size = k.data_size(&id).unwrap_or(1);
         let shown = if a.has("--all") { usize::MAX } else { REFS_SHOWN };
         let referred = show_refs(&k, analysis, &id, size, shown);
         let in_code = analysis.functions.contains_key(&id) || analysis.containing(&id).is_some();
@@ -395,7 +395,7 @@ fn texts_at(image: &[u8], n: usize) -> Vec<(usize, Vec<u8>)> {
 fn also(repo: &Repo, k: &Knowledge, analysis: Option<&Analysis>, id: &Id) -> Result<(), String> {
     // The bytes the place covers: a function's, a datum's, else the one.
     let function = analysis.and_then(|a| a.functions.get(id)).map(|f| f.size);
-    let size = function.or_else(|| k.data.get(id).and_then(|d| d.size)).unwrap_or(1).max(1);
+    let size = function.or_else(|| k.data_size(id)).unwrap_or(1).max(1);
     let overlaps = |at: &Id, n: u32| {
         at.module() == id.module()
             && at.part() == id.part()

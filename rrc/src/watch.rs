@@ -161,7 +161,7 @@ pub(crate) fn watched(repo: &Repo, args: &[String]) -> Result<Writer, String> {
     }
     let len: u32 = match a.value("--len") {
         Some(n) => n.parse().map_err(|_| "--len is a number of bytes")?,
-        None => k.data.get(&id).and_then(|d| d.size).unwrap_or(2),
+        None => k.data_size(&id).unwrap_or(2),
     };
     let (first, count) = tick_span(&a)?;
     let syncs = sync_points(&k)?;

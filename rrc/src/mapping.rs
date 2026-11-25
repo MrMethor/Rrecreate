@@ -325,11 +325,7 @@ impl Mapping {
             .map(|i| {
                 let id = item(k, &i.at).map_err(|e| format!("{MAPPING}: ignore {}: {e}", i.at))?;
                 let size = match i.size {
-                    0 => k
-                        .data
-                        .get(&id)
-                        .and_then(|d| d.size)
-                        .ok_or_else(|| format!("{MAPPING}: ignore {}: give a size", i.at))?,
+                    0 => k.data_size(&id).ok_or_else(|| format!("{MAPPING}: ignore {}: give a size", i.at))?,
                     n => n,
                 };
                 Ok((id, size))

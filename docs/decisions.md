@@ -764,6 +764,15 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D228. A datum without a size has its type's. Accepted 2026-11-25.
+Where the knowledge names a datum with a type and no size (`knowledge/data.tsv`'s size column empty), `rrc peek`,
+`rrc watch`, `rrc show` and a mapping's `[[ignore]]` take the type's size (a `u32`'s 4) before their own defaults (2
+bytes, 1). A size given still wins.
+**Why:** Arena's `game_minutes` is named `u32` with no size: `rrc peek` printed it as 2 bytes (18700, 490Ch) and
+`rrc watch` its reads so, while the program held 346380 (5490Ch): a holiday's code read as if the day were the 12th
+rather than the 240th, and the reading of the original looked wrong when it was the tool's.
+**Extends:** D159.
+
 ### D227. A port's scripts and CI's files aren't its code. Accepted 2026-11-25.
 The port's fingerprint (D158, D167), and the search of its code for the original's IDs and the quirks' names, leave
 out shell and batch scripts and CI's files (`.sh`, `.bat`, `.cmd`, `.ps1`, `.yml`, `.yaml`) as they leave out its

@@ -174,8 +174,8 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          read from its memory); MEM+LINEAR the machine's outside the program
   peek SESSION --tick N ID|NAME|SEG:OFF... [--len N]
                          memory at the end of tick N (its sync point), named or not, without
-                         recording: as its type reads it, else as a number or bytes (--len: 2, or
-                         the item's size)
+                         recording: as its type reads it, else as a number or bytes (--len: the
+                         item's size, else its type's, else 2)
   pass SESSION --tick N [--depth N] [--in ID|NAME] [--functions] [--interrupts] [--lines N]
                          what tick N's pass runs, in order: the calls from tick N-1's sync point to
                          tick N's (tick 1's from power-on, the start-up's) as a tree of named

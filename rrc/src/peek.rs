@@ -34,7 +34,7 @@ pub(crate) fn peek(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let mut items = Vec::new();
     for what in &positionals[1..] {
         let id = crate::naming::resolve_in(repo, &k, analysis.as_ref(), what, Some(&session))?;
-        let size = len.or_else(|| k.data.get(&id).and_then(|d| d.size)).unwrap_or(2);
+        let size = len.or_else(|| k.data_size(&id)).unwrap_or(2);
         items.push((id.clone(), places.address(&id.to_string())?, size));
     }
     let ranges: Vec<(String, u32)> = items.iter().map(|(_, at, size)| (at.clone(), *size)).collect();
