@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-25 (decisions to D224). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-25 (decisions to D225). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -240,7 +240,8 @@ columns, the bar around them; a row's colour code that leaves the stack a word u
 texts (the keeper's offer and deal from each kind's file, the keeper's name made as the original's): 63 bugs of the
 original registered, the frames differing in 34 sessions (36 before), the store's buying and selling matching to
 their ends. Arena's port is packaged for the person's Windows machine, to play and for the live comparison (rrc,
-Clockwork and the port, no Rust and no Ghidra); a port is now given the game's program without an analysis (D224).
+Clockwork and the port, no Rust and no Ghidra); a port is now given the game's program without an analysis (D224),
+and its start from power-on needs no recording (D225): the package plays at once, nothing recorded first.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

@@ -764,6 +764,20 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D225. A start from power-on needs no recording. Accepted 2026-11-25.
+`rrc start SESSION --tick 0` takes the inputs the session's start-up had at power-on from its recording when the cache
+has it, as before, and otherwise reads them as a recording would where its run begins: the session loaded in
+Clockwork, nothing run, each of the knowledge's inputs read there. On the folder the session was recorded on, or on
+the game's folder as it is when that one can't be made (no file is read before the program runs). With D224 a port
+repository with neither an analysis nor a recording, on a machine that only plays, makes its power-on start folder in
+a second. A session based on another's tick has no power-on of its own and still needs its recording.
+**Why:** the package that plays Arena's port on the person's Windows machine recorded a whole session (cell, a few
+minutes) on its first run only to have its start-up's inputs, and the person asked why a port records anything to be
+played. A recording reads those inputs right after loading, before its first instruction, so they are the same
+without it: on Arena's cell, the inputs and the initial data are byte for byte the recorded start's, also on a folder
+whose saves differ from the recorded one's.
+**Extends:** D134, D141, D224.
+
 ### D224. A port is given the game's program without an analysis. Accepted 2026-11-25.
 Where a port repository has no analysis (`rrc analyze`, Ghidra's), `rrc` gives the port its program all the same:
 the game's program as Clockwork unpacks it (as it is, where it isn't packed), made once and kept in the cache by the

@@ -789,6 +789,36 @@ pub(crate) fn begin_run(repo: &Repo, session: &Session) -> Result<(Clockwork, Va
     Ok((clockwork, loaded))
 }
 
+/// The inputs at power-on as a recording of `session` reads them where its run begins (D134), without running it
+/// (D225): the session loaded in Clockwork as a recording begins it, each of the knowledge's inputs read there. On
+/// its recorded folder, or on the game's folder as it is when that one can't be built (no file of it is read
+/// before the program runs); whether it was. By input, those with a value (hex).
+pub(crate) fn power_on_inputs(
+    repo: &Repo,
+    k: &Knowledge,
+    session: &Session,
+) -> Result<(serde_json::Map<String, Value>, bool), String> {
+    let mut on = session.clone();
+    let as_it_is = !session.files.is_empty() && crate::folder::of(repo, session).is_err();
+    if as_it_is {
+        on.files.clear();
+    }
+    let (_, inputs, _) = items(repo, k, &repo.module())?;
+    let (mut clockwork, _, _) = begin(repo, &on, &sync_points(k)?)?;
+    let places = Places::new(repo, &on);
+    let mut values = serde_json::Map::new();
+    if !inputs.is_empty() {
+        let request: Vec<Value> = inputs.iter().map(|item| item.request(&places)).collect::<Result<_, _>>()?;
+        let read = clockwork.ask("read", json!({ "ranges": request }))?;
+        for (item, value) in inputs.iter().zip(read["data"].as_array().into_iter().flatten()) {
+            if let Some(hex) = value.as_str() {
+                values.insert(item.name.clone(), json!(hex));
+            }
+        }
+    }
+    Ok((values, as_it_is))
+}
+
 /// Runs what [`begin_run`] began to the session's end, what `run` answered. Refused if the session is recorded and its state
 /// there isn't the recording's: what a question found wouldn't be about the run the session has.
 pub(crate) fn run_to_end(repo: &Repo, session: &Session, clockwork: &mut Clockwork) -> Result<Value, String> {

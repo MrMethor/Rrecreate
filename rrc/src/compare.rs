@@ -2375,27 +2375,34 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let [name] = a.positionals(1, 1, "start SESSION --tick N [--out DIR]")? else { unreachable!() };
     let tick: u64 = a.required("--tick")?.parse().ok().ok_or("--tick is a tick number")?;
     let session = Session::load(repo, name)?;
-    let recorded = session.trace.clone().ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
     let k = Knowledge::load(&repo.knowledge())?;
     let mapping = Mapping::load(repo)?;
     let (mapped, presented) = (mapping.resolve(&k)?, mapping.resolve_present(&k)?);
-    let cache = Cache::open(&repo.local)?;
-    let trace = Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?;
-    if tick > trace.ticks.len() as u64 {
-        return Err(format!("{name} has {} ticks, not {tick}", trace.ticks.len()));
-    }
+    let carried = mapping.resolve_carried(&k)?;
     let dir = match a.value("--out") {
         Some(dir) => std::path::PathBuf::from(dir),
         None => repo.state()?.join("start").join(format!("{name}-{tick}")),
     };
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let file = |f: &str| dir.join(f).to_string_lossy().into_owned();
-    let carried = mapping.resolve_carried(&k)?;
+    let cache = Cache::open(&repo.local)?;
+    // Its recording, when the cache has it (power-on needs none, D225).
+    let recording = match &session.trace {
+        Some(recorded) if tick == 0 && !cache.has(&recorded.hash) => None,
+        Some(recorded) => Some(Trace::parse(&String::from_utf8_lossy(&cache.get(&recorded.hash)?))?),
+        None if tick == 0 => None,
+        None => return Err(format!("{name} isn't recorded: rrc record {name}")),
+    };
     if tick == 0 {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let mut initial = mapped;
         initial.extend(carried);
-        return start_power_on(repo, (name, &session, &trace), &k, &initial, &dir);
+        return start_power_on(repo, (name, &session, recording.as_ref()), &k, &initial, &dir);
     }
+    let trace = recording.ok_or_else(|| format!("{name} isn't recorded: rrc record {name}"))?;
+    if tick > trace.ticks.len() as u64 {
+        return Err(format!("{name} has {} ticks, not {tick}", trace.ticks.len()));
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let file = |f: &str| dir.join(f).to_string_lossy().into_owned();
     let original = {
         let places = Places::new(repo, &session);
         let linear = |linear: u32| places.linear_id(linear).ok();
@@ -2433,20 +2440,18 @@ pub(crate) fn start(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 
 /// `rrc start SESSION --tick 0` (D141): power-on, for the port to play from as a comparison runs it from there:
 /// the program's own initial data (`state.json`, D135: the mapped and carried items at fixed places in its load
-/// image; none without the analysis's program), the inputs the session's start-up had at power-on
-/// (`power-on.json`, `rrc-power-on`: its command line, its clock, which a live platform may give from the host
-/// instead), and an empty saves folder.
+/// image, from the game's program as it is unpacked without an analysis, D224), the inputs the session's start-up
+/// had at power-on (`power-on.json`, `rrc-power-on`: its command line, its clock, which a live platform may give
+/// from the host instead), and an empty saves folder. The inputs are its recording's, or without one in the cache
+/// those a recording would read where its run begins, the session loaded and nothing run (D225): no recording is
+/// needed to play from power-on.
 fn start_power_on(
     repo: &Repo,
-    (session_name, session, trace): (&str, &Session, &Trace),
+    (name, session, trace): (&str, &Session, Option<&Trace>),
     k: &Knowledge,
     initial: &[Mapped],
     dir: &std::path::Path,
 ) -> Result<ExitCode, String> {
-    let name = &trace.header.session;
-    let start_up = trace.header.power_on.as_deref().ok_or_else(|| {
-        format!("{session_name} was recorded without its start-up's inputs (D134): rrc record {session_name} again")
-    })?;
     let file = |f: &str| dir.join(f).to_string_lossy().into_owned();
     let mut has = Vec::new();
     if write_initial(repo, name, initial, k, &file("state.json"))? {
@@ -2455,17 +2460,35 @@ fn start_power_on(
         let empty = json!({"format": "rrc-state", "version": 1, "session": name, "tick": 0, "state": {}});
         std::fs::write(file("state.json"), format!("{empty}\n")).map_err(|e| e.to_string())?;
     }
-    let inputs: serde_json::Map<String, Value> = start_up
-        .inputs
-        .iter()
-        .filter_map(|(i, v)| Some((trace.header.inputs.get(*i)?.name.clone(), json!(v.as_ref()?))))
-        .collect();
+    let inputs: serde_json::Map<String, Value> = match trace {
+        Some(trace) => {
+            let start_up = trace.header.power_on.as_deref().ok_or_else(|| {
+                format!("{name} was recorded without its start-up's inputs (D134): rrc record {name} again")
+            })?;
+            start_up
+                .inputs
+                .iter()
+                .filter_map(|(i, v)| Some((trace.header.inputs.get(*i)?.name.clone(), json!(v.as_ref()?))))
+                .collect()
+        }
+        None => {
+            if session.from.is_some() {
+                return Err(format!("{name} starts from another session's tick, not power-on: rrc record {name}"));
+            }
+            let (inputs, as_it_is) = crate::trace::power_on_inputs(repo, k, session)?;
+            if as_it_is {
+                say("folder", "the game's as it is: the one the session was recorded on can't be built here");
+            }
+            inputs
+        }
+    };
     let names: Vec<&str> = inputs.keys().map(String::as_str).collect();
-    has.push(format!("the start-up's inputs ({})", names.join(", ")));
+    let from = if trace.is_some() { "its recording's" } else { "read at its load, no recording" };
+    has.push(format!("the start-up's inputs ({}; {from})", names.join(", ")));
     let power_on = json!({"format": "rrc-power-on", "version": 1, "session": name, "inputs": inputs});
     std::fs::write(file("power-on.json"), format!("{power_on}\n")).map_err(|e| e.to_string())?;
     write_saves(repo, session, k, None, &dir.join("saves"))?;
-    say("start", format!("{session_name}'s power-on: {}", has.join(", ")));
+    say("start", format!("{name}'s power-on: {}", has.join(", ")));
     say("folder", crate::path_text(dir));
     say("next", format!("the port plays from it: PORT play --start {}", crate::path_text(dir)));
     Ok(ExitCode::SUCCESS)

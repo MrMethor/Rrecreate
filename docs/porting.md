@@ -891,7 +891,8 @@ plays from where a session's original is (D120): `rrc start SESSION --tick N` wr
 the presentation's own state and the screen there into `.rrc/start/SESSION-N`, made once from the person's copy,
 and `PORT play --start .rrc/start/SESSION-N` plays from them without the original running. A port that
 matches from power-on plays the whole game from tick 0's folder (D141): `rrc start SESSION --tick 0` writes the
-program's initial data and the inputs the session's start-up had (its command line), and the port's
+program's initial data and the inputs the session's start-up had (its command line; no recording is needed for
+them, D225), and the port's
 `Live::power_on` gives the start-up those with what the host has instead (its clock). A program that draws its own
 mouse pointer sets `Live::OWN_POINTER`, and the host's cursor is hidden over the window (D142); `Live::pointer` says
 where its driver's pointer is, and the host's cursor is kept there, so the program's ranges hold as on a PC (D145). Its `Live::wrote`

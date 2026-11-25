@@ -953,6 +953,19 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     let inputs = std::fs::read_to_string(at_power_on.join("power-on.json")).unwrap();
     assert!(inputs.contains(r#""format":"rrc-power-on""#), "{inputs}");
     assert!(!at_power_on.join("screen.frm").exists() && at_power_on.join("saves").is_dir());
+    // Power-on needs no recording (D225): a session never recorded starts with the inputs its recording would have
+    // at power-on, read where its run begins.
+    let defined = std::fs::read_to_string(rrc.repo.join("sessions/play.toml")).unwrap();
+    let (head, rest) = defined.split_once("[trace]").unwrap();
+    let after = rest.find("\n[").map_or("", |at| &rest[at..]);
+    std::fs::write(rrc.repo.join("sessions/unrecorded.toml"), format!("{head}{after}")).unwrap();
+    let unrecorded = rrc.ok(&["start", "unrecorded", "--tick", "0"]);
+    assert!(unrecorded.contains("read at its load, no recording"), "{unrecorded}");
+    let read = std::fs::read_to_string(rrc.repo.join(".rrc/start/unrecorded-0/power-on.json")).unwrap();
+    let inputs_of = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap()["inputs"].clone();
+    assert!(inputs_of(&read).as_object().is_some_and(|read| !read.is_empty()), "{read}");
+    assert_eq!(inputs_of(&read), inputs_of(&inputs));
+    std::fs::remove_file(rrc.repo.join("sessions/unrecorded.toml")).unwrap();
     // Memory the port carries as it was (D126): in the start's state, read at the tick, never compared.
     let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
     let carry = "\n[[carry]]\nfield = \"carried.counts\"\nat = \"pass_count\"\ntype = \"u8[2]\"\n";
