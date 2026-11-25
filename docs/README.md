@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-25 (decisions to D225). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-25 (decisions to D226). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -241,7 +241,9 @@ texts (the keeper's offer and deal from each kind's file, the keeper's name made
 original registered, the frames differing in 34 sessions (36 before), the store's buying and selling matching to
 their ends. Arena's port is packaged for the person's Windows machine, to play and for the live comparison (rrc,
 Clockwork and the port, no Rust and no Ghidra); a port is now given the game's program without an analysis (D224),
-and its start from power-on needs no recording (D225): the package plays at once, nothing recorded first.
+and its start from power-on needs no recording (D225). Then, at the person's word, a port plays on its own (D226):
+the program alone finds the person's copy, unpacks the game's program itself and starts from power-on by a book
+`rrc` writes into the port; Arena's is given as that one program.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
@@ -265,7 +267,8 @@ what the person asked for. The ones that shape the project:
 - **The emulator:** our own, deterministic, a long-lived process tools drive (D4, D7, D9), with "who wrote this
   value" as a first-class tool (D8); one protocol any emulator could speak (D58).
 - **The port:** three layers, simulation, presentation and platform (D13), meeting through seams that carry meaning
-  (D40); time is an input, so faithful and modern modes (D14); departures are toggles (D19).
+  (D40); time is an input, so faithful and modern modes (D14); departures are toggles (D19); a port plays on its own, the
+  program alone reading the game's files (D226).
 - **The comparison:** inputs read from the original's memory (D15), a state mapping that works both ways (D16),
   transplants and save states (D17), frames as pixels and sound as events (D25); the person plays the original and
   the toolkit follows (D124).

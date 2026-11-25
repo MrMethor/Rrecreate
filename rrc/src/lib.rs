@@ -41,6 +41,7 @@ mod sigs;
 pub mod snapshots;
 mod sources;
 mod stage;
+mod standalone;
 mod ticks;
 pub mod tools;
 pub mod trace;
@@ -245,6 +246,9 @@ usage: rrc <command> [arguments]     (inside a port repository)
                          where the session's original is at tick N, for the port to play from without
                          the original: the mapped fields' values, the presentation's own state and the
                          screen, in a folder (.rrc/start/SESSION-N unless --out)
+  standalone             the book a port played on its own starts by (standalone.json, D226): where
+                         each field's initial value is in the program, the inputs there, the program's
+                         versions and arguments; rrc check refuses it once behind the mapping
   progress [--lines N]   how far the port is, as the sessions show it: the program's functions the
                          original ran, those in passes the port matches (as rrc compare last left each
                          session), and those of them the port's code names; the bytes of the data
@@ -354,6 +358,7 @@ pub fn main() -> ExitCode {
         Some("compare") => here().and_then(|repo| compare::compare(&repo, rest)),
         Some("play") => here().and_then(|repo| play::play(&repo, rest)),
         Some("start") => here().and_then(|repo| compare::start(&repo, rest)),
+        Some("standalone") => here().and_then(|repo| standalone::command(&repo, rest)),
         Some("progress") => here().and_then(|repo| progress::progress(&repo, rest)),
         Some("quirk") => here().and_then(|repo| quirks::quirk(&repo, rest)),
         Some("suspects") => here().and_then(|repo| quirks::suspects(&repo, rest)),

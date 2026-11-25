@@ -72,6 +72,11 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
     }
     problems.extend(sources.problems());
     problems.extend(crate::quirks::open(repo)?);
+    // A port played on its own starts by its book (D226): never behind the mapping.
+    if repo.root.join(rrc_runtime::standalone::FILE).is_file() {
+        say("book", rrc_runtime::standalone::FILE);
+    }
+    problems.extend(crate::standalone::problem(repo)?);
     for problem in &problems {
         say("problem", problem);
     }

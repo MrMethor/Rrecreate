@@ -966,15 +966,29 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(inputs_of(&read).as_object().is_some_and(|read| !read.is_empty()), "{read}");
     assert_eq!(inputs_of(&read), inputs_of(&inputs));
     std::fs::remove_file(rrc.repo.join("sessions/unrecorded.toml")).unwrap();
+    // A port played on its own starts by its book (D226): what the initial data are read by, written by rrc
+    // standalone, and refused by rrc check once the mapping has moved past it.
+    let written = rrc.ok(&["standalone"]);
+    assert!(written.contains("book      standalone.json: "), "{written}");
+    let book = std::fs::read_to_string(rrc.repo.join("standalone.json")).unwrap();
+    let book: serde_json::Value = serde_json::from_str(&book).unwrap();
+    assert_eq!((book["format"].as_str(), book["program"].as_str()), (Some("rrc-standalone"), Some("VAULT.EXE")));
+    assert!(book["items"].as_array().is_some_and(|items| !items.is_empty()), "{book}");
+    let checked = rrc.run(&["check"]).0;
+    assert!(checked.contains("book      standalone.json") && !checked.contains("is behind"), "{checked}");
     // Memory the port carries as it was (D126): in the start's state, read at the tick, never compared.
     let mapping = std::fs::read_to_string(rrc.repo.join("mapping.toml")).unwrap();
     let carry = "\n[[carry]]\nfield = \"carried.counts\"\nat = \"pass_count\"\ntype = \"u8[2]\"\n";
     std::fs::write(rrc.repo.join("mapping.toml"), format!("{mapping}{carry}")).unwrap();
+    let (behind, ok) = rrc.run(&["check"]);
+    assert!(!ok && behind.contains("problem   standalone.json is behind the mapping"), "{behind}");
     let start = rrc.ok(&["start", "play", "--tick", "200"]);
     assert!(start.contains("16 fields mapped, 1 carried as they were, the presentation's own 4"), "{start}");
     let state = std::fs::read_to_string(folder.join("state.json")).unwrap();
     assert!(state.contains(r#""carried.counts":["#), "{state}");
     std::fs::write(rrc.repo.join("mapping.toml"), mapping).unwrap();
+    assert!(!rrc.run(&["check"]).0.contains("is behind"));
+    std::fs::remove_file(rrc.repo.join("standalone.json")).unwrap();
 
     // The archive by its format (D103): its members; the title as PNG with its palette; a level decoded as
     // the original loaded it, found in its memory at the tick after the read.

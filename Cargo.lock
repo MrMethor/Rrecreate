@@ -1213,7 +1213,9 @@ dependencies = [
  "rrc-runtime",
  "serde",
  "serde_json",
+ "sha2",
  "tinyaudio",
+ "toml",
  "winapi",
 ]
 
@@ -1222,6 +1224,7 @@ name = "rrc-runtime"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "ids",
  "rrc-types",
  "serde",
  "serde_json",

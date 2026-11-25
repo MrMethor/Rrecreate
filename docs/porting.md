@@ -899,7 +899,13 @@ where its driver's pointer is, and the host's cursor is kept there, so the progr
 takes what a pass wrote into its own inputs (a keyboard queue the program empties) into the handlers' state. A game the port
 saves goes through `rrc_runtime::original::save` and `saved` (the port's saves, `.rrc/saves` of its repository
 or `RRC_SAVES`; the person's in the game's folder are read, never written). `examples/vault` and
-`examples/chime` play so (`cargo run -p vault-port -- play --game testbins/bin`).
+`examples/chime` play so (`cargo run -p vault-port -- play --game testbins/bin`). **A port is played on its own** (D226, the person's): the
+program alone is what the person gets, and it reads their copy of the game and nothing else. `rrc standalone` writes
+the port's book (`standalone.json`: where each field's initial value is in the program, the inputs there, the
+program's versions and arguments), the port builds it in (`Live::STANDALONE`, `include_str!`) and its `power_on` gives
+from the host what the image doesn't hold (a mouse driver's reset, the book's command line); started with nothing,
+it finds the game, unpacks its program and plays from power-on. Write the book again when the mapping changes (`rrc
+check` refuses it behind), and give the person the program alone.
 
 ## Playing alongside: the live comparison
 

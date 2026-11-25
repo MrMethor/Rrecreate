@@ -18,6 +18,9 @@ tinyaudio = "2"
 # Nuked OPL3 in Rust (LGPL-2.1-or-later), as Clockwork renders the original's OPL with.
 nuked-opl3 = "0.1"
 serde_json = "1"
+# A port played on its own (D226): its game's version by its program's hash, the folder it chose kept.
+sha2 = "0.10"
+toml = "0.9"
 
 # The window's messages, for the mouse's presses between frames (D144).
 [target.'cfg(windows)'.dependencies]

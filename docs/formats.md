@@ -737,6 +737,34 @@ t's inputs makes tick t+1's. The port runs from the first tick (1, or the transp
 to the inputs' last (or `--to`'s), writing its state at each tick before stepping. All files are JSON; the
 inputs and the trace are JSON lines.
 
+A port played on its own (D226) has none of these: started with nothing (or `play` without `--start`) it finds the
+game's folder itself (`--game`, `RRC_GAME`, the folder kept in `PORT.toml` beside the program, `game = "..."`, which
+it writes once it has one; its own folder or the current one; Steam's libraries; or asked on the console), reads the
+program's file named by its book from it, checks its SHA-256 against the book's versions and unpacks it itself
+(PKLITE 1.12, extra and large compression), and keeps the games it saves in `saves` beside the program.
+
+### `standalone.json`: a port's book (D226)
+
+Written by `rrc standalone` into the port repository from the mapping and the knowledge, committed, and built into the
+port (`Live::STANDALONE`); `rrc check` refuses it once it is behind them. Nothing of the game is in it.
+
+```json
+{"format": "rrc-standalone", "version": 1,
+ "program": "ACD.EXE", "versions": ["<the program file's SHA-256 in each version>"],
+ "args": "the arguments the port's runs give the program (rrc.toml's --args)",
+ "types": {"struct": [], "enum": [], "pointer": [], "bits": []},
+ "arrays": [{"name": "...", "id": "ACD.EXE+...", "element": "type", "count": 16}],
+ "items": [{"field": "player.x", "offset": 12345, "size": 2, "type": "u16", "mask": 255, "set": false}],
+ "inputs": [{"name": "key_down", "offset": 288437, "size": 128}]}
+```
+
+`types` is the knowledge's (`knowledge/types.toml`); `arrays` the named arrays a pointer type is read into; `items`
+each mapped and carried field at a fixed place in the program's load image (not through a pointer, not an index):
+its offset in the image, its size and type, the mask a mapping gives it, `set` for a pointer mapped as whether it is
+set (D178); its initial value is what the image holds there (an item past the image is left out). `inputs` are the
+inputs at places in the image: at power-on the start-up finds there what the image holds. The command line's tail
+the program is given is `args` as DOS puts it at the PSP's 80h.
+
 The inputs may come through a pipe (D190): `--inputs -` reads them from the standard input, which is how `rrc`
 gives them. The port reads a tick's line when it needs it and writes and flushes its trace's line for a tick, with
 the tick's frame and sound, before it reads further than the next tick's line (its step needs that one's sync

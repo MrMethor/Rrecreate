@@ -33,6 +33,8 @@ pub mod flc;
 pub mod mouse;
 pub mod original;
 pub mod present;
+pub mod standalone;
+pub mod unpack;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;

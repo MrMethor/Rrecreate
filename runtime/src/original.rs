@@ -28,6 +28,19 @@ impl Program {
         Ok(Program { image: image.to_vec() })
     }
 
+    /// A program file as the game has it: unpacked first if a packer the runtime undoes packed it (PKLITE, D226).
+    pub fn from_file(bytes: &[u8]) -> Result<Program, String> {
+        match crate::unpack::pklite(bytes)? {
+            Some(unpacked) => Ok(Program { image: unpacked.image }),
+            None => Program::from_mz(bytes),
+        }
+    }
+
+    /// The whole load image.
+    pub fn image(&self) -> &[u8] {
+        &self.image
+    }
+
     /// `len` bytes at `offset`. Panics past the image: static data is in it.
     pub fn bytes(&self, offset: u32, len: usize) -> &[u8] {
         let start = offset as usize;
@@ -47,22 +60,42 @@ impl Program {
     }
 }
 
-/// The original program, as `rrc` gave it (`RRC_PROGRAM`). Panics, saying why, when there is none: a
-/// port that reads it runs through `rrc`, after `rrc analyze`.
+/// The original program, as `rrc` gave it (`RRC_PROGRAM`), else its port repository's analysis's, else, for a port
+/// played on its own (D226), the game's folder's program file ([`use_program_file`]) unpacked by the runtime.
+/// Panics, saying why, when there is none.
 pub fn program() -> &'static Program {
+    match try_program() {
+        Ok(program) => program,
+        Err(e) => panic!("{e}"),
+    }
+}
+
+/// [`program`], or why there is none.
+pub fn try_program() -> Result<&'static Program, String> {
     static PROGRAM: OnceLock<Result<Program, String>> = OnceLock::new();
     let loaded = PROGRAM.get_or_init(|| {
-        let path = match std::env::var_os("RRC_PROGRAM") {
-            Some(path) => PathBuf::from(path),
-            None => repository_program()?,
+        let given = std::env::var_os("RRC_PROGRAM").map(PathBuf::from);
+        let path = match (given, PROGRAM_FILE.get()) {
+            (Some(path), _) => path,
+            (None, Some(name)) => {
+                let dir = game_dir().ok_or("no game folder to read the program from")?;
+                return Program::from_file(&file_in(&dir, name)?);
+            }
+            (None, None) => repository_program()?,
         };
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         Program::from_mz(&bytes)
     });
-    match loaded {
-        Ok(program) => program,
-        Err(e) => panic!("{e}"),
-    }
+    loaded.as_ref().map_err(Clone::clone)
+}
+
+/// The program file a port played on its own reads from the game's folder (D226).
+static PROGRAM_FILE: OnceLock<String> = OnceLock::new();
+
+/// The program is the game's folder's file `name` (`ACD.EXE`), unpacked by the runtime, unless `rrc` gives one: a
+/// port played on its own (D226), before it reads the program.
+pub fn use_program_file(name: &str) {
+    let _ = PROGRAM_FILE.set(name.to_owned());
 }
 
 /// The game's folder a player chose (D119), before `RRC_GAME` and the repository's.

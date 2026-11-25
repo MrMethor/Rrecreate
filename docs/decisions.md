@@ -764,6 +764,27 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D226. A port plays on its own: the program alone, reading the game's files. Accepted 2026-11-25, with the person.
+A port is a program that plays, reading the person's copy of the game, and nothing beside it: no `rrc`, no Clockwork,
+no start folder, no script. Started with nothing (or `play` without `--start`), a port whose `Live::STANDALONE` holds
+its book finds the game's folder (`--game`, `RRC_GAME`, the one it played last, kept in `PORT.toml` beside it, its own
+folder or the current one, Steam's libraries, or asked once on the console), checks the program's file is a version
+the port is of by its SHA-256, reads the program from it and unpacks it itself (the runtime's PKLITE 1.12 decompressor
+with extra and large compression, as the packer's own stub does it: on Arena's ACD.EXE the load image is Clockwork's
+byte for byte; another packer is said), and starts from power-on: its state from `start()` with the program's initial
+data read from the image by the book, the start-up's inputs in the image as it holds them and the rest from the host,
+the games it saves in `saves` beside it. The book, `standalone.json`, is written by `rrc standalone` from the mapping
+and the knowledge (where each mapped and carried field's initial value is in the load image and its type, the inputs
+in the image, the program's file and versions, the arguments the port's runs give it) and built into the port; `rrc
+check` refuses one behind the mapping. The initial data `rrc` gives a comparison are read by the same book, so a
+port alone starts as it starts compared.
+**Why:** the person, 2026-11-25: "a port means a standalone program that runs the Rust code and reads the assets from
+the original". The packages before it ran the port through `rrc` and Clockwork (D224, D225) to give it what only the
+toolkit made: the unpacked program and its initial data, and a start folder. Both are the game's own, so they can't
+travel with the port (D33, D82); the port makes them on the person's machine from their copy instead, and the
+toolkit's part is a book of names, places and types, which holds nothing of the game.
+**Extends:** D82, D119, D135, D141, D224.
+
 ### D225. A start from power-on needs no recording. Accepted 2026-11-25.
 `rrc start SESSION --tick 0` takes the inputs the session's start-up had at power-on from its recording when the cache
 has it, as before, and otherwise reads them as a recording would where its run begins: the session loaded in

@@ -2577,7 +2577,7 @@ fn write_initial(repo: &Repo, session: &str, items: &[Mapped], k: &Knowledge, pa
     let Some(image) = crate::analysis::program_image(repo)? else { return Ok(false) };
     let program = Cache::open(&repo.local)?.get(&image)?;
     let Some(image) = mz_image(&program) else { return Ok(false) };
-    let state = initial_state(image, &repo.module(), items, &crate::values::of(k))?;
+    let state = initial_state(image, &repo.module(), items, k)?;
     let file = json!({"format": "rrc-state", "version": 1, "session": session, "tick": 0, "state": state});
     std::fs::write(path, format!("{file}\n")).map_err(|e| format!("{path}: {e}"))?;
     Ok(true)
@@ -2589,18 +2589,16 @@ fn initial_state(
     image: &[u8],
     module: &str,
     items: &[Mapped],
-    r: &Reader,
+    k: &Knowledge,
 ) -> Result<serde_json::Map<String, Value>, String> {
-    let mut state = serde_json::Map::new();
-    for m in items.iter().filter(|m| m.via.is_none() && m.into.is_none()) {
-        if m.id.module() != module || m.id.part().is_some() {
-            continue;
-        }
-        let at = m.id.offset() as usize;
-        let Some(bytes) = image.get(at..at + m.size as usize) else { continue };
-        state.insert(m.field.clone(), decoded(m, bytes, r).map_err(|e| format!("{}: {e}", m.field))?);
-    }
-    Ok(state)
+    // Read by the book a port played on its own reads it by (D226), so the two are the same.
+    let book = rrc_runtime::standalone::Book {
+        items: crate::standalone::initial_items(module, items),
+        types: k.types.clone(),
+        arrays: crate::standalone::arrays(k),
+        ..Default::default()
+    };
+    Ok(book.initial(image)?.into_iter().collect())
 }
 
 /// An MZ program's load image: the file past its header, as long as the header says; none if it isn't one.
@@ -3814,7 +3812,7 @@ mod tests {
             item("other", "OTHER.EXE+00000", "u8", 1),
         ];
         let k = Knowledge::default();
-        let state = initial_state(&image, "GAME.EXE", &items, &crate::values::of(&k)).unwrap();
+        let state = initial_state(&image, "GAME.EXE", &items, &k).unwrap();
         assert_eq!(state["score"], json!(0x0504));
         assert_eq!(state["saved.block"], json!([8, 9, 10]));
         assert!(!state.contains_key("heap") && !state.contains_key("other"));

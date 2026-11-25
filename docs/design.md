@@ -184,7 +184,9 @@ the session.
   service, D176). Its window shows the pictures a pass showed between ticks (a fade's steps, a dissolve's), each for
   its refreshes, before the tick's screen, and the next pass comes after them (D205). A port plays from a start
   folder `rrc start` wrote: where a session's original was at a tick (D120), or power-on, with the program's initial
-  data and the inputs the session's start-up had (D141), which need no recording (D225).
+  data and the inputs the session's start-up had (D141), which need no recording (D225). A port plays on its own
+  too (D226): the program alone, started with nothing, finds the game's folder, unpacks the game's program itself
+  and starts from power-on by its book (`rrc standalone`: where each field's initial value is in the program).
 
 A tick is one step of the original's main loop. Work the original did in interrupt handlers (music
 sequencing, timer counts) is a subsystem of the simulation with its own rate; its effects are part of the

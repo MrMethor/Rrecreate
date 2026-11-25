@@ -14,6 +14,7 @@ name = "rrc_runtime"
 [dependencies]
 # The knowledge's types, for the original's memory images a port reads and writes (its saves, D126).
 rrc-types = { path = "../types" }
+ids = { path = "../ids" }
 serde.workspace = true
 serde_json = "1"
 toml = "0.9"

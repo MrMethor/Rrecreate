@@ -35,6 +35,7 @@ mod audio;
 pub use audio::Filter;
 mod controls;
 mod keys;
+mod standalone;
 
 pub use controls::Controls;
 
@@ -177,6 +178,12 @@ pub trait Live: Simulation + Shows {
     /// The port's `quirks.toml` (`include_str!`), for `play --fix`'s names (D149): a misspelt one would do nothing and
     /// say nothing. Empty by default: a port with no quirks registered, which takes none.
     const QUIRKS: &'static str = "";
+
+    /// The port's book (`standalone.json`, `include_str!`, written by `rrc standalone`), for a port played on its own
+    /// (D226): started with nothing (or `play` with no `--start`), it finds the game's folder, reads the program's
+    /// initial data from the game's program by it, and plays from power-on. None by default: a port that plays from a
+    /// folder `rrc start` wrote.
+    const STANDALONE: Option<&'static str> = None;
 
     /// What the original's loop does next, given the host's devices as its handlers would have taken them.
     fn next(&self, devices: &mut Self::Devices, host: &Host) -> Next;
@@ -435,6 +442,11 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
             }
         });
     }
+    // Started with nothing, a port played on its own plays (D226).
+    let args = match (args.is_empty(), S::STANDALONE) {
+        (true, Some(_)) => vec!["play".to_owned()],
+        _ => args,
+    };
     if args.first().map(String::as_str) != Some("play") {
         return None;
     }
@@ -500,14 +512,30 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
         }
         rest.next();
     }
+    // On its own, what goes wrong stays on the console it was started with (D226).
+    let own = S::STANDALONE.is_some() && from.is_none();
+    if own {
+        let shown = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            shown(info);
+            standalone::hold("");
+        }));
+    }
     let started = match from {
         Some(dir) => match rrc_runtime::started::<S>(&dir) {
             Ok(started) => started,
             Err(e) => return Some(fail(&format!("{}: {e}", dir.display()))),
         },
-        None => match start {
-            Some(start) => Started { state: start(), presentation: None, screen: None, power_on: None },
-            None => {
+        None => match (S::STANDALONE, start) {
+            (Some(book), _) => match on_its_own::<S>(book) {
+                Ok(started) => started,
+                Err(e) => {
+                    standalone::hold(&format!("{title}: {e}"));
+                    return Some(std::process::ExitCode::from(1));
+                }
+            },
+            (None, Some(start)) => Started { state: start(), presentation: None, screen: None, power_on: None },
+            (None, None) => {
                 return Some(fail(
                     "this port plays from where a session is: rrc start SESSION --tick N (0: power-on), then \
                      --start DIR",
@@ -517,8 +545,27 @@ pub fn main<S: Live, P: Presentation<S>>(title: &str, start: Option<fn() -> S>) 
     };
     Some(match play::<S, P>(title, started, sound, controls) {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) if own => {
+            standalone::hold(&format!("{title}: {e}"));
+            std::process::ExitCode::from(1)
+        }
         Err(e) => fail(&e),
     })
+}
+
+/// A port played on its own from power-on (D226): its book read, the game's folder found and checked, the program
+/// read from it, the games saved beside the program.
+fn on_its_own<S: Live>(text: &str) -> Result<Started<S>, String> {
+    let book = rrc_runtime::standalone::Book::read(text)?;
+    let game = standalone::game(&book)?;
+    rrc_runtime::original::use_game_dir(game);
+    rrc_runtime::original::use_program_file(&book.program);
+    if std::env::var_os("RRC_SAVES").is_none()
+        && let Some(saves) = standalone::saves()
+    {
+        rrc_runtime::original::use_saves_dir(saves);
+    }
+    rrc_runtime::standalone::started::<S>(&book)
 }
 
 /// The port's own input handling checked against the original's (D194, `rrc compare --live`), played as the platform
