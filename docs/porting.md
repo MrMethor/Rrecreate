@@ -1000,6 +1000,27 @@ census is a work list beside lockstep's; its items are worked from transplants a
 Stage 7: the play-test is a play followed from power-on to as far as the person goes, and the port played in its own
 window (`PORT play`); what either finds becomes a session or an item, and the person closes the gate.
 
+## Giving the person the port
+
+What the person gets is two packages, each a release of the port's repository (private like it), made by a script in
+the port (Arena's `tools/package-windows.sh`, its `notes/releases.md`):
+
+- **The port to play: the program alone** (D226, the person's). Built for the person's system with its book in it
+  (`rrc standalone`, `Live::STANDALONE`), with a README and the licences of what it links (Rrecreate's MIT, and any
+  other crate's, such as Nuked OPL3's LGPL). Nothing beside it: started, it finds the game, checks its version,
+  unpacks its program and plays from power-on, and keeps its settings and saved games beside itself.
+- **The live comparison** (M6.5, "Playing alongside"): `rrc`, `clockwork` and the port built, the port's books (the
+  committed files, by `git archive`) with `rrc.toml`'s command pointing at the built port, shortcuts that find the
+  game and run `rrc play`, and Clockwork's GPL beside the rest. Neither Rust nor Ghidra is needed (D224). A play made
+  with it is evidence: the person commits its session to the port's repository.
+
+Before one: the port's code committed (the script refuses otherwise), the book current (`rrc check`), every session
+counted at that commit (`rrc work --run`), Rrecreate's `main` pushed. Never in either: the game's files or anything
+made from them (D33, D82): no cache, no start folder, no unpacked program. Check what a package holds and, for a
+program built for another system, what libraries it needs; play the program alone once where the machine allows (on
+Linux, under a virtual display). A release is published by a tag a workflow builds from; in a cloud session the agent
+can't push a tag, so the person pushes it, and the agent gives the person the built files in the meantime.
+
 ## Quirks
 
 The original's bugs stay in the faithful port, each as a registered quirk (docs/design.md §6.5, D74):
