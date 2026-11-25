@@ -764,6 +764,18 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D224. A port is given the game's program without an analysis. Accepted 2026-11-25.
+Where a port repository has no analysis (`rrc analyze`, Ghidra's), `rrc` gives the port its program all the same:
+the game's program as Clockwork unpacks it (as it is, where it isn't packed), made once and kept in the cache by the
+program's hash (`index/image/`). It is the port's `RRC_PROGRAM`, and the program's own initial data a port starts
+from at power-on (D135) are read from it. With an analysis, the analysis's program, as before: the two are the same
+bytes.
+**Why:** a machine that only plays needs no Ghidra: Arena's live comparison packaged for the person's Windows machine
+(rrc, Clockwork and the port, no Rust and no Ghidra) ran its port from a transplant, but from power-on the port had
+none of the program's initial data and stopped at its first pass. The unpacked image is the game's own, so it can't
+travel with the package (D33, D82); Clockwork makes it on the machine, as `rrc analyze` does before Ghidra.
+**Extends:** D82, D91, D135.
+
 ### D223. A presentation's item may be found through a pointer. Accepted 2026-11-24.
 A `[[present]]` item (D110) may be `via` a pointer, with `offset` and `then` as a `[[map]]` item's, as a
 `[[carry]]` item may (D177): at a transplant's or a resume's tick it is the memory where the pointer points, as long

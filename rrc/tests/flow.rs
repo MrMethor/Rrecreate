@@ -853,6 +853,9 @@ fn a_port_from_power_on_loads_the_game_s_files() {
     assert!(recorded.contains("trace     400 ticks"), "{recorded}");
     let compared = rrc.ok(&["compare", "play"]);
     assert!(compared.contains("match     every mapped field at all 400 ticks"), "{compared}");
+    // No analysis here: the port is given the game's program and its initial data all the same (D224).
+    assert!(!rrc.repo.join(".rrc/analysis.toml").exists());
+    assert!(rrc.repo.join(".rrc/compare/play/initial.json").is_file(), "the program's initial data");
     // Counted in lockstep from power-on as well, as the port starts it, not from a transplant at its first tick (D164).
     let counted = rrc.ok(&["compare", "play", "--lockstep"]);
     assert!(counted.contains("every mapped field, frame and sound in all"), "{counted}");

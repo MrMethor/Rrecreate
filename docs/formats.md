@@ -174,6 +174,8 @@ what an earlier run made from given inputs:
 - `index/results/<key>`: the output of `rrc calls` and `rrc inputs`, and the file accesses `rrc files`
   found (JSON), keyed by the build of `rrc` that gave it (its program's hash), the command, its arguments, the
   session's run (as above, without the sync points), the knowledge files and the analysis;
+- `index/image/<key>`: the game's program as Clockwork unpacks it (as it is, where it isn't packed), keyed by the
+  program's hash: what a port is given and its initial data are read from where there is no analysis (D224);
 - `index/places/<key>`: where a session's run puts the game's program, when it isn't simply loaded where
   `+OFF` counts from (an LE program, or one a launcher starts): `image BASE:SIZE`, then `object
   BASE:SIZE:FLAGS` for each LE object, a line each, in hex; keyed by the session's run, the module and the
@@ -725,8 +727,8 @@ run --inputs FILE --out FILE [--transplant FILE | --resume FILE | --initial FILE
 and its files in `.rrc/compare/<session>/` (D61). The port exits 0 when it ran; what it writes to stderr is
 shown when it fails. A run whose code changed while it ran (the fingerprint before and after its build and run
 differ) is refused (D167). Its environment has the person's copy of the game (D82): `RRC_GAME`, the game's folder,
-and `RRC_PROGRAM`, the program as the analysis unpacked it (an MZ file; its load image is what IDs' offsets
-count in), for the static data the port reads (`rrc_runtime::original`); run without them (its own tests), the
+and `RRC_PROGRAM`, the program as the analysis unpacked it, or without an analysis as Clockwork unpacks the game's
+(D224; an MZ file; its load image is what IDs' offsets count in), for the static data the port reads (`rrc_runtime::original`); run without them (its own tests), the
 runtime finds both from the port repository it runs in (D91). `RRC_SAVES` is the run's saves folder, made
 afresh with the files the original had changed where the port starts (D131), which `rrc_runtime::original`'s
 `saved`, `save` and `delete` use. The state at tick t is what the original holds at its t-th sync point hit; a step with tick

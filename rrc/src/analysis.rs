@@ -78,6 +78,42 @@ impl Index {
     }
 }
 
+/// The program a port is given (`RRC_PROGRAM`) and its initial data are read from (D224): the analysis's, else the
+/// game's program as Clockwork unpacks it (as it is, where it isn't packed), made once and kept in the cache
+/// (`index/image/<the program's hash>`), so a machine without Ghidra (one that only plays) runs a port from power-on
+/// all the same. None without the game's program.
+pub(crate) fn program_image(repo: &Repo) -> Result<Option<String>, String> {
+    if let Some(index) = Index::load(repo)? {
+        return Ok(Some(index.program));
+    }
+    let Ok(dir) = repo.game_dir() else { return Ok(None) };
+    let original = dir.join(repo.module_file());
+    if !original.is_file() {
+        return Ok(None);
+    }
+    let cache = Cache::open(&repo.local)?;
+    let hash = sha256_file(&original)?;
+    if let Some(key) = cache.recall("image", &hash).filter(|key| cache.has(key)) {
+        return Ok(Some(key));
+    }
+    let out = repo.state()?.join(format!("image-{}.tmp", std::process::id()));
+    let unpack = Command::new(clockwork::find(&repo.local)?)
+        .arg("unpack")
+        .arg(&original)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .map_err(|e| format!("clockwork unpack: {e}"))?;
+    let read = if unpack.status.success() { &out } else { &original };
+    let bytes = std::fs::read(read).map_err(|e| format!("{}: {e}", read.display()));
+    let _ = std::fs::remove_file(&out);
+    let key = cache.put(&bytes?)?;
+    cache.remember("image", &hash, &key)?;
+    let how = if unpack.status.success() { "unpacked by Clockwork" } else { "as it is" };
+    say("program", format!("{}, {how}, for the port: there is no analysis here (kept)", repo.module()));
+    Ok(Some(key))
+}
+
 pub(crate) fn analyze(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(args, &["--session"], &["--no-decompile", "--again"])?;
     a.positionals(0, 0, "analyze [--session NAME] [--no-decompile] [--again]")?;

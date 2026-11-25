@@ -1,7 +1,7 @@
 //! The person's copy of the game, for what a port loads from it instead of copying it into its source
 //! (D82): the original program's static data (tables its code reads, such as a sine table) and the
 //! game's files. `rrc` gives a port both when it runs it: `RRC_PROGRAM`, the program as the analysis
-//! unpacked it, and `RRC_GAME`, the game's folder. Run otherwise (the port's own `cargo test`), the
+//! unpacked it (without one, as Clockwork unpacks the game's: D224), and `RRC_GAME`, the game's folder. Run otherwise (the port's own `cargo test`), the
 //! port finds them as `rrc` would (D91): the port repository above the current folder, its analysis
 //! (`.rrc/analysis.toml`), its cache and its game (`rrc.local.toml`, or `RRC_CACHE`).
 

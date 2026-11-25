@@ -2548,11 +2548,11 @@ fn write_state(
 }
 
 /// The program's own initial data (`rrc-state`, tick 0, D135): each mapped field, and each carried item (D137), at
-/// a fixed place in the load image of the program the analysis has, as the image holds it (`initial_state`).
-/// False where there is no such program (no analysis, or not an MZ program).
+/// a fixed place in the load image of the program (the analysis's, else Clockwork's unpacking of the game's, D224),
+/// as the image holds it (`initial_state`). False where there is no such program (no game's program, or not MZ).
 fn write_initial(repo: &Repo, session: &str, items: &[Mapped], k: &Knowledge, path: &str) -> Result<bool, String> {
-    let Some(index) = crate::analysis::Index::load(repo)? else { return Ok(false) };
-    let program = Cache::open(&repo.local)?.get(&index.program)?;
+    let Some(image) = crate::analysis::program_image(repo)? else { return Ok(false) };
+    let program = Cache::open(&repo.local)?.get(&image)?;
     let Some(image) = mz_image(&program) else { return Ok(false) };
     let state = initial_state(image, &repo.module(), items, &crate::values::of(k))?;
     let file = json!({"format": "rrc-state", "version": 1, "session": session, "tick": 0, "state": state});
@@ -2893,8 +2893,8 @@ fn run_port(
 }
 
 /// What a port's run is given of the original: the person's copy of the game, for what the port loads from it (D82,
-/// `rrc_runtime::original`): the folder the session runs on (D170), and the program as the analysis unpacked it (its
-/// static data); where it keeps the games it saves, and reads saved ones first (D131).
+/// `rrc_runtime::original`): the folder the session runs on (D170), and the program as the analysis unpacked it, or
+/// without one as Clockwork unpacks the game's (its static data, D224); where it keeps the games it saves, and reads saved ones first (D131).
 fn port_env(
     repo: &Repo,
     session: &Session,
@@ -2907,8 +2907,8 @@ fn port_env(
         Err(_) if repo.game_dir().is_err() && session.root(repo)?.files.is_empty() => {}
         Err(e) => return Err(e),
     }
-    if let Some(index) = crate::analysis::Index::load(repo)? {
-        original.push(("RRC_PROGRAM", crate::cache::Cache::open(&repo.local)?.path(&index.program)));
+    if let Some(image) = crate::analysis::program_image(repo)? {
+        original.push(("RRC_PROGRAM", crate::cache::Cache::open(&repo.local)?.path(&image)));
     }
     if let Some(saves) = saves {
         original.push(("RRC_SAVES", saves.to_path_buf()));
