@@ -764,6 +764,15 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D227. A port's scripts and CI's files aren't its code. Accepted 2026-11-25.
+The port's fingerprint (D158, D167), and the search of its code for the original's IDs and the quirks' names, leave
+out shell and batch scripts and CI's files (`.sh`, `.bat`, `.cmd`, `.ps1`, `.yml`, `.yaml`) as they leave out its
+settings, tables and notes: its build doesn't read them, so changing one changes nothing a comparison counted.
+**Why:** Arena's setup script for cloud sessions and its release workflow were edited between two censuses: `rrc
+status` then named 100 of its 107 sessions stale, a 16-minute census to count them again for nothing, and an edit of
+either while a census runs would have stopped it as a change of the port's code.
+**Extends:** D158, D167, D219.
+
 ### D226. A port plays on its own: the program alone, reading the game's files. Accepted 2026-11-25, with the person.
 A port is a program that plays, reading the person's copy of the game, and nothing beside it: no `rrc`, no Clockwork,
 no start folder, no script. Started with nothing (or `play` without `--start`), a port whose `Live::STANDALONE` holds

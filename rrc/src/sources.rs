@@ -10,8 +10,10 @@ use std::path::Path;
 
 /// Folders of a port repository that hold no code.
 const NOT_CODE: [&str; 8] = [".git", ".rrc", "target", "knowledge", "sessions", "notes", "node_modules", "cache"];
-/// Files that aren't code, by extension: settings, tables, notes, data.
-const NOT_CODE_FILES: [&str; 7] = ["toml", "tsv", "md", "json", "jsonl", "lock", "txt"];
+/// Files that aren't code, by extension: settings, tables, notes, data; and the scripts and CI's files that set up,
+/// package or test the port, which its build doesn't read (D227).
+const NOT_CODE_FILES: [&str; 13] =
+    ["toml", "tsv", "md", "json", "jsonl", "lock", "txt", "sh", "bat", "cmd", "ps1", "yml", "yaml"];
 /// Files read at most this big.
 const MAX_FILE: u64 = 2 << 20;
 
@@ -353,7 +355,7 @@ mod tests {
     fn the_port_s_code_is_found_by_the_original_s_ids() {
         let root = std::env::temp_dir().join(format!("rrc-sources-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for dir in ["src/game", "knowledge", "target"] {
+        for dir in ["src/game", "knowledge", "target", "tools", ".github/workflows"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         let write = |file: &str, text: &str| std::fs::write(root.join(file), text).unwrap();
@@ -374,6 +376,10 @@ mod tests {
         // The code as it is: another hash when a file's text changes, the same for what isn't code.
         let before = fingerprint(&root);
         write("notes.md", "more notes\n");
+        // A script that sets the port up or packages it, and CI's workflow, aren't its code either (D227).
+        write("tools/package.sh", "#!/bin/sh\nzip port.zip port\n");
+        write(".github/workflows/release.yml", "on: push\n");
+        write("play.cmd", "rrc play %*\n");
         assert_eq!(fingerprint(&root), before);
         write("src/draw.rs", "/// `+00200`: draws (and +002001, X+00200 are others)\nfn draw() { }\n");
         assert_ne!(fingerprint(&root), before);
