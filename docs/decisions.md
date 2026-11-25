@@ -782,7 +782,8 @@ repository, in `work/` (`card.json`, `journal.jsonl`), and committed with the wo
 machine's own (the analysis's files, the comparisons, the game's hashes, the starts and the saves). Where a machine's
 `.rrc/` still holds them, `rrc` moves each into `work/` the first time it uses it, if none came with the repository;
 if one came, the machine's own stays where it was, untouched. Neither is code: the port's fingerprint leaves them
-out, so a command journaled while a comparison runs doesn't change what the run was of (D167).
+out, so a command journaled while a comparison runs doesn't change what the run was of (D167). `rrc check` isn't
+journaled: the commit hook runs it, and its line would leave the committed journal changed after every commit.
 **Why:** D221 made the repository the whole handover between sessions on different machines and named the card and
 the journal in it, but both were in `.rrc/`, which isn't committed: the first cloud session on Arena found no card
 where the person's machine had left one open (a weapon's picture, its census stopped by the memory guard), and none

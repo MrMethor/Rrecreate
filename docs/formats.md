@@ -49,7 +49,8 @@ What an agent meets first in it is written by `rrc init` too, and by `rrc hooks`
     host's), `cmd`, `args`, `ok`, and for a comparison its `session` and `end` (`match`, or its first difference:
     `tick 194: enemies[1].hits`, `tick 102: the screen`, `tick 36: the sound`; a lockstep's `census: N things
     differ`), with `stuck` on the one that ended there the third time running, and `sourced`, how many digest
-    lines it printed where a move was chosen (D185). Not kept: `init`, `rules`, `status`, `doctor`, `journal`.
+    lines it printed where a move was chosen (D185). Not kept: `init`, `rules`, `status`, `doctor`, `journal`,
+    `check` (the commit hook's, which would leave the committed journal changed after every commit).
     Nothing the port is judged by.
 - `.claude/settings.local.json`, not committed: this machine's session hook, which runs the two commands at an
   agent's session start and after a summary, as the `rrc` that wrote it. Settings that aren't `rrc`'s are left

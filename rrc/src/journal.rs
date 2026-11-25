@@ -20,7 +20,10 @@ pub(crate) const STUCK: usize = 3;
 /// Commands `rrc journal` lists at most.
 const SHOWN: usize = 12;
 /// Commands that say where things are and aren't the work.
-const UNKEPT: [&str; 9] = ["help", "--help", "-h", "--version", "init", "rules", "status", "doctor", "journal"];
+/// `check` among them: the commit hook runs it, and a line it kept would leave the committed journal changed by
+/// every commit (D222).
+const UNKEPT: [&str; 10] =
+    ["help", "--help", "-h", "--version", "init", "rules", "status", "doctor", "journal", "check"];
 
 /// A command that ran.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -267,6 +270,22 @@ mod tests {
 
     fn compared(session: &str, end: &str) -> Entry {
         Entry { session: Some(session.into()), end: Some(end.into()), ok: end == "match", ..ran("compare", &[session]) }
+    }
+
+    /// The commit hook's `rrc check` isn't kept: the journal is committed (D222), and a line of it would leave the
+    /// journal changed after every commit.
+    #[test]
+    fn a_check_is_not_kept() {
+        let root = std::env::temp_dir().join(format!("rrc-journal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let settings = toml::from_str("[game]\nname = \"t\"\n\n[original]\nprogram = \"T.COM\"\n").unwrap();
+        let repo = Repo { root: root.clone(), settings, local: crate::repo::Local::default() };
+        close(&repo, &["check".to_owned()], true);
+        close(&repo, &["show".to_owned(), "count".to_owned()], true);
+        let kept: Vec<String> = load(&repo).into_iter().map(|e| e.cmd).collect();
+        assert_eq!(kept, ["show"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
