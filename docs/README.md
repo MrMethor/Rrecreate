@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-24 (decisions to D223). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-25 (decisions to D223). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -233,7 +233,11 @@ of the game in a private store of theirs; their machine keeps the plays. The fir
 in 16, every one matching in every mapped field. Its first gap is closed: the card and the journal were the
 machine's, so the card the person's machine left open never reached the cloud; they are now the work's own record,
 committed with the port (D222). A presentation's item may now be found through a pointer, as a carried one
-(D223): Arena's sky colours are drawn from a block on the heap. **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the
+(D223): Arena's sky colours are drawn from a block on the heap. In the cloud since, each change counted over all 107
+sessions, every field still matching: a corpse moved out of a door's cell, a flat's reflection, the game speed's wait
+(its off-by-one registered), a house's people taken out, and the services' lists drawn (their pictures, their rows'
+columns, the bar around them; a row's colour code that leaves the stack a word up registered): 63 bugs of the
+original registered, the frames differing at 495 ticks of 36 sessions (508 before). **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the
 person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
