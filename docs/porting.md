@@ -1122,9 +1122,23 @@ empty), and the person's machine keeps what needs a window (D221). Arena's port 
    into `RULES.md` (where to push, as whom, what not to format).
 
 **A session:** the person starts it with the port's repository, the game's files' repository and Rrecreate
-attached; an agent can't attach one. The agent runs the setup, `rrc analyze` and `rrc work --run` (it records every
-session first: an hour or two on an empty machine), then works the loop as anywhere, toolkit fixes included
-(pushed to Rrecreate's `main` with the checks of what they touch).
+attached; an agent can't attach one. Their first message gives the work and the permissions the session's own
+instructions don't (pushing straight to the port's and Rrecreate's main branches, rule 12 of the hub; a port's cloud
+note keeps a message that worked). The agent runs the setup, which also installs `rrc hooks` (a fresh machine has
+neither the commit hook nor the session's), `rrc analyze` and `rrc work --run` (it records every session first: under
+an hour on an empty machine), then works the loop as anywhere, toolkit fixes included (pushed to Rrecreate's `main`
+with the checks of what they touch, CI looked at after). Each shell command is a new shell there: `rrc`'s folder goes
+on the `PATH` in each.
+
+- **Long jobs in the background:** a census or a flow test runs as a background command whose end the agent is told
+  of, one at a time; nothing of the port's code changes and nothing is committed while a census runs (it stops: the
+  code it counted changed).
+- **What it can't do:** push a tag or make a release (the person pushes the tag), reach a repository not attached,
+  use GitHub's GraphQL (the REST API and the session's GitHub tools work), show a window (a virtual display and
+  screenshots instead; no sound device), keep files after it ends (commit and push).
+- **Hooks:** the commit hook refuses while `rrc check` fails; the session's stop hook asks to commit and push at a
+  turn's end (after a running census, not during it); after a summary of the context, `rrc rules` and `rrc status`
+  again.
 
 - **Keep one session for a stretch of work:** its machine keeps its files between pauses; a new one starts empty.
 - **No session talks to another:** the repository is the handover. Commit and push before stopping; `rrc status`,
