@@ -115,20 +115,21 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   the last of that kind found that says something of the whole session (one stopped short by `--to` isn't kept, and
   a match from a later tick doesn't replace one of the same recording and code from an earlier). An outcome also has
   `fields_only`, `drew` (the port's frames were compared), `unsounded` (the devices the original sounded that
-  nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has
-  the recording it is of (`recorded`) and the port's code (`port`) too; `corrected.json` is the corrected run's census
-  (D191), which a play followed as it goes keeps too (`.rrc/play/NAME/census.json`, D192), with `panics`, where the
-  port stopped and was started again (D193), and `lost`, the stretches where its loop took its passes at another sync
-  point than the original's (`from`, `to` or none to the end, the sync points `port` and `original`, D207). Beside
-  it, `follow.log` (D207): a line each thing said (`new`, `lost`, `back`; `counted` while lost), with the seconds since
-  the follow began and how far behind the play it was said, and every ten seconds a `pace` line (the play's time and
-  the comparison's, and each part's share of the time). `live.json` (`rrc compare --live`, D194) is what the port's input
-  handling made: `ticks` checked, `same` as the original's handlers made them, and by input the ticks it made
-  otherwise (`differs`) or a moment apart (`timing`), each with its first tick and byte; `waits` (its loop still
-  waited, the original's next pass within two frames), `skips` (no pass by the original's next sync point), `syncs`
-  (a pass from another sync point), `ends` (its loop ended). The workflow's gates read these. What was
-  kept before them counts as other code's (stale): an `outcome.json` alone as a comparison of the fields, a census
-  without `recorded` as one of the recording there is.
+  nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has the
+  recording it is of (`recorded`) and the port's code (`port`) too, and beside `screen` and `sound`, `pictures` (D229):
+  the first tick a picture the port showed between ticks isn't among the original's there, and how many;
+  `corrected.json` is the corrected run's census (D191), which a play followed as it goes keeps too
+  (`.rrc/play/NAME/census.json`, D192), with `panics`, where the port stopped and was started again (D193), and `lost`,
+  the stretches where its loop took its passes at another sync point than the original's (`from`, `to` or none to the
+  end, the sync points `port` and `original`, D207). Beside it, `follow.log` (D207): a line each thing said (`new`,
+  `lost`, `back`; `counted` while lost), with the seconds since the follow began and how far behind the play it was
+  said, and every ten seconds a `pace` line (the play's time and the comparison's, and each part's share of the time).
+  `live.json` (`rrc compare --live`, D194) is what the port's input handling made: `ticks` checked, `same` as the
+  original's handlers made them, and by input the ticks it made otherwise (`differs`) or a moment apart (`timing`), each
+  with its first tick and byte; `waits` (its loop still waited, the original's next pass within two frames), `skips` (no
+  pass by the original's next sync point), `syncs` (a pass from another sync point), `ends` (its loop ended). The
+  workflow's gates read these. What was kept before them counts as other code's (stale): an `outcome.json` alone as a
+  comparison of the fields, a census without `recorded` as one of the recording there is.
 - `assets/`: the pictures, sounds and music `rrc asset` wrote, the person's (D78).
 - `start/<session>-<tick>/`: where `rrc start` left a session's original for the port to play from (D120):
   `state.json` (the mapped fields' values, as a transplant's `rrc-state`), `presentation.json` (the

@@ -404,6 +404,8 @@ fn compare(
                 screen: screen.clone(),
                 sound: tick.sound.clone(),
                 sync: Some(tick.sync.clone()),
+                // A play followed live keeps its pictures by their hashes alone (D196): not compared.
+                frames: Vec::new(),
             });
             ticks = tick.tick;
             log.reading += reading.elapsed().as_micros() as u64;

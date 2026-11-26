@@ -155,7 +155,7 @@ wrong in an earlier one is fixed there first (rule 12). Stages 4 to 6 repeat one
 | **3 Skeleton** | A port that compares before it does anything | Something is mapped and the port's program named; every session has a census of its recording; no named datum is neither mapped, carried nor ignored |
 | **4 Logic** | The simulation, subsystem by subsystem | No census has a field the port leaves otherwise or unset, or a path noted as not ported; every session matches in its mapped fields to its end with nothing fed; `rrc check` refuses nothing; every quirk's switch has been shown by a session |
 | **5 Data and start-up** | The port loads the game itself | Every session that starts at power-on matches in its fields from the port's own start |
-| **6 Presentation** | Frames, then sound | Every session matches from its start in state, frames and each device the original sounds in it; no census has a frame or a sound that differs |
+| **6 Presentation** | Frames, then sound | Every session matches from its start in state, frames and each device the original sounds in it; no census has a frame, a picture between ticks or a sound that differs |
 | **7 Play** | A port a person plays | Not something `rrc` tests: it plays from power-on in a window, saves load both ways with the original, and what the person's play-test found became sessions. The person closes it |
 
 The gate is what a tool can test. A stage does more, which only the agent can judge and its section below says:
@@ -169,7 +169,8 @@ and each layer stands on the one below.
 
 **The work loop** (stages 4 to 6), once for each item of the work list. `rrc work` is the list (D158): what the
 censuses of the scope's sessions count (`rrc compare SESSION --lockstep`, D124), merged over the sessions: the mapped
-fields first, then the paths noted as not ported, then the frames, then the sound, the most passes first. `rrc work
+fields first, then the paths noted as not ported, then the frames and the pictures between ticks, then the sound,
+the most passes first. `rrc work
 --run` records first each session the knowledge left stale (bases first, mostly without the emulator), then counts
 again each session whose census the port's code as it is now didn't make and the change can reach, and compares
 again each that nothing compared since (the fields alone before stage 6), so one command brings every gate up to the
@@ -727,16 +728,15 @@ named data the mapping neither maps nor ignores: the state nothing compares yet.
 
 `rrc compare SESSION --lockstep` compares the whole session at once (D124): the port gets the original's mapped
 state before every pass, so each pass starts where the original's did, and every field its own pass leaves
-otherwise is counted with the first tick and what it was (`differs   player.position: in 12 of 774 passes, first
-at dungeon's tick 197 (player.position.x: original 2448, port 2432)`), with the fields it leaves unset, the frames
-and the sound that differ, and its notes; the census is in `.rrc/compare/SESSION/census.json`. A session that starts
-at power-on is counted from there, the port started as it starts itself (its initial data, D135), not from a
-transplant at its first tick, which would leave out what its power-on sets up and nothing maps (D164). At a
-scenario's edit, the port's own values stay where the edit writes until its tick is drawn, as the pass left them
-(D166). A run whose port's code changed while it ran is refused (D167): while a long census runs, edit a copy of
-the port. It is the work
-list: take a difference, then `rrc compare SESSION --transplant T` with T the tick before its first, for who wrote
-the original's value.
+otherwise is counted with the first tick and what it was (`differs   player.position: in 12 of 774 passes, first at
+dungeon's tick 197 (player.position.x: original 2448, port 2432)`), with the fields it leaves unset, the frames, the
+pictures between ticks (D229) and the sound that differ, and its notes; the census is in
+`.rrc/compare/SESSION/census.json`. A session that starts at power-on is counted from there, the port started as it
+starts itself (its initial data, D135), not from a transplant at its first tick, which would leave out what its power-on
+sets up and nothing maps (D164). At a scenario's edit, the port's own values stay where the edit writes until its tick
+is drawn, as the pass left them (D166). A run whose port's code changed while it ran is refused (D167): while a long
+census runs, edit a copy of the port. It is the work list: take a difference, then `rrc compare SESSION --transplant T`
+with T the tick before its first, for who wrote the original's value.
 
 `rrc compare SESSION --live` checks the port's own input handling (its `Live`, what the platform plays it with)
 beside lockstep (D194): at each of the original's sync points, `Live` is given the session's keys and mouse as the

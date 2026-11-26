@@ -56,6 +56,7 @@ impl Item {
         let at = format!("first at {}'s tick {}", self.first.session, self.first.tick);
         let text = match self.kind {
             "screen" => format!("the port's frame differs at {} ticks{s}, {at}{what}", self.passes),
+            "pictures" => format!("the port's pictures between ticks differ at {} ticks{s}, {at}{what}", self.passes),
             "sound" => format!("the port's sound differs at {} ticks{s}, {at}{what}", self.passes),
             "unset" => format!("{}: the port leaves it unset, in {} passes{s}, {at}", self.key, self.passes),
             "note" => format!("{}: not ported, taken in {} passes{s}, {at}", self.key, self.passes),
@@ -93,6 +94,9 @@ pub(crate) fn list(standing: &Standing) -> Vec<Item> {
         }
         if let Some(seen) = &c.screen {
             add(2, "screen", "", seen);
+        }
+        if let Some(seen) = &c.pictures {
+            add(2, "pictures", "", seen);
         }
         if let Some(seen) = &c.sound {
             add(3, "sound", "", seen);
@@ -246,7 +250,11 @@ pub(crate) fn work(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             let census = crate::quietly(|| crate::compare::lockstep(repo, name))?;
             census.save(&repo.state()?.join("compare").join(name).join("census.json"))?;
             let things = census.fields.len() + census.unset.len();
-            let seen = [census.screen.is_some().then_some("frames"), census.sound.is_some().then_some("sound")];
+            let seen = [
+                census.screen.is_some().then_some("frames"),
+                census.pictures.is_some().then_some("pictures"),
+                census.sound.is_some().then_some("sound"),
+            ];
             let seen: Vec<&str> = seen.into_iter().flatten().collect();
             let more = if seen.is_empty() { String::new() } else { format!(", {} differ", seen.join(" and ")) };
             say(
@@ -474,6 +482,7 @@ mod tests {
         b.fields.insert("player.x".into(), seen("b", 7, 8));
         b.unset.insert("map".into(), seen("b", 1, 30));
         b.sound = Some(seen("b", 5, 2));
+        b.pictures = Some(seen("b", 3, 6));
         let standing = Standing {
             lacks: Vec::new(),
             held: vec![held("a", a), held("b", b)],
@@ -485,7 +494,7 @@ mod tests {
         };
         let items = list(&standing);
         let names: Vec<&str> = items.iter().map(Item::name).collect();
-        assert_eq!(names, ["map", "player.x", "score", "a door not opened (G+00100)", "screen", "sound"]);
+        assert_eq!(names, ["map", "player.x", "score", "a door not opened (G+00100)", "screen", "pictures", "sound"]);
         assert_eq!((items[1].passes, items[1].sessions, items[1].first.session.as_str()), (11, 2, "a"));
         assert_eq!(items[1].line().1, "player.x: in 11 passes of 2 sessions, first at a's tick 10");
         assert_eq!(
@@ -493,6 +502,7 @@ mod tests {
             ("unset".into(), "map: the port leaves it unset, in 30 passes, first at b's tick 1".into())
         );
         assert_eq!(items[4].line().1, "the port's frame differs at 40 ticks, first at a's tick 2");
+        assert_eq!(items[5].line().1, "the port's pictures between ticks differ at 6 ticks, first at b's tick 3");
     }
 
     #[test]

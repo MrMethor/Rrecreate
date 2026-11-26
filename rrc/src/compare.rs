@@ -110,8 +110,10 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
         if census.differs() || !census.unset.is_empty() || !census.notes.is_empty() {
             say("next", "rrc work: this with every other session's census, ranked; rrc work take ITEM for the top one");
         }
-        let differing =
-            census.fields.len() + usize::from(census.screen.is_some()) + usize::from(census.sound.is_some());
+        let differing = census.fields.len()
+            + usize::from(census.screen.is_some())
+            + usize::from(census.pictures.is_some())
+            + usize::from(census.sound.is_some());
         crate::journal::ended(name, format!("census: {differing} things differ"));
         return Ok(if census.differs() { ExitCode::from(1) } else { ExitCode::SUCCESS });
     }
@@ -334,7 +336,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             let fleeting: Vec<&str> =
                 v["fleeting"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
             let tick = &trace.ticks[(t - 1) as usize];
-            if let Some(miss) = between.check(t, tick, &names, &fleeting, &work.join("frames"), &cache)? {
+            if let Some(miss) = between.check(t, &tick.frames, &names, &fleeting, &work.join("frames"), &cache)? {
                 drawn = Some((t, miss.diff.clone()));
                 missed = Some(miss);
                 break;
@@ -717,18 +719,18 @@ struct Missed {
 
 impl Between {
     /// The port's pictures between the tick before and `t` (`names`, in `frames`) against the original's of the
-    /// tick's pass, each that changed from the last.
+    /// tick's pass (`shown`, the recording's refreshes), each that changed from the last.
     fn check(
         &mut self,
         t: u64,
-        tick: &crate::trace::Tick,
+        shown: &[Value],
         names: &[&str],
         fleeting: &[&str],
         frames: &std::path::Path,
         cache: &Cache,
     ) -> Result<Option<Missed>, String> {
         let mut originals: Vec<&str> = Vec::new();
-        for f in &tick.frames {
+        for f in shown {
             if let Some(hash) = f.get(4).and_then(Value::as_str)
                 && originals.last() != Some(&hash)
             {
@@ -1200,6 +1202,9 @@ pub(crate) struct At {
     pub sound: serde_json::Map<String, Value>,
     /// The tick's sync point, where the original's loop took the pass that ended at the next (a play followed: D207).
     pub sync: Option<String>,
+    /// The pictures its display showed in the pass, the recording's (D180): none in a play followed live, which keeps
+    /// them by their hashes alone (D196).
+    pub frames: Vec<Value>,
 }
 
 /// A pointer's bytes (`own`, of `kind`) read as the index of the element it points to in the array `into` names,
@@ -1483,6 +1488,9 @@ pub(crate) struct Census {
     /// Fields it leaves unset (null): not ported.
     pub unset: BTreeMap<String, Seen>,
     pub screen: Option<Seen>,
+    /// The pictures it showed between ticks (D180) where one isn't among the original's in the pass, in order (D229).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pictures: Option<Seen>,
     pub sound: Option<Seen>,
     /// What it noted (`rrc_runtime::note`, D115): paths not ported.
     pub notes: BTreeMap<String, Seen>,
@@ -1554,7 +1562,11 @@ fn lost_at(lost: &mut Vec<Lost>, runs: &mut [u32; 2], t: u64, port: Option<&str>
 impl Census {
     /// Whether the port's state, frames or sound differ anywhere, or it stopped.
     pub fn differs(&self) -> bool {
-        !self.fields.is_empty() || self.screen.is_some() || self.sound.is_some() || !self.panics.is_empty()
+        !self.fields.is_empty()
+            || self.screen.is_some()
+            || self.pictures.is_some()
+            || self.sound.is_some()
+            || !self.panics.is_empty()
     }
 
     /// Each thing `other` has that this hasn't: (its kind, its name, where first).
@@ -1569,7 +1581,11 @@ impl Census {
                 theirs.iter().filter(|(key, _)| !mine.contains_key(*key)).map(|(key, seen)| (kind, key.as_str(), seen)),
             );
         }
-        for (kind, mine, theirs) in [("screen", &self.screen, &other.screen), ("sound", &self.sound, &other.sound)] {
+        for (kind, mine, theirs) in [
+            ("screen", &self.screen, &other.screen),
+            ("pictures", &self.pictures, &other.pictures),
+            ("sound", &self.sound, &other.sound),
+        ] {
             if let (None, Some(seen)) = (mine, theirs) {
                 new.push((kind, "", seen));
             }
@@ -1588,6 +1604,9 @@ impl Census {
             "differs" => format!("{key}: in {} of {passes} passes, {at}{what}", seen.ticks),
             "unset" => format!("{key}: the port leaves it unset, in {} passes, {at}", seen.ticks),
             "screen" => format!("the port's frame differs at {} of {passes} ticks, {at}{what}", seen.ticks),
+            "pictures" => {
+                format!("the port's pictures between ticks differ at {} of {passes} ticks, {at}{what}", seen.ticks)
+            }
             "sound" => format!("the port's sound differs at {} of {passes} ticks, {at}{what}", seen.ticks),
             "panic" => format!("the port stopped in the pass to {}'s tick {}: {}", seen.session, seen.tick, seen.what),
             _ => format!("{key}: in {} passes, first in the pass to {}'s tick {}", seen.ticks, seen.session, seen.tick),
@@ -1612,7 +1631,7 @@ impl Census {
                 say("more", format!("{} more fields {kind} (in census.json)", all.len() - limit));
             }
         }
-        for (kind, seen) in [("screen", &self.screen), ("sound", &self.sound)] {
+        for (kind, seen) in [("screen", &self.screen), ("pictures", &self.pictures), ("sound", &self.sound)] {
             if let Some(seen) = seen {
                 let (kind, text) = Census::line(kind, "", seen, self.passes);
                 say(&kind, text);
@@ -1776,6 +1795,7 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
                 screen: screens[given].clone(),
                 sound: tick.sound.clone(),
                 sync: None,
+                frames: tick.frames.clone(),
             });
             given += 1;
         }
@@ -2096,6 +2116,8 @@ pub(crate) struct Counting<'a> {
     /// A free run's state as its lines leave it (each gives the top-level fields that changed).
     own: Value,
     screens_seen: Screens,
+    /// The pictures between ticks compared (D229).
+    between: Between,
     pub(crate) census: Census,
     corrected: Corrections,
     /// The last tick of the port's trace.
@@ -2141,6 +2163,7 @@ impl<'a> Counting<'a> {
             made: Vec::new(),
             own: Value::Object(serde_json::Map::new()),
             screens_seen: Screens::default(),
+            between: Between::default(),
             census,
             corrected: Corrections::default(),
             compared: 0,
@@ -2323,6 +2346,29 @@ impl<'a> Counting<'a> {
             match &mut census.screen {
                 Some(seen) => seen.ticks += 1,
                 None => census.screen = Some(seen_at(t, what)),
+            }
+        }
+        // The pictures shown between ticks (D229): where the recording has the original's in the pass.
+        if let Some(names) = v["between"].as_array().filter(|n| !n.is_empty())
+            && !at.frames.is_empty()
+        {
+            let names: Vec<&str> = names.iter().filter_map(Value::as_str).collect();
+            let fleeting: Vec<&str> =
+                v["fleeting"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            if let Some(miss) = self.between.check(t, &at.frames, &names, &fleeting, &self.frames, self.cache)? {
+                let (picture, pictures, shown) = (ordinal(miss.picture + 1), miss.pictures, miss.shown);
+                let what = if miss.from < miss.shown {
+                    format!(
+                        "its {picture} of {pictures} isn't among the original's from its {} of {shown} on",
+                        ordinal(miss.from + 1)
+                    )
+                } else {
+                    format!("its {picture} of {pictures} comes after the original's last of {shown}")
+                };
+                match &mut census.pictures {
+                    Some(seen) => seen.ticks += 1,
+                    None => census.pictures = Some(seen_at(t, what)),
+                }
             }
         }
         let made: Vec<&str> = self.made.iter().map(String::as_str).collect();
@@ -3755,15 +3801,66 @@ mod tests {
             std::fs::write(frames.join(name), picture(v).encode()).unwrap();
         }
         let mut between = Between::default();
-        assert!(between.check(1, &tick, &["a.frm", "b.frm"], &[], &frames, &cache).unwrap().is_none());
+        assert!(between.check(1, &tick.frames, &["a.frm", "b.frm"], &[], &frames, &cache).unwrap().is_none());
         assert_eq!((between.passes, between.pictures, between.shown), (1, 2, 4), "the repeat counted once");
         // One shown for less than a refresh may be missing (D181).
-        assert!(between.check(1, &tick, &["a.frm", "c.frm", "b.frm"], &["c.frm"], &frames, &cache).unwrap().is_none());
+        assert!(
+            between
+                .check(1, &tick.frames, &["a.frm", "c.frm", "b.frm"], &["c.frm"], &frames, &cache)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(between.unseen, 0, "2 is there, after 1");
-        assert!(between.check(1, &tick, &["b.frm", "c.frm"], &["c.frm"], &frames, &cache).unwrap().is_none());
+        assert!(between.check(1, &tick.frames, &["b.frm", "c.frm"], &["c.frm"], &frames, &cache).unwrap().is_none());
         assert_eq!(between.unseen, 1, "2 after 3: fleeting, passed over");
-        let missed = between.check(1, &tick, &["b.frm", "c.frm"], &[], &frames, &cache).unwrap().expect("2 after 3");
+        let missed =
+            between.check(1, &tick.frames, &["b.frm", "c.frm"], &[], &frames, &cache).unwrap().expect("2 after 3");
         assert_eq!((missed.picture, missed.from, missed.shown), (1, 4, 4), "none left after the 3 it matched");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_census_counts_the_ticks_whose_pictures_between_aren_t_the_original_s() {
+        let dir = std::env::temp_dir().join(format!("rrc-census-pictures-{}", std::process::id()));
+        let cache = Cache::at(&dir.join("cache")).unwrap();
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).unwrap();
+        let picture = |v: u8| {
+            let mut f = Frame::new(2, 1);
+            f.set(0, 0, v);
+            f
+        };
+        // The original showed 1 then 2 in each pass; the port 1 then 2 in the first, 2 then 1 in the second.
+        let shown: Vec<Value> = [1, 2]
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| json!([i, i, 19, "", cache.put(&picture(v).encode()).unwrap()]))
+            .collect();
+        for (name, v) in [("a.frm", 1), ("b.frm", 2)] {
+            std::fs::write(frames.join(name), picture(v).encode()).unwrap();
+        }
+        let sets = BTreeMap::new();
+        let mut counting = Counting::new("s", &[], &sets, &cache, frames.clone(), 0, false, Census::default());
+        for tick in 1..=3 {
+            let frames = if tick == 3 { Vec::new() } else { shown.clone() };
+            counting.original(At {
+                tick,
+                values: Vec::new(),
+                screen: None,
+                sound: Default::default(),
+                sync: None,
+                frames,
+            });
+        }
+        counting.line(&json!({"tick": 1, "between": ["a.frm", "b.frm"]})).unwrap();
+        assert_eq!(counting.census.pictures, None, "1 then 2: the original's");
+        counting.line(&json!({"tick": 2, "between": ["b.frm", "a.frm"]})).unwrap();
+        let seen = counting.census.pictures.clone().expect("1 after 2 isn't");
+        assert_eq!((seen.tick, seen.ticks), (2, 1));
+        assert_eq!(seen.what, "its 2nd of 2 comes after the original's last of 2");
+        counting.line(&json!({"tick": 3, "between": ["b.frm", "a.frm"]})).unwrap();
+        assert_eq!(counting.census.pictures.as_ref().map(|s| s.ticks), Some(1), "none recorded there: not compared");
+        assert!(counting.census.differs());
         std::fs::remove_dir_all(&dir).ok();
     }
     use crate::knowledge::{Field, Struct};

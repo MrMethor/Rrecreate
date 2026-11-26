@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-25 (decisions to D228). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-26 (decisions to D229). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -245,7 +245,8 @@ and its start from power-on needs no recording (D225). Then, at the person's wor
 the program alone finds the person's copy, unpacks the game's program itself and starts from power-on by a book
 `rrc` writes into the port; Arena's is given as that one program. A port's scripts and CI's files no longer count
 as its code, so editing them leaves its censuses standing (D227). A datum named with a type and no size is read at
-its type's size (D228): `rrc peek` had shown a four-byte clock as two.
+its type's size (D228): `rrc peek` had shown a four-byte clock as two. A census counts the pictures between ticks
+too (D229), so a fade or a dissolve that differs reaches the work list, not only a comparison that stops there.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

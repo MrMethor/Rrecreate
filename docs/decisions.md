@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D229. A census counts the pictures between ticks. Accepted 2026-11-26.
+A lockstep's census (D124) and a corrected run's compare the pictures the port shows between ticks (D180) as
+`rrc compare` does: each one of the original's display's refreshes in the pass, in order, one shown for less than a
+refresh passed over (D181). A tick where one isn't is counted in the census's `pictures` (its first tick, and which
+picture), so the work list has the item "the port's pictures between ticks differ", ranked with the frames; `rrc
+status` names the sessions where they differ, and stage 6's gate asks for none. A tick whose recording has no
+pictures of the original (a play followed live keeps them by their hashes alone, D196) isn't compared.
+**Why:** the census compared the frame at each tick and not the pictures between: on Arena a change to a place's
+leaving made the fades between its ticks the original's, and nothing but a comparison of one session could say
+whether it broke another's; journey's dissolve at tick 16 had differed unseen, as `rrc compare` stops at the first
+difference and the census is the work list's whole view.
+**Extends:** D124, D158, D180.
+
 ### D228. A datum without a size has its type's. Accepted 2026-11-25.
 Where the knowledge names a datum with a type and no size (`knowledge/data.tsv`'s size column empty), `rrc peek`,
 `rrc watch`, `rrc show` and a mapping's `[[ignore]]` take the type's size (a `u32`'s 4) before their own defaults (2

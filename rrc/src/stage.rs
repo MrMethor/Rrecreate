@@ -375,11 +375,13 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         };
         presentation.push(lack(what, next));
     }
-    let seen: Vec<&Held> =
-        held.iter().filter(|h| h.census.as_ref().is_some_and(|c| c.screen.is_some() || c.sound.is_some())).collect();
+    let seen: Vec<&Held> = held
+        .iter()
+        .filter(|h| h.census.as_ref().is_some_and(|c| c.screen.is_some() || c.pictures.is_some() || c.sound.is_some()))
+        .collect();
     if !seen.is_empty() {
         let what = format!(
-            "{} with frames or sound that differ in the census: {}",
+            "{} with frames, pictures or sound that differ in the census: {}",
             of(seen.len(), held.len()),
             some(&seen, |h| h.name.clone())
         );
@@ -562,11 +564,12 @@ fn sessions(standing: &Standing) {
         let census = match &h.census {
             None => "no census".to_owned(),
             Some(c) => format!(
-                "census: {} fields, {} unset, {} notes{}{}",
+                "census: {} fields, {} unset, {} notes{}{}{}",
                 c.fields.len(),
                 c.unset.len(),
                 c.notes.len(),
                 if c.screen.is_some() { ", frames differ" } else { "" },
+                if c.pictures.is_some() { ", pictures differ" } else { "" },
                 if c.sound.is_some() { ", sound differs" } else { "" }
             ),
         };
