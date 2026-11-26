@@ -1475,6 +1475,9 @@ pub(crate) struct Seen {
 /// every field its own pass left otherwise, the frames and the sound that differ, and what it noted.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Census {
+    /// What it counts (`Census::COUNTS`): one made before it counted all it does now holds for nothing (D229).
+    #[serde(default)]
+    pub counts: u32,
     /// The recording it is of, and the port's code that made it (`sources::fingerprint`): a census holds for those
     /// (D158).
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -1560,6 +1563,9 @@ fn lost_at(lost: &mut Vec<Lost>, runs: &mut [u32; 2], t: u64, port: Option<&str>
 }
 
 impl Census {
+    /// What a census counts now: 1, the pictures between ticks too (D229).
+    pub const COUNTS: u32 = 1;
+
     /// Whether the port's state, frames or sound differ anywhere, or it stopped.
     pub fn differs(&self) -> bool {
         !self.fields.is_empty()
@@ -1715,8 +1721,12 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
         let linear = |linear: u32| places.linear_id(linear).ok();
         original_values(&trace, &mapped, &crate::values::of(&k).with_linear(&linear), name, 0..trace.ticks.len())?
     };
-    let census =
-        Census { recorded: recorded.hash.clone(), port: crate::impact::fingerprint(repo)?, ..Census::default() };
+    let census = Census {
+        counts: Census::COUNTS,
+        recorded: recorded.hash.clone(),
+        port: crate::impact::fingerprint(repo)?,
+        ..Census::default()
+    };
     let ticks = trace.ticks.len() as u64;
     if ticks < 2 {
         return Ok((census, None));

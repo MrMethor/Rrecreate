@@ -108,7 +108,7 @@ pub(crate) fn follow(
     let start =
         crate::compare::PortStart::new(repo, session, name, &k, &mapping, &mapped, header.clone())?.checking_live();
     let sets = std::collections::BTreeMap::new();
-    let census = Census { port: crate::impact::fingerprint(repo)?, ..Census::default() };
+    let census = Census { counts: Census::COUNTS, port: crate::impact::fingerprint(repo)?, ..Census::default() };
     let mut counting = Counting::new(name, &mapped, &sets, &cache, start.frames(), 1, true, census);
     let progress = Arc::new(Progress::default());
     crate::clockwork::below_normal(true);

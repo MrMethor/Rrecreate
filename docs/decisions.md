@@ -770,7 +770,9 @@ A lockstep's census (D124) and a corrected run's compare the pictures the port s
 refresh passed over (D181). A tick where one isn't is counted in the census's `pictures` (its first tick, and which
 picture), so the work list has the item "the port's pictures between ticks differ", ranked with the frames; `rrc
 status` names the sessions where they differ, and stage 6's gate asks for none. A tick whose recording has no
-pictures of the original (a play followed live keeps them by their hashes alone, D196) isn't compared.
+pictures of the original (a play followed live keeps them by their hashes alone, D196) isn't compared. A census says
+what it counts (`counts`, 1 from this): one made before holds for nothing, so `rrc work --run` makes it again though
+neither the recording nor the port's code changed.
 **Why:** the census compared the frame at each tick and not the pictures between: on Arena a change to a place's
 leaving made the fades between its ticks the original's, and nothing but a comparison of one session could say
 whether it broke another's; journey's dissolve at tick 16 had differed unseen, as `rrc compare` stops at the first

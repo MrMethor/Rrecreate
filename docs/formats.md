@@ -116,8 +116,9 @@ java = "C:/Tools/jdk-21"        # else JAVA_HOME
   a match from a later tick doesn't replace one of the same recording and code from an earlier). An outcome also has
   `fields_only`, `drew` (the port's frames were compared), `unsounded` (the devices the original sounded that
   nothing was compared for) and `port`, the hash of the port's code then. `census.json`, a lockstep's (D124), has the
-  recording it is of (`recorded`) and the port's code (`port`) too, and beside `screen` and `sound`, `pictures` (D229):
-  the first tick a picture the port showed between ticks isn't among the original's there, and how many;
+  recording it is of (`recorded`) and the port's code (`port`) too, what it counts (`counts`: 1 since D229, a census
+  without it holding for nothing), and beside `screen` and `sound`, `pictures` (D229): the first tick a picture the
+  port showed between ticks isn't among the original's there, and how many;
   `corrected.json` is the corrected run's census (D191), which a play followed as it goes keeps too
   (`.rrc/play/NAME/census.json`, D192), with `panics`, where the port stopped and was started again (D193), and `lost`,
   the stretches where its loop took its passes at another sync point than the original's (`from`, `to` or none to the

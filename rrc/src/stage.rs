@@ -161,8 +161,11 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         let session = Session::load(repo, name)?;
         let recorded = session.trace.as_ref().map(|t| t.hash.clone());
         let current = |made_of: &str| recorded.as_deref() == Some(made_of);
-        // A census kept before it said which recording it was of counts, as other code's than now's (stale).
-        let census = Census::load(repo, name)?.filter(|c| c.recorded.is_empty() || current(&c.recorded));
+        // A census kept before it said which recording it was of counts, as other code's than now's (stale); one
+        // made before it counted what a census counts now holds for nothing, and is made again (D229).
+        let census = Census::load(repo, name)?
+            .filter(|c| c.recorded.is_empty() || current(&c.recorded))
+            .filter(|c| c.counts >= Census::COUNTS);
         let mut outcomes = Outcome::kept(repo, name)?;
         outcomes.retain(|_, o| current(&o.recorded));
         held.push(Held { unrecorded: unrecorded(name, &session)?, name: name.clone(), session, census, outcomes });
