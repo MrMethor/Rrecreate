@@ -1450,7 +1450,17 @@ pub(crate) fn inputs_line(
     }
     // The hooks' calls in the pass (D98).
     if !t.hooks.is_empty() {
-        let calls: Vec<Value> = t.hooks.iter().map(|(i, values)| json!([i, values])).collect();
+        // A call's memory, where its hook keeps some, third (D235).
+        let memory = |n: usize| t.hook_memory.iter().find(|(call, _)| *call == n).map(|(_, hex)| hex);
+        let calls: Vec<Value> = t
+            .hooks
+            .iter()
+            .enumerate()
+            .map(|(n, (i, values))| match memory(n) {
+                Some(hex) => json!([i, values, hex]),
+                None => json!([i, values]),
+            })
+            .collect();
         line["hooks"] = json!(calls);
     }
     // What each late read saw, and its bytes that differ from what the program should have read (D97).
@@ -3876,6 +3886,21 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hook_s_call_gives_the_port_the_memory_it_kept() {
+        let tick: crate::trace::Tick = serde_json::from_value(json!({
+            "tick": 3, "sync": "play", "cycle": 3000,
+            "hooks": [[0, [16]], [0, [2]]], "hook_memory": [[1, "EBFE"]]
+        }))
+        .unwrap();
+        let line = inputs_line(&tick, None, None, None);
+        assert_eq!(
+            line["hooks"],
+            json!([[0, [16]], [0, [2], "EBFE"]]),
+            "the memory third, where a call kept some (D235)"
+        );
+    }
 
     #[test]
     fn the_files_the_port_saved_are_compared_with_the_original_s() {

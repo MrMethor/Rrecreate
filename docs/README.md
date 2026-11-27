@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-27 (decisions to D234). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-27 (decisions to D235). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -255,8 +255,9 @@ The crates a port builds on by path (the runtime) count as its code, so a change
 stale (D234). By
 2026-11-27 all of Arena's short sessions (110, with scenarios of the strength's limit on what is carried) match in
 every mapped field, frame, picture between ticks and sound, in lockstep and run free, and the files they save are
-the original's but one (a new automap file's filler, the heap's leftovers); 67 bugs of the original are registered
-with their switches.
+the original's but one (a new automap file's filler); 67 bugs of the original are registered
+with their switches. That filler is the machine's first 64 KB, the interrupt table and DOS's included, which DOS
+reads for the write itself: a hook now keeps the memory its run's registers point at (D235).
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

@@ -164,10 +164,10 @@ pub(crate) fn input(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 
 /// `rrc hook [ID NAME --part TEXT --registers A,B ...] | [NAME --remove]` (D98).
 pub(crate) fn hook(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
-    let options = [DECISION_OPTIONS.as_slice(), &["--part", "--registers", "--note"]].concat();
+    let options = [DECISION_OPTIONS.as_slice(), &["--part", "--registers", "--memory", "--note"]].concat();
     let a = Args::parse(args, &options, &["--remove", "--interrupts"])?;
-    let usage = "hook [ID NAME --part TEXT --registers A,B [--interrupts] [--note TEXT] [--evidence TEXT] \
-                 [--confidence X] [--by WHO]] [NAME --remove]";
+    let usage = "hook [ID NAME --part TEXT --registers A,B [--memory SEGMENT:OFFSET:LENGTH] [--interrupts] \
+                 [--note TEXT] [--evidence TEXT] [--confidence X] [--by WHO]] [NAME --remove]";
     let _lock = crate::knowledge::EditLock::take(&repo.state()?)?;
     let mut k = Knowledge::load(&repo.knowledge())?;
     if a.has("--remove") {
@@ -202,6 +202,10 @@ pub(crate) fn hook(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
     if let Some(unknown) = registers.iter().find(|r| !REGISTERS.contains(&r.as_str())) {
         return Err(format!("--registers: no register {unknown} ({})", REGISTERS.join(", ")));
     }
+    let memory = a.value("--memory").unwrap_or_default().to_owned();
+    if !memory.is_empty() {
+        crate::knowledge::hook_memory(&memory)?;
+    }
     let d = decision(&a, name)?;
     let hook = Hook {
         name: name.clone(),
@@ -213,6 +217,7 @@ pub(crate) fn hook(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
         evidence: d.evidence,
         note: a.value("--note").unwrap_or_default().to_owned(),
         interrupts: a.has("--interrupts"),
+        memory,
     };
     say("hook", hook_text(&hook));
     match k.ticks.hooks.iter_mut().find(|h| h.name == *name) {
@@ -229,7 +234,8 @@ pub(crate) fn hook(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
 fn hook_text(h: &Hook) -> String {
     let provenance = if h.provenance.is_empty() { "?" } else { &h.provenance };
     let from = if h.interrupts { ", from interrupt handlers too" } else { "" };
-    format!("{} {}, called by {}{from}, with {} ({provenance})", h.name, h.at, h.part, h.registers.join(", "))
+    let memory = if h.memory.is_empty() { String::new() } else { format!(", keeping {}", h.memory) };
+    format!("{} {}, called by {}{from}, with {}{memory} ({provenance})", h.name, h.at, h.part, h.registers.join(", "))
 }
 
 /// A comma-separated list.

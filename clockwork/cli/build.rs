@@ -33,6 +33,7 @@ const TOOLS: &[&str] = &[
     "dos/src/bounds.rs",
     "dos/src/contracts.rs",
     "dos/src/coverage.rs",
+    "dos/src/entries.rs",
     "dos/src/trace.rs",
     "dos/src/uninit.rs",
     "dos/src/watch.rs",

@@ -44,10 +44,15 @@ fn entry_hits(hits: &[dos::EntryHit], name: &dyn Fn(u32) -> String) -> Vec<Value
     hits.iter()
         .map(|h| {
             let g = &h.regs;
-            json!({"cycle": h.cycle, "at": name(h.at), "regs": {
+            let mut hit = json!({"cycle": h.cycle, "at": name(h.at), "regs": {
                 "eax": g.gpr[0], "ecx": g.gpr[1], "edx": g.gpr[2], "ebx": g.gpr[3],
                 "esp": g.gpr[4], "ebp": g.gpr[5], "esi": g.gpr[6], "edi": g.gpr[7],
-                "es": g.es(), "cs": g.cs(), "ss": g.ss(), "ds": g.ds(), "flags": g.flags}})
+                "es": g.es(), "cs": g.cs(), "ss": g.ss(), "ds": g.ds(), "flags": g.flags}});
+            // The memory its entry keeps (D235), in hex.
+            if !h.memory.is_empty() {
+                hit["memory"] = json!(h.memory.iter().map(|b| format!("{b:02X}")).collect::<String>());
+            }
+            hit
         })
         .collect()
 }
@@ -270,6 +275,19 @@ pub(crate) fn handle(
                 interrupts.sort_unstable();
                 if let Some(entries) = m.probes.entries.as_deref_mut() {
                     entries.interrupts = interrupts;
+                }
+            }
+            // The memory an entry keeps at each run (D235): `{"at", "memory": "SEGMENT:OFFSET:LENGTH"}`.
+            if let Some(list) = r.get("memory").and_then(Value::as_array) {
+                let mut memory = Vec::new();
+                for item in list {
+                    let at = addr(m, item["at"].as_str().ok_or("\"memory\" lists {\"at\", \"memory\"}")?)?;
+                    let keeps = item["memory"].as_str().ok_or("\"memory\" lists {\"at\", \"memory\"}")?;
+                    memory.push((at, dos::entries::EntryMemory::parse(keeps)?));
+                }
+                memory.sort_by_key(|(at, _)| *at);
+                if let Some(entries) = m.probes.entries.as_deref_mut() {
+                    entries.memory = memory;
                 }
             }
             Ok(json!({}))

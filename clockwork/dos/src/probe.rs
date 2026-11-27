@@ -45,57 +45,7 @@ pub struct Probes {
     /// Input that changed within a tick ([`crate::Machine::start_late_inputs`]).
     pub late: Option<Box<LateInputs>>,
     /// Entries whose runs are kept with the registers ([`crate::Machine::start_entries`]).
-    pub entries: Option<Box<Entries>>,
-}
-
-/// The program's runs of chosen entries, with the registers it ran them with (D98): the calls a part of
-/// the program a port doesn't have makes into code the port has (a renderer waking a creature it drew).
-/// Interrupt handlers' runs aren't the program's and are left out, but those of the entries in `interrupts`
-/// (D174: a driver's service a timer interrupt calls), which are kept in order with the rest.
-#[derive(Debug, Clone, Default)]
-pub struct Entries {
-    /// The entries (linear), sorted.
-    pub at: Vec<u32>,
-    /// Each entry's [`entry_bit`]: an instruction whose bit isn't set is no entry, which is all a run asks of most.
-    pub mask: u64,
-    /// The entries whose runs in interrupt handlers count too (linear), sorted.
-    pub interrupts: Vec<u32>,
-    pub hits: Vec<EntryHit>,
-    /// Runs past [`crate::machine::MAX_EXEC_HITS`].
-    pub dropped: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct EntryHit {
-    pub cycle: u64,
-    pub at: u32,
-    pub regs: cpu::Regs,
-}
-
-/// An entry of [`crate::Machine::start_entries`] is about to run: kept, but in an interrupt handler (call tracking,
-/// when it is on, tells them apart) unless the entry is one of `interrupts` (D174).
-/// An address's bit in [`Entries::mask`], one of 64, its bits mixed so that aligned entries spread.
-#[inline]
-pub(crate) fn entry_bit(at: u32) -> u64 {
-    1 << (at.wrapping_mul(0x9E37_79B1) >> 26)
-}
-
-/// The instruction at `linear` is about to run: kept if it is an entry's (M6.5's step 1, D187: the address first, the
-/// question whether a handler runs only at an entry).
-pub(crate) fn watch_entries(m: &mut crate::Machine, linear: u32) {
-    if m.probes.entries.as_deref().is_none_or(|e| e.at.binary_search(&linear).is_err()) {
-        return;
-    }
-    let in_handler = m.probes.calls.as_deref().is_some_and(|c| c.in_hardware_interrupt());
-    let Some(entries) = m.probes.entries.as_deref_mut() else { return };
-    if in_handler && entries.interrupts.binary_search(&linear).is_err() {
-        return;
-    }
-    if entries.hits.len() >= crate::machine::MAX_EXEC_HITS {
-        entries.dropped += 1;
-        return;
-    }
-    entries.hits.push(EntryHit { cycle: m.cpu.cycles, at: linear, regs: m.cpu.regs });
+    pub entries: Option<Box<crate::entries::Entries>>,
 }
 
 pub(crate) const CALLS_FOR_WATCH: u8 = 1;

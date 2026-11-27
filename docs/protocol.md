@@ -129,7 +129,10 @@ bytes read; `clockwork run --contracts` writes the same, `clockwork/dos/src/cont
 function's entry) outside interrupt handlers, and in them too for those `interrupts` lists (D174), `{"entries":
 [{"cycle", "at", "regs": {"eax", ..., "es", "cs", "ss", "ds", "flags"}}], "dropped"}`, in order (D98; past a
 million, counted in `dropped`). `entries_take` answers the same with the runs kept since the last take, and keeps on
-(D192).
+(D192). `entries` takes `memory` too, `[{"at": addr, "memory": "ds:si:cx"}]`: the bytes an entry's run keeps,
+`SEGMENT:OFFSET:LENGTH`, each a register (a segment register at its base, a general one's 16 or 32 bits) or a
+number in hex (a segment as a real-mode one), at most 64 KB a run; each run of it has `"memory"`, the bytes in hex
+(those on a page not present read 00). Past 64 MB kept since the last take, its runs are dropped and counted (D235).
 
 **Input to come.** `queued` answers `{"events": ["<cycle> K|M|J|R ..."], "ips"}`, the input the machine still has
 to deliver, in order, as a recorded play's lines, and its speed (a cycle's millisecond: cycle × 1000 / ips): once a
@@ -236,6 +239,7 @@ An IBM PC with DOS (Clockwork).
     lines (D189).
 21. `late_inputs_take` and `entries_take`: what was found so far, the check going on (D192).
 22. `queued`: the input still to come, as a recorded play's lines (D194).
+23. `entries` takes `memory`: the bytes an entry's runs keep, found by their registers (D235).
 
 ## Changing the protocol
 

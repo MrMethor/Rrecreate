@@ -764,6 +764,22 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D235. A hook may keep memory its run's registers point at. Accepted 2026-11-27.
+A hook (D98) with `memory` (`rrc hook ... --memory SEGMENT:OFFSET:LENGTH`, each a register or a number in hex: `ds:si:cx`,
+`ds:0:FFFF`) keeps those bytes at each run of its entry, at most 64 KB a run: Clockwork's `entries` takes `memory`
+(protocol revision 23) and each run answers its bytes; the trace keeps them with the tick's calls (`hook_memory`), the
+port's inputs file has them third in each call, and the runtime's `Call::memory()` gives them. Clockwork's entries
+probe moves out of `probe.rs` into `entries.rs`, one of its analysis tools' files (D173), so the machine's hash no
+longer covers it; past 64 MB kept since a take, runs with memory are dropped and counted (D171).
+**Why:** Arena makes a missing AUTOMAP file by writing `level_map_segment`'s 64 KB twice, and at a new game's first
+level that segment is still 0: the file holds the machine's first 64 KB, the interrupt table, the BIOS's and DOS's
+data and the program's loaded code, which a level's key can later match (quirk `automap_new_file_low_memory`). DOS
+reads that memory itself, so no instruction's read shows it to a part input (D96, `late.rs`), and an input of the
+whole 64 KB at each sync point would miss what changes before the write mid-pass (the BIOS's clock). A hook at the
+code that loads the segment keeps exactly what the original wrote, the general form being memory handed on that the
+port doesn't model.
+**Extends:** D98, D173.
+
 ### D234. The crates a port builds on by path are its code too. Accepted 2026-11-27.
 The port's fingerprint (D158, D167) covers the code of the crates its `Cargo.toml` names by path, and theirs
 (Rrecreate's runtime and platform, their types and IDs), as it covers its own files; the cache keeps their hash

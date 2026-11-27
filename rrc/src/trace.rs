@@ -212,6 +212,9 @@ pub struct HookItem {
     pub registers: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interrupts: bool,
+    /// The memory each call keeps (D235): `SEGMENT:OFFSET:LENGTH`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub memory: String,
 }
 
 /// A register's value in Clockwork's `entries_end` answer: `ax` is `eax`'s low word, `ah` its second byte.
@@ -314,6 +317,9 @@ pub struct Tick {
     /// The hooks' calls in the tick's pass, in order (D98): (index in the header's `hooks`, registers).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<(usize, Vec<u32>)>,
+    /// The memory the calls whose hook keeps some kept (D235): (index in the tick's `hooks`, the bytes in hex).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hook_memory: Vec<(usize, String)>,
     /// The frames shown during the tick: [number, cycle, video mode, fingerprint, picture (its hash in
     /// the cache)].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -643,6 +649,7 @@ pub(crate) fn header(
                 at: h.at.clone(),
                 registers: h.registers.clone(),
                 interrupts: h.interrupts,
+                memory: h.memory.clone(),
             })
             .collect(),
         power_on: None,
@@ -1123,7 +1130,15 @@ impl<'a> Recorder<'a> {
             let at: Vec<String> = header.hooks.iter().map(|h| places.address(&h.at)).collect::<Result<_, _>>()?;
             let interrupts: Vec<&String> =
                 header.hooks.iter().zip(&at).filter(|(h, _)| h.interrupts).map(|(_, a)| a).collect();
-            clockwork.ask("entries", json!({ "at": at, "interrupts": interrupts }))?;
+            // The memory a hook's calls keep (D235).
+            let memory: Vec<Value> = header
+                .hooks
+                .iter()
+                .zip(&at)
+                .filter(|(h, _)| !h.memory.is_empty())
+                .map(|(h, a)| json!({"at": a, "memory": h.memory}))
+                .collect();
+            clockwork.ask("entries", json!({ "at": at, "interrupts": interrupts, "memory": memory }))?;
         }
         // Each frame's picture, kept in the cache (D25).
         clockwork.ask("frame_images", json!({"on": true}))?;
@@ -1148,6 +1163,7 @@ impl<'a> Recorder<'a> {
             state: Vec::new(),
             late: Vec::new(),
             hooks: Vec::new(),
+            hook_memory: Vec::new(),
             frames: Vec::new(),
             sound: serde_json::Map::new(),
             screen: None,
@@ -1379,6 +1395,7 @@ impl<'a> Recorder<'a> {
             state: changed,
             late: Vec::new(),
             hooks: Vec::new(),
+            hook_memory: Vec::new(),
             frames,
             sound,
             screen,
@@ -1502,6 +1519,9 @@ impl<'a> Recorder<'a> {
             let Some(p) = self.tick_of(cycle, |p: &Pending| p.tick.cycle <= cycle, |given| given <= cycle)? else {
                 continue;
             };
+            if let Some(memory) = entry["memory"].as_str() {
+                p.tick.hook_memory.push((p.tick.hooks.len(), memory.to_owned()));
+            }
             p.tick.hooks.push((hook, values));
         }
         Ok(())
@@ -1995,10 +2015,10 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
                 let item = &h.inputs[*i];
                 say("input", format!("{} = {}", item.name, value_text(value.as_deref(), &ty(item))));
             }
-            for (i, values) in tick.hooks.iter().take(HOOK_CALLS) {
+            for (n, (i, values)) in tick.hooks.iter().enumerate().take(HOOK_CALLS) {
                 let hook = &h.hooks[*i];
                 let args: Vec<String> = hook.registers.iter().zip(values).map(|(r, v)| format!("{r}={v:X}h")).collect();
-                say("hook", format!("{} ({}): {}", hook.name, hook.at, args.join(", ")));
+                say("hook", format!("{} ({}): {}{}", hook.name, hook.at, args.join(", "), memory_text(tick, n)));
             }
             if tick.hooks.len() > HOOK_CALLS {
                 say("...", format!("{} more calls through hooks in this pass", tick.hooks.len() - HOOK_CALLS));
@@ -2026,10 +2046,10 @@ pub(crate) fn show(repo: &Repo, args: &[String]) -> Result<ExitCode, String> {
             let which = if l.read > 1 { format!(" (its read {} there)", l.read) } else { String::new() };
             say("late", format!("{}: {}{which} read {value}, changed after the sync point", item.name, l.at));
         }
-        for (i, values) in tick.hooks.iter().take(HOOK_CALLS) {
+        for (n, (i, values)) in tick.hooks.iter().enumerate().take(HOOK_CALLS) {
             let hook = &h.hooks[*i];
             let args: Vec<String> = hook.registers.iter().zip(values).map(|(r, v)| format!("{r}={v:X}h")).collect();
-            say("hook", format!("{} ({}): {}", hook.name, hook.at, args.join(", ")));
+            say("hook", format!("{} ({}): {}{}", hook.name, hook.at, args.join(", "), memory_text(tick, n)));
         }
         if tick.hooks.len() > HOOK_CALLS {
             say("...", format!("{} more calls through hooks in this pass", tick.hooks.len() - HOOK_CALLS));
@@ -2170,6 +2190,14 @@ fn show_item(trace: &Trace, name: &str, ty: &dyn Fn(&Item) -> String, lines: usi
     Ok(ExitCode::SUCCESS)
 }
 
+/// How much memory the tick's call `n` kept (D235), as `rrc trace --tick` says it.
+fn memory_text(tick: &Tick, n: usize) -> String {
+    tick.hook_memory
+        .iter()
+        .find(|(call, _)| *call == n)
+        .map_or(String::new(), |(_, hex)| format!("; {} bytes kept", hex.len() / 2))
+}
+
 /// Most calls through hooks `rrc trace --tick` shows for a tick.
 const HOOK_CALLS: usize = 8;
 
@@ -2292,6 +2320,7 @@ mod tests {
             state,
             late: vec![],
             hooks: vec![],
+            hook_memory: vec![],
             frames: vec![json!([n, n * 1000 - 10, 19, "61f5"])],
             sound: serde_json::Map::new(),
             screen: None,

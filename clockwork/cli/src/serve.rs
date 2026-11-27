@@ -890,6 +890,24 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_keeps_the_memory_its_registers_point_at() {
+        let dir = game("memory");
+        let mut st = State::new();
+        ask_state(&mut st, json!({"op": "load", "argv": [dir.to_str().unwrap(), "T.COM"]})).unwrap();
+        // A .COM program at DS:0100: its one instruction, EB FE, the memory each run keeps (D235).
+        let memory = json!([{"at": "+0000", "memory": "ds:100:2"}]);
+        ask_state(&mut st, json!({"op": "entries", "at": ["+0000"], "memory": memory})).unwrap();
+        ask_state(&mut st, json!({"op": "run", "until_ms": 1})).unwrap();
+        let found = ask_state(&mut st, json!({"op": "entries_end"})).unwrap();
+        let runs = found["entries"].as_array().unwrap();
+        assert!(!runs.is_empty());
+        assert!(runs.iter().all(|run| run["memory"] == "EBFE"), "{}", runs[0]);
+        let bad = json!({"op": "entries", "at": ["+0000"], "memory": [{"at": "+0000", "memory": "ds:si"}]});
+        assert!(ask_state(&mut st, bad).unwrap_err().contains("SEGMENT:OFFSET:LENGTH"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn input_lines_read_as_a_file_does_and_a_time_past_is_refused() {
         let dir = game("input");
         let mut st = State::new();

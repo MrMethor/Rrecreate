@@ -783,7 +783,7 @@ impl Machine {
                 let until = limit.min(self.next_event);
                 let points = &self.syncs;
                 let stops = |at: u32| {
-                    (syncs && points.is_point(at)) || (entries != 0 && entries & crate::probe::entry_bit(at) != 0)
+                    (syncs && points.is_point(at)) || (entries != 0 && entries & crate::entries::entry_bit(at) != 0)
                 };
                 let now = self.cpu.cycles;
                 let inner = PcBus { mem: &mut self.mem, dev: &mut self.devices, now };
@@ -850,8 +850,8 @@ impl Machine {
             }
             if entries != 0 {
                 let at = self.cpu.segment_base(seg::CS).wrapping_add(self.cpu.regs.ip);
-                if entries & crate::probe::entry_bit(at) != 0 {
-                    crate::probe::watch_entries(self, at);
+                if entries & crate::entries::entry_bit(at) != 0 {
+                    crate::entries::watch_entries(self, at);
                 }
             }
             if self.probes.coverage.is_some() {
@@ -1380,13 +1380,13 @@ impl Machine {
     }
 
     /// Keeps each run of the entries at `at` (linear) with the registers (D98), outside interrupt
-    /// handlers (call tracking, when it is on, tells them apart; [`crate::probe::Entries::interrupts`] counts some
+    /// handlers (call tracking, when it is on, tells them apart; [`crate::entries::Entries::interrupts`] counts some
     /// in them too, D174).
     pub fn start_entries(&mut self, mut at: Vec<u32>) {
         at.sort_unstable();
         at.dedup();
-        let mask = at.iter().fold(0, |mask, &entry| mask | crate::probe::entry_bit(entry));
-        self.probes.entries = Some(Box::new(crate::probe::Entries { at, mask, ..Default::default() }));
+        let mask = at.iter().fold(0, |mask, &entry| mask | crate::entries::entry_bit(entry));
+        self.probes.entries = Some(Box::new(crate::entries::Entries { at, mask, ..Default::default() }));
     }
 
     /// The input still to come, each at its cycle, in order (D194: what a port's own input handling is checked
@@ -1395,7 +1395,7 @@ impl Machine {
         self.inputs.iter()
     }
 
-    pub fn take_entries(&mut self) -> Option<crate::probe::Entries> {
+    pub fn take_entries(&mut self) -> Option<crate::entries::Entries> {
         self.probes.entries.take().map(|e| *e)
     }
 
@@ -1416,8 +1416,9 @@ impl Machine {
 
     /// The entries' runs kept so far, the keeping going on (D192), and how many went past the limit since the last
     /// take.
-    pub fn take_entry_hits(&mut self) -> Option<(Vec<crate::probe::EntryHit>, u64)> {
+    pub fn take_entry_hits(&mut self) -> Option<(Vec<crate::entries::EntryHit>, u64)> {
         let entries = self.probes.entries.as_deref_mut()?;
+        entries.kept = 0;
         Some((std::mem::take(&mut entries.hits), std::mem::take(&mut entries.dropped)))
     }
 

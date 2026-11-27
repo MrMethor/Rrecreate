@@ -226,16 +226,23 @@ impl Gates {
 }
 
 /// A call a part of the program not ported made into ported code in the pass (D98): the registers it
-/// was made with, by name (`ax`, `cl`, `di`, as the hook's `registers` list them).
+/// was made with, by name (`ax`, `cl`, `di`, as the hook's `registers` list them), and the memory the hook
+/// keeps, if it keeps some (D235: a buffer handed to a DOS service, memory the port doesn't model).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Call {
     pub registers: BTreeMap<String, u32>,
+    pub memory: Vec<u8>,
 }
 
 impl Call {
     /// A register's value (0 if the hook doesn't take it).
     pub fn get(&self, register: &str) -> u32 {
         self.registers.get(register).copied().unwrap_or(0)
+    }
+
+    /// The bytes the hook's `memory` kept at the call, as the original's memory held them (none if it keeps none).
+    pub fn memory(&self) -> &[u8] {
+        &self.memory
     }
 }
 
@@ -1401,6 +1408,26 @@ mod tests {
     }
 
     #[test]
+    fn a_hook_s_call_gives_the_memory_it_kept() {
+        let text = INPUTS
+            .replace(
+                r#"{"name":"keys","size":2}]}"#,
+                r#"{"name":"keys","size":2}],"hooks":[{"name":"write","registers":["cx"]}]}"#,
+            )
+            .replace(
+                r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]]}"#,
+                r#"{"tick":3,"sync":"play","inputs":[[0,"0300"]],"hooks":[[0,[3],"EBFE00"],[0,[0]]]}"#,
+            );
+        let file = InputsFile::parse(&text).unwrap();
+        let mut inputs = Inputs::default();
+        inputs.set_calls(&file.ticks[2].calls);
+        let kept: Vec<&[u8]> = inputs.calls("write").iter().map(Call::memory).collect();
+        assert_eq!(kept, [&[0xEB, 0xFE, 0x00][..], &[]], "the bytes, where the call kept some (D235)");
+        let bad = text.replace("EBFE00", "EBF");
+        assert!(InputsFile::parse(&bad).is_err(), "bytes in hex");
+    }
+
+    #[test]
     fn two_hooks_calls_are_given_in_the_order_the_pass_made_them() {
         let text = INPUTS
             .replace(
@@ -1421,7 +1448,7 @@ mod tests {
 
     #[test]
     fn a_live_platform_s_calls_are_the_pass_s_runs_in_the_order_given() {
-        let call = |ax| Call { registers: [("ax".to_owned(), ax)].into() };
+        let call = |ax| Call { registers: [("ax".to_owned(), ax)].into(), ..Call::default() };
         let inputs = Inputs::default()
             .with_calls("status", vec![call(2)])
             .with_calls("service", vec![call(0), call(0)])

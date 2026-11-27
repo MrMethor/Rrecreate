@@ -515,7 +515,13 @@ way, with the registers that hold the place and the value: the port makes them a
 rest of that state stays the port's to compare, not fed (D100). A part an interrupt runs (a sound driver's
 service, from a timer interrupt) is a hook with `--interrupts`: its runs count from interrupt handlers too, and
 `tick.inputs.runs()` gives every hook's runs in the pass in the order they came, so the port makes the
-interrupt's calls between the program's own calls into that part where they fell (D174).
+interrupt's calls between the program's own calls into that part where they fell (D174). A hook keeps memory too
+(D235): where the original's code hands on memory the port doesn't model (a file written from whatever a segment
+holds, the interrupt table and DOS's included; a buffer a part not ported filled), `rrc hook ID NAME --part TEXT
+--registers ds --memory ds:0:FFFF` keeps those bytes at each run, found by the run's registers
+(`SEGMENT:OFFSET:LENGTH`, each a register or a number in hex), and the port takes them where the original's code
+used them, `tick.inputs.next_call(NAME).map(|c| c.memory())`. Playing on its own the port has no such memory: it
+does the nearest it can, and says so where it does.
 
 Then the tick's **boundary values**: what the loop reads that comes from outside it (the elapsed time the
 waiting function measures, the key-state array, the mouse). To find them:

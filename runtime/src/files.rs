@@ -222,7 +222,15 @@ impl InputsReader {
             let i = call[0].as_u64().ok_or("a hook's call: its hook")? as usize;
             let (name, registers) = hooks.get(i).ok_or_else(|| format!("tick {tick}: no hook {i}"))?;
             let values = call[1].as_array().into_iter().flatten().map(|v| v.as_u64().unwrap_or(0) as u32);
-            calls.push((name.clone(), crate::Call { registers: registers.iter().cloned().zip(values).collect() }));
+            // The memory the hook keeps, third where it keeps some (D235).
+            let memory = match call.get(2).and_then(Value::as_str) {
+                Some(hex) => unhex(hex)?,
+                None => Vec::new(),
+            };
+            calls.push((
+                name.clone(),
+                crate::Call { registers: registers.iter().cloned().zip(values).collect(), memory },
+            ));
         }
         let paths = |key: &str| -> Vec<(String, Value)> {
             v[key].as_object().into_iter().flatten().map(|(path, value)| (path.clone(), value.clone())).collect()

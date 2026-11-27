@@ -125,6 +125,35 @@ pub struct Hook {
     /// Its runs from interrupt handlers count too (D174): a driver's service a timer interrupt calls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interrupts: bool,
+    /// The memory each run keeps (D235): `SEGMENT:OFFSET:LENGTH`, each a register or a number in hex (`ds:si:cx`,
+    /// `ds:0:FFFF`): a buffer the program hands a DOS service, or memory the port doesn't model.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub memory: String,
+}
+
+/// Checks a hook's `memory` (D235): `SEGMENT:OFFSET:LENGTH`, the segment a segment register or a number in hex, the
+/// offset and the length a 16- or 32-bit general register, a segment register or a number in hex.
+pub fn hook_memory(text: &str) -> Result<(), String> {
+    const SEGMENTS: [&str; 6] = ["es", "cs", "ss", "ds", "fs", "gs"];
+    const GENERAL: [&str; 16] =
+        ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"];
+    let number = |p: &str| {
+        let digits = p.strip_suffix(['h', 'H']).unwrap_or(p);
+        !digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit())
+    };
+    let parts: Vec<String> = text.split(':').map(|p| p.trim().to_ascii_lowercase()).collect();
+    let [segment, offset, len] = parts.as_slice() else {
+        return Err(format!("--memory {text}: SEGMENT:OFFSET:LENGTH (ds:si:cx, ds:0:FFFF)"));
+    };
+    if !SEGMENTS.contains(&segment.as_str()) && !number(segment) {
+        return Err(format!("--memory {text}: the segment is a segment register (ds, es...) or a number in hex"));
+    }
+    for part in [offset, len] {
+        if !SEGMENTS.contains(&part.as_str()) && !GENERAL.contains(&part.as_str()) && !number(part) {
+            return Err(format!("--memory {text}: {part} is neither a register (si, ecx...) nor a number in hex"));
+        }
+    }
+    Ok(())
 }
 
 /// The registers a hook takes: the general ones by their 32-, 16- and 8-bit names, the segments, flags.
@@ -566,6 +595,16 @@ mod tests {
 
     fn decision(name: &str) -> Decision {
         Decision { name: name.into(), provenance: "human".into(), confidence: Some(0.8), evidence: String::new() }
+    }
+
+    #[test]
+    fn a_hook_keeps_memory_by_registers_or_numbers() {
+        for good in ["ds:si:cx", "DS:0:FFFF", "es:edi:ecx", "1000:0:42h", "ss:bp:ds"] {
+            assert_eq!(hook_memory(good), Ok(()), "{good}");
+        }
+        for bad in ["ds:si", "si:0:10", "ds:zz:10", "ds:0:", "ds:0:10:2"] {
+            assert!(hook_memory(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

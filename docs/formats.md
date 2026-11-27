@@ -298,6 +298,8 @@ part = "the 3D view"
 registers = ["ax", "bx", "cl", "di"]  # what it takes: 32-, 16- and 8-bit names, segments, flags
 interrupts = false              # optional: true, its runs from interrupt handlers count too (D174): a driver's
                                 # service a timer interrupt calls, in order with the pass's other hooks' runs
+memory = "ds:si:cx"             # optional: the memory each run keeps (D235), SEGMENT:OFFSET:LENGTH, each a register
+                                # or a number in hex (a segment as a real-mode one), at most 64 KB a run
 ```
 
 `rrc sync` and `rrc input` write these. Each item may carry `provenance`, `confidence` and `evidence`, as the
@@ -680,7 +682,9 @@ JSON lines (D72): a header, a line per tick, and an end line.
   that saw one otherwise (`late`, as a tick's), and its hooks' calls (`hooks`, as a tick's: D175).
 - `hooks` (in the header, only if the knowledge has any): the calls a part not ported makes into ported code
   (D98); a tick's `hooks`, `[[index, [value, …]]]`, are those its pass made, in order, each with its
-  registers' values as the header's hook lists them (version 9).
+  registers' values as the header's hook lists them (version 9). A hook with `memory` has it in the header too,
+  and a tick's `hook_memory`, `[[call, hex]]`, has what each of its calls kept, by its place in the tick's
+  `hooks` (D235).
 - `late`: `[index, ID, value, read, bytes, round]` for each read of the tick's pass that saw an input otherwise
   than the same instruction's read before it there (the first, otherwise than the tick's value): it changed after
   the sync point, before the program read it (D60). `ID` is the instruction (for a driver, the instruction after
@@ -797,7 +801,8 @@ ends is read as a file is; one that can't read its standard input is given the f
   runtime's `Tick::spun`). With hooks
   (D98) the header has `"hooks":[{"name":"view_wakes","registers":["ax","cl"]}]` and a tick whose pass made
   calls through them `hooks`, `[[0, [1472, 5]]]` (the hook's index, the registers' values), which
-  `Inputs::calls(name)` gives the port. A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
+  `Inputs::calls(name)` gives the port; a call whose hook keeps memory has the bytes third, in hex
+  (`[0, [16], "EBFE"]`: the runtime's `Call::memory`, D235). A tick with a scenario's edits has `set`, `{"enemies[2].alive":0}`: the
   mapped fields the edits wrote, by path (field names and `[index]`es), with the original's values, which the
   port sets in its state before writing the tick (D64), after drawing and sounding it (D165: the edit is written at
   the tick's sync point, after its pass drew). A tick has `fed`, of the same form, for fed fields (D84,

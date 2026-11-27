@@ -135,7 +135,7 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(added.contains("without   1 files left out"), "{added}");
     std::fs::write(game.join("SAVEGAM0.SAV"), b"saved again").unwrap();
     let doctor = rrc.ok(&["doctor"]);
-    assert!(doctor.contains("game      ") && doctor.contains(", protocol 22, dos-pc ("), "{doctor}");
+    assert!(doctor.contains("game      ") && doctor.contains(", protocol 23, dos-pc ("), "{doctor}");
     assert!(doctor.contains("rules     RULES.md: 5 questions for the person not answered yet"), "{doctor}");
     // The stage the port is at, and what its gate lacks (D158): the person's answers, in place of the questions.
     let asking = rrc.ok(&["status"]);
@@ -338,6 +338,17 @@ fn a_session_is_traced_tick_by_tick() {
     rrc.ok(&["record", "short"]);
     let tick = rrc.ok(&["trace", "short", "--tick", "2"]);
     assert!(tick.contains("hook      steps (T.COM+0000E): ax="), "the call in tick 2's pass: {tick}");
+    // A hook keeps the memory its run's registers point at (D235).
+    let memory = ["--memory", "cs:0:4"];
+    rrc.ok(
+        &[["hook", "T.COM+0000E", "steps", "--part", "the loop", "--registers", "ax,cl"].as_slice(), &memory].concat()
+    );
+    let (refused, ok) =
+        rrc.run(&["hook", "T.COM+0000E", "other", "--part", "x", "--registers", "ax", "--memory", "ds:si"]);
+    assert!(!ok && refused.contains("SEGMENT:OFFSET:LENGTH"), "{refused}");
+    rrc.ok(&["record", "short"]);
+    let tick = rrc.ok(&["trace", "short", "--tick", "2"]);
+    assert!(tick.contains("hook      steps (T.COM+0000E): ax=") && tick.contains("; 4 bytes kept"), "{tick}");
     // A call before the first tick is the start-up's pass's, power-on's (D175): the loop's top runs once before it.
     rrc.ok(&["hook", "T.COM+00000", "tops", "--part", "the loop", "--registers", "cx"]);
     rrc.ok(&["record", "short"]);

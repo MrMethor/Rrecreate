@@ -15,6 +15,7 @@ pub mod dma;
 pub mod dos;
 pub mod dpmi;
 pub mod ems;
+pub mod entries;
 pub mod fonts;
 pub mod frame_image;
 pub mod hash;
@@ -51,7 +52,8 @@ pub mod xms;
 
 pub use cpu::Model as CpuModel;
 pub use dos::LoadError;
+pub use entries::EntryHit;
 pub use machine::{Config, Device, Devices, ExecHit, Frame, Input, MAX_EXEC_HITS, Machine, Stop, cp437_to_char};
-pub use probe::{EntryHit, Probes};
+pub use probe::Probes;
 pub use time::DateTime;
 pub use vfs::Vfs;
