@@ -301,6 +301,8 @@ which bugs it met.
   outside git) and of the port; comparing two traces needs no emulator.
 - **Files, not code:** the toolkit and a port exchange the session's boundary values, traces and port states as
   files in documented formats, so a port in any language can be compared; Rust ports get this from the runtime.
+- **Files:** a comparison that matches compares the files the port saved with those the original changed by its
+  last tick (D231).
 - **First divergence:** the tick and the fields that differ, then *who wrote* on the original's side; on the
   port's side, its code for the function that wrote it, found by the ID it names (§6.6, D73), and what the port
   noted it left out in that pass (`rrc_runtime::note`, D115).

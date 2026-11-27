@@ -519,7 +519,24 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
                     say("unsounded", format!("{}: the port makes none yet, not compared", unmade.join(", ")));
                 }
             }
-            ExitCode::SUCCESS
+            // The files the port saved, against those the original changed by the last tick (D231).
+            let original = crate::peek::changed_files_at(repo, &session, &crate::trace::sync_points(&k)?, last)?;
+            let differing = files_differing(&original, &work.join("saves"))?;
+            if differing.is_empty() {
+                if !original.is_empty() {
+                    say(
+                        "files",
+                        format!("the port's files are the original's at tick {last}: {}", files_named(&original)),
+                    );
+                }
+                ExitCode::SUCCESS
+            } else {
+                for difference in &differing {
+                    say("files", difference);
+                }
+                crate::journal::ended(name, format!("tick {last}: the files"));
+                ExitCode::from(1)
+            }
         }
         Some((t, found)) => {
             report(repo, name, &trace, &mapped, &k, t, first, transplant.is_some(), &found)?;
@@ -2554,6 +2571,72 @@ fn start_power_on(
 /// then (its drive's, as the game's folder holds the rest), and `deleted`, the names of those it deleted, a line
 /// each. None from the session's start. The port saves into it and reads saved games from it first
 /// (`rrc_runtime::original::saved`). How many files it holds.
+/// The files the original changed (`original`, as `changed_files_at` gives them) against the port's saves folder
+/// (`saves`: the files it saved, and those it deleted listed in `deleted`), D231: each that differs said, where it
+/// first does; a file only one of them changed is said too.
+fn files_differing(original: &[crate::peek::ChangedFile], saves: &std::path::Path) -> Result<Vec<String>, String> {
+    let deleted_list = std::fs::read_to_string(saves.join(rrc_runtime::original::DELETED)).unwrap_or_default();
+    let deleted: Vec<String> = deleted_list.lines().map(|l| l.replace('\\', "/").to_uppercase()).collect();
+    let mut port: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut stack = vec![saves.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let relative = path.strip_prefix(saves).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+            if relative == rrc_runtime::original::DELETED {
+                continue;
+            }
+            let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            port.insert(relative.to_uppercase(), bytes);
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (path, bytes) in original {
+        let key = path.replace('\\', "/").to_uppercase();
+        seen.insert(key.clone());
+        match (bytes, port.get(&key)) {
+            (Some(o), Some(p)) if o == p => {}
+            (Some(o), Some(p)) => {
+                let at = o.iter().zip(p).position(|(a, b)| a != b).unwrap_or(o.len().min(p.len()));
+                let byte = |b: &[u8]| b.get(at).map_or("its end".to_owned(), |v| format!("{v:02X}h"));
+                out.push(format!(
+                    "{path}: differs from byte {at} (original {}, port {}); {} bytes, the port's {}",
+                    byte(o),
+                    byte(p),
+                    o.len(),
+                    p.len()
+                ));
+            }
+            (Some(_), None) if deleted.contains(&key) => {
+                out.push(format!("{path}: the original wrote it, the port deleted it"))
+            }
+            (Some(_), None) => out.push(format!("{path}: the original wrote it, the port didn't")),
+            (None, Some(_)) => out.push(format!("{path}: the original deleted it, the port has it")),
+            (None, None) if deleted.contains(&key) => {}
+            (None, None) => out.push(format!("{path}: the original deleted it, the port didn't")),
+        }
+    }
+    for path in port.keys().filter(|p| !seen.contains(*p)) {
+        out.push(format!("{path}: the port wrote it, the original didn't"));
+    }
+    for path in deleted.iter().filter(|p| !seen.contains(*p)) {
+        out.push(format!("{path}: the port deleted it, the original didn't"));
+    }
+    Ok(out)
+}
+
+/// The files' names, the first few.
+fn files_named(files: &[crate::peek::ChangedFile]) -> String {
+    let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+    let more = if names.len() > 5 { format!(" and {} more", names.len() - 5) } else { String::new() };
+    format!("{}{more}", names.iter().take(5).cloned().collect::<Vec<_>>().join(", "))
+}
+
 fn write_saves(
     repo: &Repo,
     session: &Session,
@@ -3748,6 +3831,34 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_files_the_port_saved_are_compared_with_the_original_s() {
+        let saves = std::env::temp_dir().join(format!("rrc-files-{}", std::process::id()));
+        std::fs::create_dir_all(saves.join("SUB")).unwrap();
+        std::fs::write(saves.join("LOG.01"), b"same").unwrap();
+        std::fs::write(saves.join("SAVE.01"), b"abcX").unwrap();
+        std::fs::write(saves.join("SUB/OWN.01"), b"port").unwrap();
+        std::fs::write(saves.join(rrc_runtime::original::DELETED), "GONE.01\n").unwrap();
+        let original: Vec<crate::peek::ChangedFile> = vec![
+            ("LOG.01".into(), Some(b"same".to_vec())),
+            ("SAVE.01".into(), Some(b"abcd".to_vec())),
+            ("NEW.01".into(), Some(b"x".to_vec())),
+            ("GONE.01".into(), None),
+        ];
+        let differing = files_differing(&original, &saves).unwrap();
+        assert_eq!(
+            differing,
+            [
+                "SAVE.01: differs from byte 3 (original 64h, port 58h); 4 bytes, the port's 4",
+                "NEW.01: the original wrote it, the port didn't",
+                "SUB/OWN.01: the port wrote it, the original didn't",
+            ],
+            "{differing:?}"
+        );
+        assert!(files_differing(&original[..1], &saves).unwrap().len() == 3, "the port's own and its deletion");
+        std::fs::remove_dir_all(&saves).ok();
+    }
 
     #[test]
     fn a_column_keeps_a_field_s_changes_and_reads_as_every_tick_s() {

@@ -724,7 +724,10 @@ mapping; one that never does can go. Mark each path the port leaves out with `rr
 (GAME.EXE+01234)")` (D115): where the comparison diverges it lists the notes made in that pass (`noted`), the
 paths not ported it took, and `--notes` lists every note of the run with the first tick it was made in.
 `unmapped` lists the
-named data the mapping neither maps nor ignores: the state nothing compares yet.
+named data the mapping neither maps nor ignores: the state nothing compares yet. Where every field, frame and sound
+matches, the files the port saved (its saves folder, D131) are compared with those the original changed by the last
+tick (D231): `files` names those that are the same, or each that differs, where it first does, and one only a side
+wrote or deleted; a file is the game's state too (a logbook's entry, a save).
 
 `rrc compare SESSION --lockstep` compares the whole session at once (D124): the port gets the original's mapped
 state before every pass, so each pass starts where the original's did, and every field its own pass leaves

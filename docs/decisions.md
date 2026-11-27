@@ -764,6 +764,18 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D231. A comparison compares the files the port saved. Accepted 2026-11-27.
+Where `rrc compare` finds every mapped field, frame and sound the original's, it compares the files in the port's
+saves folder (D131: the original's changed files at the start, then what the port saved and deleted) with the files
+the original changed by the last tick compared (Clockwork's `changed_files` at its sync point): `files` names them
+when all are the same; else each that differs, from which byte (both values) and both lengths, and each that only
+one side wrote or deleted, and the comparison fails (the journal's end: the files).
+**Why:** a game keeps state in files as well as in memory: Arena's logbook entries are written to `LOG.<slot>` and
+read only when the logbook is opened, so a job's entry written wrong (or not at all) showed in no comparison of the
+session that wrote it. Run on Arena's `jobdone`, it confirmed the job's entry the port now writes and found the
+character sheet's screen file the port doesn't write yet.
+**Extends:** D131.
+
 ### D230. A field left out of the state's serialization is checked. Accepted 2026-11-27.
 A feed (lockstep's, D124; a correction's, D191; a scenario's edit, D166) gives the port its state through its
 serialization: the runtime serializes the port's state, sets the original's values and makes the state again from it
