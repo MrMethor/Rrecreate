@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-27 (decisions to D232). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-27 (decisions to D233). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -250,7 +250,7 @@ too (D229), so a fade or a dissolve that differs reaches the work list, not only
 A field a port leaves out of its state's serialization is refused by `rrc check` unless it says why no feed needs it
 (D230): lockstep's feeds give the state through it, and Arena's view at the stairs was black for that alone. A
 comparison that matches compares the files the port saved with the original's too (D231), and a census counts them
-(D232): a logbook's entry is state no frame shows. By
+(D232), but for what the mapping says holds no state, with why (D233): a logbook's entry is state no frame shows. By
 2026-11-27 all of Arena's short sessions (110, with scenarios of the strength's limit on what is carried) match in
 every mapped field, frame, picture between ticks and sound, in lockstep and run free; 67 bugs of the original are
 registered with their switches.

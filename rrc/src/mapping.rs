@@ -32,6 +32,58 @@ pub struct Mapping {
     pub carries: Vec<Map>,
     #[serde(default, rename = "ignore", skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<Ignore>,
+    /// Files, or parts of one, the comparison of files leaves out (D233): what the original writes that holds no
+    /// state the port keeps (a screen put away while another is shown, a save's parts never read back), each with why.
+    #[serde(default, rename = "file", skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileRule>,
+}
+
+/// A file left out of the comparison of files, or byte ranges of it (D233).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FileRule {
+    /// The file's name, `*` any characters (`SAVEGAME.*`), case aside.
+    pub name: String,
+    /// Byte ranges left out, each from and to (exclusive); none: the whole file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bytes: Vec<[u64; 2]>,
+    /// Why the original's bytes there are no state the port keeps: needed.
+    #[serde(default)]
+    pub why: String,
+}
+
+impl FileRule {
+    /// Whether it is about the file `path` (its name; `/` between folders).
+    pub fn names(&self, path: &str) -> bool {
+        glob(&self.name.to_uppercase(), &path.replace('\\', "/").to_uppercase())
+    }
+}
+
+/// Whether `text` is `pattern`, `*` standing for any characters.
+fn glob(pattern: &str, text: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == text,
+        Some((head, rest)) => {
+            text.starts_with(head)
+                && (0..=text.len() - head.len())
+                    .any(|i| text.is_char_boundary(head.len() + i) && glob(rest, &text[head.len() + i..]))
+        }
+    }
+}
+
+impl Mapping {
+    /// The file rules without a reason (D233): a file left out of the comparison says why.
+    pub fn file_problems(&self) -> Vec<String> {
+        self.files
+            .iter()
+            .filter(|f| f.why.trim().is_empty())
+            .map(|f| {
+                format!(
+                    "{MAPPING}: [[file]] {:?} says no why: a file left out of the comparison says why (D233)",
+                    f.name
+                )
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]

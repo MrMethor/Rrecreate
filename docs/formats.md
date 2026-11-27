@@ -467,6 +467,11 @@ type = "u8[3663]"               # or via a pointer as for [[map]]: a file the pr
 at = "mouse_buffer"             # a data name, or an ID
 size = 0                        # bytes; 0: the data's size
 note = "the mouse driver's"
+
+[[file]]                        # a file the comparison of files (D231, D232) leaves out, or bytes of it (D233)
+name = "SAVEGAME.*"             # its name, `*` any characters, case aside
+bytes = [[0, 0xFD00]]           # optional: ranges left out, from and to (exclusive); none: the whole file
+why = "the screen's buffer, which the original never reads back"   # needed: rrc check refuses one without
 ```
 
 The original's bytes are read as the type (D62, D72): `u8`, `i8`, `u16`, `i16`, `u32`, `i32` as numbers

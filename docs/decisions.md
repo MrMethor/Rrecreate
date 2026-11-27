@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D233. A file, or bytes of one, is left out of the comparison of files by the mapping, with why. Accepted 2026-11-27.
+`mapping.toml`'s `[[file]]` names a file (`*` any characters, case aside) the comparison of files (D231, D232)
+leaves out, or byte ranges of it (`bytes`, each from and to), and says why (`why`: `rrc check` refuses one without).
+**Why:** the first census of files on Arena found 68 files of 37 sessions differing, most of them no state of the
+port's: the screen and palette (SCREENSV.$$2) and the level's map and floor (TEMPSAVE.$$$) the original writes away
+while a screen is over the view and reads back after (`+0A611`, `+0A6B5`), which the port keeps in memory, and a
+saved game's screen buffer and interrupt table, which the original never reads back. As `[[ignore]]` does for
+memory, the mapping declares them, so what is left counts and nothing is left out without a reason.
+**Extends:** D231, D232.
+
 ### D232. A census counts the files too. Accepted 2026-11-27.
 A lockstep's census (D124) and a corrected run's compare the files the port saved with those the original changed by
 the session's last tick, as `rrc compare` does (D231): where they differ, the census's `files` keeps the first

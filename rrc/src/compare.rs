@@ -521,7 +521,7 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             }
             // The files the port saved, against those the original changed by the last tick (D231).
             let original = crate::peek::changed_files_at(repo, &session, &crate::trace::sync_points(&k)?, last)?;
-            let differing = files_differing(&original, &work.join("saves"))?;
+            let differing = files_differing(&original, &work.join("saves"), &mapping.files)?;
             if differing.is_empty() {
                 if !original.is_empty() {
                     say(
@@ -1872,7 +1872,7 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
     let mut census = counting.census;
     if let Some(last) = trace.ticks.last().map(|t| t.tick).filter(|_| !live) {
         let original = crate::peek::changed_files_at(repo, &session, &crate::trace::sync_points(&k)?, last)?;
-        let differing = files_differing(&original, &saves)?;
+        let differing = files_differing(&original, &saves, &mapping.files)?;
         if let Some(first) = differing.first() {
             census.files =
                 Some(Seen { ticks: differing.len() as u64, session: name.to_owned(), tick: last, what: first.clone() });
@@ -2590,8 +2590,19 @@ fn start_power_on(
 /// (`rrc_runtime::original::saved`). How many files it holds.
 /// The files the original changed (`original`, as `changed_files_at` gives them) against the port's saves folder
 /// (`saves`: the files it saved, and those it deleted listed in `deleted`), D231: each that differs said, where it
-/// first does; a file only one of them changed is said too.
-fn files_differing(original: &[crate::peek::ChangedFile], saves: &std::path::Path) -> Result<Vec<String>, String> {
+/// first does; a file only one of them changed is said too. What `rules` leave out isn't compared (D233).
+fn files_differing(
+    original: &[crate::peek::ChangedFile],
+    saves: &std::path::Path,
+    rules: &[crate::mapping::FileRule],
+) -> Result<Vec<String>, String> {
+    let whole = |path: &str| rules.iter().any(|r| r.names(path) && r.bytes.is_empty());
+    let left_out = |path: &str, at: usize| {
+        rules
+            .iter()
+            .filter(|r| r.names(path))
+            .any(|r| r.bytes.iter().any(|[from, to]| (*from..*to).contains(&(at as u64))))
+    };
     let deleted_list = std::fs::read_to_string(saves.join(rrc_runtime::original::DELETED)).unwrap_or_default();
     let deleted: Vec<String> = deleted_list.lines().map(|l| l.replace('\\', "/").to_uppercase()).collect();
     let mut port: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -2616,10 +2627,14 @@ fn files_differing(original: &[crate::peek::ChangedFile], saves: &std::path::Pat
     for (path, bytes) in original {
         let key = path.replace('\\', "/").to_uppercase();
         seen.insert(key.clone());
+        if whole(&key) {
+            continue;
+        }
         match (bytes, port.get(&key)) {
             (Some(o), Some(p)) if o == p => {}
             (Some(o), Some(p)) => {
-                let at = o.iter().zip(p).position(|(a, b)| a != b).unwrap_or(o.len().min(p.len()));
+                let longest = o.len().max(p.len());
+                let Some(at) = (0..longest).find(|&i| o.get(i) != p.get(i) && !left_out(&key, i)) else { continue };
                 let byte = |b: &[u8]| b.get(at).map_or("its end".to_owned(), |v| format!("{v:02X}h"));
                 out.push(format!(
                     "{path}: differs from byte {at} (original {}, port {}); {} bytes, the port's {}",
@@ -2638,10 +2653,10 @@ fn files_differing(original: &[crate::peek::ChangedFile], saves: &std::path::Pat
             (None, None) => out.push(format!("{path}: the original deleted it, the port didn't")),
         }
     }
-    for path in port.keys().filter(|p| !seen.contains(*p)) {
+    for path in port.keys().filter(|p| !seen.contains(*p) && !whole(p)) {
         out.push(format!("{path}: the port wrote it, the original didn't"));
     }
-    for path in deleted.iter().filter(|p| !seen.contains(*p)) {
+    for path in deleted.iter().filter(|p| !seen.contains(*p) && !whole(p)) {
         out.push(format!("{path}: the port deleted it, the original didn't"));
     }
     Ok(out)
@@ -3863,7 +3878,7 @@ mod tests {
             ("NEW.01".into(), Some(b"x".to_vec())),
             ("GONE.01".into(), None),
         ];
-        let differing = files_differing(&original, &saves).unwrap();
+        let differing = files_differing(&original, &saves, &[]).unwrap();
         assert_eq!(
             differing,
             [
@@ -3873,7 +3888,14 @@ mod tests {
             ],
             "{differing:?}"
         );
-        assert!(files_differing(&original[..1], &saves).unwrap().len() == 3, "the port's own and its deletion");
+        assert!(files_differing(&original[..1], &saves, &[]).unwrap().len() == 3, "the port's own and its deletion");
+        // Left out (D233): a file whole, or bytes of one.
+        let rule =
+            |name: &str, bytes: Vec<[u64; 2]>| crate::mapping::FileRule { name: name.into(), bytes, why: "w".into() };
+        let rules = [rule("new.*", Vec::new()), rule("SAVE.01", vec![[3, 4]]), rule("sub/*", Vec::new())];
+        assert_eq!(files_differing(&original, &saves, &rules).unwrap(), Vec::<String>::new());
+        let rules = [rule("SAVE.01", vec![[0, 3]])];
+        assert_eq!(files_differing(&original, &saves, &rules).unwrap().len(), 3, "byte 3 still differs");
         std::fs::remove_dir_all(&saves).ok();
     }
 

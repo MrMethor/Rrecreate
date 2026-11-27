@@ -50,6 +50,7 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         Ok(_) => {}
         Err(e) => problems.push(e),
     }
+    problems.extend(mapping.file_problems());
     match mapping.resolve_present(&k) {
         Ok(presented) if !presented.is_empty() => {
             say("present", format!("{} fields of the presentation's own (D110)", presented.len()));

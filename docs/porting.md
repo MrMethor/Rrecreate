@@ -727,7 +727,9 @@ paths not ported it took, and `--notes` lists every note of the run with the fir
 named data the mapping neither maps nor ignores: the state nothing compares yet. Where every field, frame and sound
 matches, the files the port saved (its saves folder, D131) are compared with those the original changed by the last
 tick (D231): `files` names those that are the same, or each that differs, where it first does, and one only a side
-wrote or deleted; a file is the game's state too (a logbook's entry, a save).
+wrote or deleted; a file is the game's state too (a logbook's entry, a save). What the original writes that holds
+no state the port keeps (a screen put away while another is shown, a save's parts it never reads back) is left out
+with `[[file]]` in `mapping.toml`, saying why (D233).
 
 `rrc compare SESSION --lockstep` compares the whole session at once (D124): the port gets the original's mapped
 state before every pass, so each pass starts where the original's did, and every field its own pass leaves
