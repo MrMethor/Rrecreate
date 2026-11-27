@@ -255,8 +255,9 @@ The crates a port builds on by path (the runtime) count as its code, so a change
 stale (D234). By
 2026-11-27 all of Arena's short sessions (110, with scenarios of the strength's limit on what is carried) match in
 every mapped field, frame, picture between ticks and sound, in lockstep and run free, and the files they save are
-the original's but one (a new automap file's filler); 67 bugs of the original are registered
-with their switches. That filler is the machine's first 64 KB, the interrupt table and DOS's included, which DOS
+the original's; 68 bugs of the original are registered with their switches, and 3 sessions still take paths the port
+notes as not ported (11 before the day's last cloud session). A new automap file's filler was the last file that
+differed: it is the machine's first 64 KB, the interrupt table and DOS's included, which DOS
 reads for the write itself: a hook now keeps the memory its run's registers point at (D235), and a hook added or
 changed makes the sessions' recordings stale, which `rrc status` and `rrc work --run` hadn't counted, and a quirk's
 switch that changes only a saved file is shown by it. With them Arena's files are all the original's.
