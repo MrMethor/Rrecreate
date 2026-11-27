@@ -282,7 +282,7 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
     // 4 Logic: the census without a field, each session matching in its fields to the end with nothing fed, the
     // quirk rule kept.
     let mut logic = Vec::new();
-    let fields = |c: &Census| c.fields.len() + c.unset.len();
+    let fields = |c: &Census| c.fields.len() + c.unset.len() + usize::from(c.files.is_some());
     let differing: Vec<&Held> = held.iter().filter(|h| h.census.as_ref().is_some_and(|c| fields(c) > 0)).collect();
     if !differing.is_empty() {
         let text = |h: &&Held| format!("{} ({})", h.name, h.census.as_ref().map_or(0, fields));

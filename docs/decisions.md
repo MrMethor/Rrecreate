@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D232. A census counts the files too. Accepted 2026-11-27.
+A lockstep's census (D124) and a corrected run's compare the files the port saved with those the original changed by
+the session's last tick, as `rrc compare` does (D231): where they differ, the census's `files` keeps the first
+difference and how many files differ, so the work list has the item "the port's files differ from the original's",
+ranked with the fields (a file is state), and stage 4's gate counts it among a session's fields. A census says it
+counts them (`counts` 2): one made before holds for nothing and is made again.
+**Why:** D231 compares the files only where `rrc compare` is run on a session and matches; the census is the work
+list's whole view, and a file the port writes wrong in a session nobody compares alone would stay unseen, as the
+pictures between ticks did before D229.
+**Extends:** D124, D229, D231.
+
 ### D231. A comparison compares the files the port saved. Accepted 2026-11-27.
 Where `rrc compare` finds every mapped field, frame and sound the original's, it compares the files in the port's
 saves folder (D131: the original's changed files at the start, then what the port saved and deleted) with the files

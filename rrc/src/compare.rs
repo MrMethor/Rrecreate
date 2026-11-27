@@ -1512,6 +1512,10 @@ pub(crate) struct Census {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pictures: Option<Seen>,
     pub sound: Option<Seen>,
+    /// The files the port saved against those the original changed by the last tick (D231, D232): the first that
+    /// differs (`what`), and how many do (`ticks`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Seen>,
     /// What it noted (`rrc_runtime::note`, D115): paths not ported.
     pub notes: BTreeMap<String, Seen>,
     /// Where the port stopped in a play followed as it goes (D193): it panicked, or wrote no line for far longer than
@@ -1580,8 +1584,8 @@ fn lost_at(lost: &mut Vec<Lost>, runs: &mut [u32; 2], t: u64, port: Option<&str>
 }
 
 impl Census {
-    /// What a census counts now: 1, the pictures between ticks too (D229).
-    pub const COUNTS: u32 = 1;
+    /// What a census counts now: 1, the pictures between ticks too (D229); 2, the files (D232).
+    pub const COUNTS: u32 = 2;
 
     /// Whether the port's state, frames or sound differ anywhere, or it stopped.
     pub fn differs(&self) -> bool {
@@ -1589,6 +1593,7 @@ impl Census {
             || self.screen.is_some()
             || self.pictures.is_some()
             || self.sound.is_some()
+            || self.files.is_some()
             || !self.panics.is_empty()
     }
 
@@ -1608,6 +1613,7 @@ impl Census {
             ("screen", &self.screen, &other.screen),
             ("pictures", &self.pictures, &other.pictures),
             ("sound", &self.sound, &other.sound),
+            ("files", &self.files, &other.files),
         ] {
             if let (None, Some(seen)) = (mine, theirs) {
                 new.push((kind, "", seen));
@@ -1631,6 +1637,7 @@ impl Census {
                 format!("the port's pictures between ticks differ at {} of {passes} ticks, {at}{what}", seen.ticks)
             }
             "sound" => format!("the port's sound differs at {} of {passes} ticks, {at}{what}", seen.ticks),
+            "files" => format!("the port's files differ from the original's in {} files, {at}{what}", seen.ticks),
             "panic" => format!("the port stopped in the pass to {}'s tick {}: {}", seen.session, seen.tick, seen.what),
             _ => format!("{key}: in {} passes, first in the pass to {}'s tick {}", seen.ticks, seen.session, seen.tick),
         };
@@ -1861,7 +1868,17 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
         true => Some(judge(&trace, &[file("port.jsonl").into()], played.as_ref().unwrap_or(&BTreeMap::new()))?),
         false => None,
     };
-    Ok((counting.census, lived))
+    // The files the port saved, against those the original changed by the last tick (D232).
+    let mut census = counting.census;
+    if let Some(last) = trace.ticks.last().map(|t| t.tick).filter(|_| !live) {
+        let original = crate::peek::changed_files_at(repo, &session, &crate::trace::sync_points(&k)?, last)?;
+        let differing = files_differing(&original, &saves)?;
+        if let Some(first) = differing.first() {
+            census.files =
+                Some(Seen { ticks: differing.len() as u64, session: name.to_owned(), tick: last, what: first.clone() });
+        }
+    }
+    Ok((census, lived))
 }
 
 /// What the player did up to each tick's sync point, as the session's run had it (D194): its input from where it
