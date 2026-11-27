@@ -254,8 +254,9 @@ comparison that matches compares the files the port saved with the original's to
 The crates a port builds on by path (the runtime) count as its code, so a change of theirs makes its censuses
 stale (D234). By
 2026-11-27 all of Arena's short sessions (110, with scenarios of the strength's limit on what is carried) match in
-every mapped field, frame, picture between ticks and sound, in lockstep and run free; 67 bugs of the original are
-registered with their switches.
+every mapped field, frame, picture between ticks and sound, in lockstep and run free, and the files they save are
+the original's but one (a new automap file's filler, the heap's leftovers); 67 bugs of the original are registered
+with their switches.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
