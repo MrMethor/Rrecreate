@@ -168,11 +168,16 @@ pub fn saved(name: &str) -> Result<Vec<u8>, String> {
 
 /// A game the port saves, by the name the original saves it under: into `saves_dir` (no longer deleted).
 pub fn save(name: &str, bytes: &[u8]) -> Result<(), String> {
-    let dir = saves_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let path = dir.join(base_name(name));
+    save_in(&saves_dir(), name, bytes)
+}
+
+/// [`save`] into `dir`: a file there under the name in another case is the one written, as DOS names a file without
+/// regard to case (a comparison's folder holds the original's `IN106.64`, the port saves `in106.64`).
+fn save_in(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = find(dir, base_name(name)).unwrap_or_else(|_| dir.join(base_name(name)));
     std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-    forget_deleted(&dir, name)
+    forget_deleted(dir, name)
 }
 
 /// The files a DOS wildcard (`*.64`, `RE*.01`: `*` any characters, `?` one) names in the game's folder as the
@@ -210,15 +215,20 @@ fn matches(pattern: &str, name: &str) -> bool {
 /// The game deletes a file it saved, as the original does (`SAVEGAME.01`): out of `saves_dir`, and gone from the
 /// game's folder for it (the person's copy itself is only read).
 pub fn delete(name: &str) -> Result<(), String> {
-    let dir = saves_dir();
-    let path = dir.join(base_name(name));
-    if path.is_file() {
+    delete_in(&saves_dir(), name)
+}
+
+/// [`delete`] in `dir`: the file there under the name in any case.
+fn delete_in(dir: &Path, name: &str) -> Result<(), String> {
+    if let Ok(path) = find(dir, base_name(name))
+        && path.is_file()
+    {
         std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    if deleted(&dir, name) {
+    if deleted(dir, name) {
         return Ok(());
     }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let list = dir.join(DELETED);
     let mut text = std::fs::read_to_string(&list).unwrap_or_default();
     text.push_str(&base_name(name).to_ascii_uppercase());
@@ -371,6 +381,20 @@ mod tests {
         assert!(!deleted(&dir, "NAMES.DAT"));
         forget_deleted(&dir, "rest.01").unwrap();
         assert!(!deleted(&dir, "REST.01") && deleted(&dir, "INSTRUCT.01"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_file_is_saved_and_deleted_under_its_name_in_any_case() {
+        let dir = std::env::temp_dir().join(format!("rrc-case-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("IN106.64"), [0x18]).unwrap();
+        save_in(&dir, "in106.64", &[0x16]).unwrap();
+        assert_eq!(std::fs::read(dir.join("IN106.64")).unwrap(), [0x16], "the file there, as DOS finds it");
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names.len(), 1, "one file: {names:?}");
+        delete_in(&dir, "In106.64").unwrap();
+        assert!(!dir.join("IN106.64").exists() && deleted(&dir, "IN106.64"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
