@@ -213,20 +213,27 @@ fn matches(pattern: &str, name: &str) -> bool {
 }
 
 /// The game deletes a file it saved, as the original does (`SAVEGAME.01`): out of `saves_dir`, and gone from the
-/// game's folder for it (the person's copy itself is only read).
+/// game's folder for it (the person's copy itself is only read). A file it has neither saved nor finds in the game's
+/// folder isn't deleted, and nothing is recorded, as DOS's delete fails then (an error, file not found).
 pub fn delete(name: &str) -> Result<(), String> {
-    delete_in(&saves_dir(), name)
+    delete_in(&saves_dir(), game_dir().as_deref(), name)
 }
 
-/// [`delete`] in `dir`: the file there under the name in any case.
-fn delete_in(dir: &Path, name: &str) -> Result<(), String> {
-    if let Ok(path) = find(dir, base_name(name))
-        && path.is_file()
-    {
-        std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+/// [`delete`] in `dir`, `game` the game's folder: the file under the name in any case.
+fn delete_in(dir: &Path, game: Option<&Path>, name: &str) -> Result<(), String> {
+    let saved = find(dir, base_name(name)).ok().filter(|p| p.is_file());
+    if let Some(path) = &saved {
+        std::fs::remove_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if deleted(dir, name) {
-        return Ok(());
+        return match saved {
+            Some(_) => Ok(()),
+            None => Err(format!("{name}: no such file (the game deleted it)")),
+        };
+    }
+    let in_game = game.is_some_and(|g| find(g, name).is_ok_and(|p| p.is_file()));
+    if saved.is_none() && !in_game {
+        return Err(format!("{name}: no such file"));
     }
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let list = dir.join(DELETED);
@@ -393,8 +400,16 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("IN106.64")).unwrap(), [0x16], "the file there, as DOS finds it");
         let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
         assert_eq!(names.len(), 1, "one file: {names:?}");
-        delete_in(&dir, "In106.64").unwrap();
+        delete_in(&dir, None, "In106.64").unwrap();
         assert!(!dir.join("IN106.64").exists() && deleted(&dir, "IN106.64"));
+        // A file neither saved nor the game's isn't deleted, nor recorded, as DOS's delete fails.
+        assert!(delete_in(&dir, None, "IN107.64").is_err() && !deleted(&dir, "IN107.64"));
+        let game = dir.join("game");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("NAMES.DAT"), [1]).unwrap();
+        delete_in(&dir, Some(&game), "names.dat").unwrap();
+        assert!(deleted(&dir, "NAMES.DAT") && game.join("NAMES.DAT").exists(), "the person's copy only read");
+        assert!(delete_in(&dir, Some(&game), "NAMES.DAT").is_err(), "gone for the game");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
