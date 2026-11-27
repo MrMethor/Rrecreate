@@ -140,6 +140,7 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         true => None,
         false => Some(crate::trace::items(repo, &k, &repo.module())?),
     };
+    let hooks = crate::trace::hook_items(&k);
     let unrecorded = |name: &str, session: &Session| -> Result<Option<String>, String> {
         let Some(recorded) = &session.trace else { return Ok(Some(format!("rrc record {name}"))) };
         let Some((syncs, inputs, state)) = &items else { return Ok(None) };
@@ -153,6 +154,8 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
                 Some(format!("rrc record {name}: the knowledge changed since it was recorded"))
             }
             Some(h) if h.edits != edits => Some(format!("rrc record {name}: its edits changed since it was recorded")),
+            // A hook added or changed: the trace has none of its calls (D98, D235).
+            Some(h) if h.hooks != hooks => Some(format!("rrc record {name}: the hooks changed since it was recorded")),
             Some(_) => None,
         })
     };

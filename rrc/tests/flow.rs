@@ -335,6 +335,9 @@ fn a_session_is_traced_tick_by_tick() {
     assert!(hook.contains("hook      steps T.COM+0000E, called by the loop, with ax, cl"), "{hook}");
     let (refused, ok) = rrc.run(&["hook", "T.COM+0000E", "other", "--part", "x", "--registers", "zz"]);
     assert!(!ok && refused.contains("no register zz"), "{refused}");
+    // A new hook: the recording has none of its calls, so it isn't current.
+    let status = rrc.ok(&["status", "--all"]);
+    assert!(status.contains("not recorded as the knowledge is now: short"), "{status}");
     rrc.ok(&["record", "short"]);
     let tick = rrc.ok(&["trace", "short", "--tick", "2"]);
     assert!(tick.contains("hook      steps (T.COM+0000E): ax="), "the call in tick 2's pass: {tick}");

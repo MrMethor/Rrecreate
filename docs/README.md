@@ -257,7 +257,8 @@ stale (D234). By
 every mapped field, frame, picture between ticks and sound, in lockstep and run free, and the files they save are
 the original's but one (a new automap file's filler); 67 bugs of the original are registered
 with their switches. That filler is the machine's first 64 KB, the interrupt table and DOS's included, which DOS
-reads for the write itself: a hook now keeps the memory its run's registers point at (D235).
+reads for the write itself: a hook now keeps the memory its run's registers point at (D235), and a hook added or
+changed makes the sessions' recordings stale, which `rrc status` and `rrc work --run` hadn't counted.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

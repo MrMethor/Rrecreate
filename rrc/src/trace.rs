@@ -640,20 +640,24 @@ pub(crate) fn header(
         inputs,
         state,
         edits,
-        hooks: k
-            .ticks
-            .hooks
-            .iter()
-            .map(|h| HookItem {
-                name: h.name.clone(),
-                at: h.at.clone(),
-                registers: h.registers.clone(),
-                interrupts: h.interrupts,
-                memory: h.memory.clone(),
-            })
-            .collect(),
+        hooks: hook_items(k),
         power_on: None,
     })
+}
+
+/// The hooks a trace follows, as the knowledge has them now (D98): a recording with others isn't current.
+pub(crate) fn hook_items(k: &Knowledge) -> Vec<HookItem> {
+    k.ticks
+        .hooks
+        .iter()
+        .map(|h| HookItem {
+            name: h.name.clone(),
+            at: h.at.clone(),
+            registers: h.registers.clone(),
+            interrupts: h.interrupts,
+            memory: h.memory.clone(),
+        })
+        .collect()
 }
 
 /// What a session's run was asked to be (D123): its run's identity and its length.
