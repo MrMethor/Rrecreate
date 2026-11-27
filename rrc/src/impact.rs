@@ -65,6 +65,8 @@ pub(crate) fn fingerprint(repo: &Repo) -> Result<String, String> {
         let items = code(&repo.root, &repo.module()).items;
         let text = serde_json::to_string(&items).map_err(|e| e.to_string())?;
         cache.remember("code", &port, &text)?;
+        // The crates it builds on, as they were (D234): a change of theirs reaches every session.
+        cache.remember("dependencies", &port, &crate::sources::dependencies_fingerprint(&repo.root))?;
     }
     Ok(port)
 }
@@ -371,7 +373,13 @@ pub(crate) fn spared(repo: &Repo, held: &[Held], port: &str) -> Result<Spared, S
     let now = code(&repo.root, &repo.module());
     let mut changes = BTreeMap::new();
     let mut why = None;
+    let dependencies = crate::sources::dependencies_fingerprint(&repo.root);
     for old in &olds {
+        // The crates the port builds on changed (D234): what that reaches can't be told by the port's items.
+        if cache.recall("dependencies", old).as_deref() != Some(dependencies.as_str()) {
+            why = Some("the crates the port builds on changed".to_owned());
+            continue;
+        }
         match kept(&cache, old) {
             Some(items) => {
                 changes.insert(old.clone(), change(&items, &now, &repo.module()));

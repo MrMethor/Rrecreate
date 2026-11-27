@@ -212,9 +212,9 @@ pub fn ids(root: &Path, module: &str) -> BTreeSet<String> {
     found
 }
 
-/// The port's code as it is: the hash of its files' paths and contents, in path order. What a comparison found
-/// holds for the code it ran, so a comparison is kept with this, and one the code as it is now didn't make is said to
-/// be stale (D158).
+/// The port's code as it is: the hash of its files' paths and contents, in path order, and of the crates it builds
+/// on by path (`dependencies`, D234). What a comparison found holds for the code it ran, so a comparison is kept with
+/// this, and one the code as it is now didn't make is said to be stale (D158).
 pub fn fingerprint(root: &Path) -> String {
     let mut all = Vec::new();
     each_file(root, root, &mut |relative, text| {
@@ -224,6 +224,51 @@ pub fn fingerprint(root: &Path) -> String {
         all.push(0);
         true
     });
+    all.extend_from_slice(dependencies_fingerprint(root).as_bytes());
+    crate::cache::sha256(&all)
+}
+
+/// The crates the port builds on by path (its `Cargo.toml`'s dependencies with a `path`, and theirs, D234): their
+/// code is the port's too, as a change of it changes what the port does (a runtime's saving).
+pub fn dependencies(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut found: Vec<std::path::PathBuf> = Vec::new();
+    let mut todo = vec![root.to_path_buf()];
+    while let Some(dir) = todo.pop() {
+        let Ok(text) = std::fs::read_to_string(dir.join("Cargo.toml")) else { continue };
+        let Ok(manifest) = text.parse::<toml::Table>() else { continue };
+        for table in ["dependencies", "build-dependencies"] {
+            let Some(deps) = manifest.get(table).and_then(toml::Value::as_table) else { continue };
+            for dep in deps.values() {
+                let Some(path) = dep.get("path").and_then(toml::Value::as_str) else { continue };
+                let Ok(at) = dir.join(path).canonicalize() else { continue };
+                if !found.contains(&at) {
+                    found.push(at.clone());
+                    todo.push(at);
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// The hash of the code of the crates the port builds on by path (`dependencies`): none, empty.
+pub fn dependencies_fingerprint(root: &Path) -> String {
+    let deps = dependencies(root);
+    if deps.is_empty() {
+        return String::new();
+    }
+    let mut all = Vec::new();
+    for dep in &deps {
+        let name = dep.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        each_file(dep, dep, &mut |relative, text| {
+            all.extend_from_slice(format!("{name}/{relative}").as_bytes());
+            all.push(0);
+            all.extend_from_slice(text.as_bytes());
+            all.push(0);
+            true
+        });
+    }
     crate::cache::sha256(&all)
 }
 
@@ -328,6 +373,32 @@ mod tests {
         assert_eq!(found.len(), 2, "{found:?}");
         assert!(found[0].starts_with("src/main.rs:2: "), "{found:?}");
         assert!(found[1].starts_with("src/main.rs:8: "), "{found:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_crates_a_port_builds_on_by_path_are_its_code_too() {
+        let root = std::env::temp_dir().join(format!("rrc-deps-{}", std::process::id()));
+        let write = |file: &str, text: &str| {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("port/src/main.rs", "fn main() {}\n");
+        write("port/Cargo.toml", "[dependencies]\nruntime = { path = \"../runtime\" }\nserde = \"1\"\n");
+        write("runtime/src/lib.rs", "pub fn save() {}\n");
+        write("runtime/Cargo.toml", "[dependencies]\ntypes = { path = \"../types\" }\n");
+        write("types/src/lib.rs", "pub struct T;\n");
+        let port = root.join("port");
+        let names: Vec<String> =
+            dependencies(&port).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["runtime", "types"]);
+        let before = fingerprint(&port);
+        write("types/src/lib.rs", "pub struct T(u8);\n");
+        let after = fingerprint(&port);
+        assert_ne!(before, after, "a dependency's dependency changed");
+        write("runtime/Cargo.toml", "[dependencies]\ntypes = { path = \"../types\" }\n# a comment\n");
+        assert_eq!(fingerprint(&port), after, "a crate's settings aren't its code");
         std::fs::remove_dir_all(&root).ok();
     }
 

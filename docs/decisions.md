@@ -764,6 +764,17 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D234. The crates a port builds on by path are its code too. Accepted 2026-11-27.
+The port's fingerprint (D158, D167) covers the code of the crates its `Cargo.toml` names by path, and theirs
+(Rrecreate's runtime and platform, their types and IDs), as it covers its own files; the cache keeps their hash
+under each fingerprint, and a census or a comparison made with other crates is never spared by what the port's own
+items reach (D219): a change of theirs can reach every session.
+**Why:** two fixes of the runtime's saving (a file saved and deleted under its name in any case, a missing file's
+deletion recording nothing) changed what Arena's port wrote, and its censuses all stood: `rrc work --run --all`
+counted nothing, every one "of the port's code as it is". A fingerprint of the port's files alone said a run of the
+old runtime held for the new.
+**Extends:** D158, D167, D219.
+
 ### D233. A file, or bytes of one, is left out of the comparison of files by the mapping, with why. Accepted 2026-11-27.
 `mapping.toml`'s `[[file]]` names a file (`*` any characters, case aside) the comparison of files (D231, D232)
 leaves out, or byte ranges of it (`bytes`, each from and to), and says why (`why`: `rrc check` refuses one without).

@@ -161,7 +161,8 @@ wrong in an earlier one is fixed there first (rule 12). Stages 4 to 6 repeat one
 The gate is what a tool can test. A stage does more, which only the agent can judge and its section below says:
 every loop of the stretch given its sync point, the game's files listed, a play pass's top calls named, what hooks
 and parts' inputs still give the port. The sessions measured are the scope's (`rrc scope`); a comparison counts for
-the recording it was made of, and one made before the port's code changed is said to be `stale`.
+the recording it was made of, and one made before the port's code changed is said to be `stale`; the crates the port
+builds on by path (Rrecreate's runtime) are its code too (D234), so a census made before one changed is too.
 
 Why this order: a transplant means nothing has to be ported before something is compared, so the port exists, empty,
 before any logic is written; loops, state, files and sources are cheap to map early and expensive to discover late;
