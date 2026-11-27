@@ -1516,6 +1516,10 @@ pub(crate) struct Census {
     /// differs (`what`), and how many do (`ticks`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<Seen>,
+    /// The mapping's file rules it compared the files by (`file_rules_hash`, D233): one counted by others holds for
+    /// nothing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file_rules: String,
     /// What it noted (`rrc_runtime::note`, D115): paths not ported.
     pub notes: BTreeMap<String, Seen>,
     /// Where the port stopped in a play followed as it goes (D193): it panicked, or wrote no line for far longer than
@@ -1878,6 +1882,7 @@ fn counted(repo: &Repo, name: &str, correcting: bool, live: bool) -> Result<(Cen
                 Some(Seen { ticks: differing.len() as u64, session: name.to_owned(), tick: last, what: first.clone() });
         }
     }
+    census.file_rules = file_rules_hash(&mapping.files);
     Ok((census, lived))
 }
 
@@ -2660,6 +2665,14 @@ fn files_differing(
         out.push(format!("{path}: the port deleted it, the original didn't"));
     }
     Ok(out)
+}
+
+/// What a census keeps of the mapping's file rules (D233): none, nothing; else their hash.
+pub(crate) fn file_rules_hash(rules: &[crate::mapping::FileRule]) -> String {
+    if rules.is_empty() {
+        return String::new();
+    }
+    crate::cache::sha256(serde_json::to_string(rules).unwrap_or_default().as_bytes())
 }
 
 /// The files' names, the first few.

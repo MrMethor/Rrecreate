@@ -156,6 +156,8 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
             Some(_) => None,
         })
     };
+    // A census counted by other file rules than the mapping's now holds for nothing (D233).
+    let file_rules = crate::compare::file_rules_hash(&crate::mapping::Mapping::load(repo)?.files);
     let mut held = Vec::new();
     for name in &scope {
         let session = Session::load(repo, name)?;
@@ -165,7 +167,8 @@ pub(crate) fn standing(repo: &Repo) -> Result<Standing, String> {
         // made before it counted what a census counts now holds for nothing, and is made again (D229).
         let census = Census::load(repo, name)?
             .filter(|c| c.recorded.is_empty() || current(&c.recorded))
-            .filter(|c| c.counts >= Census::COUNTS);
+            .filter(|c| c.counts >= Census::COUNTS)
+            .filter(|c| c.file_rules == file_rules);
         let mut outcomes = Outcome::kept(repo, name)?;
         outcomes.retain(|_, o| current(&o.recorded));
         held.push(Held { unrecorded: unrecorded(name, &session)?, name: name.clone(), session, census, outcomes });

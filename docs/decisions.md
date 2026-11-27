@@ -771,7 +771,8 @@ leaves out, or byte ranges of it (`bytes`, each from and to), and says why (`why
 port's: the screen and palette (SCREENSV.$$2) and the level's map and floor (TEMPSAVE.$$$) the original writes away
 while a screen is over the view and reads back after (`+0A611`, `+0A6B5`), which the port keeps in memory, and a
 saved game's screen buffer and interrupt table, which the original never reads back. As `[[ignore]]` does for
-memory, the mapping declares them, so what is left counts and nothing is left out without a reason.
+memory, the mapping declares them, so what is left counts and nothing is left out without a reason. A census keeps
+the rules it compared the files by (their hash): one counted by others holds for nothing and is made again.
 **Extends:** D231, D232.
 
 ### D232. A census counts the files too. Accepted 2026-11-27.
