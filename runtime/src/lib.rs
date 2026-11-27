@@ -53,7 +53,9 @@ pub use serde_json;
 
 /// A port's game logic: its state, stepped one tick at a time (D21: deterministic, no clock, no
 /// hardware). The state serializes to the values `rrc` compares: the fields `mapping.toml` names,
-/// by their serde names (`player.x` is the `x` of the field `player`).
+/// by their serde names (`player.x` is the `x` of the field `player`). A feed gives the state through its
+/// serialization (`transplant` of it with the original's values set), so a field left out of it is lost at each
+/// one; `rrc check` names such fields (D230).
 pub trait Simulation: Serialize + DeserializeOwned {
     /// The state at the session's first tick: what the original holds when it first reaches a sync
     /// point (its start-up already run).

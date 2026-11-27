@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-26 (decisions to D229). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-27 (decisions to D230). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -247,6 +247,8 @@ the program alone finds the person's copy, unpacks the game's program itself and
 as its code, so editing them leaves its censuses standing (D227). A datum named with a type and no size is read at
 its type's size (D228): `rrc peek` had shown a four-byte clock as two. A census counts the pictures between ticks
 too (D229), so a fade or a dissolve that differs reaches the work list, not only a comparison that stops there.
+A field a port leaves out of its state's serialization is refused by `rrc check` unless it says why no feed needs it
+(D230): lockstep's feeds give the state through it, and Arena's view at the stairs was black for that alone.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

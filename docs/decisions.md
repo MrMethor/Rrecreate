@@ -764,6 +764,19 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D230. A field left out of the state's serialization is checked. Accepted 2026-11-27.
+A feed (lockstep's, D124; a correction's, D191; a scenario's edit, D166) gives the port its state through its
+serialization: the runtime serializes the port's state, sets the original's values and makes the state again from it
+(`Simulation::transplant`). A field the serialization leaves out (`#[serde(skip)]`, `skip_serializing`,
+`skip_deserializing`) is lost there: between a pass and its drawing, and between passes. `rrc check` refuses each one
+in the port's Rust code unless its line ends with `// not fed: why` (a value each pass sets before it is read, an
+input); otherwise the port serializes it (`skip_serializing_if`, to keep the trace small while it is empty).
+**Why:** Arena's port kept the level its view drew before the stairs changed it (`level_drawn`) out of its
+serialization: run free, its frame at the stairs matched; in lockstep the feed between the pass and its drawing
+dropped it and the view was black, a census item that stood for days with nothing to say why. The runtime can't keep
+what the serialization never holds, so the port says it.
+**Extends:** D124, D191.
+
 ### D229. A census counts the pictures between ticks. Accepted 2026-11-26.
 A lockstep's census (D124) and a corrected run's compare the pictures the port shows between ticks (D180) as
 `rrc compare` does: each one of the original's display's refreshes in the pass, in order, one shown for less than a

@@ -77,6 +77,8 @@ pub(crate) fn check(repo: &Repo) -> Result<ExitCode, String> {
         say("book", rrc_runtime::standalone::FILE);
     }
     problems.extend(crate::standalone::problem(repo)?);
+    // A field the state's serialization leaves out is lost at each feed (D230).
+    problems.extend(crate::sources::unfed(&repo.root));
     for problem in &problems {
         say("problem", problem);
     }

@@ -736,7 +736,9 @@ starts itself (its initial data, D135), not from a transplant at its first tick,
 sets up and nothing maps (D164). At a scenario's edit, the port's own values stay where the edit writes until its tick
 is drawn, as the pass left them (D166). A run whose port's code changed while it ran is refused (D167): while a long
 census runs, edit a copy of the port. It is the work list: take a difference, then `rrc compare SESSION --transplant T`
-with T the tick before its first, for who wrote the original's value.
+with T the tick before its first, for who wrote the original's value. Each pass's feed gives the port its state through
+its serialization: a field it leaves out (`#[serde(skip)]`) is lost between the pass and its drawing, so lockstep
+differs where a free run matches; `rrc check` refuses one unless its line says `// not fed: why` (D230).
 
 `rrc compare SESSION --live` checks the port's own input handling (its `Live`, what the platform plays it with)
 beside lockstep (D194): at each of the original's sync points, `Live` is given the session's keys and mouse as the

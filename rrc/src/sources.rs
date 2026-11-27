@@ -49,6 +49,42 @@ pub fn kept(root: &Path) -> BTreeMap<String, (String, usize)> {
     found
 }
 
+/// Where the port's Rust code leaves a field out of its state's serialization (`#[serde(skip)]`,
+/// `skip_serializing`, `skip_deserializing`) without saying on that line why no feed needs it (`// not fed: why`):
+/// a feed (lockstep's, a correction's, a scenario's edit) gives the port its state through its serialization, so
+/// such a field is lost between a pass and its drawing, and between passes (D230). As problems for `rrc check`.
+pub fn unfed(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    each_file(root, root, &mut |relative, text| {
+        if relative.ends_with(".rs") {
+            for (i, line) in text.lines().enumerate() {
+                if skips(line) && !line.contains("// not fed:") {
+                    found.push(format!(
+                        "{relative}:{}: a field left out of the state's serialization (#[serde(skip)]) is lost at each \
+                         feed (lockstep's, a correction's): serialize it (skip_serializing_if), or end the line with \
+                         `// not fed: why` when each pass sets it before it is read (D230)",
+                        i + 1
+                    ));
+                }
+            }
+        }
+        true
+    });
+    found
+}
+
+/// Whether `line` has a serde attribute that leaves a field out of a serialization or a deserialization:
+/// `skip`, `skip_serializing` or `skip_deserializing` (not `skip_serializing_if`, which keeps what it holds).
+fn skips(line: &str) -> bool {
+    let Some(at) = line.find("serde(") else { return false };
+    let inside = &line[at + "serde(".len()..];
+    let inside = &inside[..inside.find(')').unwrap_or(inside.len())];
+    inside
+        .split(',')
+        .map(|part| part.split('=').next().unwrap_or("").trim())
+        .any(|key| matches!(key, "skip" | "skip_serializing" | "skip_deserializing"))
+}
+
 /// The names in `line`'s `keeps("name")`s.
 fn kept_in(line: &str) -> impl Iterator<Item = &str> {
     line.match_indices("keeps(\"").filter_map(|(at, call)| {
@@ -280,6 +316,20 @@ fn names(line: &str, what: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_left_out_of_the_serialization_is_said_unless_it_is_never_fed() {
+        let root = std::env::temp_dir().join(format!("rrc-unfed-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let code = "struct S {\n    #[serde(skip)]\n    a: u8,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    b: Option<u8>,\n    #[serde(skip)] // not fed: set at each pass's top\n    c: u8,\n    #[serde(default, skip_deserializing)]\n    d: u8,\n}\n";
+        std::fs::write(root.join("src/main.rs"), code).unwrap();
+        std::fs::write(root.join("notes.md"), "#[serde(skip)]\n").unwrap();
+        let found = unfed(&root);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found[0].starts_with("src/main.rs:2: "), "{found:?}");
+        assert!(found[1].starts_with("src/main.rs:8: "), "{found:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     #[test]
     fn a_run_whose_code_changed_meanwhile_is_refused() {
