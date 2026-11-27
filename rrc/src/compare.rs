@@ -422,6 +422,16 @@ pub(crate) fn compare(repo: &Repo, args: &[String]) -> Result<ExitCode, String> 
             (None, None, Some((t, _))) => Some((*t, "the sound".to_owned())),
             (None, None, None) => None,
         };
+        // A fix that changes only what the port saves shows in the files at the last tick compared (D231): a new
+        // file's filler, an entry written otherwise.
+        let first = match first {
+            Some(found) => Some(found),
+            None if last > 0 => {
+                let original = crate::peek::changed_files_at(repo, &session, &crate::trace::sync_points(&k)?, last)?;
+                files_change(&files_differing(&original, &work.join("saves"), &mapping.files)?, last)
+            }
+            None => None,
+        };
         match first {
             None => say(
                 "shown",
@@ -1432,6 +1442,13 @@ pub(crate) fn inputs_header(header: &crate::trace::Header) -> Value {
         line["hooks"] = json!(hooks);
     }
     line
+}
+
+/// What a fix changes in the files the port saved (D160, D231), as a switch is shown by: the last tick compared and the
+/// first file that differs, by name (`files_differing`'s lines start with it).
+fn files_change(differing: &[String], last: u64) -> Option<(u64, String)> {
+    let file = differing.first()?;
+    Some((last, format!("the files ({})", file.split(':').next().unwrap_or(file))))
 }
 
 /// A tick's inputs line: what its pass reads (`next`, the tick after it, has how many times the original went round
@@ -3886,6 +3903,13 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fix_that_changes_only_a_file_is_shown_by_it() {
+        let differing = vec!["AUTOMAP.64: differs from byte 8196 (original 30h, port 00h)".to_owned()];
+        assert_eq!(files_change(&differing, 750), Some((750, "the files (AUTOMAP.64)".to_owned())));
+        assert_eq!(files_change(&[], 750), None, "the same files: nothing shown");
+    }
 
     #[test]
     fn a_hook_s_call_gives_the_port_the_memory_it_kept() {
