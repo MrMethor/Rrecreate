@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-28 (decisions to D235). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-28 (decisions to D236). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -264,7 +264,10 @@ automap file's filler was the last file that
 differed: it is the machine's first 64 KB, the interrupt table and DOS's included, which DOS
 reads for the write itself: a hook now keeps the memory its run's registers point at (D235), and a hook added or
 changed makes the sessions' recordings stale, which `rrc status` and `rrc work --run` hadn't counted, and a quirk's
-switch that changes only a saved file is shown by it. With them Arena's files are all the original's.
+switch that changes only a saved file is shown by it. With them Arena's files are all the original's. Run without a
+digital driver, the game loads its music driver where that one would have been: the mapping now finds a driver's
+variables through the game's pointer to it, a pointer read as an index included (D236), and a session may give the
+program its own command line.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).

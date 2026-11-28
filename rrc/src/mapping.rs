@@ -321,8 +321,9 @@ fn into(k: &Knowledge, pointer: &Mapped, field: &str, targets: &[&Mapped]) -> Re
     };
     let (element, count) = values::array_of(&array.ty, &k.types).unwrap_or((&array.ty, 1));
     let width = values::size(element, &k.types)?;
-    if PointerKind::of_type(&pointer.ty, &k.types).is_none() || pointer.via.is_some() {
-        return Err(format!("into: {} isn't a pointer type at an ID", pointer.ty));
+    // The pointer itself at an ID or found through one (its node of a list isn't).
+    if PointerKind::of_type(&pointer.ty, &k.types).is_none() || pointer.via.as_ref().is_some_and(|v| v.next.is_some()) {
+        return Err(format!("into: {} isn't a pointer type at an ID or through a pointer", pointer.ty));
     }
     let (base, kind, offset) = (array.id.clone(), via.pointer.clone(), via.offset);
     Ok(Into { field: field.to_owned(), width, count, base, pointer: kind, offset })
@@ -594,5 +595,23 @@ mod tests {
         assert!(wrong(vec![via("t", "world.turn", 0, "u8")]).contains("isn't a pointer type"));
         assert!(wrong(vec![Map { at: "score".into(), ..via("t", "trail", 0, "u8") }]).contains("not both"));
         assert!(wrong(vec![Map { offset: 2, ..map("s", "score", "") }]).contains("offset goes with via"));
+    }
+
+    #[test]
+    fn a_pointer_found_through_a_pointer_is_read_as_an_index() {
+        // D236: a driver's variables on the heap, one of them a far pointer into a table found through another.
+        let k = knowledge();
+        let into = |field: &str, via_: &str, offset| Map { into: "table".into(), ..via(field, via_, offset, "far") };
+        let m =
+            Mapping { maps: vec![via("table", "trail", 0, "i16[8]"), into("at", "trail", 16)], ..Mapping::default() };
+        let mapped = m.resolve(&k).unwrap();
+        let index = mapped[1].into.as_ref().expect("an index");
+        assert_eq!((index.field.as_str(), index.width, index.count), ("table", 2, 8));
+        assert_eq!(mapped[1].via.as_ref().map(|v| v.offset), Some(16), "the pointer itself through `trail`");
+        // A list's node isn't a pointer read as an index.
+        let node = Map { next: Some(0), count: Some(8), ..into("node", "trail", 0) };
+        let wrong = Mapping { maps: vec![via("table", "trail", 0, "i16[8]"), node], ..Mapping::default() };
+        let e = wrong.resolve(&k).unwrap_err();
+        assert!(e.contains("at an ID or through a pointer"), "a list's node: {e}");
     }
 }

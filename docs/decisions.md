@@ -764,6 +764,18 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D236. A pointer read as an index may itself be found through a pointer. Accepted 2026-11-28.
+A mapped or carried item with `into` (D122, D178) may be `via` a pointer, with `offset` and `then`, as any other
+item (but a list's node): the trace keeps its bytes through the pointer as it keeps any such item's, and a start
+reads it there, then reads it as the index of the element it points to. A session's own `--clockwork` options take a
+value in double quotes whole, so a session may give the program another command line (`--args "..."`).
+**Why:** Arena's music driver (D174 to D179) is loaded on the heap after the digital driver, where that one would
+have been without it: run without a digital driver (session `nodigital`, its own command line), the driver's
+variables were read at the other's place and every one differed at the first tick. Found through the pointer the
+game keeps to the driver's memory, and the song's state through the game's own pointer to it, they match; the
+state's pointers into the song (D178) are read through the same pointer as indexes.
+**Extends:** D122, D178.
+
 ### D235. A hook may keep memory its run's registers point at. Accepted 2026-11-27.
 A hook (D98) with `memory` (`rrc hook ... --memory SEGMENT:OFFSET:LENGTH`, each a register or a number in hex: `ds:si:cx`,
 `ds:0:FFFF`) keeps those bytes at each run of its entry, at most 64 KB a run: Clockwork's `entries` takes `memory`

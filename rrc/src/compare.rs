@@ -2872,16 +2872,13 @@ fn read_given_from(
     let (read, mut bases) = (read[..items.len().min(read.len())].to_vec(), read.into_iter().skip(items.len()));
     let r = crate::values::of(k);
     for (m, hex) in items.iter().zip(read) {
-        if let Some(into) = &m.into {
-            let kind = crate::values::PointerKind::of_type(&m.ty, r.types)
-                .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
-            let own = hex.as_deref().map(crate::trace::unhex).unwrap_or_default();
-            let base = bases.next().flatten().as_deref().map(crate::trace::unhex).unwrap_or_default();
-            state.insert(m.field.clone(), pointer_index(&own, &kind, &base, into));
-            continue;
-        }
+        // An index's array's pointer, taken in order whether its own pointer is found or not.
+        let base =
+            m.into.as_ref().map(|_| bases.next().flatten().as_deref().map(crate::trace::unhex).unwrap_or_default());
         let bytes = match (&m.via, hex) {
             (None, Some(hex)) => unhex(&hex)?,
+            // A pointer read as an index: null where it can't be read.
+            (None, None) if m.into.is_some() => Vec::new(),
             (None, None) => return Err(format!("{} ({}) isn't in memory at tick {tick}", m.field, m.id)),
             (Some(v), hex) => {
                 let pointer = hex.as_deref().map(crate::trace::unhex).unwrap_or_default();
@@ -2896,6 +2893,13 @@ fn read_given_from(
                 }
             }
         };
+        // A pointer read as an index into an array (D178), itself at an ID or found through a pointer.
+        if let (Some(into), Some(base)) = (&m.into, base) {
+            let kind = crate::values::PointerKind::of_type(&m.ty, r.types)
+                .ok_or_else(|| format!("{}: {} isn't a pointer", m.field, m.ty))??;
+            state.insert(m.field.clone(), pointer_index(&bytes, &kind, &base, into));
+            continue;
+        }
         let value = decode(&bytes, &m.ty, &r).map_err(|e| format!("{}: {e}", m.field))?;
         state.insert(m.field.clone(), value);
     }
