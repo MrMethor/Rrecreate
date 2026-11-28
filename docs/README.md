@@ -253,12 +253,13 @@ comparison that matches compares the files the port saved with the original's to
 (D232), but for what the mapping says holds no state, with why (D233): a logbook's entry is state no frame shows.
 The crates a port builds on by path (the runtime) count as its code, so a change of theirs makes its censuses
 stale (D234). By
-2026-11-28 all of Arena's short sessions (138, with scenarios of the strength's limit on what is carried) match in
+2026-11-28 all of Arena's short sessions (139, with scenarios of the strength's limit on what is carried) match in
 every mapped field, frame, picture between ticks and sound, in lockstep and run free, and the files they save are
-the original's; 83 bugs of the original are registered with their switches (53 shown by a session), and 3 sessions
+the original's; 84 bugs of the original are registered with their switches (53 shown by a session), and 2 sessions
 still take paths the port notes as not ported (11 before the cloud sessions of 2026-11-27); with the tavern's drinks
 and rumors, the temple's cure and blessings, the store's repairs, theft (the store's and the tavern's, and the crime
-it begins, to the guards it calls and their first blow) and the haggle's counter offers at every service. A new
+it begins, to the guards it calls, drawn walking and attacking, and their first blow) and the haggle's counter offers
+at every service. A new
 automap file's filler was the last file that
 differed: it is the machine's first 64 KB, the interrupt table and DOS's included, which DOS
 reads for the write itself: a hook now keeps the memory its run's registers point at (D235), and a hook added or
