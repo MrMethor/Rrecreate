@@ -255,8 +255,9 @@ The crates a port builds on by path (the runtime) count as its code, so a change
 stale (D234). By
 2026-11-28 all of Arena's short sessions (140, with scenarios of the strength's limit on what is carried) match in
 every mapped field, frame, picture between ticks and sound, in lockstep and run free, and the files they save are
-the original's; 84 bugs of the original are registered with their switches (53 shown by a session), and 1 session
-still takes a path the port notes as not ported (11 before the cloud sessions of 2026-11-27); with the tavern's drinks
+the original's; 84 bugs of the original are registered with their switches (53 shown by a session), and no session
+takes a path the port notes as not ported any more (11 did before the cloud sessions of 2026-11-27; the last, the
+provinces' map scrolled in at the character's creation, is drawn step by step); with the tavern's drinks
 and rumors, the temple's cure and blessings, the store's repairs, theft (the store's and the tavern's, and the crime
 it begins, to the guards it calls, drawn walking and attacking, and their first blow) and the haggle's counter offers
 at every service. A new
