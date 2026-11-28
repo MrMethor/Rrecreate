@@ -603,7 +603,7 @@ inputs = "walk.inputs"          # an input script (clockwork run --input-file), 
                                 # `# clockwork SOURCE`; `# end CYCLE`); rrc record --follow records it
                                 # as it is written (D189), and rrc play compares the port with it so (D192)
 seconds = 86.0                  # emulated seconds it runs (from power-on, for a session from another's tick too)
-options = []                    # optional: more `clockwork run` options (rrc session --clockwork)
+options = []                    # optional: more `clockwork run` options (rrc session --clockwork, "..." a value with spaces)
 
 [from]                          # optional: where it starts (D118): another session's tick, its tick 1
 session = "walk"                # its input replaces that session's from there; a recorded play that is the

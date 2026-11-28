@@ -429,11 +429,47 @@ fn edit_session(
     Ok(ExitCode::SUCCESS)
 }
 
-/// More `clockwork run` options for a session (`--joystick 1`), split at spaces.
+/// More `clockwork run` options for a session (`--joystick 1`), split at spaces but within double quotes, so an
+/// option's value may hold spaces (`--args "-Msbp2fm.adv -IOM220"`, the program's command line).
 fn clockwork_options(text: &str) -> Vec<String> {
-    text.split_whitespace().map(str::to_owned).collect()
+    let mut options = Vec::new();
+    let (mut word, mut quoted, mut any) = (String::new(), false, false);
+    for c in text.chars() {
+        match c {
+            '"' => (quoted, any) = (!quoted, true),
+            c if c.is_whitespace() && !quoted => {
+                if any {
+                    options.push(std::mem::take(&mut word));
+                }
+                any = false;
+            }
+            c => {
+                word.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        options.push(word);
+    }
+    options
 }
 
 fn note(text: &str) -> String {
     if text.is_empty() { String::new() } else { format!(": {text}") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clockwork_options;
+
+    #[test]
+    fn clockwork_options_split_at_spaces_but_in_quotes() {
+        assert_eq!(clockwork_options("--joystick 1"), ["--joystick", "1"]);
+        assert_eq!(
+            clockwork_options(r#"--args "-Msbp2fm.adv -IOM220"  --ips 24000000"#),
+            ["--args", "-Msbp2fm.adv -IOM220", "--ips", "24000000"]
+        );
+        assert_eq!(clockwork_options(r#"--args """#), ["--args", ""]);
+    }
 }
