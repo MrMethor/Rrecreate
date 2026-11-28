@@ -253,10 +253,10 @@ comparison that matches compares the files the port saved with the original's to
 (D232), but for what the mapping says holds no state, with why (D233): a logbook's entry is state no frame shows.
 The crates a port builds on by path (the runtime) count as its code, so a change of theirs makes its censuses
 stale (D234). By
-2026-11-28 all of Arena's short sessions (139, with scenarios of the strength's limit on what is carried) match in
+2026-11-28 all of Arena's short sessions (140, with scenarios of the strength's limit on what is carried) match in
 every mapped field, frame, picture between ticks and sound, in lockstep and run free, and the files they save are
-the original's; 84 bugs of the original are registered with their switches (53 shown by a session), and 2 sessions
-still take paths the port notes as not ported (11 before the cloud sessions of 2026-11-27); with the tavern's drinks
+the original's; 84 bugs of the original are registered with their switches (53 shown by a session), and 1 session
+still takes a path the port notes as not ported (11 before the cloud sessions of 2026-11-27); with the tavern's drinks
 and rumors, the temple's cure and blessings, the store's repairs, theft (the store's and the tavern's, and the crime
 it begins, to the guards it calls, drawn walking and attacking, and their first blow) and the haggle's counter offers
 at every service. A new
@@ -267,7 +267,8 @@ changed makes the sessions' recordings stale, which `rrc status` and `rrc work -
 switch that changes only a saved file is shown by it. With them Arena's files are all the original's. Run without a
 digital driver, the game loads its music driver where that one would have been: the mapping now finds a driver's
 variables through the game's pointer to it, a pointer read as an index included (D236), and a session may give the
-program its own command line.
+program its own command line: Arena's port plays no sample without one, and its session from power-on without it
+matches whole.
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
