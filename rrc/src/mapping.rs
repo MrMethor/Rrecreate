@@ -123,6 +123,10 @@ pub struct Map {
     /// (an array through a pointer; another item is an array of one: D178): null where it points elsewhere (D122).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub into: String,
+    /// An item through a pointer: the named datum it is at in the run the name was given in (memory on the heap the
+    /// knowledge named where one run put it, D237), which it accounts for as its own.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub names: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -256,6 +260,7 @@ impl Mapping {
                 (true, true) => Err("no at: the original's item (or via: a pointer to it)".into()),
             };
             let mut resolved = resolved.map_err(at)?;
+            names(k, m, resolved.size).map_err(at)?;
             if let Some(mask) = m.mask {
                 if !matches!(resolved.ty.as_str(), "u8" | "u16" | "u32") {
                     return Err(at(format!("a mask takes some bits of an unsigned number, not of {}", resolved.ty)));
@@ -329,6 +334,36 @@ fn into(k: &Knowledge, pointer: &Mapped, field: &str, targets: &[&Mapped]) -> Re
     Ok(Into { field: field.to_owned(), width, count, base, pointer: kind, offset })
 }
 
+/// An item's `names` (D237): with `via`, a datum the knowledge names, as long as the item.
+fn names(k: &Knowledge, m: &Map, size: u32) -> Result<(), String> {
+    if m.names.is_empty() {
+        return Ok(());
+    }
+    if m.via.is_empty() {
+        return Err(format!("names {} goes with via: an item at an ID or a name is that datum", m.names));
+    }
+    let id = k.named(&m.names).ok_or_else(|| format!("names {}: no data named so", m.names))?;
+    match k.data_size(id) {
+        Some(n) if n == size => Ok(()),
+        n => {
+            Err(format!("names {}: {} bytes, the item {size}", m.names, n.map_or("no size".into(), |n| n.to_string())))
+        }
+    }
+}
+
+impl Mapping {
+    /// The data the items found through a pointer name (`names`, D237), accounted for as theirs.
+    pub fn named_through_pointers(&self) -> Vec<&str> {
+        self.maps
+            .iter()
+            .chain(&self.carries)
+            .chain(&self.presents)
+            .map(|m| m.names.as_str())
+            .filter(|n| !n.is_empty())
+            .collect()
+    }
+}
+
 /// Items given at a start, not compared (`[[present]]`, `[[carry]]`): each at an ID or a name, a field once.
 fn given(k: &Knowledge, items: &[Map], section: &str, what: &str) -> Result<Vec<Mapped>, String> {
     let mut mapped: Vec<Mapped> = Vec::new();
@@ -355,7 +390,9 @@ fn given(k: &Knowledge, items: &[Map], section: &str, what: &str) -> Result<Vec<
             "carry" => carried(k, m),
             _ => direct(k, m),
         };
-        mapped.push(item.map_err(at)?);
+        let item = item.map_err(at)?;
+        names(k, m, item.size).map_err(at)?;
+        mapped.push(item);
     }
     Ok(mapped)
 }
@@ -595,6 +632,20 @@ mod tests {
         assert!(wrong(vec![via("t", "world.turn", 0, "u8")]).contains("isn't a pointer type"));
         assert!(wrong(vec![Map { at: "score".into(), ..via("t", "trail", 0, "u8") }]).contains("not both"));
         assert!(wrong(vec![Map { offset: 2, ..map("s", "score", "") }]).contains("offset goes with via"));
+    }
+
+    #[test]
+    fn an_item_through_a_pointer_names_the_datum_named_at_its_place() {
+        // D237: a driver on the heap, its variables named where one run loaded it, mapped through its pointer.
+        let k = knowledge();
+        let named = |field: &str, names: &str, ty: &str| Map { names: names.into(), ..via(field, "trail", 6, ty) };
+        let m = Mapping { maps: vec![named("score", "score", "u16")], ..Mapping::default() };
+        assert!(m.resolve(&k).is_ok());
+        assert_eq!(m.named_through_pointers(), vec!["score"]);
+        let wrong = |maps| Mapping { maps, ..Mapping::default() }.resolve(&k).unwrap_err();
+        assert!(wrong(vec![named("s", "score", "u32")]).contains("names score: 2 bytes, the item 4"));
+        assert!(wrong(vec![named("s", "nothing", "u16")]).contains("no data named so"));
+        assert!(wrong(vec![Map { names: "score".into(), ..map("s", "score", "") }]).contains("goes with via"));
     }
 
     #[test]

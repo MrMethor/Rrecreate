@@ -764,6 +764,16 @@ change of them: the toy's lockstep then differed after its edit. Measured on Are
 lockstep censuses counted the compass turned at tick 2, where both match from a transplant; fed so, they match in
 every field, frame and sound.
 
+### D237. An item found through a pointer may name the datum at its place. Accepted 2026-11-28.
+A `[[map]]`, `[[carry]]` or `[[present]]` item `via` a pointer may say `names`: the datum the knowledge names where
+the run it was named in put that memory, as long as the item (`rrc check` refuses another). Stage 3's gate and
+`rrc compare`'s list of named data not mapped count that datum as the item's, as a mapped one.
+**Why:** Arena's music driver's variables are named at their places with the digital driver loaded first (the
+driver at 6464:0000); mapped through the game's pointer to it (D236), so as to follow it wherever it loads, the
+gate named all 123 as forgotten state. The names stay true of the runs they were taken from, and `rrc show`,
+`rrc peek` and `rrc watch` find them by them; what the gate lacked was the mapping's word that they are these items.
+**Extends:** D218, D236.
+
 ### D236. A pointer read as an index may itself be found through a pointer. Accepted 2026-11-28.
 A mapped or carried item with `into` (D122, D178) may be `via` a pointer, with `offset` and `then`, as any other
 item (but a list's node): the trace keeps its bytes through the pointer as it keeps any such item's, and a start

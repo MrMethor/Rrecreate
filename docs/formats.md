@@ -428,6 +428,8 @@ field = "level.cells"
 via = "level_map"               # or: a pointer (named data, an ID, a path into one: world.level); the item
 offset = 0                      # is where it points at each tick, this many bytes past (optional)
 type = "u8[4096]"               # needed: what it points to
+names = "cells"                 # optional: the datum named at its place in the run it was named in, as long as
+                                # the item: the gate counts it as mapped (D237)
 
 [[map]]
 field = "actors"                # a list on the heap (D122): the field is an array of its nodes

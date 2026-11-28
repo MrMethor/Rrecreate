@@ -3891,9 +3891,12 @@ pub(crate) fn unmapped_names(k: &Knowledge, mapped: &[Mapped], repo: &Repo) -> R
             || ignored.iter().any(|(at, n)| inside(at, *n))
     };
     let inputs: Vec<String> = k.ticks.inputs.iter().map(|i| i.at.clone()).collect();
+    // Named where one run put them, found through a pointer by an item that says so (D237).
+    let through = mapping.named_through_pointers();
     Ok(k.data
         .iter()
         .filter(|(id, d)| d.size.is_some_and(|size| !covered(id, size)) && !inputs.contains(&id.to_string()))
+        .filter(|(_, d)| !through.contains(&d.decision.name.as_str()))
         .map(|(_, d)| d.decision.name.clone())
         .collect())
 }

@@ -126,7 +126,7 @@ from the original silently; where the work stands is the toolkit's to say, not t
 
 ## 5. Where we are
 
-As of 2026-11-28 (decisions to D236). The plan is the design's ([design](design.md) §12, D71); this is its state,
+As of 2026-11-28 (decisions to D237). The plan is the design's ([design](design.md) §12, D71); this is its state,
 kept here and nowhere else.
 
 | Milestone | State | Shown by |
@@ -269,7 +269,8 @@ switch that changes only a saved file is shown by it. With them Arena's files ar
 digital driver, the game loads its music driver where that one would have been: the mapping now finds a driver's
 variables through the game's pointer to it, a pointer read as an index included (D236), and a session may give the
 program its own command line: Arena's port plays no sample without one, and its session from power-on without it
-matches whole.
+matches whole. Such an item names the datum at its place, so stage 3's gate counts the driver's variables as mapped
+(D237).
 **Then M7, the modern mode** ([design](design.md) §12): its plan first, for the person to accept.
 
 **The person's calls ahead:** the game M9 is run on, which stays out of the toolkit's development until then (D71).
